@@ -13,7 +13,8 @@ use crate::error::Result;
 // ---------------------------------------------------------------------------
 
 /// What routing may be told about `key` — `None` unless the task class has
-/// GRADUATED, and `None` when the scope has no runs to speak from.
+/// GRADUATED, `None` when the scope has no runs to speak from, and `None`
+/// when the task class holds no range to compare against.
 ///
 /// # Errors
 ///
@@ -28,8 +29,8 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
     let Some(own) = AGGREGATE.get(&vault.store, &rtxn, &aggregate_key)? else {
         return Ok(None);
     };
-    let peers = peer_totals(vault, &rtxn, &key.task_class)?;
-    Ok(hint_of(own, peers))
+    let peers = peer_means(vault, &rtxn, &key.task_class)?;
+    Ok(hint_of(own, &peers))
 }
 
 /// Every scope a task class has promoted to at least [`RolloutRung::DataBar`],
@@ -45,11 +46,15 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
 pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
     let rtxn = vault.store.env.read_txn()?;
     let rows = aggregates(vault, &rtxn)?;
-    let mut peers: BTreeMap<String, (f64, u64)> = BTreeMap::new();
+    let mut peers: BTreeMap<String, Vec<f64>> = BTreeMap::new();
     for (key, aggregate) in &rows {
-        let totals = peers.entry(key.task_class.clone()).or_default();
-        totals.0 += aggregate.d_norm_sum;
-        totals.1 += aggregate.runs;
+        if aggregate.runs == 0 {
+            continue;
+        }
+        peers
+            .entry(key.task_class.clone())
+            .or_default()
+            .push(aggregate.d_norm_sum / runs_as_f64(aggregate.runs));
     }
 
     let mut out = Vec::new();
@@ -58,8 +63,8 @@ pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
         if rung == RolloutRung::Shadow {
             continue;
         }
-        let totals = peers.get(&key.task_class).copied().unwrap_or_default();
-        let Some(hint) = hint_of(aggregate, totals) else {
+        let means = peers.get(&key.task_class).map(Vec::as_slice).unwrap_or(&[]);
+        let Some(hint) = hint_of(aggregate, means) else {
             continue;
         };
         out.push(RoutingScopeStats {
@@ -72,28 +77,27 @@ pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
     Ok(out)
 }
 
-/// The pair, computed against a task class's whole peer distribution.
-///
-/// The peer set INCLUDES the scope itself: a lone generation is then exactly at
-/// par, which is the truthful reading of "no peer has ever done this work".
-/// Excluding self would leave it dividing by nothing and inventing a verdict.
-fn hint_of(own: StoredAggregate, peers: (f64, u64)) -> Option<WeightHint> {
+/// The pair, computed against the task class's observed floor and ceiling:
+/// the cheapest and dearest per-model mean in the same task class (FIX 7827).
+/// A degenerate range — one model, or floor equal to ceiling — is no signal
+/// and reads as `None`, the same absence the callers already skip.
+fn hint_of(own: StoredAggregate, means: &[f64]) -> Option<WeightHint> {
     if own.runs == 0 {
         return None;
     }
     let own_mean = own.d_norm_sum / runs_as_f64(own.runs);
-    let peer_mean = if peers.1 == 0 {
-        0.0
-    } else {
-        peers.0 / runs_as_f64(peers.1)
-    };
-    // A task class nobody has ever had to edit is at par by every reading, and
-    // the alternative is a division that means nothing.
-    let relative = if peer_mean > 0.0 {
-        own_mean / peer_mean
-    } else {
-        1.0
-    };
+    let mut floor = f64::INFINITY;
+    let mut ceiling = f64::NEG_INFINITY;
+    let mut count = 0;
+    for &mean in means {
+        floor = floor.min(mean);
+        ceiling = ceiling.max(mean);
+        count += 1;
+    }
+    if count <= 1 || !(ceiling > floor) {
+        return None;
+    }
+    let relative = (own_mean - floor) / (ceiling - floor);
     // The outcome is the sound share of what the judge could attribute: an
     // unclear share holds, so it weighs neither for nor against the scope.
     let judged = own.judged_weight();
@@ -114,15 +118,16 @@ fn runs_as_f64(runs: u64) -> f64 {
     runs as f64
 }
 
-fn peer_totals(vault: &Vault, rtxn: &heed::RoTxn<'_>, task_class: &str) -> Result<(f64, u64)> {
+fn peer_means(vault: &Vault, rtxn: &heed::RoTxn<'_>, task_class: &str) -> Result<Vec<f64>> {
     let prefix = task_class_prefix(task_class)?;
-    let mut sum = 0.0;
-    let mut runs = 0_u64;
+    let mut means = Vec::new();
     for (_, aggregate) in AGGREGATE.scan_from(&vault.store, rtxn, &prefix)? {
-        sum += aggregate.d_norm_sum;
-        runs += aggregate.runs;
+        if aggregate.runs == 0 {
+            continue;
+        }
+        means.push(aggregate.d_norm_sum / runs_as_f64(aggregate.runs));
     }
-    Ok((sum, runs))
+    Ok(means)
 }
 
 fn aggregates(

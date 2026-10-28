@@ -108,14 +108,19 @@ pub(super) struct ArtifactAskEvent {
     /// and names no proposal.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) details_omitted: bool,
+    /// Every unit the ask left without an answer, with its receipt (FIX 9913).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) units: Vec<super::ArtifactUnitReceipt>,
 }
 
 impl ArtifactAskEvent {
-    /// Every id the entry names besides its question and principal.
+    /// Every id the entry names besides its question and principal, its unit
+    /// receipts' evidence too: erasing one takes the entry and their copies.
     fn names(&self, id: &EntityId) -> bool {
         self.artifact == *id
             || self.ask_id == *id
             || self.versions.iter().any(|(read, _)| read == id)
+            || self.units.iter().any(|unit| unit.names(id))
     }
 }
 
@@ -288,6 +293,7 @@ pub(crate) fn record_standing_reask_in_txn(
         failed,
         parent_proposal_ref: Some(reask.parent_proposal_ref.to_owned()),
         details_omitted: false,
+        units: Vec::new(),
     };
     let entry = |event: ArtifactAskEvent| QuestionAskHistoryEntry {
         principal: reask.principal,
