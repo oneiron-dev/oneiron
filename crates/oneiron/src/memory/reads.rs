@@ -476,10 +476,10 @@ impl Memory<'_> {
         let reads: Vec<_> = hits
             .iter()
             .map(|hit| {
-                let mode = revisions.get(&hit.id).copied().map_or(
-                    crate::vault::ReadMode::Live,
-                    crate::vault::ReadMode::Pinned,
-                );
+                let mode = revisions
+                    .get(&hit.id)
+                    .copied()
+                    .map_or(crate::vault::ReadMode::Live, crate::vault::ReadMode::Pinned);
                 PointRead::id(hit.id).at(mode)
             })
             .collect();
