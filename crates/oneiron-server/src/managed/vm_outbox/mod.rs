@@ -17,10 +17,13 @@
 //! the member's file ([`scan`]); a session sends the difference and takes the
 //! other end's ([`transfer`]). A receiver publishes into its own tree through
 //! held directories, never through a link ([`local`]), syncs, records and only
-//! then acks. Nothing here carries a key or a credential, decides a
-//! business receipt, schedules or prunes a backup, ages anything out, or caps
-//! a file, a set or an outbox; a full disk or an absent host is a typed
-//! deferral that keeps the work on both ends and never stops the vault.
+//! then acks. A put whose bytes did not hash to its digest on arrival goes
+//! again at its set's pacing, its file read again first, and a file damaged
+//! at its source waits, typed, until it changes ([`source_check`]). Nothing
+//! here carries a key or a credential, decides a business receipt, schedules
+//! or prunes a backup, ages anything out, or caps a file, a set or an
+//! outbox; a full disk or an absent host is a typed deferral that keeps the
+//! work on both ends and never stops the vault.
 
 mod endpoint;
 mod guest;
@@ -28,6 +31,7 @@ mod host;
 mod link;
 mod local;
 mod scan;
+mod source_check;
 mod store;
 mod transfer;
 
@@ -48,9 +52,10 @@ use std::time::{Duration, Instant};
 /// How long an idle end waits before it looks for changes again: the
 /// cadence of a scan, not a deadline on anything.
 const RESCAN_EVERY: Duration = Duration::from_secs(2);
-/// The longest a set the other end deferred waits before it is sent again:
-/// the pacing of a retry, which doubles from [`RESCAN_EVERY`] up to this so
-/// a full disk is not streamed to every two seconds. Nothing is dropped.
+/// The longest a set the other end deferred, or refused a put of as
+/// `digest_mismatch`, waits before it is sent again: the pacing of a retry,
+/// which doubles from [`RESCAN_EVERY`] up to this so a full disk is not
+/// streamed to every two seconds. Nothing is dropped.
 const PACE_CEILING: Duration = Duration::from_secs(128);
 /// What a kind's wait on its carrier records is said under: no member's
 /// name, as no part of one starts with a dot.
@@ -81,7 +86,8 @@ struct Carrier {
     /// What was last said of each member's deferral or failure, so one
     /// repeated every turn is said once.
     said: HashMap<(VmOutboxKind, String), String>,
-    /// When each set the other end deferred goes again, and its step.
+    /// When each set the other end deferred, or refused a put of as
+    /// `digest_mismatch`, goes again, and its step.
     paced: HashMap<(VmOutboxKind, String), (Instant, Duration)>,
     /// The host's, for its session: why its backup sets wait, once a backup
     /// label the guest named was not kept; `None` until then, once one is
