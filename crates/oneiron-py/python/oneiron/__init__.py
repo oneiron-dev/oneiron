@@ -4626,7 +4626,7 @@ class Oneiron:
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs":
             return Oneiron._VaultVoicesTargetsVerbs(self._client)
         def inspect(self, spec):
-            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target."""
             return json.loads(_translate(lambda: self._client.vault_voices_inspect(json.dumps(spec))))
         def lineage(self, spec):
             """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""

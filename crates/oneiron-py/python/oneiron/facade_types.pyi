@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1166 facade rows, 4175 declarations.
+Census: 1166 facade rows, 4177 declarations.
 Inputs: 1101 of 1166 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1049 of 1166 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -16141,17 +16141,33 @@ class VoiceRenderConsentView(TypedDict):
     state: VoiceConsentState
     revision: str
     sequence: int
+class VoiceTargetRenderHostedClone(TypedDict):
+    kind: Literal["hosted_clone"]
+    locality: ModelLocality
+class VoiceTargetRenderReference(TypedDict):
+    kind: Literal["reference"]
+    locality: ModelLocality
+class VoiceTargetRenderUnconfigured(TypedDict):
+    kind: Literal["unconfigured"]
+VoiceTargetRender = VoiceTargetRenderHostedClone | VoiceTargetRenderReference | VoiceTargetRenderUnconfigured
 class VoiceTargetCloneView(TypedDict):
     vendor_voice_id: str
     source_packs: list[str]
     ref_digest: str
     cloned_at: int
     revision: str
+class VoiceReferenceFenceView(TypedDict):
+    source_packs: list[str]
+    ref_digest: str
+    incarnation: NotRequired[str | None]
+    consent_revision: str
+    revision: str
 class VoiceTargetInspection(TypedDict):
     target: str
-    locality: ModelLocality
+    render: VoiceTargetRender
     include_generated: bool
     current: NotRequired[VoiceTargetCloneView | None]
+    reference: NotRequired[VoiceReferenceFenceView | None]
 class VoiceBankInspection(TypedDict):
     voice_id: str
     identity: NotRequired[VoiceIdentityView | None]

@@ -13802,7 +13802,7 @@
     },
     {
       "name": "vault.voices.inspect",
-      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone.",
+      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target.",
       "input": "crate::task_verb::sdk::VoiceBankInspectRequest",
       "output": "crate::task_verb::sdk::VoiceBankInspection",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.inspect\", &input)?",
