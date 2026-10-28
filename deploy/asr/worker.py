@@ -59,7 +59,6 @@ WHISPER_WINDOW_SAMPLES = 30 * ASR_SAMPLE_RATE
 # The rates a host records at, as the engine's own WAV checks bound them.
 MIN_INPUT_RATE = 8000
 MAX_INPUT_RATE = 192000
-FIELDS = {"model", "file", "response_format", "language"}
 
 
 def decode_wav(data):
@@ -160,8 +159,10 @@ class Worker:
 
     def transcribe(self, content_type, body, ticket):
         parts = form_parts(content_type, body)
-        if set(parts) - FIELDS or "file" not in parts:
-            raise ValueError("unsupported form fields")
+        # Other OpenAI transcription fields (prompt, temperature, ...) are accepted and
+        # unused: this worker decodes greedily with its fixed settings.
+        if "file" not in parts:
+            raise ValueError("no audio file")
 
         def field(name):
             return parts[name][1].decode("utf-8") if name in parts else None
