@@ -14,7 +14,6 @@ use super::filter::glob_match;
 /// The owner's grant rows, by binding. Absent, a hook reads at its author's
 /// ceiling.
 const GRANTS: SideTable<EntityId, GrantRow, Named> = SideTable::new(&side_table::HOOKS_GRANT);
-const MAX_GRANT_ENTRIES: usize = 64;
 
 /// What a hook may read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -79,15 +78,11 @@ impl Vault {
     ) -> VaultResult<()> {
         self.with_write_txn_grouped(|txn| {
             let set_by = owner.revalidate_in_txn(self, txn)?;
-            if grant.predicates.len() > MAX_GRANT_ENTRIES
-                || grant.worlds.len() > MAX_GRANT_ENTRIES
-                || grant
-                    .predicates
-                    .iter()
-                    .any(|glob| glob.is_empty() || glob.len() > 256)
-            {
+            // The whole grant, any size, is checked before it is installed
+            // (FIX 10073): only an empty glob is malformed.
+            if grant.predicates.iter().any(String::is_empty) {
                 return Err(Error::InvalidConfig(
-                    "hook grant is out of bounds".to_owned(),
+                    "hook grant has an empty predicate glob".to_owned(),
                 ));
             }
             if !self

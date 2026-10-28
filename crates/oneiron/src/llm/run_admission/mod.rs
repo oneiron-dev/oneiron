@@ -13,6 +13,7 @@
 //! that declares nothing is admitted to any bound offer, and only the run's
 //! own rules are enforced.
 mod admission;
+mod capture;
 mod declaration;
 mod gate;
 mod host;
@@ -27,6 +28,7 @@ mod wire;
 pub use admission::{
     RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
 };
+pub use capture::{capture_settlements, captured_sink};
 pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };

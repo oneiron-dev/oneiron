@@ -54,6 +54,8 @@ use serde_json::Value;
 use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
 
+pub(crate) mod hook;
+
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";
 

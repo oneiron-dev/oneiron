@@ -30,7 +30,7 @@ use super::store::{
     self, CursorRow, HookIntent, HookIntentState, HookRunRecord, HookRunRef, HookRunState, RunKey,
 };
 
-pub(super) use body::{Verdict, ask_verdict, judge};
+pub(super) use body::{Verdict, ask_verdict, judge, verdict_context};
 use body::{VerdictPins, receipt, record};
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
@@ -45,7 +45,6 @@ pub const HOOK_RUNNER_TICK: Duration = Duration::from_secs(2);
 pub type HookPassAdmission = std::sync::Arc<dyn Fn() -> Option<Box<dyn Send>> + Send + Sync>;
 /// The largest input a memo row pins.
 pub(super) const MAX_PINNED_INPUT: usize = 256 * 1024;
-pub(super) const MAX_OUTCOME_BYTES: usize = 64 * 1024;
 /// The longest reason or error a receipt field carries.
 const MAX_FIELD: usize = 512;
 
@@ -461,12 +460,21 @@ impl Pass<'_> {
             Ok(body) => {
                 let mut answer = |request: &str| read::answer(lane, run.grant, request, &mut pins);
                 // Each verdict is pinned as it is heard: replay answers from
-                // the pins rather than asking a model again.
+                // the pins rather than asking a model again. Each asks in
+                // the run's own trusted context (FIX 10068, 10075).
                 let host = self.verdict;
                 let mut verdict = |request: &str| {
-                    let (reply, evidence) =
-                        ask_verdict(run.binding, run.grant, host, request, deadline);
-                    verdicts.push(request, &reply, evidence);
+                    let trusted = verdict_context(
+                        run.binding_id,
+                        run.binding,
+                        run.grant,
+                        &run.key,
+                        verdicts.heard(),
+                        deadline,
+                    );
+                    let answer = ask_verdict(run.binding, host, &trusted, request);
+                    let reply = answer.reply.clone();
+                    verdicts.push(request, answer);
                     reply
                 };
                 // What a runtime's body uses is unavailable until the
@@ -481,7 +489,7 @@ impl Pass<'_> {
         // ends here, and an overrun goes beside its outcome (FIX 8842).
         let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let verdict = judge(run.binding, result, overrun, context.usage());
+        let verdict = judge(run.binding, result, overrun, &context);
         let memo = record(run, &input, pins, verdicts, &verdict, duration_ms, now);
         let queued = self.commit(run, memo, &verdict)?;
         self.report.count(&verdict);

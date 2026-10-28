@@ -9,7 +9,7 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result, Vault};
 
-use super::body::HookBudgetOverrun;
+use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::lineage::LineageLink;
 use super::source::{
     ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
@@ -240,6 +240,15 @@ pub(super) struct HookRunRecord {
     pub(super) verdicts: Vec<HookVerdictPin>,
     /// False once a verdict did not fit: replay has no verdict history then.
     pub(super) verdicts_complete: bool,
+    /// Every model call the run's verdicts settled on its pack line, in the
+    /// order they settled, whether or not their pins fit (FIX 10075): a
+    /// reference to each settlement, never a second one.
+    #[serde(default)]
+    pub(super) verdict_calls: Vec<HookSettledCallRef>,
+    /// How the body was prepared before it ran (FIX 9208); `body_hash`
+    /// still names the body as authored.
+    #[serde(default)]
+    pub(super) preparation: Option<HookPreparation>,
     pub(super) outcome_json: Option<String>,
     /// The outcome kind, or `refused` / `failed`.
     pub(super) outcome: String,

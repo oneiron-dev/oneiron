@@ -201,6 +201,8 @@ impl Chain<'_> {
             verb: self.call.verb.clone(),
             input_json: (run.input.len() <= MAX_PINNED_INPUT).then(|| run.input.clone()),
             input_hash: blake3::hash(run.input.as_bytes()).to_hex().to_string(),
+            dependencies: run.dependencies.clone(),
+            preparation: run.preparation.clone(),
             reads: run.reads.clone(),
             outcome_json: run.outcome_json.clone(),
             outcome: run.token.clone(),

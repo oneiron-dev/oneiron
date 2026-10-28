@@ -5,7 +5,11 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EdgeActorClass, EntityId, Result};
+
+use super::filter;
+use super::grant::HookGrant;
 
 /// Answers one `ai.verdict` call of a body; the refusal text otherwise.
 pub type HookVerdictCall<'a> = &'a mut dyn FnMut(&str) -> std::result::Result<String, String>;
@@ -111,6 +115,9 @@ pub struct HookRunContext {
     read_overruns: u32,
     verdict_overruns: u32,
     usage: HookBodyUsage,
+    /// How the runtime prepared the body it ran (FIX 9208): `None` until a
+    /// runtime that prepares reports it.
+    preparation: Option<HookPreparation>,
 }
 
 impl HookRunContext {
@@ -126,6 +133,7 @@ impl HookRunContext {
             read_overruns: 0,
             verdict_overruns: 0,
             usage: HookBodyUsage::NOT_RUN,
+            preparation: None,
         }
     }
 
@@ -187,6 +195,18 @@ impl HookRunContext {
         self.usage
     }
 
+    /// How the runtime prepared the body before it ran it (FIX 9208), on
+    /// its success and its failure alike.
+    pub fn report_preparation(&mut self, preparation: HookPreparation) {
+        self.preparation = Some(preparation);
+    }
+
+    /// The body's preparation, once a runtime reported one.
+    #[must_use]
+    pub const fn preparation(&self) -> Option<&HookPreparation> {
+        self.preparation.as_ref()
+    }
+
     /// The run's overrun, read once its body has ended (its worker joined,
     /// a failed run's too): `None` for a run that ended by its deadline.
     #[must_use]
@@ -242,22 +262,104 @@ fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// How a runtime prepared a hook body before it ran it (FIX 9208): the body
+/// stays as authored (its `body_hash` names it); a TypeScript body runs as
+/// the JavaScript its preparation printed, named here by that
+/// preparation's identity. JavaScript runs byte for byte as written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookPreparation {
+    /// `javascript` or `typescript`: the language the body ran as.
+    pub language: String,
+    /// Why a body that is not JavaScript ran as written: the preparation's
+    /// typed note code, never a refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// A TypeScript body's preparation identity (the Oxc pin, its options,
+    /// the executed JavaScript and its position map), lowercase hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
+}
+
+/// The trusted context of one `ai.verdict` a fact hook asks (FIX 10068,
+/// 10075): the runner builds it from the binding and the run, never from the
+/// request. Its grant is the authority the verdict's evidence is read under;
+/// its pack and author name the line the verdict's model calls are charged
+/// to, once, by the rungs that make them.
+#[derive(Debug, Clone)]
+pub struct HookVerdictContext {
+    /// The grant the hook reads under, as it stands for this run: its
+    /// reader reads the evidence, and its predicates and worlds bound which
+    /// evidence reaches the ladder.
+    pub grant: HookGrant,
+    pub binding: EntityId,
+    /// The exact pack source the body came from.
+    pub source: EntityId,
+    pub pack: String,
+    pub hook: String,
+    /// The actor whose pack it is: the line its verdicts spend on is theirs.
+    pub author: EntityId,
+    pub author_class: HookActorClass,
+    /// The run that asks, by its key as lowercase hex.
+    pub run: String,
+    /// Which of the run's verdicts this is, from 0.
+    pub ordinal: u32,
+    /// The hook run's accounting deadline: advisory context only, never a
+    /// clamp or a refusal (FIX 8842).
+    pub deadline: Instant,
+}
+
+impl HookVerdictContext {
+    /// The class the grant's reader reads as.
+    #[must_use]
+    pub const fn reader_class(&self) -> EdgeActorClass {
+        filter::edge_class(self.grant.reader_class)
+    }
+}
+
+/// One model call a hook's verdict made, as its run settled it (FIX 10075):
+/// the run instance and the lease. A hook record names it; nothing settles
+/// it again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookSettledCallRef {
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub instance: EntityId,
+    pub lease: String,
+}
+
+/// What one `ai.verdict` came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookVerdictReply {
+    /// The verdict as JSON, or the refusal's text.
+    pub reply: std::result::Result<String, String>,
+    /// The rows the ask resolved its evidence to: `Some([])` for one read
+    /// from none, `None` when they are not known.
+    pub evidence: Option<Vec<EntityId>>,
+    /// Each model call the ask settled, in the order they settled, a
+    /// refused ask's included.
+    pub calls: Vec<HookSettledCallRef>,
+}
+
+impl HookVerdictReply {
+    /// A verdict refused before it read or asked anything.
+    #[must_use]
+    pub fn refused(reason: impl Into<String>) -> Self {
+        Self {
+            reply: Err(reason.into()),
+            evidence: Some(Vec::new()),
+            calls: Vec::new(),
+        }
+    }
+}
+
 /// `ai.verdict` for a fact hook that declares the generative class (ARCH-0080
 /// §4 Its shape). The server supplies it: a verdict climbs its decision
 /// ladder, under run admission, and a verb hook never reaches it.
 pub trait HookVerdict: Send + Sync {
-    /// Asks `request_json`, an `ai.verdict` input, for `reader`, the reader
-    /// the hook's grant names. `deadline` is the hook run's accounting
-    /// deadline, advisory context only: it never clamps or refuses the ask
-    /// (FIX 8842). The verdict as JSON, or the refusal's text, beside the
-    /// rows the same ask resolved its evidence to: `Some([])` for one read
-    /// from none, `None` when they are not known. Blocks: the runner calls it
-    /// off the runtime.
-    fn verdict(
-        &self,
-        reader: EntityId,
-        class: EdgeActorClass,
-        request_json: &str,
-        deadline: Instant,
-    ) -> (std::result::Result<String, String>, Option<Vec<EntityId>>);
+    /// Asks `request_json`, an `ai.verdict` input, in `context`: its
+    /// evidence read by the grant's reader and shown only as the grant shows
+    /// it (FIX 10068), its model calls charged once to the hook's pack line
+    /// by the rungs that make them (FIX 10075). The context's deadline is
+    /// advisory only: it never clamps or refuses the ask (FIX 8842). Blocks:
+    /// the runner calls it off the runtime.
+    fn verdict(&self, context: &HookVerdictContext, request_json: &str) -> HookVerdictReply;
 }
