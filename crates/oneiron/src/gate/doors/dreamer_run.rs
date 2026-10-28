@@ -29,7 +29,11 @@ pub(super) fn pending_consent_dreamer_run_id(
     }
     let envelope = envelope?;
     match body.source {
-        Some(ClaimSource::Generated) => dreamer_run_id_from_write_envelope(envelope),
+        // An observed claim a run derived waits with that run's proposals
+        // (FIX 3083).
+        Some(ClaimSource::Generated | ClaimSource::Observed) => {
+            dreamer_run_id_from_write_envelope(envelope)
+        }
         // A claim from imported evidence waits in its import's review
         // (ARCH-0027): one group per import, whichever runs extracted it. One
         // with no imported TURN behind it waits with its run.
