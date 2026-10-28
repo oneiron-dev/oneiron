@@ -468,6 +468,8 @@ impl Vault {
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).
         self.signal_decision_answer(seq);
+        // A graph unit's ask lands its answer on the unit (FIX 11231).
+        self.land_question_unit_answer(seq);
         Ok(answered)
     }
 
