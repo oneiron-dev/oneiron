@@ -13,8 +13,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use oneiron::agent_dispatch::PlannerDecisions;
-use oneiron::attempt_queue::AttemptState;
+use oneiron::agent_dispatch::{AgentDispatcher, PlannerDecisions};
+use oneiron::attempt_queue::AttemptId;
 use oneiron::code_run::HostPlannerBinding;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
@@ -225,12 +225,15 @@ pub(crate) async fn vault_agents_spawn_get(
     .await
 }
 
-/// Appends a `no_executor` issue for each launched attempt still waiting in
-/// the queue, queued or scheduled, when this host has no engine-native
-/// executor to run it (FIX 4929): the resident pump never starts here, so
-/// such a run waits until a host that has one serves the vault. Status
+/// Appends a `no_executor` issue for each launched attempt the native agent
+/// pump would take now (`AgentDispatcher::is_ready_native_run`: queued or
+/// scheduled and due, no saved workflow's leaf), when this host has no
+/// engine-native executor to run it (FIX 4929): the resident pump never
+/// starts here, so such a run waits until a host that has one serves the
+/// vault. A workflow's leaf is its own pump's and is never labelled. Status
 /// only: each attempt keeps the state the queue holds, and nothing is
-/// refused, held or relabelled.
+/// refused, held or relabelled. An attempt whose eligibility does not read
+/// is named as unavailable instead.
 fn note_no_executor(server: &SyncServer, observation: &mut PlannedSpawnObservation) {
     if server
         .code_execution_host()
@@ -239,16 +242,26 @@ fn note_no_executor(server: &SyncServer, observation: &mut PlannedSpawnObservati
     {
         return;
     }
-    let waiting = [AttemptState::Queued.as_str(), AttemptState::Scheduled.as_str()];
-    let issues = observation
-        .launched
-        .iter()
-        .filter(|member| waiting.contains(&member.state.as_str()))
-        .map(|member| ObservationIssue::NoExecutor {
-            attempt_ref: member.attempt_ref,
-            state: member.state.clone(),
-        })
-        .collect::<Vec<_>>();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let dispatcher = AgentDispatcher::new(server.vault());
+    let mut issues = Vec::new();
+    for member in &observation.launched {
+        let ready = AttemptId::from_bytes(member.attempt_ref.as_bytes())
+            .and_then(|attempt| dispatcher.is_ready_native_run(attempt, now));
+        match ready {
+            Ok(true) => issues.push(ObservationIssue::NoExecutor {
+                attempt_ref: member.attempt_ref,
+                state: member.state.clone(),
+            }),
+            Ok(false) => {}
+            Err(error) => issues.push(ObservationIssue::Unavailable {
+                consumer: format!("executor {}", member.attempt_ref.to_hex()),
+                reason: error.to_string(),
+            }),
+        }
+    }
     observation.issues.extend(issues);
 }
 

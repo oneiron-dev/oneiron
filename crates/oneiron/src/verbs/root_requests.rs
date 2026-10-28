@@ -110,7 +110,7 @@ impl From<RootChange> for RootChangeView {
 
 /// One root request naming this install with no result yet, as
 /// `vault.roots.requests.list` answers it: its change and its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PendingRootRequestView {
     pub change: RootChangeView,
