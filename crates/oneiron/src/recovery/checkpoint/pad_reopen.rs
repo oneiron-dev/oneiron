@@ -192,6 +192,14 @@ impl Vault {
                     report.owed_refs = state.required_refs.len();
                     report.remaining = state.remaining.clone();
                 }
+                // The carried pads (PAD-3) the epoch no longer owes go; one a
+                // fault leaves stays carried until the next prune.
+                if let Err(error) = epochs::prune_carried_pads(self) {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "carried world pads not pruned after a pad reopen"
+                    );
+                }
             }
             Err(error) => report.faults.push(PadReopenFault {
                 world: None,
