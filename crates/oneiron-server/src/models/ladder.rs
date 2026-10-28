@@ -1271,10 +1271,12 @@ impl OfferLadder {
             .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = cache_warmth::Sending::of(rung, &bound);
         // The caller's deadline ends the send too (FIX 7792): the rung is
-        // settled, its reservation spent once it went out.
+        // settled, its reservation spent once it went out. Its reply is read
+        // on the vault's chat-reply line (FIX 10626).
+        let sent = gate.generate(bound, permit.lease());
         let Some(answered) = call
             .deadline
-            .bound(gate.generate(bound, permit.lease()))
+            .bound(super::http::holding_chat_replies(self.rests.reply_budgets(), sent))
             .await
         else {
             settle_failed(permit);
@@ -1806,7 +1808,10 @@ impl OfferLadder {
         let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = cache_warmth::Sending::of(rung, &call);
         let ended = match gate.stream(call, permit.lease()) {
-            Ok(stream) => forward(stream, events).await,
+            Ok(stream) => {
+                let budgets = self.rests.reply_budgets();
+                super::http::holding_chat_replies(budgets, forward(stream, events)).await
+            }
             Err(error) => Ended::Failed {
                 error,
                 spoken: false,
