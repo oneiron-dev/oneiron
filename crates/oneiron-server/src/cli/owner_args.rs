@@ -12,7 +12,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 
-use super::{RestoreWrapArgs, SecretBindArgs, SecretPendingArgs, SecretUnbindArgs, VaultUnlockArgs};
+use super::{
+    RestoreWrapArgs, SecretBindArgs, SecretPendingArgs, SecretUnbindArgs, VaultUnlockArgs,
+};
 use crate::config::ServeArgs;
 
 #[derive(Args, Clone, Debug)]

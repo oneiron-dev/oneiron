@@ -157,7 +157,7 @@ impl RestoreWrap {
 /// only once its key is wrapped here. A custody anchor door is called with
 /// `anchor`, the owner credential the restore was handed on its pipe
 /// (`--custody-anchor-credentials-fd`).
-pub(crate) fn restore_fresh(
+pub(in crate::commands::owner) fn restore_fresh(
     backup: &Path,
     config: &ServeConfig,
     keystore: Option<Arc<dyn DeviceKeystore>>,

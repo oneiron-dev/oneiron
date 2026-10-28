@@ -9,8 +9,8 @@ use oneiron::world_keys::{HybridSecretKey, VaultKeyUnlock};
 use zeroize::Zeroizing;
 
 use super::{
-    UnlockRequest, capsule_secret, check_name, hex, read_capsule_report, read_secret,
-    recovery_box, secret32,
+    UnlockRequest, capsule_secret, check_name, hex, read_capsule_report, read_secret, recovery_box,
+    secret32,
 };
 use crate::cli::{RestoreArgs, SecretSourceArgs, UnlockMethod};
 
