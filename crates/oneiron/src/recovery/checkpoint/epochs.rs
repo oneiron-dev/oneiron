@@ -12,7 +12,9 @@
 //! came from names it retired), and an erased one says ErasedUnavailable. An
 //! unresolved reference stays owed and its note stays: a Locked world is
 //! never shown readable and never dropped. A reopen updates its epoch in
-//! place; receipts already printed stay as they landed.
+//! place; receipts already printed stay as they landed. A pad no epoch owes
+//! any longer has its carried compartments pruned from current custody once
+//! the transaction that settled it commits ([`prune_carried_pads`], PAD-3).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -160,6 +162,31 @@ pub(crate) fn reconcile_restore_pad_notes_in_txn(
         reconciled.insert(sequence, state);
     }
     Ok(reconciled)
+}
+
+/// Drops the world pad compartments current custody carries (PAD-3, FIX
+/// 11133) for every pad no restore epoch of `vault` still owes: one rested
+/// here or erased needs no carried copy, and one no epoch names was never
+/// owed. Run after the transaction that reconciled the epochs commits, never
+/// inside it, so a write that does not commit strands nothing.
+///
+/// # Errors
+///
+/// Storage and custody faults.
+pub(crate) fn prune_carried_pads(vault: &Vault) -> Result<()> {
+    vault.store.prune_carried_world_pads(|txn| {
+        let mut owed = BTreeSet::new();
+        for row in RESTORE_EPOCH.iter_from(&vault.store, txn, &[])? {
+            let (_, row) = row?;
+            owed.extend(
+                row.pad_recovery
+                    .required_refs
+                    .iter()
+                    .map(WorldKeyId::envelope_key_id),
+            );
+        }
+        Ok(owed)
+    })
 }
 
 /// Where one owed reference stands now.

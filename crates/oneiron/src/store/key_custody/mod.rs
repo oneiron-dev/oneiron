@@ -13,6 +13,7 @@
 
 mod anchor;
 mod body_history;
+mod carried_pads;
 mod credential_faults;
 mod erasable;
 mod erase_binding;
