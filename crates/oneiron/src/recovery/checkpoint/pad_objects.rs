@@ -527,6 +527,14 @@ fn reconcile(vault: &Vault, epoch: Option<u64>, report: &mut RestoreReport) {
                     report.epoch.pad_recovery = state.clone();
                     report.pad_notes = state.remaining.clone();
                 }
+                // The carried pads (PAD-3) no epoch owes now go, once the
+                // reconcile committed; one a fault leaves waits for the next.
+                if let Err(error) = super::epochs::prune_carried_pads(vault) {
+                    warn_fault(
+                        &error,
+                        "carried world pads not pruned after an object install",
+                    );
+                }
             }
             Err(error) => warn_debt_fault(&error),
         }

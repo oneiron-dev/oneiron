@@ -85,7 +85,8 @@ fn warn_undecided(error: &crate::error::Error) {
 }
 
 /// Reconciles, now a kit's pads landed, every restore epoch of `vault` that
-/// still owes a pad. A fault leaves each as recorded, warned.
+/// still owes a pad, then drops the carried pads (PAD-3) none owes once that
+/// committed. A fault leaves each as recorded, warned.
 pub(super) fn reconcile_owed_epochs(vault: &Vault) {
     let reconciled = vault.with_write_txn_grouped(|txn| {
         crate::recovery::checkpoint::reconcile_restore_pad_notes_in_txn(
@@ -100,5 +101,9 @@ pub(super) fn reconcile_owed_epochs(vault: &Vault) {
             kind = ?error.kind(),
             "a kit restore's owed pads did not reconcile; each epoch stays as recorded"
         );
+        return;
+    }
+    if let Err(error) = crate::recovery::checkpoint::prune_carried_pads(vault) {
+        tracing::warn!(kind = ?error.kind(), "carried world pads not pruned after a kit restore");
     }
 }
