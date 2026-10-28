@@ -1,4 +1,5 @@
-//! One render's PCM16LE result as it streams in from the worker (C058).
+//! One render's PCM16LE result as it streams in from the worker (C058), here
+//! and on the own-server VoxCPM2 speech rung (FIX 6122).
 //! It is kept in memory up to the result-body inline bound
 //! (`[limits] code_result_inline_bytes`). Past that bound it spills, as it
 //! streams, through the result-body substrate's never-published spill: a
@@ -72,11 +73,27 @@ impl VoxCpm2PcmBody {
             StoredPcm::Spilled(file) => file.read_range(offset, take),
         }
     }
+
+    /// Appends the whole result to `out`, a playback window at a time, so a
+    /// spilled one is never read into a buffer of its own first.
+    ///
+    /// # Errors
+    ///
+    /// A spilled result's read error.
+    pub fn append_to(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut offset = 0;
+        while offset < self.len {
+            let window = self.read(offset, PCM_WINDOW_BYTES)?;
+            offset = offset.saturating_add(window.len() as u64);
+            out.extend_from_slice(&window);
+        }
+        Ok(())
+    }
 }
 
 /// Takes one render's PCM as it streams: in memory up to the inline bound,
 /// past it into an unlinked spill.
-pub(super) struct PcmSpool {
+pub struct PcmSpool {
     dir: BodyDir,
     inline_limit: u64,
     inline: Vec<u8>,
@@ -88,7 +105,11 @@ pub(super) struct PcmSpool {
 impl PcmSpool {
     /// A spool into `vault`'s body directory, spilling past its result-body
     /// inline bound.
-    pub(super) fn new(vault: &Vault) -> Result<Self> {
+    ///
+    /// # Errors
+    ///
+    /// The body directory's own.
+    pub fn new(vault: &Vault) -> Result<Self> {
         Ok(Self {
             dir: vault.store.body_dir()?,
             inline_limit: vault.code_result_inline_bytes(),
@@ -99,7 +120,12 @@ impl PcmSpool {
         })
     }
 
-    pub(super) fn write(&mut self, frame: &[u8]) -> Result<()> {
+    /// Takes the result's next bytes.
+    ///
+    /// # Errors
+    ///
+    /// The spill's write error.
+    pub fn write(&mut self, frame: &[u8]) -> Result<()> {
         self.hasher.update(frame);
         self.len = self.len.saturating_add(frame.len() as u64);
         if let Some(spill) = &mut self.spill {
@@ -123,7 +149,11 @@ impl PcmSpool {
     /// The whole result: its bytes, or a reader over its spill. A spill
     /// that left `vault`'s disk below `[limits] code_result_disk_floor_bytes`
     /// asks that row's question, and plays all the same.
-    pub(super) fn finish(self, vault: &Vault) -> Result<VoxCpm2PcmBody> {
+    ///
+    /// # Errors
+    ///
+    /// The spill's seal or reopen error.
+    pub fn finish(self, vault: &Vault) -> Result<VoxCpm2PcmBody> {
         let stored = match self.spill {
             None => StoredPcm::Inline(self.inline),
             Some(spill) => {

@@ -901,7 +901,7 @@ impl Vault {
             if asked && let Some(read) = &read {
                 crate::llm::decision::questions::record_failed_standing_reask(
                     self,
-                    &standing_reask(wake, read, now),
+                    &standing_reask(wake, read, &[], now),
                     error.kind(),
                 );
             }
@@ -925,9 +925,9 @@ impl Vault {
         reask_ref: &str,
         read: Option<&[(EntityId, u64)]>,
     ) -> Result<Option<PendingProposalView>> {
-        let (asked, proposal) = match reasked {
-            Reasked::Nothing => (false, None),
-            Reasked::Asked(proposal) => (true, proposal),
+        let (asked, proposal, unit_receipts) = match reasked {
+            Reasked::Nothing => (false, None, Vec::new()),
+            Reasked::Asked { proposal, units } => (true, proposal, units),
         };
         // The carried envelope is admitted through the principal's own read as
         // the fresh proposal waits (FIX 1229), its grant clock settled before
@@ -961,7 +961,7 @@ impl Vault {
                 crate::llm::decision::questions::record_standing_reask_in_txn(
                     self,
                     wtxn,
-                    &standing_reask(wake, read, now),
+                    &standing_reask(wake, read, &unit_receipts, now),
                     proposed.as_ref().map(|_| reask_ref),
                     None,
                 )?;
@@ -1045,7 +1045,7 @@ impl Vault {
             deadline: Instant::now() + WAKE_DEADLINE,
             run_ref: &reask_ref,
         };
-        let proposal = match &wake.shape {
+        let (proposal, units) = match &wake.shape {
             ReaskShape::SheetRows {
                 sheet,
                 answer_col,
@@ -1064,7 +1064,7 @@ impl Vault {
                 else {
                     return Ok((Reasked::Nothing, reask_ref));
                 };
-                self.ask_blob_artifact_sheet_rows(
+                let run = self.ask_blob_artifact_sheet_rows(
                     &wake.artifact,
                     &SheetRowsAsk {
                         ask,
@@ -1084,8 +1084,10 @@ impl Vault {
                         max_count_override: *max_count_override,
                         only_rows: Some(&rows),
                     },
-                )?
-                .proposal
+                )?;
+                let units =
+                    crate::llm::decision::questions::artifact_unit_receipts(&run);
+                (run.proposal, units)
             }
             ReaskShape::FolderItems {
                 sheet,
@@ -1106,7 +1108,7 @@ impl Vault {
                 if items.is_empty() {
                     return Ok((Reasked::Nothing, reask_ref));
                 }
-                self.ask_folder_items_into_sheet(
+                let run = self.ask_folder_items_into_sheet(
                     &wake.artifact,
                     &FolderAsk {
                         ask,
@@ -1116,8 +1118,10 @@ impl Vault {
                         max_count_override: *max_count_override,
                         sight: crate::secret_custody::SecretSight::Masked,
                     },
-                )?
-                .proposal
+                )?;
+                let units =
+                    crate::llm::decision::questions::artifact_unit_receipts(&run);
+                (run.proposal, units)
             }
             ReaskShape::Paragraphs { author, labels } => {
                 let blocks: Vec<String> = wake
@@ -1131,7 +1135,7 @@ impl Vault {
                 if blocks.is_empty() {
                     return Ok((Reasked::Nothing, reask_ref));
                 }
-                self.ask_blob_artifact_paragraphs(
+                let run = self.ask_blob_artifact_paragraphs(
                     &wake.artifact,
                     &ParagraphAsk {
                         ask,
@@ -1139,8 +1143,10 @@ impl Vault {
                         author,
                         labels,
                     },
-                )?
-                .proposal
+                )?;
+                let units =
+                    crate::llm::decision::questions::artifact_unit_receipts(&run);
+                (run.proposal, units)
             }
             ReaskShape::Slides { author, labels } => {
                 let bytes = self
@@ -1211,15 +1217,20 @@ impl Vault {
                     // The comment writer stamps epoch milliseconds.
                     at: now.saturating_mul(1000),
                 };
-                self.review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
+                let run = self.review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
                     .map_err(|error| match error {
                         SlideReviewError::Vault(error) => error,
                         other => Error::InvalidConfig(other.to_string()),
-                    })?
-                    .proposal
+                    })?;
+                // Standing artifact questions never ask slides, so a slide re-ask
+                // logs nowhere; it carries no unit receipts.
+                (run.proposal, Vec::new())
             }
         };
-        Ok((Reasked::Asked(proposal), reask_ref))
+        Ok((
+            Reasked::Asked { proposal, units },
+            reask_ref,
+        ))
     }
 
     /// The refs the wakes of `proposal_ref`'s withdrawn answers asked again under, for a
@@ -1277,16 +1288,21 @@ impl Vault {
 enum Reasked {
     /// Nothing was asked: a replay of a wake already asked, or no unit left.
     Nothing,
-    /// The ask ran: its answers' proposal, none when no unit was answered.
-    Asked(Option<EditProposal>),
+    /// The ask ran: its answers' proposal, none when no unit was answered,
+    /// and the units it left without an answer, as the first ask keeps them.
+    Asked {
+        proposal: Option<EditProposal>,
+        units: Vec<crate::llm::decision::questions::ArtifactUnitReceipt>,
+    },
 }
 
 /// `wake`'s re-ask at `now` of the head versions it `read`, as its standing
 /// question's ask log keeps it (FIX 9174): the withdrawn answers' proposal is
-/// its parent.
+/// its parent, and `units` the units it left without an answer.
 fn standing_reask<'a>(
     wake: &'a UnitWithdrawal,
     read: &'a [(EntityId, u64)],
+    units: &'a [crate::llm::decision::questions::ArtifactUnitReceipt],
     now: u64,
 ) -> crate::llm::decision::questions::StandingReask<'a> {
     crate::llm::decision::questions::StandingReask {
@@ -1297,6 +1313,7 @@ fn standing_reask<'a>(
         parent_proposal_ref: &wake.proposal_ref,
         versions: read,
         asked_at: now,
+        units,
     }
 }
 

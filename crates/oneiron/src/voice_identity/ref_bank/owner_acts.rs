@@ -20,9 +20,10 @@ use super::render_history::{
 use super::{
     PACKS, VoiceIdentity, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRenderConsent,
     VoiceRenderDecision, VoiceTargetClone, VoiceTargetRecord, admit_render, current_target,
-    evict_target_in, invalid, read_identity, read_pack, record_target_clone_in, store_pack_in,
-    target_key, valid_id,
+    evict_target_in, invalid, limits_for, read_identity, read_pack, record_target_clone_in,
+    store_pack_in, target_key, valid_id,
 };
+use super::validation::pack_intake_crossed;
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
@@ -53,6 +54,9 @@ pub struct VoicePackSummary {
     /// Captured under the render grant it cites, designed, or generated.
     pub origin: VoiceRefOrigin,
     pub clips: Vec<VoiceClipSummary>,
+    /// Each intake row the pack's count or sizes went past, as the owner's
+    /// current rows measure it; banked whole all the same.
+    pub crossed: Vec<String>,
 }
 
 /// One clip of a banked pack, without its audio or transcript.
@@ -177,22 +181,23 @@ impl From<VoiceTargetRecord> for VoiceTargetCloneView {
     }
 }
 
-impl From<VoiceRefPack> for VoicePackSummary {
-    fn from(pack: VoiceRefPack) -> Self {
-        Self {
-            version: pack.version,
-            id: pack.id,
-            origin: pack.origin,
-            clips: pack
-                .clips
-                .into_iter()
-                .map(|clip| VoiceClipSummary {
-                    register: clip.register,
-                    media_type: clip.media_type,
-                    audio_bytes: clip.audio.len() as u64,
-                })
-                .collect(),
-        }
+/// One banked `pack` without its audio or transcripts, with the intake rows
+/// it went past under the owner's current rows.
+fn pack_summary(pack: VoiceRefPack, crossed: Vec<String>) -> VoicePackSummary {
+    VoicePackSummary {
+        version: pack.version,
+        id: pack.id,
+        origin: pack.origin,
+        clips: pack
+            .clips
+            .into_iter()
+            .map(|clip| VoiceClipSummary {
+                register: clip.register,
+                media_type: clip.media_type,
+                audio_bytes: clip.audio.len() as u64,
+            })
+            .collect(),
+        crossed,
     }
 }
 
@@ -315,7 +320,11 @@ impl Vault {
         for id in identity.iter().flat_map(|identity| &identity.pack_ids) {
             let pack = read_pack(&self.store, &txn, id)?
                 .ok_or_else(|| invalid("voice identity has missing refs"))?;
-            packs.push(VoicePackSummary::from(pack));
+            let crossed = pack_intake_crossed(&pack, limits_for(&self.store, &txn, &pack.owner)?)
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            packs.push(pack_summary(pack, crossed));
         }
         // A clone is current only under a render consent that reaches the
         // target, as a render admits it: a withdrawn or narrowed decision

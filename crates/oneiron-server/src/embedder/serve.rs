@@ -13,11 +13,13 @@
 //! exactly as the local provider does, so an endpoint vault stores the very
 //! vectors a local vault would rather than a rounding of them.
 //!
-//! The wire is OpenAI's plus two optional fields, which the vault's endpoint
+//! The wire is OpenAI's plus three optional fields, which the vault's endpoint
 //! client sends once `/v1/models` marks the server as this one
 //! (`oneiron_wire`): `input_type` (`query` or `document`) picks the prompt and
-//! the pool's prompt rows as the local provider would, and `instruction` is a
-//! vault's own `query_instruction`. That client then also leaves the input cap
+//! the pool's prompt rows as the local provider would, `instruction` is a
+//! vault's own `query_instruction`, and `error_member` asks that a streamed
+//! answer a later batch cannot complete end with an `error` member rather
+//! than broken ([`batches`]). That client then also leaves the input cap
 //! to this server's tokenizer, as a local vault's is. A request without
 //! `input_type` is a document request. One input runs at query priority and
 //! more park for queries ([`super::local::Priority`]), whichever side they
@@ -402,6 +404,11 @@ struct EmbeddingsRequest {
     input_type: Option<String>,
     #[serde(default)]
     instruction: Option<String>,
+    /// The client reads the `error` member that ends a streamed answer a
+    /// later batch could not complete (FIX 10702); without it such an answer
+    /// ends broken.
+    #[serde(default)]
+    error_member: bool,
 }
 
 #[derive(Deserialize)]
@@ -613,6 +620,7 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
         priority,
         base64,
         model: request.model,
+        error_member: request.error_member,
     };
     batches::stream_embedding_rows(Arc::clone(&served), work, (held, body_held)).await
 }

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::{BudgetExhaustionPolicy, BudgetGuard, DispatchBinding, ModelId, ModelLocality};
 use super::declaration::LeaseUnit;
+use super::resident::{ResidentLedger, Residents};
 use crate::EntityId;
 use crate::agent_dispatch::SpendScopeId;
 
@@ -347,6 +348,9 @@ pub enum AllocationGrantError {
 #[derive(Debug, Default)]
 pub struct HostAccount {
     state: Mutex<AccountState>,
+    /// Each resident's share of the allocation (FIX 7767), when the host
+    /// keeps them.
+    residents: Option<Arc<Residents>>,
 }
 
 #[derive(Debug, Default)]
@@ -367,6 +371,21 @@ impl HostAccount {
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// An account whose residents each hold a share of its allocation, kept
+    /// in `ledger` (FIX 7767): a soft share by default, which a call may
+    /// overdraw with a receipt, or one the owner pinned.
+    #[must_use]
+    pub fn with_residents(ledger: Arc<dyn ResidentLedger>) -> Arc<Self> {
+        Arc::new(Self {
+            residents: Some(Residents::new(ledger)),
+            ..Self::default()
+        })
+    }
+
+    pub(super) fn residents(&self) -> Option<&Arc<Residents>> {
+        self.residents.as_ref()
     }
 
     /// Installs a fresh allocation. Leases on the one it replaces still

@@ -9,10 +9,9 @@
 //! holds nothing.
 
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::checkout::{CheckoutId, CheckoutLeaseAct};
@@ -21,7 +20,7 @@ use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoaCliExecutor, ByoaConnectorSpec, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult, ByoaStream, CaptureByoaExhaust,
+    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult, CaptureByoaExhaust,
     ClaudeCodeRunner, CliSandboxSpec, CodexRunner, DispatchOfficialSeat, DreamerProviderAdapter,
     OfficialDreamerSeat, OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatRegistry,
     OfficialSeatRoute, OfficialSeatSpec, OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry,
@@ -39,8 +38,11 @@ use utoipa::ToSchema;
 
 use super::secret_destinations::RunSecretDestinations;
 
+mod drain;
 mod runner_work;
 mod surface;
+
+use drain::{Drain, drain_spooled};
 pub use surface::{
     SeatLoginSurface, SeatRouteRow, SeatSettings, seat_login_surface, seat_route_catalog,
     siwc_authorize_request,
@@ -96,56 +98,6 @@ impl std::fmt::Debug for OfficialCliSeatExecutor {
     }
 }
 
-/// Drains every byte `reader` yields into a spooled stream on its own thread.
-/// The disk floor and the run's deadline are its only stops; a read failure
-/// is an error, never an early end of the stream.
-fn drain_spooled(
-    mut reader: impl Read + Send + 'static,
-    floor: Option<Arc<dyn SpillFloor>>,
-    deadline: Instant,
-) -> mpsc::Receiver<ByoaResult<ByoaStream>> {
-    let (done, drain) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let mut stream = ByoaStream::writer(floor, Some(deadline));
-        let mut chunk = [0_u8; 8192];
-        let spooled = loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => break stream.finish(),
-                Ok(read) => {
-                    if let Err(error) = stream.append(&chunk[..read]) {
-                        break Err(error);
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => {
-                    break Err(ByoaError::Backend(
-                        "official seat output read failed".to_owned(),
-                    ));
-                }
-            }
-        };
-        let _ = done.send(spooled);
-    });
-    drain
-}
-
-/// A drain's stream, waited for no later than the run's deadline.
-fn drained(
-    drain: &mpsc::Receiver<ByoaResult<ByoaStream>>,
-    deadline: Instant,
-) -> ByoaResult<ByoaStream> {
-    drain
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .unwrap_or_else(|error| {
-            Err(match error {
-                mpsc::RecvTimeoutError::Timeout => ByoaError::SpoolDeadline,
-                mpsc::RecvTimeoutError::Disconnected => {
-                    ByoaError::Backend("official seat output drain stopped".to_owned())
-                }
-            })
-        })
-}
-
 impl ByoaCliExecutor for OfficialCliSeatExecutor {
     fn run(
         &mut self,
@@ -192,49 +144,55 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
             .map_err(|_| ByoaError::Backend("official seat spawn failed".to_owned()))?;
         // One deadline bounds the run, its drains and the wait for them.
         let deadline = Instant::now() + Duration::from_secs(budget.wall_clock_secs.max(1));
-        let stdout = child
+        let mut stdout = child
             .stdout
             .take()
-            .map(|pipe| drain_spooled(pipe, self.floor.clone(), deadline))
+            .map(|pipe| Drain::new(drain_spooled(pipe, self.floor.clone(), deadline)))
             .ok_or_else(|| ByoaError::Backend("official seat stdout unavailable".to_owned()))?;
-        let stderr = child
+        let mut stderr = child
             .stderr
             .take()
-            .map(|pipe| drain_spooled(pipe, self.floor.clone(), deadline))
+            .map(|pipe| Drain::new(drain_spooled(pipe, self.floor.clone(), deadline)))
             .ok_or_else(|| ByoaError::Backend("official seat stderr unavailable".to_owned()))?;
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
-                // The host's claim on the run ended under it (FIX 9320): its
-                // process stops, and nothing it would still print is kept.
-                Ok(None)
-                    if self
-                        .stop
-                        .as_ref()
-                        .is_some_and(|stop| stop.load(std::sync::atomic::Ordering::SeqCst)) =>
-                {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ByoaError::Backend(
-                        "official seat stopped: its claim ended".to_owned(),
-                    ));
-                }
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(25));
-                }
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ByoaError::SpoolDeadline);
-                }
+                Ok(None) => {}
                 Err(_) => {
                     return Err(ByoaError::Backend("official seat wait failed".to_owned()));
                 }
             }
+            // A drain that stopped early, at the disk floor say, leaves the
+            // child blocked on its full pipe (FIX 5152): it stops now, and
+            // the run reports the drain's failure, not the later deadline.
+            if let Some(error) = stdout.failure().or_else(|| stderr.failure()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+            // The host's claim on the run ended under it (FIX 9320): its
+            // process stops, and nothing it would still print is kept.
+            if self
+                .stop
+                .as_ref()
+                .is_some_and(|stop| stop.load(std::sync::atomic::Ordering::SeqCst))
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ByoaError::Backend(
+                    "official seat stopped: its claim ended".to_owned(),
+                ));
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ByoaError::SpoolDeadline);
+            }
+            std::thread::sleep(Duration::from_millis(25));
         };
         let mut exhaust = ByoaExhaust {
-            stdout: drained(&stdout, deadline)?,
-            stderr: drained(&stderr, deadline)?,
+            stdout: stdout.stream(deadline)?,
+            stderr: stderr.stream(deadline)?,
             ..ByoaExhaust::default()
         };
         if !status.success() && exhaust.stderr.is_empty() {
