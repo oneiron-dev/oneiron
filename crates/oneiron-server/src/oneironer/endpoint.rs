@@ -258,7 +258,8 @@ impl HttpTagger {
                 expected: expected.clone(),
             });
         }
-        self.contract.store(card.contract_version, Ordering::Relaxed);
+        self.contract
+            .store(card.contract_version, Ordering::Relaxed);
         Ok(ProbeOutcome::Ready(card))
     }
 

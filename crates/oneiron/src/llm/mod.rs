@@ -186,12 +186,12 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
     ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
     RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
     VaultResidentLedger,
 };
-pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
