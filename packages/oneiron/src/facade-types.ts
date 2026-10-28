@@ -7537,7 +7537,7 @@ export type FreeTimeSchedule = { cadence: FreeTimeCadence; hour: number; minute:
 /** `oneiron::dreamer_runner::free_time::policy::FreeTimeSplit` */
 export type FreeTimeSplit = { for_human_units: number; own_time_units: number }
 /** `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyRow` */
-export type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by: string; set_at: number }
+export type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by?: string | null; set_at: number }
 /** `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyView` */
 export type FreeTimePolicyView = { agent: string; state: FreeTimePolicyState; revision: number; policy?: FreeTimePolicyRow | null }
 /** `oneiron::dreamer_runner::free_time::policy::FreeTimePolicyInput` */
