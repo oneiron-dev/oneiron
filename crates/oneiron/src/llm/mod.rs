@@ -13,6 +13,10 @@ mod autocheck;
 mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
+pub use defaults::{
+    PurposeDefaultProposal, PurposeDefaultSubmission, PurposeDefaultSubmitter,
+    purpose_default_grant_target,
+};
 mod inference_admission;
 pub(crate) use inference_admission::admitted_as;
 mod role_defaults;
