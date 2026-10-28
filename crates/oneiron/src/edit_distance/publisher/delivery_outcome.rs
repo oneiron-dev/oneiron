@@ -64,10 +64,18 @@ fn settled(
     (current.state != SignatureSendState::Sent && *current != next).then_some(next)
 }
 
-/// Writes one send's outcome back onto its signature, in the caller's write.
-/// A delivery confirms the signature and records its comm send receipt to
-/// `publisher` in that same write, exactly once.
-fn record_signature_delivery_in_txn(
+/// Writes one send's outcome back onto its signature, in the caller's write:
+/// the lane records its outcome and the signature's state together. A
+/// delivery confirms the signature and records its comm send receipt to
+/// `publisher` in that same write, exactly once; a replay of the outcome
+/// already written changes nothing. A delivery with no publisher actor to
+/// name is still `Sent`, and records no comm receipt: no placeholder party is
+/// minted for it. `publisher` is read before the write takes its writer.
+///
+/// # Errors
+///
+/// Storage errors, and whatever `comm.rs`'s send-receipt door raises.
+pub(crate) fn record_signature_delivery_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     signature: EntityId,
@@ -96,15 +104,11 @@ fn record_signature_delivery_in_txn(
     Ok(SEND_STATE.put(&vault.store, wtxn, &signature, &next)?)
 }
 
-/// Writes one send's outcome back onto its signature, in a write taken only
-/// when the outcome changes the signature's state: the replay of a settled
-/// send writes nothing. A crash before it runs leaves the lane's own record,
-/// whose next run replays the outcome here.
-///
-/// `publisher` answers the ACTOR the stored signature's artifact was
-/// published by; it is asked only when a delivery is about to be confirmed.
-/// A delivery with no actor to name is still `Sent`, and records no comm
-/// receipt: no placeholder party is minted for it.
+/// [`record_signature_delivery_in_txn`] for a finished lane's replay, read
+/// first: the write is taken only when the outcome changes the signature's
+/// state, so the replay of a settled send writes nothing. `publisher`
+/// answers the ACTOR the stored signature's artifact was published by; it is
+/// asked only when a delivery is about to be confirmed.
 ///
 /// # Errors
 ///

@@ -69,6 +69,7 @@ mod vocab;
 
 pub(crate) use self::delivery_outcome::{
     PublisherActor, SignatureDeliveryOutcome, record_signature_delivery,
+    record_signature_delivery_in_txn,
 };
 pub(crate) use self::dial::publisher_enabled_in_txn;
 pub use self::dial::{

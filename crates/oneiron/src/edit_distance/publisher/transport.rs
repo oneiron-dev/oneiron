@@ -25,8 +25,12 @@ const SEND_REF_SEPARATOR: u8 = 0;
 /// dial is on (FIX 9811).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SignatureSendState {
-    /// Computed and stored; no outbound send has answered for it yet.
+    /// No delivery lane carries it, so it has no outward publisher channel:
+    /// it is never sent and never refused, and stays readable here. A
+    /// signature no lane stored reads this.
     #[default]
+    Local,
+    /// A delivery lane carries it; no outbound send has answered for it yet.
     Pending,
     /// Offered while the dial was off — stored, deliberately not sent.
     Withheld,
@@ -42,7 +46,8 @@ pub enum SignatureSendState {
 
 impl SignatureSendState {
     /// Every arm.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::Local,
         Self::Pending,
         Self::Withheld,
         Self::Uncertain,
@@ -54,6 +59,7 @@ impl SignatureSendState {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Local => "local",
             Self::Pending => "pending",
             Self::Withheld => "withheld",
             Self::Uncertain => "uncertain",
@@ -69,11 +75,12 @@ impl SignatureSendState {
     }
 }
 
-/// One signature's stored send state, and the logical send that answered it.
+/// One signature's stored send state, and the delivery lane's logical send
+/// that carries it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct SendStateRow {
     pub(super) state: SignatureSendState,
-    /// The outbound path's logical send, on a state that path wrote.
+    /// The lane's logical send, the key its outcome is written back under.
     pub(super) send_ref: Option<String>,
 }
 
@@ -107,37 +114,37 @@ impl RawValue for SendStateRow {
 /// is never counted as sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SendOutcome {
-    /// Signatures left [`SignatureSendState::Pending`] for the ordinary
-    /// delivery path; none of them is confirmed yet.
+    /// Signatures left to their delivery lane, the ordinary delivery path;
+    /// none of them is confirmed yet.
     pub handed_off: usize,
     /// Signatures the outbound path already confirmed:
     /// [`SignatureSendState::Sent`].
     pub sent: usize,
     /// Signatures held locally because the dial is off.
     pub withheld: usize,
+    /// Signatures no delivery lane carries: [`SignatureSendState::Local`].
+    pub local: usize,
 }
 
-/// Reads a signature's send state; [`SignatureSendState::Pending`] until the
-/// dial or the outbound path has ruled on it.
+/// Reads a signature's send state: [`SignatureSendState::Local`] when no
+/// delivery lane stored it, [`SignatureSendState::Pending`] while its lane's
+/// send is unanswered.
 ///
 /// # Errors
 ///
 /// Storage errors, and [`Error::CorruptedIndex`] on a token this engine never
 /// wrote.
 pub fn signature_send_state(vault: &Vault, id: EntityId) -> PublisherResult<SignatureSendState> {
-    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    Ok(SEND_STATE
-        .get(&vault.store, &rtxn, &id)?
-        .unwrap_or_default()
-        .state)
+    Ok(send_state_row(vault, id)?.unwrap_or_default().state)
 }
 
-fn put_send_state(vault: &Vault, id: EntityId, state: SignatureSendState) -> Result<()> {
-    let row = SendStateRow {
-        state,
-        send_ref: None,
-    };
-    vault.with_write_txn_grouped(|wtxn| SEND_STATE.put(&vault.store, wtxn, &id, &row))
+fn send_state_row(vault: &Vault, id: EntityId) -> PublisherResult<Option<SendStateRow>> {
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    Ok(SEND_STATE.get(&vault.store, &rtxn, &id)?)
+}
+
+fn put_send_state(vault: &Vault, id: EntityId, row: &SendStateRow) -> Result<()> {
+    vault.with_write_txn_grouped(|wtxn| SEND_STATE.put(&vault.store, wtxn, &id, row))
 }
 
 fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {
@@ -151,17 +158,16 @@ fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {
 /// Offers a batch of stored signatures to the publisher channel, honoring the
 /// dial.
 ///
-/// Dial ON: each signature is handed to the ordinary delivery path
-/// (`feedback/report/delivery.rs`), which dispatches it under one logical send
-/// to its artifact's publisher ACTOR and writes that send's outcome back
-/// (`delivery_outcome.rs`); an artifact with no publisher actor has no
-/// outward channel, and its signature stays here unsent. Nothing is
-/// confirmed here: a handed-off signature stays [`SignatureSendState::Pending`]
-/// (a withheld one returns to it) and is counted as handed off, never as sent
-/// (FIX 9811). Dial OFF: nothing is sent; each pending signature is durably
-/// marked [`SignatureSendState::Withheld`], which is what makes a skip
-/// auditable afterwards. Either way a state the outbound path wrote stands,
-/// and a confirmed signature counts as sent.
+/// Dial ON: each signature a delivery lane carries is left to that lane, the
+/// ordinary delivery path (`feedback/report/delivery.rs`), which dispatches it
+/// under one logical send and writes that send's outcome back
+/// (`delivery_outcome.rs`). Nothing is confirmed here: a handed-off signature
+/// stays [`SignatureSendState::Pending`] (a withheld one returns to it) and is
+/// counted as handed off, never as sent (FIX 9811). Dial OFF: nothing is sent;
+/// each pending signature is durably marked [`SignatureSendState::Withheld`],
+/// which is what makes a skip auditable afterwards. Either way a signature no
+/// lane carries stays [`SignatureSendState::Local`], a state the outbound path
+/// wrote stands, and a confirmed signature counts as sent.
 ///
 /// The projector is NOT run here — `comm.rs` owns when its pass runs, and
 /// coupling a send door to a projector pass is exactly the kind of internal
@@ -181,19 +187,27 @@ pub fn send_signatures_if_enabled(
     let enabled = publisher_enabled(vault)?;
     let mut outcome = SendOutcome::default();
     for id in sigs {
-        let state = signature_send_state(vault, *id)?;
-        if state == SignatureSendState::Sent {
-            outcome.sent += 1;
-        } else if enabled {
-            if state == SignatureSendState::Withheld {
-                put_send_state(vault, *id, SignatureSendState::Pending)?;
+        let row = send_state_row(vault, *id)?.unwrap_or_default();
+        let next = match (row.state, enabled) {
+            (SignatureSendState::Sent, _) => {
+                outcome.sent += 1;
+                continue;
             }
+            (SignatureSendState::Local, _) => {
+                outcome.local += 1;
+                continue;
+            }
+            (SignatureSendState::Withheld, true) => SignatureSendState::Pending,
+            (SignatureSendState::Pending, false) => SignatureSendState::Withheld,
+            (state, _) => state,
+        };
+        if enabled {
             outcome.handed_off += 1;
         } else {
-            if state == SignatureSendState::Pending {
-                put_send_state(vault, *id, SignatureSendState::Withheld)?;
-            }
             outcome.withheld += 1;
+        }
+        if next != row.state {
+            put_send_state(vault, *id, &SendStateRow { state: next, ..row })?;
         }
     }
     Ok(outcome)

@@ -31,6 +31,7 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edit_distance::publisher::{
     IssueSignature, PublisherActor, PublisherError, SignatureDeliveryOutcome,
     emit_issue_signature_in_txn, issue_signature, record_signature_delivery,
+    record_signature_delivery_in_txn,
 };
 use crate::outbound::{
     OutboundDispatchOutcome, OutboundExecutionOutcome, OutboundExecutionRequest, connector_actor_id,
@@ -333,9 +334,8 @@ impl Vault {
 
     /// Offers one issue's content-free signature to its publisher's bound
     /// endpoint and records the lane. `Ok(None)` when the issue is not
-    /// routed to a publisher, or its artifact has no publisher ACTOR to be
-    /// the channel's counterparty. A finished lane answers its record and
-    /// sends nothing. The gate admits the send on the participation grant that
+    /// routed to a publisher. A finished lane answers its record and sends
+    /// nothing. The gate admits the send on the participation grant that
     /// [`Self::run_coach_feedback_delivery`] keeps; without it the send is
     /// held like any other.
     ///
@@ -370,35 +370,33 @@ impl Vault {
             .as_ref()
             .is_some_and(ReportDeliveryOutcome::is_final)
         {
-            self.settle_signature_send(&record, |artifact| {
-                self.report_publisher_actor(publisher_ref, artifact)
-            })?;
+            // A finished lane whose write-back never ran settles here; a
+            // settled one reads and writes nothing (FIX 7690).
+            if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                record_signature_delivery(self, signature, send_ref, outcome, |artifact| {
+                    self.report_publisher_actor(publisher_ref, artifact)
+                })
+                .map_err(engine_error)?;
+            }
             return Ok(Some(record));
         }
         record.updated_at = now;
         let mut built = None;
         record.hold =
             self.signature_hold(&mut record, &mut built, &issue, &payload, &*transport)?;
-        // The channel runs to the artifact's publisher ACTOR (FIX 7829). An
-        // artifact with none has no outward channel: nothing is stored or
-        // sent, and the report stays in the owner's inbox.
-        let publisher = match self.lane_artifact(&record, built.as_ref())? {
-            Some(artifact) => {
-                let Some(publisher) = self.report_publisher_actor(publisher_ref, artifact)? else {
-                    return Ok(None);
-                };
-                Some(publisher)
-            }
-            None => None,
-        };
         // The frozen bytes and send are written before they can leave:
         // admission reads them under the outbound writer. A signature built
         // now is stored in that same write, so a crash leaves both or
         // neither, and the next run never stores a second (FIX 7689).
         self.with_write_txn_grouped(|txn| {
             if let Some(built) = built {
-                let signature = emit_issue_signature_in_txn(self, txn, &built.signature)
-                    .map_err(engine_error)?;
+                let signature = emit_issue_signature_in_txn(
+                    self,
+                    txn,
+                    &built.signature,
+                    &record.key.send_ref(),
+                )
+                .map_err(engine_error)?;
                 record.signature = Some(ReportFrozenSignature {
                     signature,
                     body: built.body,
@@ -409,8 +407,24 @@ impl Vault {
         })?;
         if record.hold.is_none() {
             self.dispatch_report_signature(&mut record, transport, now)?;
-            self.with_write_txn_grouped(|txn| DELIVERIES.put(&self.store, txn, &row, &record))?;
-            self.settle_signature_send(&record, |_| Ok(publisher))?;
+            let publisher = self.delivered_publisher(&record, publisher_ref)?;
+            // The send's outcome lands on its ED-08 signature in the lane's
+            // own write (FIX 7690), naming the publisher ACTOR (FIX 7829).
+            self.with_write_txn_grouped(|txn| {
+                DELIVERIES.put(&self.store, txn, &row, &record)?;
+                if let Some((signature, send_ref, outcome)) = signature_delivery(&record) {
+                    record_signature_delivery_in_txn(
+                        self,
+                        txn,
+                        signature,
+                        send_ref,
+                        outcome,
+                        publisher.as_ref(),
+                    )
+                    .map_err(engine_error)?;
+                }
+                Ok(())
+            })?;
         }
         Ok(Some(record))
     }
@@ -553,54 +567,44 @@ impl Vault {
         Ok(())
     }
 
-    /// The artifact the lane's signature names: the one built this run, else
-    /// the stored ED-08 row's; `None` while the metadata is unresolved.
-    fn lane_artifact(
+    /// The publisher ACTOR a delivered lane's comm receipt names (FIX 7829),
+    /// read before the lane's write takes its writer. `None` for any other
+    /// outcome and for an artifact with no publisher actor, such as the
+    /// owner's own pack: that delivery names no counterparty.
+    fn delivered_publisher(
         &self,
         record: &ReportDeliveryRecord,
-        built: Option<&BuiltSignature>,
-    ) -> Result<Option<EntityId>> {
-        if let Some(built) = built {
-            return Ok(Some(built.signature.artifact()));
+        publisher_ref: &str,
+    ) -> Result<Option<PublisherActor>> {
+        if !matches!(record.outcome, Some(ReportDeliveryOutcome::Delivered)) {
+            return Ok(None);
         }
         let Some(frozen) = &record.signature else {
             return Ok(None);
         };
-        Ok(issue_signature(self, frozen.signature)
-            .map_err(engine_error)?
-            .map(|signature| signature.artifact()))
+        match issue_signature(self, frozen.signature).map_err(engine_error)? {
+            Some(signature) => self.report_publisher_actor(publisher_ref, signature.artifact()),
+            None => Ok(None),
+        }
     }
+}
 
-    /// Writes the lane's last send outcome back onto its ED-08 signature, so
-    /// its send state says what the outbound path answered (FIX 7690), with
-    /// `publisher` naming the comm counterparty of a confirmed delivery (FIX
-    /// 7829). A lane with no outcome yet writes nothing, and a settled one is
-    /// a no-op: the finished-lane replay settles a lane whose write-back never
-    /// ran.
-    fn settle_signature_send(
-        &self,
-        record: &ReportDeliveryRecord,
-        publisher: impl FnOnce(EntityId) -> Result<Option<PublisherActor>>,
-    ) -> Result<()> {
-        let (Some(signature), Some(send), Some(outcome)) =
-            (&record.signature, &record.send, &record.outcome)
-        else {
-            return Ok(());
-        };
-        let outcome = match outcome {
-            ReportDeliveryOutcome::Delivered => SignatureDeliveryOutcome::Delivered,
-            ReportDeliveryOutcome::Uncertain => SignatureDeliveryOutcome::Uncertain,
-            ReportDeliveryOutcome::NotDelivered { .. } => SignatureDeliveryOutcome::NotDelivered,
-        };
-        record_signature_delivery(
-            self,
-            signature.signature,
-            &send.send_ref,
-            outcome,
-            publisher,
-        )
-        .map_err(engine_error)
-    }
+/// The ED-08 signature, logical send and outcome a lane's last send writes
+/// back (FIX 7690); `None` before a send recorded an outcome.
+fn signature_delivery(
+    record: &ReportDeliveryRecord,
+) -> Option<(EntityId, &str, SignatureDeliveryOutcome)> {
+    let (Some(signature), Some(send), Some(outcome)) =
+        (&record.signature, &record.send, &record.outcome)
+    else {
+        return None;
+    };
+    let outcome = match outcome {
+        ReportDeliveryOutcome::Delivered => SignatureDeliveryOutcome::Delivered,
+        ReportDeliveryOutcome::Uncertain => SignatureDeliveryOutcome::Uncertain,
+        ReportDeliveryOutcome::NotDelivered { .. } => SignatureDeliveryOutcome::NotDelivered,
+    };
+    Some((signature.signature, send.send_ref.as_str(), outcome))
 }
 
 /// The publisher a report's signature goes to: none for a local,
