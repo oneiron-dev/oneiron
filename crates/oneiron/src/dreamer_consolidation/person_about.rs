@@ -242,7 +242,7 @@ fn person_about_input(person: EntityId) -> rmpv::Value {
     )])
 }
 
-fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
+pub(crate) fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
     let rmpv::Value::Map(entries) = input else {
         return Err(invalid_consolidation("person about input is not a map"));
     };

@@ -44,9 +44,9 @@ struct NodeInput {
 }
 
 /// The node a child's input names.
-struct NodeTarget {
+pub(crate) struct NodeTarget {
     source_ref: FeedbackTriageSourceRef,
-    evidence: EntityId,
+    pub(crate) evidence: EntityId,
     generation: u32,
     node: u32,
 }
@@ -96,7 +96,7 @@ fn lost_lease() -> Error {
     Error::InvalidConfig("the feedback triage job no longer holds its lease".into())
 }
 
-fn node_target(input: &Value) -> Result<NodeTarget> {
+pub(crate) fn node_target(input: &Value) -> Result<NodeTarget> {
     let node: NodeInput = rmpv::ext::from_value(input.clone()).map_err(|_| invalid_job())?;
     Ok(NodeTarget {
         source_ref: FeedbackTriageSourceRef {

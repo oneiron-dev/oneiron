@@ -677,9 +677,12 @@ after `models.dreamer.idle_floor_secs` (1200) without activity, or after
 `session_ceiling_secs` (43200). Apps send `{"event":"open"}` and
 `{"event":"activity"}`; chat turns send them for you. Per-pass spend is
 `models.dreamer.pass_budget_units` (400000), metered through the usual budget
-guard. If the server is killed mid-pass, the next start requeues the
-interrupted attempt and runs it once more; durable steps that already have a
-response are not paid for again. A pass that ran out of budget is parked on a
+guard. Each stewardship follow-up draft is written on
+`models.dreamer.drafting.role` (`generative_reasoner`) and may spend
+`models.dreamer.drafting.budget_units` (the pass budget when unset). If the
+server is killed mid-pass, the next start requeues the interrupted attempt
+and runs it once more; durable steps that already have a response are not paid
+for again. A pass that ran out of budget is parked on a
 budget trap instead, and a restart leaves it parked: only the trap's resume
 signal lets it spend again. Once that signal (or a consent answer, or a
 person's response) is sent, here or on a peer that syncs it in, the next pass

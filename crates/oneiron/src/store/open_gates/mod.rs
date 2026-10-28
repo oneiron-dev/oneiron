@@ -3,6 +3,7 @@
 //! ABI/schema gates, HNSW config and embedding-model gates, and open-time
 //! migrations. The exact gate order is documented on [`crate::store`].
 
+mod custody_pad_rows;
 mod embedding_transform_gates;
 mod hnsw_model_gates;
 mod manifest_storage_gates;
@@ -12,6 +13,7 @@ mod open_version_keys;
 mod read_only_door;
 mod vault_root_bind;
 
+pub(in crate::store) use self::custody_pad_rows::read_existing_custody_pad_rows;
 pub(crate) use self::embedding_transform_gates::{
     EMBEDDING_TRANSFORM_KEY, admit_embedding_transform_in_txn,
 };

@@ -297,7 +297,7 @@ async fn supervise(
     tokio::spawn(super::stewardship::draft_loop(
         Arc::clone(&vault),
         Arc::clone(&runtime),
-        settings.pass_budget_units,
+        super::stewardship::Drafter::of(&settings),
         admission.clone(),
     ));
     // So do the urgent digest's harm questions (OF-194): each queues on the

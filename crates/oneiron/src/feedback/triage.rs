@@ -46,9 +46,11 @@ mod source;
 mod work;
 mod work_store;
 
+pub(crate) use self::jobs::job_target;
 use self::jobs::{
-    attempt_id, attempt_ref, enqueue_triage_in_txn, invalid_job, job_target, requeue_unacknowledged,
+    attempt_id, attempt_ref, enqueue_triage_in_txn, invalid_job, requeue_unacknowledged,
 };
+pub(crate) use self::work_store::node_target;
 
 pub use self::github::{
     FEEDBACK_TRIAGE_GITHUB_PREFIX, GithubIssueKind, GithubIssuePage, GithubIssueRevision,
