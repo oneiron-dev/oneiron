@@ -69,6 +69,10 @@ impl Vault {
     /// one snapshot; `None` when no receipt landed for it or the receipt
     /// names no conversation evidence.
     ///
+    /// Read under no reader's scope: for dependency and invalidation sets
+    /// only, never served to a caller. A caller that needs what a summary
+    /// folded reads it through a [`crate::claim::ScopedRead`].
+    ///
     /// # Errors
     ///
     /// Storage errors.

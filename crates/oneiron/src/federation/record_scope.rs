@@ -408,6 +408,10 @@ impl Vault {
     /// where no live row stands under `id` (none, or a deleted shell) or the
     /// row cannot prove its world.
     ///
+    /// Read under no reader's scope: for dependency and invalidation sets
+    /// only, never served to a caller. A caller that needs a row's world
+    /// reads it through a [`crate::claim::ScopedRead`].
+    ///
     /// # Errors
     ///
     /// Storage errors.

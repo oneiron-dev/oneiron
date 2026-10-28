@@ -85,6 +85,10 @@ impl Vault {
     /// deleted shell), its body does not decode, a MESSAGE has more than one
     /// author edge, or nothing names a writer.
     ///
+    /// Read under no reader's scope: for dependency and invalidation sets
+    /// only, never served to a caller. A caller that needs a row's author
+    /// reads it through a [`crate::claim::ScopedRead`].
+    ///
     /// # Errors
     ///
     /// Storage errors, and a CLAIM whose attested authorship does not verify.
