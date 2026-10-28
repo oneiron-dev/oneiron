@@ -6363,7 +6363,7 @@ export type VoiceIdentityView = { version: number; id: string; owner: string; su
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceClipSummary` */
 export type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number }
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoicePackSummary` */
-export type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[] }
+export type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[]; crossed: string[] }
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceRenderConsentView` */
 export type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: VoiceRefSubjectKind; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: VoiceConsentBasis | null; state: VoiceConsentState; revision: string; sequence: number }
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceTargetCloneView` */

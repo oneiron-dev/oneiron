@@ -2,8 +2,8 @@
 //!
 //! The engine names each pending reach-out whose owner rule routes drafts.
 //! This host reads the reach-out's sources through the representation seam,
-//! asks the generative role once on the Dreamer's budget (once more, over
-//! the newest sources, when that call fails: `draft`), and hands the answer
+//! asks the drafting role once on the drafting budget (once more, over the
+//! newest sources, when that call fails: `draft`), and hands the answer
 //! back pre-materialized. The owner's own instruction is the system
 //! message; the sources go as data, each model the call reaches sent only
 //! the sources its own destination may receive (FIX 8714, `sources`), and
@@ -22,11 +22,13 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::dreamer_runner::maintenance::stewardship::StewardshipDraftOutcome;
+use oneiron::llm::manifest::ModelRole;
 use tokio::sync::watch;
 
 use self::draft::{DraftPass, draft_pass};
 use self::pace::Pace;
 use super::dreamer::{PassAdmission, admit, pause, paused};
+use crate::config::models::DreamerSettings;
 use crate::models::ModelRuntime;
 
 mod draft;
@@ -36,13 +38,34 @@ mod sources;
 /// The least time between two rounds: a burst of vault writes wakes one.
 const SETTLE: Duration = Duration::from_secs(60);
 
+/// What each follow-up draft is written on (FIX 1002): the owner's
+/// `[models.dreamer.drafting]`, else the generative role and the Dreamer's
+/// own pass budget, as drafts always were.
+#[derive(Clone, Copy)]
+pub(super) struct Drafter {
+    /// The role its call is seated, admitted and routed on.
+    pub(super) role: ModelRole,
+    /// Each draft's line on the Dreamer's live budget policy rows.
+    pub(super) budget_units: u64,
+}
+
+impl Drafter {
+    /// The drafting `settings`, the Dreamer's resolved section, name.
+    pub(super) fn of(settings: &DreamerSettings) -> Self {
+        Self {
+            role: settings.drafting.role(),
+            budget_units: settings.drafting.budget_units(settings.pass_budget_units),
+        }
+    }
+}
+
 /// Drafts every due follow-up, then waits for the vault to change, for the
 /// pause to lift, or for the next paced retry of a draft that failed (FIX
 /// 9465). Runs on the Dreamer's thread and stops with it.
 pub(super) async fn draft_loop(
     vault: Arc<Vault>,
     runtime: Arc<ModelRuntime>,
-    budget_units: u64,
+    drafter: Drafter,
     admission: PassAdmission,
 ) {
     let mut changes = vault.subscribe_proactivity_changes();
@@ -54,7 +77,7 @@ pub(super) async fn draft_loop(
         if let Err(error) = draft_round(
             &vault,
             &runtime,
-            budget_units,
+            drafter,
             &admission,
             epoch.as_ref(),
             &mut pace,
@@ -114,7 +137,7 @@ async fn pause_lifted(epoch: Option<watch::Receiver<bool>>) {
 async fn draft_round(
     vault: &Vault,
     runtime: &ModelRuntime,
-    budget_units: u64,
+    drafter: Drafter,
     admission: &PassAdmission,
     epoch: Option<&watch::Receiver<bool>>,
     pace: &mut Pace,
@@ -150,7 +173,7 @@ async fn draft_round(
                 if paused(epoch) {
                     return Ok(());
                 }
-                match draft_pass(vault, runtime, budget_units, &draft).await? {
+                match draft_pass(vault, runtime, drafter, &draft).await? {
                     DraftPass::Done(StewardshipDraftOutcome::Scheduled(_)) | DraftPass::Gone => {
                         pace.clear(draft.proposal);
                         break;

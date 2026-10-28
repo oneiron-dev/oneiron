@@ -16147,6 +16147,7 @@ class VoicePackSummary(TypedDict):
     id: str
     origin: VoiceRefOrigin
     clips: list[VoiceClipSummary]
+    crossed: list[str]
 class VoiceRenderConsentView(TypedDict):
     event_id: str
     subject: str
