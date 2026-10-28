@@ -305,7 +305,10 @@ impl Vault {
     ) -> Result<OwnerPlanePass> {
         let (verdict, moved) =
             self.owner_verdict_in_force_in_txn(wtxn, &pass.verdict, request, config)?;
-        let pass = OwnerPlanePass { verdict };
+        let pass = OwnerPlanePass {
+            verdict,
+            examined: pass.examined,
+        };
         if pass.verdict.decision == PolicyClassifyDecision::Allow
             && pass.verdict.audit.is_none()
             && !moved
