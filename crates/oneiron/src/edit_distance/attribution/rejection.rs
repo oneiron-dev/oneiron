@@ -13,8 +13,8 @@ use super::cells::{charge_judgment_in_txn, learning_scope};
 use super::evidence_judge::judgment_row;
 use super::stored::{JUDGMENT, normalized_scope};
 use super::taxonomy::{
-    AmendmentEvidence, AmendmentJudgment, AmendmentShare, class_subject, classify_amendment_traced,
-    cost_predicate,
+    AmendmentEvidence, AmendmentJudgment, AmendmentShare, charges_edit_cost, class_subject,
+    classify_amendment_traced,
 };
 use crate::Vault;
 use crate::edit_distance::delta::MEASUREMENT_ENGINE_VERSION;
@@ -84,7 +84,7 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
     // judgment: nothing lands.
     if shares
         .iter()
-        .any(|share| cost_predicate(share.class).is_some() && share.subject.is_none())
+        .any(|share| charges_edit_cost(share.class) && share.subject.is_none())
     {
         return Ok(None);
     }

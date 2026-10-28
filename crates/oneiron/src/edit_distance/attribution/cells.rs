@@ -12,14 +12,17 @@
 //! A cell is qualified by `executor` and `consent_scope`, and by `typeRef`
 //! when a task placed the run. An actor is its own executor. A skill's
 //! executor is the model the drafting run was stamped with, or the
-//! unknown-executor key.
+//! unknown-executor key. Readers ask the cell ([`edit_cost_for`]); no parallel
+//! scalar `actor.edit_cost` / `skill.edit_cost` head is kept (FIX 9797).
 
+use super::projector::record_target_in_txn;
 use super::taxonomy::{AmendmentClass, AmendmentJudgment};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::{
-    Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation, TypeRef,
+    Anchor, Estimate, LearningCell, LearningEvidence, LearningPredicate, Observation,
+    PREDICATE_LEARNING_EDIT_COST, TypeRef,
 };
 use crate::ports::EntityStoreRead;
 
@@ -63,6 +66,24 @@ pub(super) fn edit_cost_cell(
     }
 }
 
+/// The `learning.edit_cost` estimate of `subject` at `executor` in `scope`,
+/// and in task type `type_ref` when one placed the runs: the shared cell's
+/// own estimate, `None` while no own run has landed. The scope keys the cell
+/// exactly as the writers key it.
+///
+/// # Errors
+///
+/// Storage errors; a malformed qualifier.
+pub fn edit_cost_for(
+    vault: &Vault,
+    subject: &EntityId,
+    executor: &str,
+    scope: &str,
+    type_ref: Option<&TypeRef>,
+) -> Result<Option<Estimate>> {
+    crate::learning::learning_estimate(vault, &edit_cost_cell(*subject, executor, scope, type_ref))
+}
+
 /// `scope` as a learning qualifier: verbatim when it fits, its digest when it
 /// does not.
 pub(super) fn learning_scope(scope: &str) -> String {
@@ -101,7 +122,10 @@ pub(in crate::edit_distance) fn record_untouched_in_txn(
 /// Only a `skill_defect` share charges the skill and only an
 /// `execution_lapse` share charges the actor; every other class charges
 /// nobody. Each share weighs its fraction of the receipt at the receipt's
-/// edit mass, counted amended, or rejected for a rejection.
+/// edit mass, counted amended, or rejected for a rejection. The charged
+/// subject is recorded in the retraction ledger first, and the receipt's row
+/// moves off any other edit-cost cell of that subject, so a re-judgment onto
+/// another executor, scope or task type never counts in two cells.
 ///
 /// # Errors
 ///
@@ -122,10 +146,55 @@ pub(super) fn charge_judgment_in_txn(
         );
         evidence.judge.clone_from(&judgment.judge);
         evidence.on_judge_model = judgment.on_judge_model();
+        record_target_in_txn(
+            vault,
+            txn,
+            PREDICATE_LEARNING_EDIT_COST,
+            &cell.subject,
+            &judgment.receipt_id,
+        )?;
+        withdraw_receipt_in_txn(
+            vault,
+            txn,
+            &cell.subject,
+            &judgment.receipt_id,
+            Some(&cell),
+            judgment.at,
+        )?;
         record_in_txn(vault, txn, &cell, &evidence)?;
         charged.push(cell);
     }
     Ok(charged)
+}
+
+/// Whether `judgment` charges `subject` any share.
+pub(super) fn charges_subject(judgment: &AmendmentJudgment, subject: &EntityId) -> bool {
+    charged_cells(judgment)
+        .iter()
+        .any(|(cell, _)| cell.subject == *subject)
+}
+
+/// Withdraws `receipt`'s evidence from every `learning.edit_cost` cell of
+/// `subject` but `keep`, reprojecting each cell it leaves at `now`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn withdraw_receipt_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    subject: &EntityId,
+    receipt: &str,
+    keep: Option<&LearningCell>,
+    now: u64,
+) -> Result<()> {
+    for row in crate::learning::evidence::cells_for_subject_in_txn(vault, &*txn, subject)? {
+        if row.cell.predicate != LearningPredicate::EditCost || keep == Some(&row.cell) {
+            continue;
+        }
+        crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, &row.cell, receipt, now)?;
+    }
+    Ok(())
 }
 
 /// Each cell `judgment` charges, with the share it charges there.
