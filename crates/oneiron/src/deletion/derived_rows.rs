@@ -47,6 +47,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::memory::release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
     crate::voice_identity::erase_recognition_for_subject_in_txn,
+    // FIX 9805: a reviewed claim's teaching copies in the miner.
+    crate::edit_distance::miner::erase_source_claim_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.

@@ -383,7 +383,8 @@ side_tables! {
     EDIT_DISTANCE_PREFERENCE_PROPOSAL: VaultMeta b"edit_distance/preference_proposal/v1\0" Raw;
     /// Immutable owner-bound decision on an inbox/amendment intake item, keyed by receipt id. Key:
     /// string.
-    EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw;
+    EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw
+        => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
     EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored;
