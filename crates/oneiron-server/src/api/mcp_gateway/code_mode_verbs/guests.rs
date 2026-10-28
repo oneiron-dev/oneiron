@@ -645,7 +645,8 @@ impl RunGuests {
                     admission: self.admission,
                 };
                 // Its site skills load under the run's skill-load lease (CUA E10).
-                let sites = Arc::new(RunSiteSkills::new(server, run_id, self.admission_lease.as_ref()));
+                let lease = self.admission_lease.as_ref();
+                let sites = Arc::new(RunSiteSkills::new(server, run_id, lease));
                 let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets, sites);
                 let fields =
                     RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());

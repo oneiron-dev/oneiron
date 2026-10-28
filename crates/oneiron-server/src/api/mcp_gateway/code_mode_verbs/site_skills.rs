@@ -17,7 +17,7 @@ use oneiron_browser::site::{
     SeedBody, SiteSkillError, SiteSkillErrorCode, SiteSkillLoader, SiteSkillMatch, SiteSkillQuery,
 };
 
-use crate::server::SyncServer;
+use crate::server::{LiveRuns, SyncServer};
 
 /// The note an open carries, and the error a candidate answers, on a run
 /// with no skill-load lease.
@@ -25,7 +25,8 @@ const NO_SKILL_LEASE: &str = "no skill-load lease for this run";
 
 /// One run's site skills.
 pub(super) struct RunSiteSkills {
-    server: Arc<SyncServer>,
+    vault: Arc<oneiron::Vault>,
+    live_runs: Arc<LiveRuns>,
     run_id: EntityId,
     /// The admission job's own leased try (CUA E8b); none takes the live
     /// run the server registered under `run_id`.
@@ -35,13 +36,10 @@ pub(super) struct RunSiteSkills {
 impl RunSiteSkills {
     /// The site skills of run `run_id`, under `job`'s leased try for an
     /// admission job, else its registered live run's.
-    pub(super) fn new(
-        server: &Arc<SyncServer>,
-        run_id: EntityId,
-        job: Option<&AttemptRecord>,
-    ) -> Self {
+    pub(super) fn new(server: &SyncServer, run_id: EntityId, job: Option<&AttemptRecord>) -> Self {
         Self {
-            server: Arc::clone(server),
+            vault: Arc::clone(&server.vault),
+            live_runs: Arc::clone(&server.live_runs),
             run_id,
             job: job.cloned(),
         }
@@ -56,10 +54,7 @@ impl RunSiteSkills {
                 .executor_model
                 .clone()
                 .map(|executor| (leased.clone(), executor))),
-            None => self
-                .server
-                .live_runs
-                .skill_lease(&self.server.vault, self.run_id),
+            None => self.live_runs.skill_lease(&self.vault, self.run_id),
         };
         match lease {
             Ok(Some(lease)) => Ok(lease),
@@ -75,17 +70,17 @@ impl RunSiteSkills {
 impl SiteSkillLoader for RunSiteSkills {
     fn site_skills(&self, query: &SiteSkillQuery) -> Result<Vec<SiteSkillMatch>, SiteSkillError> {
         let (leased, executor) = self.lease()?;
-        let vault = &self.server.vault;
-        vault
-            .site_skills_for(&leased, &executor, query, vault.now_recorded_at())
+        let at = self.vault.now_recorded_at();
+        self.vault
+            .site_skills_for(&leased, &executor, query, at)
             .map_err(|error| read_failed(&error))
     }
 
     fn seed(&self, candidate: &str) -> Result<SeedBody, SiteSkillError> {
         let (leased, _) = self.lease()?;
-        let vault = &self.server.vault;
-        vault
-            .resolve_seed(&leased, candidate, vault.now_recorded_at())
+        let at = self.vault.now_recorded_at();
+        self.vault
+            .resolve_seed(&leased, candidate, at)
             .map_err(|error| match error {
                 oneiron::Error::EntityNotFound => SiteSkillError::new(
                     SiteSkillErrorCode::Unresolved,

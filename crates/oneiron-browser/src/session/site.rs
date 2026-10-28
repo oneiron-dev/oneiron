@@ -160,9 +160,8 @@ impl BrowserSession {
             return Ok((site, page));
         }
         let page = self.live()?.url()?;
-        let site = site_of(&page).ok_or_else(|| {
-            BrowserError::Input("the open page has no site; name one".to_owned())
-        })?;
+        let site = site_of(&page)
+            .ok_or_else(|| BrowserError::Input("the open page has no site; name one".to_owned()))?;
         Ok((site, Some(page)))
     }
 
