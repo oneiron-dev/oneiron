@@ -16,8 +16,9 @@
 //! under the registry's lock and the turn's admission.
 //!
 //! Any failure drops the session and the turn runs cold, recomputing from
-//! source; a snapshot that failed its recheck or that the worker cannot
-//! rebuild is retired. A snapshot a sliding window cut between page
+//! source: a lost snapshot is a cache miss, never a failed call or an error
+//! the user sees. A snapshot that failed its recheck or that the worker
+//! cannot rebuild is retired. A snapshot a sliding window cut between page
 //! boundaries carries its state at the boundary below its frontier: its
 //! first attach falls there and the worker replays the suffix, counted as
 //! a replay. Linear-attention state is exact.
@@ -34,7 +35,7 @@ use oneiron::llm::{
 use zeroize::Zeroizing;
 
 use super::lifecycle::{self, Admitted, Counted};
-use super::park::{headroom_mib, identity_part, mib};
+use super::park::{device_room, host_room, identity_part, mib};
 use super::registry::{self, HostCopy, Phase, Place, Session, send};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
 use crate::models::native_exl3::{OpFault, SnapshotRegion, session_import};
@@ -100,7 +101,7 @@ pub(super) async fn restore(
         Ok(restored) => Some(restored),
         Err((cold, leased)) => {
             lifecycle::count(Counted::RestoreCold);
-            restore.went_cold(&cold, leased).await;
+            restore.went_cold(&cold, leased);
             None
         }
     }
@@ -172,19 +173,26 @@ impl Restore<'_> {
     }
 
     /// The restore, in order. `Err` with whether the session it registered
-    /// holds the snapshot's pin now.
+    /// holds the snapshot's pin now. Its host copy (the plaintext, then the
+    /// region made of it) runs only while it fits beside the headroom, as a
+    /// park's does; the device room is honoured where the ledger knows it,
+    /// and elsewhere the worker's own answer decides (`snapshot_busy` is
+    /// cold).
     async fn run(&self) -> Result<Restored, (Cold, bool)> {
         self.recheck().await.map_err(|cold| (cold, false))?;
-        let ledger = super::super::device_ledger(self.worker_id).ok_or((COLD, false))?;
-        let room = ledger.room_mib(headroom_mib()).ok_or((COLD, false))?;
-        let needed = mib(self.record.plaintext_bytes);
-        if room < needed {
+        let bytes = self.record.plaintext_bytes;
+        let ledger = super::super::device_ledger(self.worker_id);
+        if host_room(bytes) != Some(true) || !device_room(ledger.as_deref(), bytes) {
             return Err((COLD, false));
         }
         let holder = format!("snapshot-restore-{}", policy::next_op_id());
-        ledger.hold(&holder, needed);
+        if let Some(ledger) = &ledger {
+            ledger.hold(&holder, mib(bytes));
+        }
         let restored = self.import().await;
-        ledger.release_hold(&holder);
+        if let Some(ledger) = &ledger {
+            ledger.release_hold(&holder);
+        }
         restored
     }
 
@@ -368,7 +376,7 @@ impl Restore<'_> {
     /// After a cold restore: the session it registered dropped, whose
     /// release drops the pin, or else the pin dropped here; and the snapshot
     /// retired when it failed its recheck or cannot be rebuilt.
-    async fn went_cold(&self, cold: &Cold, leased: bool) {
+    fn went_cold(&self, cold: &Cold, leased: bool) {
         let id = self.record.id;
         if leased {
             registry::drop_session(
@@ -381,15 +389,16 @@ impl Restore<'_> {
             self.vault.snapshot_ledger().unpin(&id);
         }
         if cold.retire {
+            // On a task of its own: the cold turn does not wait for it.
             let vault = Arc::clone(&self.vault);
-            let retired =
-                tokio::task::spawn_blocking(move || vault.retire_inference_snapshot(&id)).await;
-            if let Ok(Err(error)) = retired {
-                tracing::warn!(
-                    kind = ?error.kind(),
-                    "a kept model snapshot that went cold was not retired; housekeeping retries"
-                );
-            }
+            tokio::task::spawn_blocking(move || {
+                if let Err(error) = vault.retire_inference_snapshot(&id) {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a kept model snapshot that went cold was not retired; housekeeping retries"
+                    );
+                }
+            });
         }
     }
 }

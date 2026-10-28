@@ -9,15 +9,18 @@
 //! [`PARK_PRESSURE_HEADROOMS`] headrooms free. Nothing parks per token, and
 //! one park runs at a time.
 //!
-//! A park takes the device room its copy needs first, through the device
-//! ledger with [`SNAPSHOT_HEADROOM_BYTES`] left free: room nobody measured
-//! skips the park (FIX 11220). It exports the checkpoint it claimed, checks
-//! the answer names that checkpoint and the region its length, reads the
-//! region and drops it at once, rechecks the turn's authority, the
-//! session's HEAD and the vault's admission in that order, and seals and
-//! publishes the snapshot, the store reserving its disk through the vault's
-//! ledger. Only then is the session retired, and its device hold released
-//! once the worker has acknowledged the release.
+//! A park's copy is host memory (the export's region, then the buffer read
+//! from it): it runs only while that copy and [`SNAPSHOT_HEADROOM_BYTES`]
+//! fit in the memory this process may still take, and memory no source
+//! measures skips it (FIX 11220). Where the device ledger knows its room
+//! the copy holds it there too, with the same headroom left; where it does
+//! not, the worker's own answer decides. It exports the checkpoint it
+//! claimed, checks the answer names that checkpoint and the region its
+//! length, reads the region and drops it at once, rechecks the turn's
+//! authority, the session's HEAD and the vault's admission in that order,
+//! and seals and publishes the snapshot, the store reserving its disk
+//! through the vault's ledger. Only then is the session retired, and its
+//! device hold released once the worker has acknowledged the release.
 //!
 //! A budget crossing evicts or skips, never refuses a turn; a budget that is
 //! off or zero purges the vault's kept snapshots (FIX 11214); a snapshot
@@ -40,6 +43,8 @@ use oneiron::llm::{
     SessionResidency, SessionTarget,
 };
 use oneiron::{EntityId, Vault};
+use oneiron_contracts::limit_ask::available_memory_bytes;
+use oneiron_driver::DeviceLedger;
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
@@ -62,24 +67,36 @@ const PARK_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// rows and holds parks its candidates at once, idle or not. A Call.
 const PARK_PRESSURE_HEADROOMS: u64 = 2;
 
-/// Whether this host counts as a machine the owner does not own, for his
-/// sealed-copies setting: a world kept to his own machines is then never
-/// parked here either. A Call: the host does not know which it is.
-const PARK_HOST_IS_HOSTED: bool = true;
-
 const MIB: u64 = 1024 * 1024;
 
 /// Whether the sweep runs.
 static SWEEPING: AtomicBool = AtomicBool::new(false);
 
 /// [`SNAPSHOT_HEADROOM_BYTES`] in MiB, as the device ledger counts.
-pub(super) fn headroom_mib() -> u64 {
+fn headroom_mib() -> u64 {
     SNAPSHOT_HEADROOM_BYTES / MIB
 }
 
 /// `bytes` in MiB, rounded up.
 pub(super) fn mib(bytes: u64) -> u64 {
     bytes.div_ceil(MIB)
+}
+
+/// Whether a host copy of `bytes` fits in the memory this process may
+/// still take with [`SNAPSHOT_HEADROOM_BYTES`] left; `None` when no source
+/// measures that memory.
+pub(super) fn host_room(bytes: u64) -> Option<bool> {
+    let available = available_memory_bytes()?;
+    Some(bytes.saturating_add(SNAPSHOT_HEADROOM_BYTES) <= available)
+}
+
+/// Whether the device room `ledger` knows leaves room for `bytes` past the
+/// headroom: `true` when no ledger or no room is known, the worker's own
+/// answer then deciding.
+pub(super) fn device_room(ledger: Option<&DeviceLedger>, bytes: u64) -> bool {
+    ledger
+        .and_then(|ledger| ledger.room_mib(headroom_mib()))
+        .is_none_or(|room| room >= mib(bytes))
 }
 
 /// A commit published a candidate: starts the sweep on this runtime unless
@@ -231,30 +248,40 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
     if kept_local(&vault, &scope.dependencies.worlds).await? {
         return Err(Some(Skip::KeptLocal));
     }
-    let bytes = candidate
-        .residency
-        .unique_bytes
-        .ok_or(Some(Skip::UnknownRoom))?;
-    if bytes > budget.limit() {
+    // The size the worker measured, when it did: the export's region is
+    // checked again once its length is known.
+    let estimate = candidate.residency.unique_bytes;
+    if estimate.is_some_and(|bytes| bytes > budget.limit()) {
         return Err(Some(Skip::Oversize));
     }
-    let ledger =
-        super::super::device_ledger(&candidate.worker_id).ok_or(Some(Skip::UnknownRoom))?;
-    let room = ledger
-        .room_mib(headroom_mib())
-        .ok_or(Some(Skip::UnknownRoom))?;
-    if room < mib(bytes) {
+    room(estimate.unwrap_or(0))?;
+    let ledger = super::super::device_ledger(&candidate.worker_id);
+    if estimate.is_some_and(|bytes| !device_room(ledger.as_deref(), bytes)) {
         return Err(Some(Skip::NoRoom));
     }
     let holder = format!("snapshot-park-{}", policy::next_op_id());
-    ledger.hold(&holder, mib(bytes));
+    if let (Some(ledger), Some(bytes)) = (&ledger, estimate) {
+        ledger.hold(&holder, mib(bytes));
+    }
     let parked = seal(candidate, &vault, admission, budget).await;
     if parked.is_ok() {
         retire(candidate).await;
     }
     // The device hold goes only once the worker has answered the release.
-    ledger.release_hold(&holder);
+    if let Some(ledger) = &ledger {
+        ledger.release_hold(&holder);
+    }
     parked
+}
+
+/// Whether a host copy of `bytes` may be taken now: `Err` with the reason
+/// it may not.
+fn room(bytes: u64) -> Result<(), Option<Skip>> {
+    match host_room(bytes) {
+        Some(true) => Ok(()),
+        Some(false) => Err(Some(Skip::NoRoom)),
+        None => Err(Some(Skip::UnknownRoom)),
+    }
 }
 
 /// A budget that is off or zero: every kept snapshot of the vault not
@@ -270,11 +297,12 @@ async fn purge(vault: &Arc<Vault>, budget: SnapshotBudget) {
 }
 
 /// Whether `worlds` names a world whose sealed copies the owner keeps off
-/// this host. `Err(None)` when his settings do not read.
+/// this host, as the vault's posture places it (a hosted vault's host is
+/// not his). `Err(None)` when his settings do not read.
 async fn kept_local(vault: &Arc<Vault>, worlds: &[EntityId]) -> Result<bool, Option<Skip>> {
     let reading = Arc::clone(vault);
     let kept = tokio::task::spawn_blocking(move || {
-        reading.inference_snapshot_worlds_kept_local(PARK_HOST_IS_HOSTED)
+        reading.inference_snapshot_worlds_kept_local(reading.is_host_readable())
     })
     .await
     .map_err(|_| None)?
@@ -306,9 +334,15 @@ async fn seal(
         .map_err(|_| None)?;
     let region = HostCopy::hold(vault_ref, region);
     lifecycle::count(Counted::Park);
-    if answer.checkpoint != candidate.checkpoint || answer.snapshot_bytes != region.get().len() {
+    let bytes = region.get().len();
+    if answer.checkpoint != candidate.checkpoint || answer.snapshot_bytes != bytes {
         return Err(None);
     }
+    if bytes > budget.limit() {
+        return Err(Some(Skip::Oversize));
+    }
+    // Reading the region makes a second copy.
+    room(bytes)?;
     if lifecycle::admission(&vault_ref) != Some(Admitted::Granted(admission)) {
         return Err(None);
     }

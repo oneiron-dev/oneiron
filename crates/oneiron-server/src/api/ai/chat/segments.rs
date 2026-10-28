@@ -91,6 +91,9 @@ pub(super) struct TurnSegments {
     authority: Option<(ScopedReadActorKey, Vec<EntityId>)>,
     /// Who wrote the canonical path, when known whole ([`authors`]).
     authors: Option<Vec<EntityId>>,
+    /// The vault's authority generation the turn was admitted at; `None`
+    /// when it did not read.
+    revocation: Option<u64>,
     /// The authority a snapshot restored for the turn's call is rechecked
     /// under, held for the turn's life: the record [`turn_admitted`] keeps
     /// lapses once it goes.
@@ -174,7 +177,12 @@ pub(super) fn admitted(
         SegmentClock::Live,
         newest,
     ));
-    let read_key = crate::server::blocking(|| reader.read_key());
+    // The authority generation first: a revoke between the two reads
+    // leaves the key read after it.
+    let (revocation, read_key) = crate::server::blocking(|| {
+        let revocation = reader.vault.authority_generation().ok();
+        (revocation, reader.read_key())
+    });
     let sources = canonical_sources(&assembled);
     let anchor = match (log, &read_key, &sources) {
         (Some(log), Some(key), Some(_)) => Some(ConversationAnchor {
@@ -212,6 +220,7 @@ pub(super) fn admitted(
                 sources: rows.clone(),
                 at: Some((anchor.head, anchor.fold_epoch)),
                 authors: authors.clone(),
+                revocation,
             });
             turn_admitted(&manifest, &turn);
             Some(turn)
@@ -222,6 +231,7 @@ pub(super) fn admitted(
         manifest,
         authority: read_key.zip(sources),
         authors,
+        revocation,
         _turn: turn,
     })
 }
@@ -327,6 +337,8 @@ struct ChatAuthority {
     at: Option<(Option<EntityId>, u64)>,
     /// Who wrote the path, when known whole ([`authors`]).
     authors: Option<Vec<EntityId>>,
+    /// The vault's authority generation the turn was admitted at.
+    revocation: Option<u64>,
 }
 
 impl ChatAuthority {
@@ -360,10 +372,9 @@ impl CheckpointAuthority for ChatAuthority {
         self.reads(&rows)
     }
 
-    /// The read's scope as the session is keyed by it, no revocation
-    /// generation (this producer keeps none: a restore reads every source
-    /// again instead), and the path's sources with the reply, base reality
-    /// (a chat MESSAGE is no claim) and its two authors.
+    /// The read's scope as the session is keyed by it, the authority
+    /// generation the turn was admitted at, and the path's sources with the
+    /// reply, base reality (a chat MESSAGE is no claim) and its two authors.
     fn snapshot_scope(&self, commit: &ReplyCommit) -> Option<SnapshotScope> {
         let authors = self.authors.clone()?;
         let mut sources = self.sources.clone();
@@ -372,7 +383,7 @@ impl CheckpointAuthority for ChatAuthority {
         sources.dedup();
         Some(SnapshotScope {
             read_scope: scope_digest(&self.reader, &self.read_key),
-            revocation: None,
+            revocation: self.revocation,
             dependencies: SnapshotDependencies {
                 sources,
                 worlds: vec![base_world_id()],
@@ -384,14 +395,23 @@ impl CheckpointAuthority for ChatAuthority {
         })
     }
 
-    /// In order: the credential, the claim's revocation generation (none
-    /// is kept here), the HEAD and fold epoch the turn read at, the read key
-    /// and its scope, then every source the snapshot depends on.
+    /// In order: the credential, the vault's authority generation now
+    /// against the one the snapshot was admitted at, the HEAD and fold epoch
+    /// the turn read at, the read key and its scope, then every source the
+    /// snapshot depends on, in every case: the generation does not move on
+    /// a scope or world setting held outside the authority log. A snapshot
+    /// admitted with no generation read rests on that last check alone. A
+    /// rejection only sends the turn cold.
     fn recheck_restore(&self, claim: &RestoreClaim<'_>) -> AuthorityVerdict {
         let Some((head, fold_epoch)) = self.at else {
             return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
         };
-        if !self.credential.live() || claim.revocation.is_some() {
+        if !self.credential.live() {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        if let Some(kept) = claim.revocation
+            && self.reader.vault.authority_generation().ok() != Some(kept)
+        {
             return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
         }
         if claim.head != head {
@@ -436,6 +456,7 @@ pub(super) fn commit_on_answer(
         sources,
         at: None,
         authors: segments.authors.clone(),
+        revocation: segments.revocation,
     };
     let Answering {
         handle,
