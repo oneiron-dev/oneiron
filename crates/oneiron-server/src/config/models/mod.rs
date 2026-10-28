@@ -35,6 +35,7 @@ mod levels;
 mod media;
 mod planner;
 mod provider;
+pub mod snapshots;
 #[cfg(test)]
 mod tests;
 mod training;
@@ -109,6 +110,7 @@ pub(crate) struct ModelsFile {
     planner: planner::PlannerFile,
     #[serde(default)]
     training: training::TrainingFile,
+    snapshots: Option<snapshots::SnapshotPolicyFile>,
     #[serde(default)]
     workers: BTreeMap<String, workers::WorkerFile>,
 }
@@ -238,9 +240,9 @@ pub struct ModelsConfig {
     /// The seats a leased agent's planned spawns choose among
     /// (`[models.planner]`); none lends no planner.
     pub planner: PlannerSettings,
-    /// The trainer connectors an authorized training run dispatches through
-    /// (`[models.training]`); none by default.
+    /// The trainer connectors (`[models.training]`); none by default.
     pub training: TrainingSettings,
+    pub snapshots: snapshots::SnapshotPolicy,
     /// The model workers this server supervises or probes
     /// (`[models.workers]`), in id order; none by default.
     pub workers: Vec<WorkerConfig>,
@@ -587,6 +589,7 @@ impl ModelsFile {
             voice,
             planner,
             training,
+            snapshots: self.snapshots.unwrap_or_default().resolve()?,
             workers,
         };
         if let Some(file) = self.decision_read {

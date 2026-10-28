@@ -124,6 +124,18 @@ pub use oneiron_model::llm::{
     SessionRestored, SessionSuffixCommit, SessionSuffixStaged, SessionTarget, SourceRevision,
     TokenDigest, TrustFence, VaultRef, message_digest, role_name,
 };
+// DESIGN-V2 R3: the snapshot ops of the worker session wire.
+pub use oneiron_model::llm::{
+    RegionDescriptor, SNAPSHOT_ENCODING, SNAPSHOT_HASH, SNAPSHOT_SCHEMA, SNAPSHOT_SCHEMA_MINOR,
+    SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
+    SnapshotDigest, SnapshotMiss,
+};
+// DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
+pub use oneiron_model::llm::{
+    AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
+    SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
+    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
+};
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 

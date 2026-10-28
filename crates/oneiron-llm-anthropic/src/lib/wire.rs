@@ -354,7 +354,7 @@ pub(super) fn parse_anthropic_usage(usage: &JsonValue) -> LlmUsage {
 }
 
 /// The finish of a reply whose provider reported none.
-fn unreported_finish_reason() -> FinishReason {
+pub(super) fn unreported_finish_reason() -> FinishReason {
     FinishReason::Other {
         name: "unreported".to_owned(),
     }

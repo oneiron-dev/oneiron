@@ -18,6 +18,10 @@ pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../../deploy/house-model/cache_usage.py"),
     ),
     (
+        "exl3_executor.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_executor.py"),
+    ),
+    (
         "exl3_ipc.py",
         include_bytes!("../../../../../deploy/house-model/exl3_ipc.py"),
     ),
@@ -56,6 +60,10 @@ pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
     (
         "exl3_session/registry.py",
         include_bytes!("../../../../../deploy/house-model/exl3_session/registry.py"),
+    ),
+    (
+        "exl3_session/snapshot.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/snapshot.py"),
     ),
     (
         "exl3_session/state.py",

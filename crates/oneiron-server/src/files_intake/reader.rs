@@ -30,7 +30,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::ingest::{PdfText, pdf_text};
 use oneiron::limit_ask::EngineLimit;
-use oneiron::note::{ImportedNoteLink, ImportedNoteStanding, NameOnlyReason};
+use oneiron::note::{ImportedNoteLink, ImportedNoteStanding, NameOnlyReason, OriginalBytes};
 use serde::Serialize;
 
 use super::ImportWarning;
@@ -65,11 +65,15 @@ pub(crate) struct Note {
     pub(crate) title: Option<String>,
     /// The frontmatter's `type` or `metadata.type`.
     pub(crate) label: Option<String>,
-    /// The frontmatter as it decodes, for the secret scan.
+    /// The frontmatter as it decodes, for the secret scan; each part of a
+    /// file carries its file's.
     pub(crate) decoded: String,
     links: Vec<Link>,
     /// For a continuation part, its file's path: the first part's note.
     pub(crate) part_of: Option<String>,
+    /// The file's bytes as the walk opened them, kept as its original (FIX
+    /// 7779): on the file's first part alone, so a file is kept once.
+    pub(crate) original: Option<OriginalBytes>,
 }
 
 impl Note {
@@ -242,6 +246,17 @@ pub(super) enum TextKind {
     Plain,
 }
 
+impl TextKind {
+    /// The media type a file read this way keeps its original under.
+    fn media_type(self) -> &'static str {
+        match self {
+            Self::Markdown => "text/markdown",
+            Self::Pdf => "application/pdf",
+            Self::Plain => "text/plain",
+        }
+    }
+}
+
 /// When a file was last written (seconds). A file whose time cannot be read
 /// was written by now at the latest.
 pub(super) fn written_at(metadata: &std::fs::Metadata) -> u64 {
@@ -263,6 +278,8 @@ pub(super) fn read_text(
     counts: &mut NoteCounts,
     notes: &mut Vec<Note>,
 ) -> Option<NameOnlyReason> {
+    // The text is read from a copy: the bytes themselves are the file's
+    // original (FIX 7779).
     let (text, raw_hash) = match kind {
         // Bytes, never the lossy text read: a PDF is binary.
         TextKind::Pdf => match pdf_text(&bytes) {
@@ -282,15 +299,19 @@ pub(super) fn read_text(
             }
         },
         TextKind::Markdown => (
-            String::from_utf8(bytes)
+            String::from_utf8(bytes.clone())
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
             None,
         ),
-        TextKind::Plain => match String::from_utf8(bytes) {
+        TextKind::Plain => match String::from_utf8(bytes.clone()) {
             Ok(text) if !text.contains('\0') => (text, None),
             _ => return Some(NameOnlyReason::NotText),
         },
     };
+    let mut original = Some(OriginalBytes {
+        media_type: kind.media_type().to_owned(),
+        bytes,
+    });
     if text.trim().is_empty() {
         counts.blank += 1;
         return Some(NameOnlyReason::Empty);
@@ -305,7 +326,7 @@ pub(super) fn read_text(
     let Front {
         title,
         label,
-        mut decoded,
+        decoded,
     } = match front.map(markdown::frontmatter) {
         Some(Some(found)) => found,
         unread => {
@@ -352,10 +373,11 @@ pub(super) fn read_text(
                 written_at,
                 title: title.clone(),
                 label: label.clone(),
-                decoded: std::mem::take(&mut decoded),
+                decoded: decoded.clone(),
                 links,
                 markdown,
                 part_of: None,
+                original: original.take(),
             }
         } else {
             counts.parts += 1;
@@ -366,10 +388,14 @@ pub(super) fn read_text(
                 written_at,
                 title: Some(format!("{named} (part {number})")),
                 label: label.clone(),
-                decoded: String::new(),
+                // The part's title and kind come from the file's
+                // frontmatter, so its scan reads that frontmatter too (FIX
+                // 9475): a secret in it keeps every part out, not the first.
+                decoded: decoded.clone(),
                 links,
                 markdown,
                 part_of: Some(path.clone()),
+                original: None,
             }
         });
     }

@@ -37,7 +37,7 @@
 //! product module enters this crate; prompt packages, model selection, and
 //! localization remain host configuration.
 
-use super::recall::{RECALL_TOKEN_BUDGET, parse_pack_format, truncate_text};
+use super::recall::{execution_render_budget, parse_pack_format, truncate_text};
 use super::*;
 
 use serde::{Deserialize, Serialize};
@@ -99,53 +99,14 @@ pub struct ChatOptions<'a> {
     pub lease: Option<&'a BudgetLease>,
     /// Host-injected composer. Required at standard/deep, ignored at minimal.
     pub composer: Option<&'a dyn ChatComposer>,
-}
-
-/// What the host composer is handed: the question and the retrieved pack, and
-/// nothing else. No vault handle crosses this seam.
-pub struct ChatComposeRequest<'a> {
-    /// The caller's prose question, exactly as asked.
-    pub question: &'a str,
-    /// The depth that priced this retrieval.
-    pub depth: ChatDepth,
-    /// The full pack the evidence pass produced, provenance included. This
-    /// exact pack is what the answer's citations are checked against, so an
-    /// id it does not carry is an id the answer may not stand on.
-    pub pack: &'a MemoryPack,
-}
-
-/// What a composer returns: the answer text, the evidence it stands on, what
-/// it could not cover, its own token accounting, and its right to refuse.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ComposedChatAnswer {
-    /// The composed answer text. Blank text is never answered.
-    pub answer: String,
-    /// The short ids the answer cites. The engine validates them against the
-    /// pack it handed over; proposing is the composer's whole part in it.
-    pub source_short_ids: Vec<String>,
-    /// What the evidence could not cover, surfaced verbatim.
-    pub gaps: Vec<String>,
-    /// Tokens the composer spent. Surfaced verbatim; chat takes no budgeting
-    /// action on it.
-    pub tokens_used: u32,
-    /// The composer's own refusal to answer, which is a typed abstention
-    /// ([`ChatAbstentionReason::BackendDeclined`]) and never an error.
-    pub declined: bool,
-}
-
-/// The host-injected, provider-neutral composition seam.
-///
-/// Implementations live above the engine (the `LlmBackend` precedent). The
-/// lease arrives as the opaque admission token the caller already held; the
-/// implementation must not settle or abort it either.
-pub trait ChatComposer: Send + Sync {
-    /// Turns one retrieved pack into one answer. Called at most once per
-    /// [`Memory::chat`] call, and never at minimal depth.
-    fn compose(
-        &self,
-        request: &ChatComposeRequest<'_>,
-        lease: Option<&BudgetLease>,
-    ) -> MemoryResult<ComposedChatAnswer>;
+    /// The budget the owner set for chat, when one is set: composition then
+    /// runs on it (FIX 9951). `None` composes as before.
+    pub budget: Option<&'a crate::llm::BudgetGuard>,
+    /// The token budget `format`'s rendering is cut to; 0 renders it uncut.
+    pub token_budget: Option<u64>,
+    /// An agent definition whose memory profile sizes the rendering when
+    /// `token_budget` is omitted (FIX 9962); it grants no read.
+    pub reader_agent_ref: Option<&'a str>,
 }
 
 /// Why a `.chat` call answered nothing. Each reason is a fact about the
@@ -280,6 +241,7 @@ impl Memory<'_> {
                 &["Ask for at least one memory item."],
             ));
         }
+        let execution = &self.chat_execution(&options, execution);
         // Resolved before retrieval: at standard/deep a missing composer is a
         // request the host cannot answer at any price, and at minimal the
         // composer is structurally out of reach even when one is supplied.
@@ -314,9 +276,12 @@ impl Memory<'_> {
                 )?;
                 (pack, Vec::new())
             }
-            ChatScope::Documents { source_short_ids } => {
-                self.document_pack(source_short_ids, options.limit, options.format)?
-            }
+            ChatScope::Documents { source_short_ids } => self.document_pack(
+                source_short_ids,
+                options.limit,
+                options.format,
+                execution_render_budget(execution),
+            )?,
         };
 
         // The evidence floor, ahead of every composer: nothing retrieved is
@@ -338,13 +303,15 @@ impl Memory<'_> {
         let (answer, proposed, tokens_used): (String, Vec<String>, u32) = match composer {
             None => (extractive_answer(&pack), pack_short_ids(&pack), 0),
             Some(composer) => {
-                let composed = composer.compose(
+                let composed = self.run_composer(
+                    composer,
                     &ChatComposeRequest {
                         question,
                         depth,
                         pack: &pack,
                     },
                     options.lease,
+                    options.budget,
                 )?;
                 gaps.extend(composed.gaps);
                 if composed.declined {
@@ -425,6 +392,7 @@ impl Memory<'_> {
         source_short_ids: &[String],
         limit: usize,
         format: Option<&str>,
+        budget: usize,
     ) -> MemoryResult<(MemoryPack, Vec<String>)> {
         // Before the first read: an unknown format is refused, and a known one
         // is already the format this call will render in.
@@ -462,7 +430,7 @@ impl Memory<'_> {
         // Rendered from the documents this call already hydrated: the format
         // the caller asked for, over exactly the set they named.
         let rendered = pack_format
-            .map(|pack_format| render_document_pack(&views, pack_format))
+            .map(|pack_format| render_document_pack(&views, pack_format, budget))
             .transpose()?;
         let items: Vec<MemoryItem> = views.iter().map(document_item).collect();
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
@@ -662,7 +630,11 @@ fn document_item(view: &EntityView) -> MemoryItem {
 /// second read, no ranking, no new mechanism — and each entity carries the
 /// same `short_id:content_hash` pair the pipeline reads, so a document
 /// rendered here carries the id and fields a recall would have given it.
-fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResult<String> {
+fn render_document_pack(
+    views: &[EntityView],
+    format: PackFormat,
+    budget: usize,
+) -> MemoryResult<String> {
     let mut results = Vec::with_capacity(views.len());
     for view in views {
         results.push(document_entity(view)?);
@@ -696,7 +668,7 @@ fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResul
     let config = SerializeConfig {
         format,
         profile: FieldProfile::Standard,
-        budget: RECALL_TOKEN_BUDGET,
+        budget,
         allocation: TokenAllocation::default(),
         include_stats: false,
         // An allowlist walks no edges, so it carries no neighbors to merge.

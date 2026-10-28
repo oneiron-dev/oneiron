@@ -59,7 +59,8 @@ pub(crate) use self::read::{
 };
 pub use self::resident::rank_resident_skill_versions;
 pub(crate) use self::rule_outcome::{
-    RuleOutcomeSource, record_rule_outcome_in_txn, withdraw_rule_outcome_in_txn,
+    RuleOutcomeSource, record_rule_outcome_in_txn, rule_outcome_receipts_in_txn,
+    withdraw_rule_outcome_in_txn,
 };
 
 #[cfg(test)]

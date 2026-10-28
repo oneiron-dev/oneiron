@@ -451,19 +451,22 @@ impl Vault {
             DecisionLedger::Record => super::in_force::SettlingDoor::RecordAndEnforce,
             DecisionLedger::AlreadyRecorded => super::in_force::SettlingDoor::EnforceRecorded,
         });
-        // An allow that learned nothing carries no signal and is not
-        // receipted. An allow that DID learn something — a pattern fired and
-        // the model overruled it, say — is exactly the row the substrate owner
-        // needs, so it is. The door that writes the row drops only an allow
-        // still in force; anything else it settles against the policy in
-        // force in the row's own transaction, as the bare doors do, so a
-        // manifest that moved after the pass is never answered with the
-        // decision it replaced.
+        // A clean allow the owner plane gave is one hash-only row (FIX 7805),
+        // as the bare doors write it; only an off plane's allow, which
+        // examined nothing, is not receipted. An allow that DID learn
+        // something — a pattern fired and the model overruled it, say — is
+        // exactly the row the substrate owner needs, so it is. The door that
+        // writes the row drops only such an allow still in force; anything
+        // else it settles against the policy in force in the row's own
+        // transaction, as the bare doors do, so a manifest that moved after
+        // the pass is never answered with the decision it replaced. A door
+        // enforcing a verdict another door recorded writes no second row.
         let silent = verdict.decision == PolicyClassifyDecision::Allow
             && verdict.audit.is_none()
             && match ledger {
                 DecisionLedger::Record => {
                     !self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)?
+                        && !self.owner_plane_examines()?
                 }
                 DecisionLedger::AlreadyRecorded => true,
             };

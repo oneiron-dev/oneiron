@@ -19,21 +19,40 @@ token a following message would render differently (a last assistant
 message's thinking block, say). `session.generate` attaches again against
 the ids its own call renders: the attach point is verified on the tokens
 that run.
-"""
-import threading
 
+Codec v1.2 (R3) adds the snapshot ops. `session.export` names the published
+checkpoint exactly and answers `{checkpoint, snapshot_bytes,
+snapshot_sha256, output, residency}`; its snapshot region rides on the
+answer's frame (`exl3_ipc.py` passes it, and fills `output.buffer_id`).
+`session.import` carries a `snapshot_v1` input region, binary, never a
+`chat_json` conversation; it goes only to a session that holds nothing yet,
+and answers `{staged, imported_bytes, snapshot_sha256, residency}` once the
+snapshot is checked, its pages written and its checkpoint staged. Their own
+refusals: `snapshot_incompatible` (a snapshot this worker does not rebuild
+exactly) and `snapshot_busy` (no room for it now), both a cache miss to the
+host, and `invalid_input` for a region that is not the snapshot the body
+names.
+"""
+import hashlib
+import threading
+import time
+
+import exl3_executor
 import torch
 from exllamav3.constants import PAGE_SIZE
 
+from . import snapshot
 from .anchor import common_prefix
 from .jobs import Plan
-from .registry import (INVALID_REQUEST, LOST_RESIDENCY, STALE_GENERATION, UNKNOWN_SESSION, Branch, Commit,
-                       Refused, Staged, new_handle)
+from .registry import (INVALID_INPUT, INVALID_REQUEST, LOST_RESIDENCY, STALE_GENERATION, UNKNOWN_SESSION, Branch,
+                       Commit, Refused, Retained, Staged, new_handle)
 
 # The ephemeral tail a differential rendering puts after a canonical path.
 PROBE = {"role": "user", "content": "oneiron session probe"}
 HEX = frozenset("0123456789abcdef")
 U64_MAX = (1 << 64) - 1
+# A checkpoint ref's fields, every one named.
+REF_FIELDS = ("digest", "head", "frontier_tokens", "parent")
 
 
 def _u64(body, key):
@@ -59,6 +78,21 @@ def _ref(body, key):
         raise Refused(INVALID_REQUEST, f"{key} must be a checkpoint ref or null")
     _hex(value, "digest", 32)
     return value
+
+
+def _exact_ref(body, key):
+    """A checkpoint ref the host names exactly: `{digest, head,
+    frontier_tokens, parent}`."""
+    value = body.get(key)
+    if not isinstance(value, dict) or set(value) != set(REF_FIELDS):
+        raise Refused(INVALID_REQUEST, f"{key} must be a checkpoint ref {{digest, head, frontier_tokens, parent}}")
+    _hex(value, "digest", 32)
+    _u64(value, "frontier_tokens")
+    if value["parent"] is not None:
+        _hex(value, "parent", 32)
+    if value["head"] is not None and not isinstance(value["head"], str):
+        raise Refused(INVALID_REQUEST, f"{key}.head must be a string or null")
+    return {field: value[field] for field in REF_FIELDS}
 
 
 def _target(body):
@@ -168,9 +202,10 @@ def append(layer, body, conversation):
     return answer
 
 
-def _commit(layer, session, op_id, staged):
+def _commit(layer, session, op_id, staged, work):
     """The commit of `staged`: its ids (the path and one pad id, which never
-    runs), where it attaches on its base, and the fresh pages it needs."""
+    runs), where it attaches on its base, the fresh pages it needs, and its
+    scheduling."""
     ids = torch.cat([staged.tokens, staged.tokens[-1:]])
     anchor = staged.base.anchor if staged.base is not None else None
     position, snapshot = anchor.attach_point(ids, staged.lcp) if anchor is not None else (0, None)
@@ -178,12 +213,24 @@ def _commit(layer, session, op_id, staged):
     # output, one more, the draft depth), less the ones it shares.
     depth = int(layer.generator.num_draft_tokens)
     total = -(-(int(ids.numel()) + 2 + depth) // PAGE_SIZE)
-    return Commit(session, op_id, staged, Plan(anchor, position, snapshot), ids, total - position // PAGE_SIZE)
+    return Commit(session, op_id, staged, Plan(anchor, position, snapshot), ids, total - position // PAGE_SIZE,
+                  work)
+
+
+def _work(body):
+    """The op's scheduling (exl3_executor): the class, priority and deadline
+    its body names, each defaulted when absent; refused `invalid_request`
+    for one this side cannot read."""
+    try:
+        return exl3_executor.WorkContext(**exl3_executor.work_fields(body, time.monotonic_ns()))
+    except exl3_executor.SchedulingError as error:
+        raise Refused(INVALID_REQUEST, str(error)) from None
 
 
 def suffix_commit(layer, body, _conversation_):
     handle, binding = _target(body)
     op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
+    work = _work(body)
     with layer.lock:
         session = layer.find(handle, binding)
         kept = layer.replay(session, op_id)
@@ -198,7 +245,7 @@ def suffix_commit(layer, body, _conversation_):
                 raise Refused(LOST_RESIDENCY, "the session's checkpoint is no longer held")
             if staged.base is not session.published:
                 raise Refused(STALE_GENERATION, "another checkpoint is published")
-            kept = _commit(layer, session, op_id, staged)
+            kept = _commit(layer, session, op_id, staged, work)
             if staged.base is not None:
                 staged.base.anchor.pins += 1
             session.commit = kept
@@ -264,12 +311,82 @@ def drop(layer, body, _conversation_):
             cancel()
         layer.scheduler.run_owned(lambda: layer.abandon(session))
         with layer.lock:
-            while session.branches:
+            # An export or import in flight sees the drop and stops.
+            while session.branches or session.transfers:
                 layer.lock.wait()
         layer.scheduler.run_owned(lambda: layer.release_session(session))
     finally:
         done.set()
     return _with_stats(layer, {"released": True})
+
+
+def export(layer, body, _conversation_):
+    """`session.export`: (answer, region). The published checkpoint the
+    body names exactly, copied on the scheduler thread and written off it
+    into a sealed region, which the answer's frame passes. The region is
+    kept with the answer: a retry passes the same bytes again."""
+    handle, binding = _target(body)
+    op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
+    ref = _exact_ref(body, "checkpoint")
+    work = _work(body)
+    with layer.lock:
+        session = layer.find(handle, binding)
+        kept = layer.replay(session, op_id)
+        if kept is None:
+            layer.check_generation(session, generation)
+            checkpoint = layer.published_exactly(session, ref)
+            session.transfers += 1
+    if kept is not None:
+        if not isinstance(kept, Retained):
+            raise Refused(INVALID_REQUEST, "this op id answered another op")
+        return dict(kept.answer), kept.region
+    try:
+        fields, tensors = layer.export_checkpoint(session, checkpoint, work)
+        region = snapshot.write_region(fields, tensors)
+        tensors = None
+        with layer.lock:
+            if session.dropping:
+                region.close()
+                raise Refused(UNKNOWN_SESSION, "the session was dropped")
+            answer = {"checkpoint": checkpoint.ref(), "snapshot_bytes": region.length,
+                      "snapshot_sha256": region.sha256,
+                      "output": {"fd_index": 0, "offset": 0, "length": region.length, "encoding": snapshot.ENCODING},
+                      "residency": layer.residency(session)}
+            layer.remember(session, op_id, generation, Retained(answer, region))
+    finally:
+        layer.end_transfer(session)
+    return _with_stats(layer, answer), region
+
+
+def import_(layer, body, payload):
+    """`session.import`: the snapshot `payload` (the input region's bytes)
+    checked against the body and this worker, then written into fresh pages
+    on the scheduler thread and staged as the empty session's successor."""
+    handle, binding = _target(body)
+    op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
+    ref = _exact_ref(body, "checkpoint")
+    size, sha256 = _u64(body, "snapshot_bytes"), _hex(body, "snapshot_sha256", 32)
+    work = _work(body)
+    with layer.lock:
+        session = layer.find(handle, binding)
+        kept = layer.replay(session, op_id)
+        if kept is None:
+            layer.import_target(session, generation)
+            session.transfers += 1
+    if kept is not None:
+        if isinstance(kept, Retained):
+            raise Refused(INVALID_REQUEST, "this op id answered another op")
+        return kept
+    try:
+        if payload is None:
+            raise Refused(INVALID_INPUT, "the op carries no input region")
+        if len(payload) != size or hashlib.sha256(payload).hexdigest() != sha256:
+            raise Refused(INVALID_INPUT, "the input region is not the snapshot the body names")
+        rebuilt = layer.decode_import(payload, ref)
+        answer = layer.import_checkpoint(session, op_id, generation, rebuilt, size, sha256, work)
+    finally:
+        layer.end_transfer(session)
+    return _with_stats(layer, answer)
 
 
 def claim(layer, field):
@@ -290,12 +407,20 @@ HANDLERS = {
     "session.suffix_commit": suffix_commit,
     "session.checkpoint": checkpoint,
     "session.drop": drop,
+    "session.export": export,
+    "session.import": import_,
 }
 
-# The ops that carry an input region.
+# The ops that carry a `chat_json` input region.
 WITH_INPUT = ("session.fork", "session.append", "session.generate")
+# The op that carries a `snapshot_v1` input region, and the op whose answer
+# passes one: the handler gives (answer, region).
+SNAPSHOT_INPUT = ("session.import",)
+SNAPSHOT_OUTPUT = ("session.export",)
 
 
 def answer(layer, op, body, conversation):
-    """The answer body of session op `op`; Refused when it is refused."""
+    """The answer body of session op `op` (for `session.export`, the answer
+    and its region); Refused when it is refused. `conversation` is an op's
+    input: a `chat_json` conversation, or an import's snapshot bytes."""
     return HANDLERS[op](layer, body, conversation)

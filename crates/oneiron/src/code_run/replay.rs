@@ -61,6 +61,9 @@ pub struct CodeRunBridgeCall {
     /// ([`ActionInputs::action_digest`], OF-568); `None` when the host
     /// captured none, or the call never ran.
     pub action_digest: Option<String>,
+    /// The targets its host resolved for a spawn (FIX 9180), text-free;
+    /// none for every other call.
+    pub(crate) spawn_targets: super::spawn_replay::SpawnTargets,
 }
 
 impl CodeRunBridgeCall {
@@ -81,7 +84,7 @@ impl CodeRunBridgeCall {
             ));
         }
 
-        let row = Self {
+        let mut row = Self {
             seq,
             effect: call.effect(),
             request: self_call_request_value(call)?,
@@ -89,8 +92,11 @@ impl CodeRunBridgeCall {
             started_at_ms,
             finished_at_ms,
             action_digest: None,
+            spawn_targets: super::spawn_replay::SpawnTargets::default(),
         };
+        row.scrub_target_erased_ask()?;
         row.validate_speech_coherence()?;
+        row.validate_spawn_coherence()?;
         Ok(row)
     }
 
@@ -932,6 +938,8 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         // difference the guest was never allowed to control.
         let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
         let request = self_call_request_value(&call)?;
+        // A spawn row's erased ask answers only from a coherent row (FIX 9180).
+        stored.validate_spawn_coherence()?;
         // A stored request keeps the handles the side-row wall placed where
         // the live call still holds the secrets (OF-067). This cursor issues
         // nothing, so a spawn's miss (FIX 7447) is a mismatch here.

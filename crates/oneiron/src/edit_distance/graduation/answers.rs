@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{ANSWER, ANSWER_ROW_LABEL, ROW_VERSION};
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::consent_graduation::RampScope;
+use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::store::Store;
 use crate::vault::Vault;
@@ -107,10 +108,27 @@ pub(super) struct StoredAnswer {
     pub(super) op_kind: String,
     pub(super) target_class: String,
     pub(super) actor: String,
+    /// Authenticated owner-door provenance; the non-owner doors store neither.
+    pub(super) answerer: Option<String>,
+    pub(super) decision_ref: Option<String>,
     pub(super) answer: String,
     pub(super) at: u64,
     pub(super) after_seq: u64,
     pub(super) snooze_backoff_seconds: [u64; 2],
+}
+
+struct AnswerProvenance {
+    answerer: String,
+    decision_ref: String,
+}
+
+impl AnswerProvenance {
+    fn new(owner: &AuthenticatedOwner, answerer: EntityId) -> Self {
+        Self {
+            answerer: answerer.to_hex(),
+            decision_ref: owner.decision_id().to_hex(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +225,7 @@ pub(super) fn answer_graduation_offer_at(
     at: u64,
 ) -> Result<OfferAnswerOutcome> {
     vault.with_write_txn_grouped(|wtxn| {
-        answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at)
+        answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at, None)
     })
 }
 
@@ -220,8 +238,9 @@ pub fn answer_graduation_offer_as_owner(
 ) -> Result<OfferAnswerOutcome> {
     let at = vault.store.clock.now_recorded_at();
     vault.with_write_txn_grouped(|wtxn| {
-        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
-        answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at)
+        let answerer = owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+        let provenance = AnswerProvenance::new(owner, answerer);
+        answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at, Some(provenance))
     })
 }
 
@@ -231,6 +250,7 @@ fn answer_graduation_offer_in_txn(
     scope: &RampScope,
     answer: OfferAnswer<'_>,
     at: u64,
+    provenance: Option<AnswerProvenance>,
 ) -> Result<OfferAnswerOutcome> {
     scope.validate()?;
     if !crate::consent_graduation::offer_is_standing_in_txn(vault, &*wtxn, scope)? {
@@ -255,7 +275,7 @@ fn answer_graduation_offer_in_txn(
             let backoffs =
                 super::threshold_policy::graduation_policy_in_txn(&vault.store, &*wtxn, scope)?
                     .snooze_backoff_seconds;
-            append_answer_in_txn(vault, wtxn, scope, answer.as_str(), at)?;
+            append_answer_in_txn(vault, wtxn, scope, answer.as_str(), at, provenance)?;
             crate::consent_graduation::reset_ramp_streak_in_txn(vault, wtxn, scope, at)?;
             let next = match answer {
                 OfferAnswer::ManualPinned => SnoozeState::ManualPinned,
@@ -294,7 +314,7 @@ pub fn unpin_scope(vault: &Vault, scope: &RampScope) -> Result<()> {
 fn unpin_scope_at(vault: &Vault, scope: &RampScope, at: u64) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         scope.validate()?;
-        append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at)
+        append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at, None)
     })
 }
 
@@ -306,9 +326,10 @@ pub fn unpin_scope_as_owner(
 ) -> Result<()> {
     let at = vault.store.clock.now_recorded_at();
     vault.with_write_txn_grouped(|wtxn| {
-        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+        let answerer = owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
         scope.validate()?;
-        append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at)
+        let provenance = AnswerProvenance::new(owner, answerer);
+        append_answer_in_txn(vault, wtxn, scope, ANSWER_UNPIN, at, Some(provenance))
     })
 }
 
@@ -341,10 +362,13 @@ pub(crate) fn streak_resets_in_txn(
 pub(crate) fn record_go_auto_answer_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
     scope: &RampScope,
     at: u64,
 ) -> Result<()> {
-    append_answer_in_txn(vault, wtxn, scope, ANSWER_GO_AUTO, at)
+    let answerer = owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
+    let provenance = AnswerProvenance::new(owner, answerer);
+    append_answer_in_txn(vault, wtxn, scope, ANSWER_GO_AUTO, at, Some(provenance))
 }
 
 /// Appends one answer row. The row is the state AND the receipt — there is no
@@ -356,12 +380,19 @@ fn append_answer_in_txn(
     scope: &RampScope,
     answer: &str,
     at: u64,
+    provenance: Option<AnswerProvenance>,
 ) -> Result<()> {
+    let (answerer, decision_ref) = match provenance {
+        Some(provenance) => (Some(provenance.answerer), Some(provenance.decision_ref)),
+        None => (None, None),
+    };
     let row = StoredAnswer {
         v: ROW_VERSION,
         op_kind: scope.op_kind.clone(),
         target_class: scope.target_class.clone(),
         actor: scope.actor.clone(),
+        answerer,
+        decision_ref,
         answer: answer.to_owned(),
         at,
         after_seq: vault.read_identity_topology_seq_in_txn(&*wtxn)?,

@@ -504,7 +504,7 @@ class Oneiron:
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
-        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None) -> MemoryPack: ...
+        def recall(self, query: str, *, effort: Effort = 'medium', scope: RecallScope | None = None, limit: int = 10, format: PackFormat | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: RecallMedia | None = None, query_affect: QueryAffect | None = None, token_budget: int | None = None, reader_agent_ref: str | None = None) -> MemoryPack: ...
         @property
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs": ...
         @property
@@ -2162,7 +2162,7 @@ class Oneiron:
             """The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."""
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
-            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""
+            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."""
         def activate(self, spec: Facade.LensActivateRequest) -> Facade.LensActivationReceipt:
             """The owner selects a proposed lens revision for its pack slot."""
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:
@@ -3537,7 +3537,7 @@ class Oneiron:
         @property
         def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.BrowserHandoverOutput:
-            """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
+            """Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft."""
         def switch_engine(self, spec: Facade.LiveRunRequest[Facade.SwitchEngineInput]) -> Facade.BrowserSwitchEngineOutput:
             """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
     class _SelfBrowserLibraryVerbs:

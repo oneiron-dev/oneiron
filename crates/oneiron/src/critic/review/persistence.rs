@@ -226,7 +226,13 @@ fn review_identity_hash(request: &ReviewRequest) -> Result<[u8; 32]> {
             .collect::<Vec<_>>(),
     ))
     .map_err(|_| invalid_critic_config("review identity encode"))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    // A project's review keys apart (FIX 6038); a vault review keeps its key.
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&bytes);
+    if let Some(project) = request.project {
+        hasher.update(project.as_bytes());
+    }
+    Ok(*hasher.finalize().as_bytes())
 }
 pub(super) fn cached_review(
     vault: &Vault,

@@ -6,8 +6,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_attribution::{
     AttemptOutcome, AttributionDecisions, AttributionLane, AttributionSplit, AttributionVerdict,
-    AuditAnswerSource, EditHunk, JudgeRequest, JudgeTrace, OutcomeEvidence, RawAnswer,
-    classify_split_traced, settled_split,
+    AuditAnswerSource, EditHunk, HunkVerdict, JudgeRequest, JudgeTrace, OutcomeEvidence, RawAnswer,
+    classify_split_traced, settled_split, split_from_verdicts,
 };
 
 // ---------------------------------------------------------------------------
@@ -26,8 +26,9 @@ pub type AmendmentClass = AttributionVerdict;
 /// An attempt that FAILED is wrong by construction. An amendment rode an
 /// APPROVAL, so wrongness is a question, and these three answers are what the
 /// pre-filter in [`classify_amendment`] reasons over. `None` on the evidence
-/// means the question is unsettled, and the judge abstains rather than guessing
-/// — the false-pass bias [`run_judge_audit`](crate::edit_distance::attribution::run_judge_audit) exists to expose starts exactly
+/// means the question is unsettled, and the amendment holds as `unclear`
+/// rather than guessing — the false-pass bias
+/// [`run_judge_audit`](crate::edit_distance::attribution::run_judge_audit) exists to expose starts exactly
 /// there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -71,9 +72,9 @@ impl AmendmentCause {
 /// scope, and the facts that settle the class.
 ///
 /// The `Option` facts are unsettled-by-default on purpose. A door that observed
-/// an amendment but cannot say WHY records what it knows and lets the judge
-/// abstain; inventing a cause to fill the slot is the failure this whole module
-/// is instrumented against.
+/// an amendment but cannot say WHY records what it knows and the amendment
+/// holds as `unclear`; inventing a cause to fill the slot is the failure this
+/// whole module is instrumented against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AmendmentEvidence {
     /// The receipt ED-01 measured this amendment's Δ against.
@@ -207,6 +208,20 @@ pub struct AmendmentJudgment {
     /// ED-01's measured edit mass for this amendment.
     pub d_norm: f32,
     pub at: u64,
+    /// Each changed hunk the host cut, in text order, as judged (FIX 9808).
+    /// Empty when the amendment was judged as one region.
+    pub hunks: Vec<HunkLabel>,
+}
+
+/// One changed hunk as judged: the label it stands at after the floor, and
+/// the identities of the substitutions it made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkLabel {
+    pub class: AmendmentClass,
+    /// The miner's digests of the hunk's normalized substitutions, at the
+    /// miner's own extraction granularity; empty when the hunk makes none.
+    /// Identities, never the hunk's text.
+    pub substitution_refs: Vec<String>,
 }
 
 impl AmendmentJudgment {
@@ -264,14 +279,14 @@ pub struct PreferenceProposal {
 // ---------------------------------------------------------------------------
 
 /// Classifies one amendment into a label + share split, or ABSTAINS
-/// (`Ok(None)`) when the facts do not settle it.
+/// (`Ok(None)`) when the judge does.
 ///
 /// | cause | class of every hunk |
 /// |---|---|
 /// | external change | `Environment` |
 /// | decider preference | `PreferenceShift` |
 /// | proposal wrong | *the judge's, hunk by hunk* |
-/// | unsettled | abstain |
+/// | unsettled | `unclear`, with a missing-cause note |
 ///
 /// `hunks` are the changed regions as the host cut them; each weighs its own
 /// edit mass, measured here with the pinned reconstructed-lane metric. With no
@@ -299,8 +314,8 @@ pub fn classify_amendment(
 }
 
 /// [`classify_amendment`], beside what answered it for the held-out audit's
-/// batch (OF-542): nothing for an unsettled cause, a settled cause's certain
-/// label, or the judge's raw answers before the floor held any.
+/// batch (OF-542): an unclear hold for an unsettled cause, a settled cause's
+/// certain label, or the judge's raw answers before the floor held any.
 ///
 /// # Errors
 ///
@@ -311,19 +326,6 @@ pub(super) fn classify_amendment_traced(
     hunks: &[EditHunk<'_>],
     floor: f32,
 ) -> Result<(Option<AttributionSplit>, JudgeTrace)> {
-    let settled = match evidence.cause {
-        None => {
-            let trace = JudgeTrace {
-                source: AuditAnswerSource::NotJudged,
-                answers: Vec::new(),
-                revision: None,
-            };
-            return Ok((None, trace));
-        }
-        Some(AmendmentCause::ExternalChange) => Some(AmendmentClass::Environment),
-        Some(AmendmentCause::DeciderPreference) => Some(AmendmentClass::PreferenceShift),
-        Some(AmendmentCause::ProposalWrong) => None,
-    };
     let masses: Vec<f64> = hunks
         .iter()
         .map(|hunk| {
@@ -332,6 +334,31 @@ pub(super) fn classify_amendment_traced(
                 .edit_mass()
         })
         .collect();
+    let settled = match evidence.cause {
+        None => {
+            // An unsettled cause holds the whole amendment as `unclear` with
+            // a missing-cause note (FIX 9798), through the normal
+            // unclear-ledger path — never a withdrawal.
+            let trace = JudgeTrace {
+                source: AuditAnswerSource::NotJudged,
+                answers: Vec::new(),
+                revision: None,
+            };
+            let answers = vec![
+                HunkVerdict {
+                    verdict: AmendmentClass::Unclear,
+                    confidence: 0.0,
+                    note: Some("cause unsettled".to_owned()),
+                };
+                hunks.len().max(1)
+            ];
+            let split = split_from_verdicts(AttributionLane::Amendment, &masses, answers, floor)?;
+            return Ok((Some(split), trace));
+        }
+        Some(AmendmentCause::ExternalChange) => Some(AmendmentClass::Environment),
+        Some(AmendmentCause::DeciderPreference) => Some(AmendmentClass::PreferenceShift),
+        Some(AmendmentCause::ProposalWrong) => None,
+    };
     let probe = evidence.as_outcome_evidence();
     let request = JudgeRequest {
         lane: AttributionLane::Amendment,

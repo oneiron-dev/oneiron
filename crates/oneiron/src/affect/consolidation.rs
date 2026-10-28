@@ -257,6 +257,7 @@ impl Vault {
             let reappraisal = if active_states.len() == 1
                 && active_states[0].body.value == value
                 && active_states[0].body.evidence.as_ref() == Some(&evidence)
+                && active_states[0].body.scope == claim_body.scope
             {
                 ClaimVadReappraisal {
                     active_claim_id: Some(active_states[0].id),
@@ -275,6 +276,8 @@ impl Vault {
                 )?;
                 body.evidence = Some(evidence);
                 body.source = Some(ClaimSource::Inferred);
+                body.scope = claim_body.scope.clone();
+                body.scope_facet = claim_body.scope_facet;
                 body.valid_from = Some(now);
                 let data = encode_claim_body(&body)?;
                 ops.push(BatchOp::Put {

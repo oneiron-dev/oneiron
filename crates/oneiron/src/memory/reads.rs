@@ -87,7 +87,8 @@ pub struct ClaimListFilter {
 /// One BM25 hit (engine index scores, never re-ranked app-side).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LexicalHit {
-    /// Short ref (hex fallback).
+    /// Short ref (hex fallback), pinned as `<ref>@<revision>` to the revision
+    /// whose text matched when the index names one: the snippet is read there.
     pub short_id: String,
     /// Registry kind string.
     pub kind: String,
@@ -445,24 +446,43 @@ impl Memory<'_> {
             ));
         }
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let hits = lane.filter_scored_entities(self.vault.search_text(query, limit)?)?;
-        self.lexical_hits(&lane, hits, |id| self.short_ref_of(id))
+        // The lane admits inside the posting scan, before the rank and the
+        // cut, so a row it withholds takes no place a readable match could
+        // fill (FIX 9955); each hit keeps the revision the index matched.
+        let found = lane.search_text_revisioned(query, limit, None)?;
+        let hits = ScopedReadResult {
+            value: found.hits,
+            receipt: found.receipt,
+        };
+        self.lexical_hits(&lane, hits, &found.revisions, |id| self.short_ref_of(id))
     }
 
     /// The admitted `hits` of one BM25 query on `lane`, read there and ranked
     /// by claim source as the pack ranks them, each with its snippet and the
     /// short ref `short_ref` names it by (a room's read names the room's).
+    /// A hit `revisions` names is read at the revision the index matched, and
+    /// its short id names that revision (FIX 9956); any other is read live.
     pub(super) fn lexical_hits(
         &self,
         lane: &crate::claim::ScopedRead<'_>,
         hits: ScopedReadResult<Vec<crate::pipeline::ScoredEntity>>,
+        revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
         short_ref: impl Fn(&EntityId) -> MemoryResult<Option<String>>,
     ) -> MemoryResult<ScopedReadResult<Vec<LexicalHit>>> {
         let ScopedReadResult {
             value: hits,
             mut receipt,
         } = hits;
-        let reads: Vec<_> = hits.iter().map(|hit| PointRead::id(hit.id)).collect();
+        let reads: Vec<_> = hits
+            .iter()
+            .map(|hit| {
+                let mode = revisions
+                    .get(&hit.id)
+                    .copied()
+                    .map_or(crate::vault::ReadMode::Live, crate::vault::ReadMode::Pinned);
+                PointRead::id(hit.id).at(mode)
+            })
+            .collect();
         let rows = lane.read(&reads, None)?;
         receipt.restrict_with(&rows.receipt);
         // Admitted hits rank by claim source, as the pack does.
@@ -495,6 +515,18 @@ impl Memory<'_> {
                     .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
             });
             let short = short_ref(&hit.id)?;
+            let short_id = match revisions.get(&hit.id) {
+                // A pinned ref carries the content hash of the revision it
+                // pins, the row this read admitted, never the live one.
+                Some(revision) => {
+                    let named = match short.as_deref().and_then(|short| short.rsplit_once(':')) {
+                        Some((name, _)) => format!("{name}:{:02x}", row.content_hash),
+                        None => hit.id.to_hex(),
+                    };
+                    format!("{named}@{}", revision.to_hex())
+                }
+                None => short.clone().unwrap_or_else(|| hit.id.to_hex()),
+            };
             out.push(LexicalHit {
                 record: Some(crate::lens::RecordRef::from_body(
                     row.entity_type,
@@ -502,7 +534,7 @@ impl Memory<'_> {
                     short.as_deref(),
                     body.as_ref(),
                 )),
-                short_id: short.unwrap_or_else(|| hit.id.to_hex()),
+                short_id,
                 kind: kind_string_for_type(row.entity_type),
                 score,
                 snippet,

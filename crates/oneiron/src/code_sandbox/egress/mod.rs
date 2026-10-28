@@ -9,6 +9,7 @@ mod receipt;
 
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
 use crate::{EntityId, Vault};
+pub use dns::{UnusableResolver, exchange_dns_query};
 pub use fixture::{FixtureForward, FixtureForwardError};
 pub use name_gate::EgressNameRefusal;
 use oneiron_container::{
