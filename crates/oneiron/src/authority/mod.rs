@@ -78,6 +78,7 @@ mod grant_travel_door;
 mod guest_revoke;
 mod handoff_equivocation;
 mod handover_evidence;
+mod history_admission;
 mod history_coverage;
 mod history_fetch;
 mod history_repair;
@@ -356,6 +357,7 @@ pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;
+pub(crate) use history_admission::preflight_authority_rows_in_txn;
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;
