@@ -1,8 +1,15 @@
-//! Device-local maintenance ingest security bounds.
+//! Device-local maintenance ingest shares and their fair admission.
 
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::SyncError;
 use crate::{Error, Result, Vault};
+
+mod work;
+pub(super) use work::MaintenanceOp;
+pub use work::{
+    MAINTENANCE_DRAIN_TURNS, MaintenanceRetainedReceipt, MaintenanceWorkState,
+    maintenance_ingest_retained,
+};
+pub(crate) use work::{drain_retained_maintenance, erase_retained_in_txn};
 
 const MAINTENANCE_INGEST_QUOTA_PREFIX: &[u8] = b"m:maintenance_ingest_quota:v1:";
 const MAINTENANCE_INGEST_QUOTA_CONFIG_KEY: &[u8] = b"m:maintenance_ingest_quota_config:v1";
@@ -10,8 +17,9 @@ const MAINTENANCE_INGEST_QUOTA_VALUE_LEN: usize = 12;
 const MAINTENANCE_INGEST_QUOTA_PEER_DOMAIN: &[u8] = b"oneiron/maintenance-ingest-quota/v1/peer";
 /// Default accepted maintenance-band replay ops per peer per quota window.
 ///
-/// This is a generous device-local DoS bound for signed maintenance records
-/// arriving through sync replay doors, not a policy rate limiter.
+/// This is a generous device-local share for signed maintenance records
+/// arriving through sync replay doors, not a policy rate limiter. Crossing it
+/// is advisory: the op waits its turn as retained work (FIX 8565).
 pub const DEFAULT_MAINTENANCE_INGEST_MAX_OPS_PER_PEER_WINDOW: u32 = 4096;
 /// Default maintenance-band replay quota window length, in seconds.
 pub const DEFAULT_MAINTENANCE_INGEST_QUOTA_WINDOW_SECS: u64 = 60 * 60;
@@ -25,7 +33,7 @@ pub struct MaintenanceIngestQuotaSnapshot {
     pub window_start_secs: u64,
     /// Accepted signed maintenance-band replay ops in the bucket.
     pub accepted_count: u32,
-    /// Configured cap for the bucket.
+    /// Configured share for the bucket; past it ops wait their turn.
     pub max_ops_per_peer_window: u32,
     /// Configured quota bucket width, in seconds.
     pub quota_window_secs: u64,
@@ -59,14 +67,80 @@ pub(super) struct MaintenanceIngestQuotaDebit {
     previous_value: Option<[u8; MAINTENANCE_INGEST_QUOTA_VALUE_LEN]>,
 }
 
-pub(super) fn try_accept_maintenance_ingest_peer_in_txn(
+/// What maintenance admission made of one operation.
+pub(super) enum MaintenanceAdmission {
+    /// It is admitted now; the debit rolls back if its write fails.
+    Now(MaintenanceIngestQuotaDebit),
+    /// It waits its turn as retained work, typed Pending, and nothing of it
+    /// lands now (FIX 8565, 8858).
+    Retained,
+}
+
+/// Admits `op` from the signer `peer_key` now, debiting its bucket, or keeps
+/// it as retained work: past the signer's share of the window, or behind
+/// that signer's own waiting work. Crossing the share is advisory, counted
+/// and logged, never a refusal. Work its drain replays is admitted now.
+pub(super) fn admit_maintenance_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    peer_key: MaintenanceIngestPeerKey,
+    op: MaintenanceOp<'_>,
+) -> Result<MaintenanceAdmission> {
+    let now_secs = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    if !work::replaying() {
+        let (accepted_count, max_ops) =
+            maintenance_ingest_share_in_txn(vault, wtxn, peer_key, now_secs)?;
+        let crossed = accepted_count >= max_ops;
+        if crossed || work::waiting_in(vault, wtxn, &peer_key.0)? {
+            if crossed {
+                tracing::info!(
+                    peer_key = %bytes_to_hex_lower(&peer_key.0),
+                    accepted_count,
+                    max_ops,
+                    "maintenance signer passed its share of the quota window; the op waits its turn"
+                );
+            }
+            work::retain_in_txn(vault, wtxn, &peer_key.0, op, now_secs)?;
+            return Ok(MaintenanceAdmission::Retained);
+        }
+    }
+    try_accept_maintenance_ingest_peer_in_txn(vault, wtxn, peer_key, now_secs)
+        .map(MaintenanceAdmission::Now)
+}
+
+/// The ops `peer_key` has had accepted in the quota window at `now_secs`, and
+/// its share of the window.
+fn maintenance_ingest_share_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer_key: MaintenanceIngestPeerKey,
+    now_secs: u64,
+) -> Result<(u32, u32)> {
+    let config = maintenance_ingest_quota_config_in_ro_txn(vault, txn)?;
+    let window_start_secs = now_secs - (now_secs % config.quota_window_secs);
+    let accepted_count = match vault
+        .store
+        .sync_queue
+        .get(txn, &maintenance_ingest_quota_key(peer_key))?
+    {
+        Some(value) => match decode_maintenance_ingest_quota_value(&value)? {
+            (start, count) if start == window_start_secs => count,
+            _ => 0,
+        },
+        None => 0,
+    };
+    Ok((accepted_count, config.max_ops_per_peer_window))
+}
+
+/// Debits `peer_key`'s bucket for one accepted op. Past the share the count
+/// keeps rising: the share is advisory.
+fn try_accept_maintenance_ingest_peer_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     peer_key: MaintenanceIngestPeerKey,
     now_secs: u64,
-) -> Result<Option<MaintenanceIngestQuotaDebit>> {
+) -> Result<MaintenanceIngestQuotaDebit> {
     let config = maintenance_ingest_quota_config_in_rw_txn(vault, &*wtxn)?;
-    let max_ops = config.max_ops_per_peer_window;
     let quota_window_secs = config.quota_window_secs;
 
     let window_start_secs = now_secs - (now_secs % quota_window_secs);
@@ -93,25 +167,15 @@ pub(super) fn try_accept_maintenance_ingest_peer_in_txn(
         0
     };
 
-    if accepted_count >= max_ops {
-        return Err(Error::Sync(SyncError::MaintenanceIngestQuotaExceeded {
-            peer_key_hex: bytes_to_hex_lower(&peer_key.0),
-            accepted_count,
-            max_ops_per_peer_window: max_ops,
-            window_start_secs,
-            quota_window_secs,
-        }));
-    }
-
     let next_count = accepted_count
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("maintenance ingest quota"))?;
     let value = encode_maintenance_ingest_quota_value(window_start_secs, next_count);
     vault.store.sync_queue.put(wtxn, key.as_slice(), &value)?;
-    Ok(Some(MaintenanceIngestQuotaDebit {
+    Ok(MaintenanceIngestQuotaDebit {
         key,
         previous_value,
-    }))
+    })
 }
 
 pub(super) fn rollback_maintenance_ingest_debit_in_txn(
@@ -170,8 +234,8 @@ pub fn maintenance_ingest_quota_config(vault: &Vault) -> Result<MaintenanceInges
 /// Stores device-local maintenance-ingest quota tunables.
 ///
 /// The row lives in `sync_queue`'s `m:` family and is never mirrored into CRDT
-/// state. Existing accepted counters are left in place; a lower cap can make a
-/// peer over-quota until the next bucket.
+/// state. Existing accepted counters are left in place; under a lower share a
+/// peer's later ops wait their turn until the next bucket.
 pub fn set_maintenance_ingest_quota_config(
     vault: &Vault,
     config: MaintenanceIngestQuotaConfig,

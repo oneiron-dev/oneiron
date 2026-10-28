@@ -1,10 +1,15 @@
 //! The durable step executor owns retries; this door sends one gated attempt.
+use super::step_quota::StepOfferAvailability;
 use super::*;
 
 impl OfferLadder {
     /// One exact-model attempt for the durable step executor. Its retry
-    /// policy owns the backoff: no ladder walk, cooldown retry or owner model
-    /// fallback can multiply that count. Every send still takes this run's
+    /// policy owns the backoff: no ladder walk, cooldown wait or owner model
+    /// fallback can multiply that count. The attempt still meets its offer
+    /// as every call does (FIX 9510): an offer that rests, or whose one
+    /// probation request is out, parks the attempt unsent with when it is
+    /// back, and the attempt's end is kept on the offer
+    /// ([`Self::step_offer_availability`]). Every send takes this run's
     /// ordinary admission, gate, one-use permit and settlement.
     pub(crate) async fn generate_step_attempt(
         &self,
@@ -15,24 +20,27 @@ impl OfferLadder {
         if !self.picked || self.rungs.len() != 1 {
             return Err(FatalLlmError::InvalidRequest.into());
         }
-        let rung = &self.rungs[0];
-        // A managed worker's lease, held through settlement (FIX 8315); a
-        // parked worker fails the attempt as an unreachable one would.
-        let _lease = self.hold_worker(0).await?;
-        let (bound, permit) = self.admit(run, rung, &request, None, false)?;
-        let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
-        let warmth = super::cache_warmth::Sending::of(rung, &bound);
-        match gate.generate(bound, permit.lease()).await {
-            Ok(mut response) => {
-                warmth.answered(&self.rests);
-                permit.settle(CallOutcome::Answered(&response.usage))?;
-                response.usage = self.answered(0, &Walk::default(), response.usage);
-                rung.note_answered(&request);
-                Ok(response)
-            }
-            Err(error) => {
-                settle_failed(permit);
-                Err(error)
+        let call = Call {
+            run,
+            request: &request,
+            selector: None,
+            needs: Needs::Chat {
+                request: &request,
+                stream: false,
+            },
+        };
+        let mut walk = Walk::default();
+        if let StepOfferAvailability::Parked(refusal) =
+            self.step_offer_availability(call, &mut walk)
+        {
+            return Err(refusal);
+        }
+        // A managed worker's lease is held through settlement (FIX 8315),
+        // and the offer's probation slot through the request.
+        match self.send(call, 0, &|| true, None, &mut walk).await? {
+            Sent::Answer(response) => Ok(response),
+            Sent::Failed | Sent::Held | Sent::Stopped => {
+                Err(self.record_step_offer_result(call, walk))
             }
         }
     }

@@ -17540,6 +17540,12 @@ pub struct ChatCompletionRequest {
     pub seed: Option<i64>,
     #[serde(rename = "user", default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
 }
 
 /// `oneiron::verbs::proxy::ChatCompletionObject`.
@@ -20658,6 +20664,12 @@ pub enum FederationBurstWorkState {
     Imported,
     #[serde(rename = "rejected")]
     Rejected,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "stale_authority")]
+    StaleAuthority,
+    #[serde(rename = "erased")]
+    Erased,
 }
 
 /// `oneiron::sync::federation_burst::types::FederationBurstReceipt`.
@@ -47915,6 +47927,8 @@ pub enum BudgetDenied {
     LeaseInvalid,
     #[serde(rename = "AdmissionDenied")]
     AdmissionDenied,
+    #[serde(rename = "HostCheck")]
+    HostCheck,
 }
 
 /// `oneiron_model::llm::error::LlmError`.
@@ -54210,6 +54224,8 @@ pub struct MemoryError {
         skip_serializing_if = "Option::is_none"
     )]
     pub retry_after: Option<u64>,
+    #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<Vec<u64>>,
     #[serde(flatten)]
     pub memory_wrong_root: Option<MemoryWrongRoot>,
 }

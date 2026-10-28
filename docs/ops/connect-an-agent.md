@@ -180,8 +180,26 @@ tier.
 - `model` must be a model id your `[models]` config serves; any other id is
   refused with 404 `model_not_found`. The call is admitted and paid like your
   own `/v1/llm` calls.
-- Calls are buffered. `stream: true`, `n` above 1, tools, images and any body
+- Calls are buffered. `stream: true`, `n: 0`, tools, images and any body
   field the proxy does not know are refused with 400, never dropped.
+- `n` asks for that many choices. Each is its own model call, sent in turn,
+  and the reply lists them by `index` with their usage summed. One proposed
+  claim holds every answer: choice 0 under `assistant`, all of them under
+  `choices`. If a later choice fails, the reply keeps the choices already
+  answered.
+- `deadline_ms` (optional, an Oneiron field) is your deadline in
+  milliseconds from when the call arrives. Recall, every choice and each wait
+  for a rate-limited model end by then; a call it cuts answers 504 `timeout`.
+  Without it, a rate-limited model is waited for up to the vault's longest
+  wait.
+- A refusal from a rate limit or a spent usage window says when to try
+  again when the provider said: `error.retry_after` in seconds (also the
+  `Retry-After` header) and `error.resets_at`, each reset as Unix seconds.
+- Before the answer is sent, it is checked again against the worlds of the
+  memory that went into the prompt. If one of those worlds now keeps its rows
+  on this device, the call answers 403 `memory_withheld` and proposes
+  nothing. The proposed claim names those rows as its sources, so a world's
+  later settings apply to it as well.
 - The reply carries one extra `oneiron` object: `injected` says whether
   memory went in, and `remembered` gives the proposed claim or why it was
   refused.

@@ -2281,7 +2281,7 @@ export type ChatMessage = { role: ChatRole; content: ChatContent; name?: string 
 /** `oneiron::verbs::proxy::ChatStop` */
 export type ChatStop = string | string[]
 /** `oneiron::verbs::proxy::ChatCompletionRequest` */
-export type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null }
+export type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null; deadline_ms?: number | null }
 /** `oneiron::verbs::proxy::ChatCompletionObject` */
 export type ChatCompletionObject = "chat.completion"
 /** `oneiron::verbs::proxy::ChatCompletionRole` */
@@ -2679,7 +2679,7 @@ export type ConnectDelivery = { body: ConnectWindow; signature: string }
 /** `oneiron::sync::federation_burst::types::FederationBurstDisposition` */
 export type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string }
 /** `oneiron::sync::federation_burst::types::FederationBurstWorkState` */
-export type FederationBurstWorkState = "pending" | "imported" | "rejected"
+export type FederationBurstWorkState = "pending" | "imported" | "rejected" | "expired" | "stale_authority" | "erased"
 /** `oneiron::sync::federation_burst::types::FederationBurstReceipt` */
 export type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState }
 /** `oneiron::sync::federation_burst::types::FederationBurstReplayRequest` */
@@ -6089,7 +6089,7 @@ export type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "s
 /** `oneiron_model::llm::error::RetryableLlmError` */
 export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut"
 /** `oneiron_model::llm::error::BudgetDenied` */
-export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied"
+export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck"
 /** `oneiron_model::llm::error::LlmError` */
 export type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied }
 /** `oneiron::llm::step::public::ModelStepFailure` */
@@ -6887,7 +6887,7 @@ export type MemoryWrongRoot = { attempted: string; replacement: string; schemaRe
 /** `oneiron_contracts::error::hook::VerbHookStop` */
 export type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null }
 /** `oneiron_contracts::memory::error::MemoryError` */
-export type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null }
+export type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[] }
 /** `oneiron::blob_artifact::esign::document_view::EsignDocumentTrail` */
 export type EsignDocumentTrail = { trail: "readable"; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] } | { trail: "unreadable"; error: MemoryError }
 /** `oneiron::blob_artifact::esign::document_view::EsignDocumentView` */
