@@ -395,6 +395,9 @@ impl DecisionLadder<'_> {
         } = *call;
         let mut rung = dial.first;
         let mut prior = None;
+        // The pin that served `prior`: a later cut rung's pin joins the receipt
+        // (FIX 9907) but never speaks for an answer it did not give.
+        let mut prior_pin = None;
         let mut answered = None;
         let mut in_band = false;
         let mut needs_person = false;
@@ -443,6 +446,7 @@ impl DecisionLadder<'_> {
                 step_cause(&answer, in_band, row.mode, think_row)
             };
             prior = Some(answer);
+            prior_pin = readings.pins.last().cloned();
             if needs_person {
                 rung = DecisionRung::Human;
                 break;
@@ -513,8 +517,8 @@ impl DecisionLadder<'_> {
                 principal,
                 evidence: evidence.to_vec(),
                 reason,
-                // The prior is the last provider read's answer.
-                prior_provider: prior.as_ref().and(readings.pins.last().cloned()),
+                // The prior is the last provider read's answer, from the pin that served it.
+                prior_provider: prior.as_ref().and(prior_pin.clone()),
                 prior,
                 queue_pin: self.human_pin.clone(),
                 to: self.ask_to.cloned().unwrap_or_else(AskTo::owner),

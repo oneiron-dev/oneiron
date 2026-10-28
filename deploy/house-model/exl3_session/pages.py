@@ -47,6 +47,12 @@ class SessionPageTable(PageTable):
             owner.pages.append(page)
         self.owners.add(owner)
 
+    def adopt(self, owner, pages):
+        """`owner` takes over the one reference each of `pages` holds from
+        their allocation, which no Job holds: an import's fresh pages."""
+        owner.pages.extend(pages)
+        self.owners.add(owner)
+
     def release(self, owner):
         """Gives back every reference `owner` holds. A page nothing holds any
         more is free at once, and cleared."""

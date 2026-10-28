@@ -56,6 +56,21 @@ pub(crate) fn record_explicit_ruling_in_txn(
     };
     ESCALATION.put(&vault.store, txn, &(scope_key(&scope), id), &row)?;
     if remember {
+        // The remembered row activates at once, so its holder answers the
+        // same door a learned row's acceptance does, in this writer.
+        super::policy::standing_policy_holder_in_txn(vault, &*txn, owner)?;
+        let key = ScopeTriggerKey {
+            scope_digest: scope_key(&scope),
+            trigger: receipt.trigger,
+        };
+        let superseded = match STANDING_POLICY.get(&vault.store, &*txn, &key)? {
+            Some(mut previous) => {
+                let mut superseded = std::mem::take(&mut previous.superseded);
+                superseded.push(previous);
+                superseded
+            }
+            None => Vec::new(),
+        };
         let policy = StoredStandingPolicy {
             v: ROW_VERSION,
             row_ref: vault.new_entity_id()?.to_hex(),
@@ -67,10 +82,7 @@ pub(crate) fn record_explicit_ruling_in_txn(
             cited_receipts: vec![escalation_receipt_id(&id)],
             proposed_at: at,
             accepted_at: Some(at),
-        };
-        let key = ScopeTriggerKey {
-            scope_digest: scope_key(&scope),
-            trigger: receipt.trigger,
+            superseded,
         };
         STANDING_POLICY.put(&vault.store, txn, &key, &policy)?;
     }

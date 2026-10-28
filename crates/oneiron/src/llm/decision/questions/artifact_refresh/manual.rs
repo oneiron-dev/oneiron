@@ -23,7 +23,7 @@ use super::{
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::edit_roundtrip::{ArtifactAsk, UnitDecider};
 use crate::llm::decision::questions::{ARTIFACT_ADAPTER, ArtifactUnits, QuestionRecord};
-use crate::llm::decision::{DecisionBandPolicy, DecisionRung, Reversibility};
+use crate::llm::decision::{DecisionBandPolicy, Reversibility};
 use crate::{EntityId, Error, Result, Vault, WriteActor};
 
 /// Asks the caller's standing artifact question `question` now, by hand, as
@@ -129,8 +129,9 @@ impl Asking<'_> {
         }
         files.retain(|file| readable.contains(file));
         let definition = &self.record.definition;
-        let mut dial = definition.dial;
-        dial.ceiling = dial.ceiling.min(DecisionRung::Big);
+        // The recorded ceiling stands: a dial up to the person asks the next
+        // authorised role for a unit, never stops at big (FIX 9912).
+        let dial = definition.dial;
         let budget = definition.deadline(vault)?;
         self.ask_recorded(artifact, observed, "manual", |reference| {
             let ask = ArtifactAsk {

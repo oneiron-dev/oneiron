@@ -576,7 +576,8 @@ pub use files::{
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;
 pub use folder_source::{
-    FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile,
+    FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
+    FolderSourceFile, OriginalBytes,
 };
 mod import;
 pub use import::{

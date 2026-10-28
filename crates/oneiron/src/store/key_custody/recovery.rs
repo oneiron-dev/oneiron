@@ -171,11 +171,13 @@ impl Store {
 /// Lands `admitted` beside the restore's destination under `binding`, the
 /// image's own rebound there (the same namespace): a new container, every
 /// retirement fact first, then every live entry but an erased credential's,
-/// which lands retired, then the journal at the next writer epoch and every
-/// erased credential's fact, all synced. The admitted retirements stay owed
-/// as one takeover obligation at the admitted position: the new writer's
-/// targets and anchor must reach it at its epoch before they count complete
-/// (KS-4A2). The directory it made is removed when the restore fails.
+/// which lands retired, then each world pad compartment the head left
+/// unopened, carried on (PAD-3, FIX 11133), then the journal at the next
+/// writer epoch and every erased credential's fact, all synced. The admitted
+/// retirements stay owed as one takeover obligation at the admitted
+/// position: the new writer's targets and anchor must reach it at its epoch
+/// before they count complete (KS-4A2). The directory it made is removed
+/// when the restore fails.
 pub(crate) fn land_recovery(
     admitted: &AdmittedCustody,
     binding: &CustodyBinding,
@@ -204,6 +206,9 @@ pub(crate) fn land_recovery(
                 continue;
             }
             custody.publish(id, secret)?;
+        }
+        for carried in &admitted.carried {
+            custody.put_carried(carried)?;
         }
         let control = Control::taken_over(admitted.control.clone(), &admitted.position)?;
         let journal = custody.journal()?;
