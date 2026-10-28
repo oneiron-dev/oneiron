@@ -161,7 +161,7 @@ pub(crate) fn rule_outcome_receipts_in_txn(
                 tracing::warn!(
                     skill = %skill.to_hex(),
                     receipt = %receipt,
-                    %error,
+                    ?error,
                     "a rule skill outcome is unreadable; it was skipped"
                 );
             }
