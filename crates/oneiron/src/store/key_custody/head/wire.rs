@@ -1,23 +1,46 @@
 //! The custody head's wire (KS-4): its MessagePack shapes, the key id that
 //! binds a compartment and its wraps to their place in one head, and the
 //! unauthenticated reads of a head's position.
+//!
+//! A head is framed by bytes, never by a cap on what it holds (FIX 5800):
+//! each compartment's rows take at most [`COMPARTMENT_BYTES`] of plaintext,
+//! a history row too large for that rides in fragments across compartments
+//! in order, the released escrow recipients are paged with the host-readable
+//! rows, and the control compartment commits to every compartment with one
+//! fixed-size [`DigestRoot`], so no part of a head nears one envelope's
+//! bound however much custody grows.
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 use crate::error::Result;
 
+use super::super::body_history::HistoryRows;
 use super::super::log::{CustodyPosition, POSITION_LEN};
 use super::super::recipients::RecipientRetirement;
 use super::{CompartmentScope, carried_pads, head_corrupt};
 
 pub(super) const HEAD_MAGIC: &[u8; 4] = b"OCHD";
-/// Version 2 carries erased credentials' evidence in every host-readable
-/// compartment (FIX 10584 item 3), one pad per world compartment, each
-/// compartment's whole wire committed, and the carried world compartments
-/// (PAD-3). A version-1 head reads as invalid until the next publication
-/// pass seals it again (FIX 10469): no old-head reader.
-pub(super) const HEAD_VERSION: u16 = 2;
+/// Version 3 frames a head by bytes (FIX 5800): compartments bounded by
+/// their plaintext, history rows in fragments, paged recipients and one
+/// fixed control root. It keeps version 2's erased credentials' evidence
+/// (FIX 10584 item 3), one pad per world compartment, each compartment's
+/// whole wire committed, and the carried world compartments (PAD-3). An
+/// older head reads as invalid until the next publication pass seals it
+/// again (FIX 10469): no old-head reader.
+pub(super) const HEAD_VERSION: u16 = 3;
+/// The most plaintext bytes one compartment's rows are counted at: a pacing
+/// bound far inside one E0 envelope, never a cap on the head; a scope with
+/// more takes more compartments (Rule 5).
+const COMPARTMENT_BYTES: usize = 4 << 20;
+/// The most bytes of one history row's value in one compartment: a larger
+/// value rides in fragments of this size, in order.
+const HISTORY_FRAGMENT_BYTES: usize = 1 << 20;
+/// What one row's MessagePack framing, its field names and markers, is
+/// counted at above its byte strings.
+const ROW_OVERHEAD: usize = 96;
 
 /// The derive-key context of a compartment's envelope key id ([`key_id`]).
 const KEY_ID_CONTEXT: &str = "oneiron/custody-head/compartment-key-id/v1";
@@ -61,16 +84,21 @@ pub(super) struct WrapWire {
 }
 
 /// One compartment's plaintext. The control compartment holds the control
-/// secret and the other compartments' digests; the rest hold entries.
+/// secret and the root of every other compartment's digest; the rest hold
+/// entries.
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BodyWire {
     pub(super) control: Option<[u8; 32]>,
-    pub(super) digests: Vec<[u8; 32]>,
+    /// The control compartment's: its commitment to every other compartment
+    /// and every carried one (FIX 5800).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) root: Option<DigestRoot>,
     pub(super) live: Vec<EntryWire>,
     pub(super) retired: Vec<FactWire>,
-    /// The control compartment's: every released escrow recipient the
-    /// lineage retired, public facts only (LC FIX 5384/5385).
+    /// A host-readable compartment's: released escrow recipients the lineage
+    /// retired, public facts only (LC FIX 5384/5385), paged with its other
+    /// rows (FIX 5800).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) recipients: Vec<RecipientRetirement>,
     /// A host-readable compartment's: body history rows, ids only (FIX
@@ -79,9 +107,17 @@ pub(super) struct BodyWire {
     /// A host-readable compartment's: each erased credential's fact (FIX
     /// 10584 item 3), value-free, whatever key eligibility keeps local.
     pub(super) evidence: Vec<EvidenceWire>,
-    /// The control compartment's: each carried compartment's digest (PAD-3).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(super) carried_digests: Vec<[u8; 32]>,
+}
+
+/// What a control compartment commits to (FIX 5800): how many compartments
+/// follow it and how many carried ones its head holds, and one root over
+/// all their digests in order ([`carried_pads::digest_root`]).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DigestRoot {
+    pub(super) compartments: u32,
+    pub(super) carried: u32,
+    pub(super) root: [u8; 32],
 }
 
 #[derive(Serialize, Deserialize)]
@@ -96,8 +132,13 @@ pub(super) struct EvidenceWire {
 pub(super) struct HistoryWire {
     #[serde(with = "serde_bytes_vec")]
     pub(super) key: Vec<u8>,
+    /// The value, or one fragment of it (FIX 5800).
     #[serde(with = "serde_bytes_vec")]
     pub(super) value: Vec<u8>,
+    /// The fragment's place in its row, from 0.
+    pub(super) part: u32,
+    /// Whether it is the row's last fragment.
+    pub(super) last: bool,
 }
 
 impl Drop for BodyWire {
@@ -236,5 +277,101 @@ pub(in crate::store::key_custody) fn staged_position(lead: &[u8]) -> Option<Cust
             CustodyPosition::from_bytes(&position)
         }
         _ => None,
+    }
+}
+
+/// Each scope's compartment bodies as rows fill them, scopes in order.
+#[derive(Default)]
+pub(super) struct Bodies {
+    scopes: BTreeMap<CompartmentScope, Vec<(BodyWire, usize)>>,
+}
+
+impl Bodies {
+    /// The body of `scope` a row with `bytes` of byte strings goes in: the
+    /// last one while it has room, else a fresh one. A world compartment
+    /// holds one pad (PAD-3); a row larger than the bound gets a body alone.
+    pub(super) fn body(&mut self, scope: CompartmentScope, bytes: usize) -> &mut BodyWire {
+        let bytes = bytes.saturating_add(ROW_OVERHEAD);
+        let chunks = self.scopes.entry(scope).or_default();
+        let full = chunks.last().is_none_or(|(body, used)| match scope.world() {
+            Some(_) => !body.live.is_empty() || !body.retired.is_empty(),
+            None => *used > 0 && used.saturating_add(bytes) > COMPARTMENT_BYTES,
+        });
+        if full {
+            chunks.push((BodyWire::default(), 0));
+        }
+        let at = chunks.len() - 1;
+        let (body, used) = &mut chunks[at];
+        *used = used.saturating_add(bytes);
+        body
+    }
+
+    /// The history row `key`, `value` in the host-readable compartments, a
+    /// value larger than [`HISTORY_FRAGMENT_BYTES`] in fragments, in order.
+    pub(super) fn push_history(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        let fragments: Vec<&[u8]> = if value.is_empty() {
+            vec![value]
+        } else {
+            value.chunks(HISTORY_FRAGMENT_BYTES).collect()
+        };
+        let count = fragments.len();
+        for (part, fragment) in fragments.into_iter().enumerate() {
+            let row = HistoryWire {
+                key: key.to_vec(),
+                value: fragment.to_vec(),
+                part: u32::try_from(part).map_err(|_| head_corrupt())?,
+                last: part + 1 == count,
+            };
+            self.body(CompartmentScope::HostReadable, key.len() + fragment.len())
+                .history
+                .push(row);
+        }
+        Ok(())
+    }
+
+    /// Every body, scopes in order and each scope's in the order it filled.
+    pub(super) fn into_bodies(self) -> impl Iterator<Item = (CompartmentScope, BodyWire)> {
+        self.scopes
+            .into_iter()
+            .flat_map(|(scope, bodies)| bodies.into_iter().map(move |(body, _)| (scope, body)))
+    }
+}
+
+/// A history row whose fragments are still arriving, compartment by
+/// compartment in order (FIX 5800).
+#[derive(Default)]
+pub(super) struct HistoryJoin {
+    pending: Option<HistoryWire>,
+}
+
+impl HistoryJoin {
+    /// Joins `row` to the row it continues, and lands the row in `into` once
+    /// its last fragment has come. A fragment out of order, or of another
+    /// row before the pending one ended, is refused.
+    pub(super) fn push(&mut self, row: HistoryWire, into: &mut HistoryRows) -> Result<()> {
+        let joined = match self.pending.take() {
+            None if row.part == 0 => row,
+            Some(mut held) if held.key == row.key && held.part.checked_add(1) == Some(row.part) => {
+                held.value.extend_from_slice(&row.value);
+                held.part = row.part;
+                held.last = row.last;
+                held
+            }
+            _ => return Err(head_corrupt()),
+        };
+        if joined.last {
+            into.insert(joined.key, joined.value);
+        } else {
+            self.pending = Some(joined);
+        }
+        Ok(())
+    }
+
+    /// Refuses a head whose last history row never ended.
+    pub(super) fn finish(self) -> Result<()> {
+        match self.pending {
+            Some(_) => Err(head_corrupt()),
+            None => Ok(()),
+        }
     }
 }

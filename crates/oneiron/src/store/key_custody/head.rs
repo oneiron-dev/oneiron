@@ -10,10 +10,11 @@
 //! vault data key's custody subkey as well. An owner-only compartment is
 //! never wrapped to the host-readable data key. Compartment 0 is the control
 //! compartment: the lineage's control secret, which opens its log frames and
-//! authenticates its anchor records, and the digest of every other
-//! compartment in order, so no compartment is dropped, added, moved or
-//! transplanted from another head. A head holds no frozen requirement: a
-//! restore asks it for what its image needs. A world's pads may go in a
+//! authenticates its anchor records, and one fixed-size root over every
+//! other compartment's digest in order, with their count, so no compartment
+//! is dropped, added, moved or transplanted from another head (FIX 5800).
+//! A head holds no frozen requirement: a restore asks it for what its image
+//! needs. A world's pads may go in a
 //! compartment of their own, wrapped to the world's admitted machines and
 //! roots alone (`pad_scope`, FIX 6706); that is off for now. A world
 //! compartment holds one pad, and the control compartment commits to each
@@ -58,8 +59,8 @@ pub(crate) use self::pad_scope::{
 pub(crate) use self::scope::{CompartmentScope, CustodyOpener, CustodyRecipients};
 pub(super) use self::wire::{head_position, serde_bytes_vec, staged_position};
 use self::wire::{
-    BodyWire, CompartmentWire, EntryWire, EvidenceWire, FactWire, HEAD_MAGIC, HEAD_VERSION,
-    HeadWire, HistoryWire, WrapWire, key_id, parse,
+    Bodies, BodyWire, CompartmentWire, DigestRoot, EntryWire, EvidenceWire, FactWire, HEAD_MAGIC,
+    HEAD_VERSION, HeadWire, HistoryJoin, WrapWire, key_id, parse,
 };
 
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
@@ -67,10 +68,6 @@ const DATA_KEY_RECIPIENT: &[u8] = b"oneiron/custody-head/data-key/v1";
 const COMPARTMENT_RECIPIENT: &[u8] = b"oneiron/custody-head/compartment/v1";
 const TO_ROOT: u8 = 1;
 const TO_DATA_KEY: u8 = 2;
-/// The most entries, live or retired, one compartment holds: a codec bound
-/// that keeps each compartment's plaintext far inside one E0 envelope; a
-/// scope with more takes more compartments.
-const COMPARTMENT_ENTRIES: usize = 32 * 1024;
 
 /// The context of the vault data key's subkey a host-readable compartment
 /// is also wrapped under.
@@ -248,74 +245,64 @@ pub(super) fn seal_head(
     carried: &[CarriedWorldPad],
     recipients: &CustodyRecipients,
 ) -> Result<Zeroizing<Vec<u8>>> {
-    // Each scope's entries go in as many compartments as they fill, each
-    // at most COMPARTMENT_ENTRIES of them: a head grows with its custody,
-    // never past one envelope's bound and never capped (Rule 5). A world
-    // compartment holds one pad (PAD-3).
-    let mut scopes: BTreeMap<CompartmentScope, Vec<BodyWire>> = BTreeMap::new();
-    let chunk_of = |scopes: &mut BTreeMap<CompartmentScope, Vec<BodyWire>>,
-                    scope: CompartmentScope| {
-        let bound = scope.world().map_or(COMPARTMENT_ENTRIES, |_| 1);
-        let chunks = scopes.entry(scope).or_default();
-        if chunks.last().is_none_or(|body| {
-            body.live.len() + body.retired.len() + body.history.len() + body.evidence.len() >= bound
-        }) {
-            chunks.push(BodyWire::default());
-        }
-        chunks.len() - 1
-    };
+    // Each scope's rows go in as many compartments as they fill, each at
+    // most a pacing bound of plaintext bytes and a world's one pad (PAD-3):
+    // a head grows with its custody, never past one envelope's bound and
+    // never capped (Rule 5, FIX 5800).
+    let mut bodies = Bodies::default();
     for entry in entries {
         let scope = CompartmentScope::of(entry.id.subject())?;
-        let at = chunk_of(&mut scopes, scope);
-        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
+        let item = entry.id.subject().item();
+        let secret = entry.secret.expose();
+        bodies
+            .body(scope, item.len() + secret.len())
             .live
             .push(EntryWire {
                 kind: entry.id.kind().tag(),
-                item: entry.id.subject().item().to_vec(),
+                item: item.to_vec(),
                 generation: entry.id.generation(),
-                secret: entry.secret.expose().to_vec(),
+                secret: secret.to_vec(),
             });
     }
     for id in retired {
         let scope = recipients.fact_scope(&id)?;
-        let at = chunk_of(&mut scopes, scope);
-        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
-            .retired
-            .push(FactWire {
-                kind: id.kind().tag(),
-                item: id.subject().item().to_vec(),
-                generation: id.generation(),
-            });
+        let item = id.subject().item();
+        bodies.body(scope, item.len()).retired.push(FactWire {
+            kind: id.kind().tag(),
+            item: item.to_vec(),
+            generation: id.generation(),
+        });
     }
-    // The body history rides with the host-readable keys it retires.
+    // The body history rides with the host-readable keys it retires, a
+    // large row in fragments.
     for (key, value) in history {
-        let scope = CompartmentScope::HostReadable;
-        let at = chunk_of(&mut scopes, scope);
-        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
-            .history
-            .push(HistoryWire {
-                key: key.clone(),
-                value: value.clone(),
-            });
+        bodies.push_history(key, value)?;
     }
     // Every erased credential's fact rides the host-readable compartments,
     // whatever key eligibility keeps local (FIX 10584 item 3).
     for (credential, fact) in evidence {
-        let scope = CompartmentScope::HostReadable;
-        let at = chunk_of(&mut scopes, scope);
-        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
+        bodies
+            .body(CompartmentScope::HostReadable, 16)
             .evidence
             .push(EvidenceWire {
                 credential: *credential.as_bytes(),
                 fact: fact.code(),
             });
     }
-    let mut compartments = Vec::with_capacity(scopes.len() + 1);
-    let mut digests = Vec::with_capacity(scopes.len());
-    let chunks = scopes
-        .into_iter()
-        .flat_map(|(scope, bodies)| bodies.into_iter().map(move |body| (scope, body)));
-    for (index, (scope, body)) in chunks.enumerate() {
+    // The released escrow recipients are paged with them, public facts only
+    // (FIX 5800), so the control compartment stays one size.
+    for retirement in released {
+        let bytes = rmp_serde::to_vec_named(&retirement)
+            .map_err(|_| head_corrupt())?
+            .len();
+        bodies
+            .body(CompartmentScope::HostReadable, bytes)
+            .recipients
+            .push(retirement);
+    }
+    let mut compartments = Vec::new();
+    let mut digests = Vec::new();
+    for (index, (scope, body)) in bodies.into_bodies().enumerate() {
         let index = u32::try_from(index + 1).map_err(|_| head_corrupt())?;
         let sealed = seal_compartment(position, index, Some(scope), &body, recipients)?;
         digests.push(carried_pads::wire_digest(&sealed)?);
@@ -324,13 +311,12 @@ pub(super) fn seal_head(
     let (carried_world_pads, carried_digests) = carried_pads::eligible(carried, recipients)?;
     let control_body = BodyWire {
         control: Some(*control.secret()),
-        digests,
+        root: Some(carried_pads::digest_root(&digests, &carried_digests)?),
         live: Vec::new(),
         retired: Vec::new(),
-        recipients: released,
+        recipients: Vec::new(),
         history: Vec::new(),
         evidence: Vec::new(),
-        carried_digests,
     };
     compartments.insert(
         0,
@@ -439,11 +425,13 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     let key = unwrap_key(&position, &control_id, None, &first.wraps, opener).ok_or_else(|| {
         crate::world_keys::refused("the custody head does not open with this key or kit")
     })?;
-    let mut control = open_body(&position, &control_id, &key, &first.sealed)?;
+    let control = open_body(&position, &control_id, &key, &first.sealed)?;
     let secret = Zeroizing::new(control.control.ok_or_else(head_corrupt)?);
+    let root: DigestRoot = control.root.ok_or_else(head_corrupt)?;
     if !control.history.is_empty()
         || !control.evidence.is_empty()
-        || !carried_pads::committed(rest, &control.digests, &carried, &control.carried_digests)?
+        || !control.recipients.is_empty()
+        || !carried_pads::committed(rest, &carried, &root)?
     {
         return Err(head_corrupt());
     }
@@ -454,7 +442,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         live: BTreeMap::new(),
         retired: BTreeSet::new(),
         unopened: BTreeSet::new(),
-        recipients: std::mem::take(&mut control.recipients),
+        recipients: Vec::new(),
         history: BTreeMap::new(),
         evidence: BTreeMap::new(),
         carried: Vec::new(),
@@ -462,6 +450,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     // A scope's compartments follow one another, scopes in order: one
     // canonical layout, which the control compartment's digests fix.
     let mut last: Option<CompartmentScope> = None;
+    let mut history = HistoryJoin::default();
     for (index, compartment) in rest.iter().enumerate() {
         let scope = CompartmentScope::from_wire(compartment.scope, compartment.world)
             .ok_or_else(head_corrupt)?;
@@ -479,13 +468,15 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
             continue;
         };
         let mut body = open_body(&position, &id, &key, &compartment.sealed)?;
-        if !body.recipients.is_empty()
-            || !body.carried_digests.is_empty()
-            || ((!body.history.is_empty() || !body.evidence.is_empty())
+        if body.root.is_some()
+            || ((!body.history.is_empty()
+                || !body.evidence.is_empty()
+                || !body.recipients.is_empty())
                 && scope != CompartmentScope::HostReadable)
         {
             return Err(head_corrupt());
         }
+        opened.recipients.append(&mut body.recipients);
         carried_pads::check_pad(compartment.pad.as_ref(), &body)?;
         for wire in &body.evidence {
             let fact = CredentialFenceFact {
@@ -498,7 +489,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
             if !super::body_history::admits(&row.key) {
                 return Err(head_corrupt());
             }
-            opened.history.insert(row.key, row.value);
+            history.push(row, &mut opened.history)?;
         }
         // A world's compartment names each of its pads once, live or
         // retired, never both (FIX 6706).
@@ -540,6 +531,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
             opened.retired.insert(id);
         }
     }
+    history.finish()?;
     carried_pads::open_carried(&mut opened, carried, opener)?;
     Ok(opened)
 }
