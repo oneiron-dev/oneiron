@@ -1,13 +1,15 @@
 //! FIX 10176: a settlement measures the proposal it names, never a document
 //! minted for it.
 
-use super::{ProposalDeltaSettleRequest, settlement_receipt};
+use super::{ProposalDeltaSettleRequest, ProposalReplacement, settlement_receipt};
 use crate::Vault;
 use crate::edit_distance::delta::{
-    AmendmentDelta, DeltaCaptureContext, DeltaSource, EndpointRef, MeasuredEnd, capture_delta_best,
+    AmendmentDelta, DeltaCaptureContext, DeltaSource, EndpointRef, MeasuredEnd, amendment_delta,
+    capture_delta_best, delta_from_recorded_ops,
 };
 use crate::edit_distance::{
-    LoroOpRef, OpAttribution, ProposalArtifactRef, RetainedProposal, TextRead, retained_proposal,
+    OpAttribution, ProposalArtifactRef, RetainedProposal, TextRead, put_imported_endpoints,
+    retained_proposal,
 };
 use crate::error::Result;
 
@@ -23,11 +25,18 @@ pub(super) struct SettledWindow {
 /// Measures a settlement through [`capture_delta_best`].
 ///
 /// The named artifact's recorded window measures it when that window is this
-/// edit: its proposed and final texts are the settled endpoints. Otherwise the
-/// endpoints were edited outside the recorded window (an imported,
-/// endpoint-only edit) and are measured as `reconstructed` (ARCH-0056 §3,
-/// ruling r2). An end the artifact holds is named there; an imported end is
-/// named on the settlement receipt beside its content hash.
+/// edit: its proposed and final texts are the settled endpoints. The receipt
+/// is the artifact's own, reused only for an identical measurement; a
+/// different one stored there (another engine version) takes a receipt of
+/// its own, still naming the artifact in its refs.
+///
+/// Otherwise the endpoints were edited outside the recorded window (an
+/// imported, endpoint-only edit). Both texts are retained under the
+/// settlement's own record and measured as `reconstructed` (ARCH-0056 §3,
+/// ruling r2) under that record's receipt. The proposed end stays named in
+/// the original artifact when that artifact holds it.
+///
+/// A named artifact that does not read settles as endpoint-only.
 ///
 /// # Errors
 ///
@@ -37,83 +46,107 @@ pub(super) fn settle_window(
     input: &ProposalDeltaSettleRequest,
     expected_final: &str,
 ) -> Result<SettledWindow> {
-    let original = match input.artifact_ref {
-        Some(id) => retained_proposal(vault, ProposalArtifactRef::new(id))?,
-        None => None,
-    };
-    let subject = match &original {
-        Some(original) => original.record.artifact_ref.entity_id(),
-        None => vault.new_entity_id()?,
-    };
-    let receipt_id = settlement_receipt(subject);
-    let proposed_at = original.as_ref().and_then(|original| {
-        held_end(
-            original,
-            original.proposed_text(),
-            &original.record.proposed_ref,
-            &input.proposed_text,
-        )
+    let original = input.artifact_ref.and_then(|id| {
+        match retained_proposal(vault, ProposalArtifactRef::new(id)) {
+            Ok(found) => found,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a settlement's named artifact does not read; it settles endpoint-only"
+                );
+                None
+            }
+        }
     });
-    let final_at = original.as_ref().and_then(|original| {
-        held_end(
-            original,
-            original.final_text(),
-            &original.record.final_ref,
-            expected_final,
-        )
-    });
+    let held_proposed = original
+        .as_ref()
+        .is_some_and(|original| holds(original.proposed_text(), &input.proposed_text));
     let recorded = original
         .as_ref()
-        .filter(|_| proposed_at.is_some() && final_at.is_some());
-    let context = DeltaCaptureContext {
-        recorded,
-        bodies: None,
-        texts: Some((
-            MeasuredEnd {
-                at: proposed_at.unwrap_or_else(|| EndpointRef::receipt(&receipt_id)),
-                content: input.proposed_text.as_str(),
-            },
-            MeasuredEnd {
-                at: final_at.unwrap_or_else(|| EndpointRef::receipt(&receipt_id)),
-                content: expected_final,
-            },
-        )),
+        .filter(|original| held_proposed && holds(original.final_text(), expected_final))
+        .and_then(|original| {
+            let delta = delta_from_recorded_ops(original).ok()?;
+            Some((original.record.artifact_ref, delta))
+        });
+    if let Some((artifact, delta)) = recorded {
+        let own = settlement_receipt(artifact.entity_id());
+        let receipt_id = match amendment_delta(vault, &own)? {
+            Some(stored) if stored != delta => settlement_receipt(vault.new_entity_id()?),
+            _ => own,
+        };
+        return Ok(SettledWindow {
+            receipt_id,
+            artifact: original,
+            delta: Some(delta),
+        });
+    }
+    let record = ProposalArtifactRef::new(vault.new_entity_id()?);
+    put_imported_endpoints(
+        vault,
+        record,
+        original
+            .as_ref()
+            .and_then(|original| original.record.source_turn_ref),
+        &input.proposed_text,
+        expected_final,
+    )?;
+    let proposed_at = match &original {
+        Some(original) if held_proposed => {
+            EndpointRef::proposal(original.record.artifact_ref, &original.record.proposed_ref)
+        }
+        _ => EndpointRef::imported_proposed(record),
     };
-    let delta = capture_delta_best(context).ok();
+    let context = DeltaCaptureContext::from_texts(
+        MeasuredEnd {
+            at: proposed_at,
+            content: input.proposed_text.as_str(),
+        },
+        MeasuredEnd {
+            at: EndpointRef::imported_final(record),
+            content: expected_final,
+        },
+    );
     Ok(SettledWindow {
-        receipt_id,
+        receipt_id: settlement_receipt(record.entity_id()),
         artifact: original,
-        delta,
+        delta: capture_delta_best(context).ok(),
     })
 }
 
-/// The artifact version that holds `settled` as this end of its window.
-fn held_end(
-    original: &RetainedProposal,
-    read: TextRead,
-    frontier: &LoroOpRef,
-    settled: &str,
-) -> Option<EndpointRef> {
-    (read.into_text().as_deref() == Some(settled))
-        .then(|| EndpointRef::proposal(original.record.artifact_ref, frontier))
+/// Whether `read` is the settled text.
+fn holds(read: TextRead, settled: &str) -> bool {
+    read.into_text().as_deref() == Some(settled)
 }
 
-/// The attribution every recorded change of a recorded-ops window carries,
-/// which is then every hunk's; `None` for a reconstructed Δ or a window of
-/// more than one attribution, where no hunk maps onto one change.
-pub(super) fn sole_attribution(window: &SettledWindow) -> Option<OpAttribution> {
-    if window.delta.as_ref()?.source != DeltaSource::RecordedOps {
-        return None;
-    }
-    let mut changes = window
+/// Each supplied hunk's attribution, given only where the recorded window
+/// verifies it: the window has one change per hunk, in order, and change `i`
+/// is exactly hunk `i` applied once to its own before text. A hunk that does
+/// not verify, and every hunk of a reconstructed settlement, names no one.
+pub(super) fn hunk_attributions(
+    window: &SettledWindow,
+    replacements: &[ProposalReplacement],
+) -> Vec<Option<OpAttribution>> {
+    let recorded = window
+        .delta
+        .as_ref()
+        .is_some_and(|delta| delta.source == DeltaSource::RecordedOps);
+    let artifact = window
         .artifact
-        .as_ref()?
-        .record
-        .ops_by_actor
+        .as_ref()
+        .filter(|artifact| recorded && artifact.record.ops_by_actor.len() == replacements.len());
+    replacements
         .iter()
-        .map(|(attribution, _)| *attribution);
-    let first = changes.next()?;
-    changes
-        .all(|attribution| attribution == first)
-        .then_some(first)
+        .enumerate()
+        .map(|(index, replacement)| {
+            let artifact = artifact?;
+            let (attribution, span) = artifact.record.ops_by_actor.get(index)?;
+            let (TextRead::Text(before), TextRead::Text(after)) = artifact.change_texts(span)
+            else {
+                return None;
+            };
+            let applied = before.matches(replacement.before.as_str()).count() == 1
+                && before.replacen(replacement.before.as_str(), &replacement.after, 1) == after;
+            applied.then_some(*attribution)
+        })
+        .collect()
 }

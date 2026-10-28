@@ -274,8 +274,8 @@ pub struct SettledHunkView {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProposalDeltaSettlement {
     pub receipt_id: String,
-    /// The original artifact the settlement measured; `None` for an
-    /// endpoint-only edit.
+    /// The original artifact the request named, when the vault holds it;
+    /// `receipt_id` names the record the measurement rides.
     pub artifact_ref: Option<EntityId>,
     pub proposed_text: String,
     pub final_text: String,
@@ -422,11 +422,12 @@ pub fn skill_attribution_settle_as_owner(
         ),
         None => (Vec::new(), Vec::new(), Vec::new()),
     };
-    let attribution = settle_window::sole_attribution(&window);
+    let attributions = settle_window::hunk_attributions(&window, &input.replacements);
     let hunks = input
         .replacements
         .iter()
-        .map(|replacement| SettledHunkView {
+        .zip(attributions)
+        .map(|(replacement, attribution)| SettledHunkView {
             before: replacement.before.clone(),
             after: replacement.after.clone(),
             edit_mass: crate::edit_distance::myers::myers_line_diff(
