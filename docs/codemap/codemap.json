@@ -40706,7 +40706,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 11,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -84137,8 +84137,8 @@
      "path": "src/session/demonstration.rs",
      "purpose": "`demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs…",
      "surface": {
-      "crate-vis": 7,
-      "fn": 1
+      "crate-vis": 11,
+      "fn": 2
      }
     },
     {
@@ -92024,7 +92024,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 30
+      "re-export": 31
      }
     },
     {
@@ -92152,6 +92152,7 @@
      "notable": [
       "CanonicalCheckpointRef",
       "ConversationAnchor",
+      "RegionDescriptor",
       "SessionAppend",
       "SessionAppended",
       "SessionCapability",
@@ -92160,9 +92161,13 @@
       "SessionCreate",
       "SessionCreated",
       "SessionDrop",
+      "SessionExport",
+      "SessionExported",
       "SessionFork",
       "SessionForked",
       "SessionGenerate",
+      "SessionImport",
+      "SessionImported",
       "SessionInvalidation",
       "SessionKey",
       "SessionOp",
@@ -92173,15 +92178,17 @@
       "SessionRestored",
       "SessionSuffixCommit",
       "SessionSuffixStaged",
-      "SessionTarget"
+      "SessionTarget",
+      "SnapshotCapability",
+      "SnapshotMiss"
      ],
      "path": "src/llm/session.rs",
      "purpose": "Exact conversation sessions on a model worker (DESIGN-V2 §3.2, R2): what a session is keyed by, the…",
      "surface": {
-      "const": 4,
-      "enum": 2,
-      "fn": 4,
-      "struct": 22
+      "const": 8,
+      "enum": 3,
+      "fn": 8,
+      "struct": 28
      }
     },
     {
@@ -100558,7 +100565,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/browser_takeover_routes.rs",
@@ -107919,9 +107926,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/native_exl3/buffer.rs",
-     "purpose": "A native call's input region: the conversation's bytes copied once into an immutable shared region…",
+     "purpose": "A native call's regions",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 13
      }
     },
     {
@@ -107931,7 +107938,7 @@
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -107941,7 +107948,7 @@
      "path": "src/models/native_exl3/session_ops.rs",
      "purpose": "The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -107951,7 +107958,7 @@
      "path": "src/models/native_exl3/transport.rs",
      "purpose": "One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -107961,7 +107968,7 @@
      "path": "src/models/native_exl3/wire.rs",
      "purpose": "Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
