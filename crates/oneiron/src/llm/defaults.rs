@@ -14,8 +14,8 @@ use oneiron_model::llm::locality_rank;
 
 mod submit;
 pub use submit::{
-    PurposeDefaultProposal, PurposeDefaultSubmission, PurposeDefaultSubmitter,
-    purpose_default_grant_target,
+    PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission,
+    PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 
 // The sibling tests name these bare through `use super::*`, as they did when the table
