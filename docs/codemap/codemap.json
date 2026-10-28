@@ -26611,7 +26611,7 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 33,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 11,
       "trait": 1
      }
@@ -29765,7 +29765,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactAsk",
@@ -39987,7 +39987,7 @@
      "path": "src/llm/decision/media.rs",
      "purpose": "Images and audio clips a typed decision reads",
      "surface": {
-      "const": 7,
+      "const": 3,
       "fn": 12,
       "struct": 2
      }
@@ -40066,7 +40066,7 @@
      "path": "src/llm/decision/questions/arrival.rs",
      "purpose": "Outcome arrival projection in the materializing transaction",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -40084,7 +40084,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -40110,6 +40110,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactUnitReceipt"
+     ],
+     "path": "src/llm/decision/questions/artifact_refresh/unit_receipts.rs",
+     "purpose": "FIX 9913: every unit an artifact ask left without an answer keeps its receipt in the question's ask log…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -40128,6 +40141,20 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "QuestionCriteria"
+     ],
+     "path": "src/llm/decision/questions/criteria.rs",
+     "purpose": "A question's criteria (ARCH-0076 §3), one type for every asker: a typed question's lines and a task's…",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 1
      }
     },
     {
@@ -40191,11 +40218,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/decision/questions/lifetime.rs",
+     "purpose": "FIX 9918: an erased answer takes its copies with it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 11,
-      "re-export": 14
+      "crate-vis": 12,
+      "re-export": 15
      }
     },
     {
@@ -40250,7 +40287,6 @@
       "QuestionActivation",
       "QuestionAskerClass",
       "QuestionAudience",
-      "QuestionCriteria",
       "QuestionDefinition",
       "QuestionMedia",
       "QuestionRecord",
@@ -40264,11 +40300,12 @@
      "path": "src/llm/decision/questions/records.rs",
      "purpose": "Immutable definitions and typed outcome bindings",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 2,
       "enum": 7,
-      "fn": 12,
-      "struct": 15,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 14,
       "type": 1
      }
     },
@@ -40315,6 +40352,16 @@
      "path": "src/llm/decision/questions/refresh/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/role_asks.rs",
+     "purpose": "A question unit's person ask (OF-506; ARCH-0076 role ladder): a graph or artifact answer whose dial reaches…",
+     "surface": {
+      "fn": 1
+     }
     },
     {
      "bucket": "L",
@@ -40399,7 +40446,7 @@
      "path": "src/llm/decision/routine.rs",
      "purpose": "Routine driver steps (the CUA-S1 pattern, OF-523): a small decider takes a driver's routine choice behind…",
      "surface": {
-      "const": 6,
+      "const": 5,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -40427,6 +40474,7 @@
      "kind": "src",
      "notable": [
       "DecisionSeat",
+      "RemoteDecisionCapability",
       "SeatAnswer",
       "SeatPhase",
       "SeatRequest"
@@ -40435,8 +40483,8 @@
      "purpose": "Opt-in, non-light typed-decision seat and its receipt boundary",
      "surface": {
       "enum": 1,
-      "fn": 2,
-      "struct": 2,
+      "fn": 3,
+      "struct": 3,
       "trait": 1,
       "type": 1
      }
@@ -69487,7 +69535,7 @@
      "surface": {
       "crate-vis": 14,
       "enum": 2,
-      "fn": 5,
+      "fn": 7,
       "struct": 15
      }
     },
@@ -79649,7 +79697,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 135,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80358,7 +80406,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5331,
+   "source_files": 5335,
    "test_files": 902
   },
   "oneiron-android": {
@@ -112043,6 +112091,7 @@
       "ArtifactPublishView",
       "ArtifactRefRequest",
       "ArtifactServeTier",
+      "ArtifactUnitReceipt",
       "ArtifactUnitView",
       "ArtifactUnits",
       "ArtifactUnitsRequest",
@@ -114645,7 +114694,8 @@
       "QuestionAudience",
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
-      "QuestionCriteria",
+      "QuestionCriteriaCriterion",
+      "QuestionCriteriaString",
       "QuestionDefinitionDecisionQuestion",
       "QuestionDefinitionDecisionQuestionInput",
       "QuestionEditRequest",
@@ -116012,8 +116062,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1024,
-      "struct": 3129
+      "enum": 1025,
+      "struct": 3130
      }
     },
     {
