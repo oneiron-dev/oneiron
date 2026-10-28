@@ -16,10 +16,11 @@ fn decision_offer_allowed(offer: &oneiron::llm::run_admission::OfferBinding) -> 
 impl OfferLadder {
     /// This ladder for one decision call whose posture keeps its text on the
     /// host: a call-local copy of the rungs whose offer may take it, in order
-    /// and at their configured positions, under this ladder's name, receipt
-    /// and rests, scoped so that no owner's fallback that would take the work
-    /// off the device is reachable ([`Self::can_serve`]). The shared ladder is
-    /// never changed. `None` when no rung may take the call.
+    /// and at their configured positions, under this ladder's name and rests,
+    /// scoped so that no owner's fallback that would take the work
+    /// off the device is reachable ([`Self::can_serve`]). Every ladder stamps
+    /// its receipt. The shared ladder is never changed. `None` when no rung
+    /// may take the call.
     pub(crate) fn kept_on_host(&self) -> Option<Arc<Self>> {
         let rungs: Vec<LadderRung> = self
             .rungs
@@ -33,7 +34,6 @@ impl OfferLadder {
         Some(Arc::new(Self {
             name: self.name.clone(),
             rungs,
-            receipt: self.receipt,
             picked: self.picked,
             rests: Arc::clone(&self.rests),
             scope: SeatScope {
