@@ -320,7 +320,7 @@ pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
-    HostSlipIssuer,
+    HostSlipIssuer, ScopeOpeningKey,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,

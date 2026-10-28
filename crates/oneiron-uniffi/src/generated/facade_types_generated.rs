@@ -20831,6 +20831,8 @@ pub struct Offer {
     pub signer: String,
     #[serde(rename = "signature")]
     pub signature: String,
+    #[serde(rename = "key")]
+    pub key: String,
 }
 
 /// `oneiron::verbs::federation::AcceptConnect`.
@@ -20932,6 +20934,8 @@ pub struct RescopeOffer {
     pub signer: String,
     #[serde(rename = "signature")]
     pub signature: String,
+    #[serde(rename = "key")]
+    pub key: String,
 }
 
 /// `oneiron::verbs::federation::AcceptRescopeConnect`.

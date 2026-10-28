@@ -6918,7 +6918,7 @@ class OfferConnect(TypedDict):
 class FederationPactScope(TypedDict):
     lo_to_hi: FederationDirectionScope
     hi_to_lo: FederationDirectionScope
-Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str, "key": str})
 class AcceptConnect(TypedDict):
     offer: Offer
     grant: str
@@ -6943,7 +6943,7 @@ class RescopeConnect(TypedDict):
     epoch: int
     outbound: FederationDirectionScope
     inbound: FederationDirectionScope
-RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str, "key": str})
 class AcceptRescopeConnect(TypedDict):
     offer: RescopeOffer
 class ConnectRescoped(TypedDict):

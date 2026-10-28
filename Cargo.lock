@@ -8009,6 +8009,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek 2.2.0",
+ "getrandom 0.4.3",
  "oneiron-contracts",
  "oneiron-crypto",
  "p256",
@@ -8017,6 +8018,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]

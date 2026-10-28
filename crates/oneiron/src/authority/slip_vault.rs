@@ -13,7 +13,7 @@ mod connect;
 mod connect_lifecycle;
 pub use connect_lifecycle::ConnectRescopeOffer;
 mod courtesy;
-pub use connect::ConnectOffer;
+pub use connect::{ConnectOffer, ScopeOpeningKey};
 mod issuer_custody;
 mod issuer_seed;
 pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};

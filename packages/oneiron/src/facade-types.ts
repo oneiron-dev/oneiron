@@ -2703,7 +2703,7 @@ export type OfferConnect = { peer_vault: string; grant: string; outbound: Federa
 /** `oneiron_authority::federation::pact_scope::FederationPactScope` */
 export type FederationPactScope = { lo_to_hi: FederationDirectionScope; hi_to_lo: FederationDirectionScope }
 /** `oneiron::verbs::federation::Offer` */
-export type Offer = { pact: string; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string }
+export type Offer = { pact: string; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string; key: string }
 /** `oneiron::verbs::federation::AcceptConnect` */
 export type AcceptConnect = { offer: Offer; grant: string }
 /** `oneiron::verbs::federation::ConnectAccepted` */
@@ -2717,7 +2717,7 @@ export type ConnectPactReceipt = { pact: string; status: FederationPactStatus; e
 /** `oneiron::verbs::federation::RescopeConnect` */
 export type RescopeConnect = { pact: string; epoch: number; outbound: FederationDirectionScope; inbound: FederationDirectionScope }
 /** `oneiron::verbs::federation::RescopeOffer` */
-export type RescopeOffer = { pact: string; epoch: number; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string }
+export type RescopeOffer = { pact: string; epoch: number; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string; key: string }
 /** `oneiron::verbs::federation::AcceptRescopeConnect` */
 export type AcceptRescopeConnect = { offer: RescopeOffer }
 /** `oneiron::verbs::federation::ConnectRescoped` */

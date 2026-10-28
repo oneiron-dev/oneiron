@@ -47,6 +47,10 @@ pub struct Offer {
     pub scope: FederationPactScope,
     pub signer: String,
     pub signature: String,
+    /// The pact epoch's scope opening key, 64 hex (FIX 7907, 7958): what
+    /// the scope commitment is keyed by, outside the signed transcript and
+    /// logged nowhere; each host's custody holds it until the pact ends.
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -94,6 +98,8 @@ pub struct RescopeOffer {
     pub scope: FederationPactScope,
     pub signer: String,
     pub signature: String,
+    /// The new epoch's scope opening key, 64 hex (FIX 7907, 7958).
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
