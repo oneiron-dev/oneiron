@@ -737,7 +737,7 @@ impl Vault {
         };
         // One serde round trip normalizes what a decoder would (an empty
         // scope set is the bottom), so the image re-encodes to its own bytes.
-        let normalized: AuthorityCheckpointV2 = rmp_serde::from_slice(
+        let normalized = rmp_serde::from_slice::<AuthorityCheckpointV2>(
             &rmp_serde::to_vec_named(&image)
                 .map_err(|_| refused("checkpoint image does not encode"))?,
         )
