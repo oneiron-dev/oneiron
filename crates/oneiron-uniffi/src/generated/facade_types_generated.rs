@@ -60125,8 +60125,8 @@ pub struct FreeTimePolicyRow {
     pub pinned_split: Option<FreeTimeSplit>,
     #[serde(rename = "cap_shown_at_ms")]
     pub cap_shown_at_ms: u64,
-    #[serde(rename = "set_by")]
-    pub set_by: String,
+    #[serde(rename = "set_by", default, skip_serializing_if = "Option::is_none")]
+    pub set_by: Option<String>,
     #[serde(rename = "set_at")]
     pub set_at: u64,
 }
@@ -64109,6 +64109,11 @@ pub enum RecordingGapKind {
     CaptureLost,
     #[serde(rename = "unrecorded_navigation")]
     UnrecordedNavigation,
+    #[serde(rename = "not_started")]
+    NotStarted {
+        #[serde(rename = "refusal")]
+        refusal: String,
+    },
 }
 
 /// `oneiron_browser::demonstration::RecordingGap`.
@@ -66503,6 +66508,12 @@ pub struct BrowserAnswerLibraryRunOutput {
 pub struct HandoverInput {
     #[serde(rename = "reason")]
     pub reason: String,
+    #[serde(
+        rename = "demonstrate",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub demonstrate: Option<bool>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `HandoverInput`.

@@ -25,6 +25,8 @@
 //! the queued action. A managed vault's attested owner presents no slip: his
 //! carries his person alone and runs only while the vault records him as its
 //! live owner (FIX 11090). Only the in-process host queues one with neither.
+mod actor_erase;
+
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};

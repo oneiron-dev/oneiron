@@ -48,6 +48,7 @@ pub(crate) use lifetime::erase_question_source_in_txn;
 pub use health_ask::{
     HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
 };
+pub(crate) use lifetime::erase_question_source_in_txn;
 pub(crate) use outcomes::calibration_pairs_in_txn;
 pub use outcomes::{
     calibration_pairs, outcome_labels, person_changed_pairs, project_bound_outcomes,

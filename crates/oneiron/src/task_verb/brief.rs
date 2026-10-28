@@ -21,6 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::decision::Reversibility;
 use crate::llm::decision::questions::OutcomeBinding;
+use crate::llm::decision::questions::QuestionCriteria;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 use super::ask_types::{TaskAskDefault, TaskAskTarget};

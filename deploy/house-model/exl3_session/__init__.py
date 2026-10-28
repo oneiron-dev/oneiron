@@ -18,12 +18,17 @@ and leaves every session-less call as it was.
 - `registry.py`: sessions, branches, checkpoints, by handle.
 - `layer.py`: the scheduler-thread side: plans, carries, commits, eviction,
   release, stats.
-- `ops.py`: the session ops of codec v1.1, as `exl3_ipc.py` dispatches them.
+- `ops.py`: the session ops of codec v1.1 and v1.2, as `exl3_ipc.py`
+  dispatches them.
+- `snapshot.py`: the portable snapshot of a checkpoint (R3): its format, the
+  KV adapters, and the sealed region `session.export` passes.
 
 Sessions live in this process's memory alone: never persisted, and never
 restored as truth. A new incarnation starts with none, and its epoch makes
 every old handle unknown. Startup index reconstruction therefore has nothing
-to rebuild.
+to rebuild. A snapshot leaves the process only to the host, which decides
+what to keep; an import rebuilds a checkpoint the host has rechecked, on a
+new session, staged until the host publishes it.
 """
 from .generator import SessionGenerator, unsupported
 from .jobs import FrontierMixin

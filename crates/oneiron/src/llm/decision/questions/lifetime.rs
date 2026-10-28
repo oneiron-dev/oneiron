@@ -10,8 +10,8 @@
 use super::arrival::unwatch;
 use super::records::AnswerRecord;
 use super::store::{
-    AnswerKey, HeadKey, LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL,
-    QUESTION_VERSION, VersionKey, family_prefix,
+    AnswerKey, HeadKey, LabelKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION,
+    VersionKey, family_prefix,
 };
 use super::windows::{QUESTION_WINDOW, WindowKey};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};

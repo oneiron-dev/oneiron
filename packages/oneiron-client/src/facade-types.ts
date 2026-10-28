@@ -7537,7 +7537,7 @@ export type FreeTimeSchedule = { cadence: FreeTimeCadence; hour: number; minute:
 /** `oneiron::dreamer_runner::free_time::policy::FreeTimeSplit` */
 export type FreeTimeSplit = { for_human_units: number; own_time_units: number }
 /** `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyRow` */
-export type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by: string; set_at: number }
+export type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by?: string | null; set_at: number }
 /** `oneiron::dreamer_runner::free_time::doors::FreeTimePolicyView` */
 export type FreeTimePolicyView = { agent: string; state: FreeTimePolicyState; revision: number; policy?: FreeTimePolicyRow | null }
 /** `oneiron::dreamer_runner::free_time::policy::FreeTimePolicyInput` */
@@ -8037,7 +8037,7 @@ export type RecordedStep = { seq: number; verb: string; tab?: string | null; res
 /** `oneiron_browser::demonstration::LocatorGap` */
 export type LocatorGap = "no_target" | "document_gone" | "not_in_front" | "no_match" | "ambiguous" | "no_outline"
 /** `oneiron_browser::demonstration::RecordingGapKind` */
-export type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" }
+export type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" } | { why: "not_started"; refusal: string }
 /** `oneiron_browser::demonstration::RecordingGap` */
 export type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind }
 /** `oneiron_browser::demonstration::DemonstrationStopCause` */
@@ -8253,7 +8253,7 @@ export type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: 
 /** `oneiron::verbs::browser::BrowserLibraryRunOutput` */
 export type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>
 /** `oneiron_browser::programs::HandoverInput` */
-export type HandoverInput = { reason: string }
+export type HandoverInput = { reason: string; demonstrate?: boolean }
 /** `oneiron_browser::programs::HandoverOutput` */
 export type HandoverOutput = { reason: string; asked_at_ms: number }
 /** `oneiron::verbs::browser::BrowserHandoverOutput` */
