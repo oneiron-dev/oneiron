@@ -89,6 +89,15 @@ pub struct SecretUseRecord {
     pub handle: String,
     /// The secret's rotation generation when it was used.
     pub generation: u32,
+    /// The custody record whose value the send actually presented, as its
+    /// door released it (FIX 8052); distinct from the admitted handle.
+    /// `None` when nothing was sent, or nothing said what was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presented_custody: Option<EntityId>,
+    /// The generation the send actually presented; distinct from the
+    /// admitted generation. `None` when nothing said what was presented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presented_generation: Option<u32>,
     /// The effector the binding names, such as `connector:slack`.
     pub effector: String,
     pub operation: String,
@@ -367,6 +376,7 @@ fn connector_consumed(reply: &ConnectorCallReply) -> SecretUseConsumed {
 
 fn answer(outcome: SecretUseOutcome) -> SecretUseAnswer {
     let receipt = outcome.receipt;
+    let presented = receipt.presented;
     SecretUseAnswer {
         status: match receipt.send {
             SecretUseSend::Answered => SecretUseStatus::Answered,
@@ -378,6 +388,8 @@ fn answer(outcome: SecretUseOutcome) -> SecretUseAnswer {
         receipt: SecretUseRecord {
             handle: receipt.handle,
             generation: receipt.generation,
+            presented_custody: presented.map(|presented| presented.custody),
+            presented_generation: presented.map(|presented| presented.generation),
             effector: receipt.effector,
             operation: receipt.operation,
             decision: format!("gate:{}", receipt.receipt.to_hex()),

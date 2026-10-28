@@ -25,6 +25,7 @@ mod standing_tests;
 
 pub use answers::question_answers;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
+pub(crate) use artifact_refresh::artifact_unit_receipts;
 pub use artifact_refresh::{
     ArtifactAskRecord, ArtifactAskStanding, ArtifactUnitReceipt, artifact_ask_records,
 };

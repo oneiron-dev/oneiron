@@ -354,10 +354,14 @@ impl OfferCooldowns {
         may_send: &(dyn Fn() -> bool + Sync),
     ) -> Duration {
         let start = tokio::time::Instant::now();
-        let end = start + wait;
+        // An open call's wait for a probation request has no end of its own
+        // (FIX 8213): only that request's end, or its caller, stops it.
+        let end = start.checked_add(wait);
         let mut changed = self.health_changed.subscribe();
         loop {
-            let left = end.saturating_duration_since(tokio::time::Instant::now());
+            let left = end.map_or(WAIT_SLICE, |end| {
+                end.saturating_duration_since(tokio::time::Instant::now())
+            });
             if left.is_zero() {
                 break;
             }
@@ -924,10 +928,16 @@ fn rest_end(
         return rest(until, ResetSource::ErrorTime);
     }
     if let Some(seconds) = refusal.retry_after.filter(|seconds| *seconds > 0) {
-        return rest(
-            now.saturating_add(seconds).min(longest),
-            ResetSource::RetryAfter,
-        );
+        // A spent window said as Retry-After rests until it resets, however
+        // far, as one said as a reset time does (FIX 7795); a rate limit's
+        // keeps the vault's longest rest.
+        let until = now.saturating_add(seconds);
+        let until = if refusal.spent == Some(SpentKind::Window) {
+            until
+        } else {
+            until.min(longest)
+        };
+        return rest(until, ResetSource::RetryAfter);
     }
     if strikes == 0 {
         return rest(

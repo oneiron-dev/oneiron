@@ -6,6 +6,7 @@ mod installed_pack;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
 mod source_erase;
 pub(crate) use source_erase::erase_registry_source_in_txn;
+mod stale_mark;
 mod stored_rows;
 use stored_rows::StoredRows;
 
@@ -244,6 +245,10 @@ impl Vault {
             row.source_rows =
                 union_source_rows([row.source_rows.as_deref(), old.source_rows.as_deref()]);
         }
+        // The owner's own stale mark holds through a re-put (FIX 4546).
+        if let Some(at) = stale_mark::owner_mark(&self.store, &txn, &key)? {
+            row.stale_since = Some(at);
+        }
         REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
         txn.commit()?;
         Ok(())
@@ -434,7 +439,8 @@ impl Vault {
     /// prior pack shipped takes the new catalog and keeps its scores; a row
     /// the host edited stays as it is. With no prior pack this is the seed.
     /// A model the prior pack shipped and this one does not goes stale, its
-    /// row kept; a model this pack ships is not stale.
+    /// row kept; a model this pack ships is not stale, unless the owner
+    /// marked it so (FIX 4546).
     pub(crate) fn refresh_model_catalog_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -465,8 +471,11 @@ impl Vault {
             .iter()
             .map(|row| row.catalog.model.as_str().to_owned())
             .collect();
-        for row in checked.rows {
+        for mut row in checked.rows {
             let key = row.catalog.model.as_str().to_owned();
+            // A pack that ships the model keeps the owner's own mark (FIX 4546).
+            let marked = stale_mark::owner_mark(&self.store, txn, &key)?;
+            row.stale_since = row.stale_since.or(marked);
             match REGISTRY_ROW.get(&self.store, txn, &key)? {
                 None => REGISTRY_ROW.put(&self.store, txn, &key, &row)?,
                 Some(existing)
@@ -492,13 +501,13 @@ impl Vault {
                         wire: row.wire,
                         catalog: row.catalog,
                         tokens_per_o200k,
-                        stale_since: None,
+                        stale_since: marked,
                         source_rows,
                         ..existing
                     };
                     REGISTRY_ROW.put(&self.store, txn, &key, &refreshed)?;
                 }
-                Some(mut existing) if existing.is_stale() => {
+                Some(mut existing) if existing.is_stale() && marked.is_none() => {
                     existing.stale_since = None;
                     existing.source_rows = union_source_rows([
                         existing.source_rows.as_deref(),
@@ -529,28 +538,6 @@ impl Vault {
             }
         }
         Ok(())
-    }
-    /// Marks `model`'s stored row retired by its provider since `at`, for a
-    /// host that learns of a retirement outside a pack refresh; `None`
-    /// clears the mark. The row stays. `Ok(false)` when no row is stored or
-    /// it already reads so.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn mark_model_row_stale(&self, model: &ModelId, at: Option<u64>) -> Result<bool> {
-        let key = model.as_str().to_owned();
-        let mut txn = self.store.env.write_txn()?;
-        let Some(mut row) = REGISTRY_ROW.get(&self.store, &txn, &key)? else {
-            return Ok(false);
-        };
-        if row.stale_since == at {
-            return Ok(false);
-        }
-        row.stale_since = at;
-        REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
-        txn.commit()?;
-        Ok(true)
     }
     pub fn apply_model_scores(&self, snapshot: &ScoreSnapshot) -> Result<Vec<ModelScoreDiff>> {
         self.apply_model_score_snapshots(std::slice::from_ref(snapshot))

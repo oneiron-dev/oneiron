@@ -4,13 +4,14 @@
 //! `GET {url}/v1/model` answers with a model card (identity and what the model
 //! returns); `POST {url}/v1/extract` takes the engine's `EncoderInput` and
 //! answers with an `EncoderOutput`, which names the served stack and which a
-//! card read after it vouches for.
+//! card read after it vouches for. A card names contract version 2 or 3, and
+//! each tagger is sent what its version reads (FIX 10704).
 //! The client follows the embedder endpoint's rules: a loopback host is
 //! on-device, one attempt per call, no redirects, a bounded body, and errors
 //! that carry the failure class and never vault text. It takes no proxy.
 
 use std::io::Read;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use oneiron::ModelId;
@@ -21,10 +22,15 @@ use serde::Deserialize;
 use crate::config::OneironerConfig;
 use crate::config::models::RequestCodec;
 
-/// The slot's wire contract version. A tagger must report exactly this.
+/// The slot's wire contract version, which the host's own taggers report.
 /// Version 2 carries cross-turn and speaker links, link confidences and the
 /// served stack's identity.
 pub(crate) const CONTRACT_VERSION: u32 = 2;
+/// The contract version that also reads a conversation register's later
+/// turns (`following`) and the `register` itself, with where it stops
+/// short; its answers are version 2's. A tagger reports this or
+/// [`CONTRACT_VERSION`], and only one that reports this is sent them.
+pub(crate) const FOLLOWING_CONTRACT_VERSION: u32 = 3;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 /// Tool name on every upstream failure this provider reports.
@@ -77,7 +83,10 @@ pub(crate) enum ProbeError {
     WrongCheckpoint { expected: String },
     #[error("the tagger reports a checkpoint that is not 16 lowercase hex digits")]
     MalformedCheckpoint,
-    #[error("the tagger speaks another contract version than this server's {expected}")]
+    #[error(
+        "the tagger speaks another contract version than this server's {expected} or {following}",
+        following = FOLLOWING_CONTRACT_VERSION
+    )]
     WrongContract { expected: u32 },
     #[error("the tagger reports another label count than the configured label_count {expected}")]
     WrongLabelCount { expected: u32 },
@@ -103,6 +112,10 @@ pub(crate) struct HttpTagger {
     compression: Option<RequestCodec>,
     /// Off once the tagger refused a compressed body that it took plain.
     compress: AtomicBool,
+    /// The contract version the tagger's last accepted card named, which
+    /// decides what its extract bodies carry: [`CONTRACT_VERSION`] until a
+    /// card says otherwise.
+    contract: AtomicU32,
 }
 
 impl HttpTagger {
@@ -168,6 +181,7 @@ impl HttpTagger {
             client,
             compression: config.request_compression,
             compress: AtomicBool::new(true),
+            contract: AtomicU32::new(CONTRACT_VERSION),
         })
     }
 
@@ -220,7 +234,7 @@ impl HttpTagger {
                 expected: self.expected_checkpoint.clone(),
             });
         }
-        if card.contract_version != CONTRACT_VERSION {
+        if ![CONTRACT_VERSION, FOLLOWING_CONTRACT_VERSION].contains(&card.contract_version) {
             return Err(ProbeError::WrongContract {
                 expected: CONTRACT_VERSION,
             });
@@ -244,6 +258,8 @@ impl HttpTagger {
                 expected: expected.clone(),
             });
         }
+        self.contract
+            .store(card.contract_version, Ordering::Relaxed);
         Ok(ProbeOutcome::Ready(card))
     }
 
@@ -292,10 +308,13 @@ impl HttpTagger {
 
     fn post_extract(&self, input: &EncoderInput) -> oneiron::Result<EncoderOutput> {
         let url = format!("{}/v1/extract", self.base);
-        // Contract version 2 reads earlier context only: a conversation
-        // register goes as its turn and every earlier turn, whole, which the
-        // tagger's own window cuts (FIX 9520); its later turns stay here.
-        let plain = if input.register.is_live() {
+        // A version 3 tagger reads the input whole (FIX 10704). Version 2
+        // reads earlier context only: a conversation register goes as its
+        // turn and every earlier turn, whole, which the tagger's own window
+        // cuts (FIX 9520); its later turns stay here.
+        let whole = input.register.is_live()
+            || self.contract.load(Ordering::Relaxed) == FOLLOWING_CONTRACT_VERSION;
+        let plain = if whole {
             serde_json::to_vec(input)
         } else {
             let mut earlier = input.clone();
@@ -309,6 +328,12 @@ impl HttpTagger {
             .map_err(|error| transport_error("extract", &error))?;
         let status = response.status();
         if !status.is_success() {
+            // A tagger that refuses a register's later turns may no longer
+            // be the version 3 one its card named: the next call goes as
+            // version 2, until a card read names 3 again.
+            if whole && !input.register.is_live() {
+                self.contract.store(CONTRACT_VERSION, Ordering::Relaxed);
+            }
             return Err(failure(format!(
                 "tagger extract returned {}",
                 status_class(status)

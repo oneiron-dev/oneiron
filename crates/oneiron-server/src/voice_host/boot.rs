@@ -331,7 +331,12 @@ async fn call(
             }
         }
     });
-    connection.serve_until(host, stop).await
+    let speculative = host.speculative.clone();
+    let served = connection.serve_until(host, stop).await;
+    // Its speculative passes still running past their deadline write when
+    // their queries end: joined before the call's admission drops (FIX 3814).
+    super::join_speculative(speculative).await;
+    served
 }
 
 /// The hello, read and admitted: its credential through the doors its

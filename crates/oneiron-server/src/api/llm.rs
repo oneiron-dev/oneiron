@@ -1,5 +1,5 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
-use crate::models::{OfferLadder, RawInference};
+use crate::models::{CallDeadline, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
 use crate::{auth::CoreAuth, server::SyncServer};
@@ -222,7 +222,8 @@ fn admit_owner(
         .vault
         .authorize_raw_inference(request.clone(), &context)
         .map_err(|_| {
-            Box::new(if original_purpose == oneiron::CallPurpose::Extraction {
+            let admitted = oneiron::llm::admitted_as(&original_purpose);
+            Box::new(if *admitted == oneiron::CallPurpose::Extraction {
                 refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
             } else {
                 refusal(StatusCode::BAD_REQUEST, "invalid_request")
@@ -245,7 +246,11 @@ async fn generate(
         Ok(v) => v,
         Err(e) => return *e,
     };
-    match ladder.generate(&run, request, None).await {
+    // The caller's own connection is the raw call's deadline (FIX 8213).
+    match ladder
+        .generate_by(&run, request, None, &|| true, CallDeadline::Open)
+        .await
+    {
         Ok(response) => Json(response).into_response(),
         Err(e) => failure(e),
     }
@@ -274,7 +279,7 @@ async fn stream(
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend.
-    let mut source = match ladder.stream(&run, request, None) {
+    let mut source = match ladder.stream_by(&run, request, None, CallDeadline::Open) {
         Ok(source) => source,
         Err(e) => return failure(e),
     };
@@ -345,7 +350,9 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
         Box::pin(async move {
             let (ladder, run) =
                 admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
-            ladder.generate(&run, request, None).await
+            ladder
+                .generate_by(&run, request, None, &|| true, CallDeadline::Open)
+                .await
         })
     }
 
@@ -356,7 +363,7 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
     ) -> oneiron::LlmResult<oneiron::LlmStream<'static>> {
         let (ladder, run) =
             admit_owner(&self.0, &mut request).map_err(|refused| refused_error(&refused))?;
-        ladder.stream(&run, request, None)
+        ladder.stream_by(&run, request, None, CallDeadline::Open)
     }
 
     /// The configured chat models that run on this node or the owner's own

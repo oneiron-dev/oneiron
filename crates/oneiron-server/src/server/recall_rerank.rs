@@ -164,9 +164,12 @@ impl RecallRerankHost for ServedRerank {
         }
         self.meter
             .revise_line(line.limit_units, price.max(self.reserve_units));
+        // Recall is memory work (FIX 11003): the call takes no hold on the
+        // vault's allocation, and still writes its receipts and usage.
         let run = self
             .ai
             .undeclared_run(self.run_id.clone(), self.meter.clone())
+            .for_memory_work()
             .sourced(sent_rows(documents));
         // The vault's model policy places the call: its manifest's binding
         // for the role when it has one, the role's seat otherwise.

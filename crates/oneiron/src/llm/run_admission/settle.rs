@@ -93,6 +93,12 @@ impl RunInner {
                 None => (0, hold.meter.abort(&hold.lease)),
             }
         });
+        // The resident's share is charged what the allocation was (FIX 7767).
+        if let (Some(hold), Some((units, _))) = (&permit.allocation, &allocation)
+            && let Some(draw) = &hold.resident
+        {
+            draw.settle(*units);
+        }
         let charged = if permit.metered { units } else { 0 };
         if settled.is_ok()
             && let Some(facts) = self.lock_calls().get_mut(permit.lease.id())
