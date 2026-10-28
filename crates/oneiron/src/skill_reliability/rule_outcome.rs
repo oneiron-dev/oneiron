@@ -2,7 +2,8 @@
 //! and no pack receipt behind its work, scored by an anchored verdict on what
 //! it decided. The agent-health reviewer is one: an owner's confirmed or
 //! dismissed on a card is one outcome of the revision whose policy raised it.
-//! Entry: `record_rule_outcome_in_txn`, `withdraw_rule_outcome_in_txn`.
+//! Entry: `record_rule_outcome_in_txn`, `withdraw_rule_outcome_in_txn`,
+//! `rule_outcome_receipts_in_txn`.
 //! A row sits on the legacy no-executor arm, keyed `(skill, receipt)`, and
 //! carries the review receipt it came from in place of a pack receipt and an
 //! executor. The attributed-outcome reads (selection, the brief, the
@@ -16,7 +17,7 @@ use super::ledger::OutcomeRow;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
 
 /// The outcome ledger's rows as a rule skill writes them: the ledger's own
 /// outcome row, which every ledger read decodes, plus its source.
@@ -126,4 +127,45 @@ pub(crate) fn withdraw_rule_outcome_in_txn(
         return Err(Error::CorruptedIndex("rule skill outcome source"));
     }
     RULE_OUTCOME.delete(&vault.store, txn, &key)
+}
+
+/// Every rule-skill outcome receipt of `skill`, in ledger order: the rows the
+/// DEV posterior folds that the projected `skill.reliability` claim never
+/// cites, so the optimize brief cites them from here (FIX 10879).
+///
+/// A row that no longer decodes is skipped with a WARN, never fatal. A row
+/// without a rule source is not a rule row and is skipped silently.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn rule_outcome_receipts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Vec<String>> {
+    let mut receipts = Vec::new();
+    for row in RULE_OUTCOME.iter_raw_from(&vault.store, txn, skill.as_bytes())? {
+        let (key, value) = row?;
+        let Some((_, receipt)) = <(EntityId, String) as SideKey>::decode_key(&key) else {
+            tracing::warn!(
+                skill = %skill.to_hex(),
+                "a rule skill outcome key is unreadable; it was skipped"
+            );
+            continue;
+        };
+        match RuleOutcomeRow::from_raw(&value) {
+            Ok(_) => receipts.push(receipt),
+            Err(_) if OutcomeRow::from_raw(&value).is_ok() => {}
+            Err(error) => {
+                tracing::warn!(
+                    skill = %skill.to_hex(),
+                    receipt = %receipt,
+                    %error,
+                    "a rule skill outcome is unreadable; it was skipped"
+                );
+            }
+        }
+    }
+    Ok(receipts)
 }
