@@ -8,6 +8,9 @@ use super::storage::{
 use super::types::{EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::gate::edit_distance_thresholds::{
+    EditDistanceThreshold, edit_distance_threshold_in_txn,
+};
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -22,18 +25,19 @@ pub const ESCALATION_LAST_RULINGS_BOUND: usize = 8;
 
 /// Agreeing rulings a `(scope, trigger)` pair owes before a standing policy is
 /// proposed: the policy manifest's `escalation_standing_rulings` row, seeded
-/// as data and changed through the manifest authoring doors (FIX 9802).
+/// as data and changed through the manifest authoring doors (FIX 9802). A
+/// manifest that does not read warns and reads the shipped row.
 ///
 /// # Errors
 ///
-/// Storage failures and an unreadable shipped row.
+/// Storage failures opening the read, and a build missing its shipped row.
 pub fn escalation_standing_n(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     escalation_standing_n_in_txn(&vault.store, &rtxn)
 }
 
 pub(super) fn escalation_standing_n_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u32> {
-    let n = crate::gate::resolve_policy_manifest(store, txn)?.escalation_standing_rulings()?;
+    let n = edit_distance_threshold_in_txn(store, txn, EditDistanceThreshold::StandingRulings)?;
     Ok(u32::try_from(n).unwrap_or(u32::MAX))
 }
 

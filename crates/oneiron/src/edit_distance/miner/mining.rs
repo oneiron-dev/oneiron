@@ -30,15 +30,19 @@ use crate::scan_check::{EngineScan, ScanCount};
 
 /// Reads K, the distinct-receipt threshold: the policy manifest's
 /// `miner_recurrence_receipts` row, seeded as data and changed through the
-/// manifest authoring doors (FIX 9809).
+/// manifest authoring doors (FIX 9809). A manifest that does not read warns
+/// and reads the shipped row.
 ///
 /// # Errors
 ///
-/// Storage errors and an unreadable shipped row.
+/// Storage errors opening the read, and a build missing its shipped row.
 pub fn miner_k(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    let k =
-        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.miner_recurrence_receipts()?;
+    let k = crate::gate::edit_distance_thresholds::edit_distance_threshold_in_txn(
+        &vault.store,
+        &rtxn,
+        crate::gate::edit_distance_thresholds::EditDistanceThreshold::RecurrenceReceipts,
+    )?;
     Ok(u32::try_from(k).unwrap_or(u32::MAX))
 }
 

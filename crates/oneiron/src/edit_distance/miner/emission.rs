@@ -102,8 +102,11 @@ pub(super) fn cluster_is_eligible(
     };
     let reference = EntityId::from_hex(&mark.reference)
         .map_err(|_| Error::CorruptedIndex(MINT_MARK_ROW_LABEL))?;
-    let wait =
-        crate::gate::resolve_policy_manifest(&vault.store, txn)?.miner_rejection_wait_seconds()?;
+    let wait = crate::gate::edit_distance_thresholds::edit_distance_threshold_in_txn(
+        &vault.store,
+        txn,
+        crate::gate::edit_distance_thresholds::EditDistanceThreshold::RejectionWaitSeconds,
+    )?;
     match mark.kind.as_str() {
         MARK_KIND_SKILL_EDIT => skill_edit_is_stale(vault, txn, &reference, now, wait),
         MARK_KIND_PREFERENCE => preference_is_stale(vault, txn, &reference, now, wait),
