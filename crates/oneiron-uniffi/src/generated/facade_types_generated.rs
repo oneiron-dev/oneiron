@@ -65166,8 +65166,6 @@ pub enum SiteSkillErrorCode {
     Loader,
     #[serde(rename = "unresolved")]
     Unresolved,
-    #[serde(rename = "not_issued")]
-    NotIssued,
     #[serde(rename = "digest_mismatch")]
     DigestMismatch,
     #[serde(rename = "no_loader")]

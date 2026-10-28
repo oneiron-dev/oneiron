@@ -3319,7 +3319,7 @@ declare namespace Sdk {
   type DialogAnswerFailure = { tab?: string | null; kind: string; accept: boolean; error: string };
   type SeedCandidate = { candidate: string; path: string; digest: string; license: string };
   type SiteSkillMatch = { skill_id: string; revision: string; knowledge: string; seeds?: SeedCandidate[] };
-  type SiteSkillErrorCode = "no_lease" | "origin" | "loader" | "unresolved" | "not_issued" | "digest_mismatch" | "no_loader";
+  type SiteSkillErrorCode = "no_lease" | "origin" | "loader" | "unresolved" | "digest_mismatch" | "no_loader";
   type SiteSkillError = { code: SiteSkillErrorCode; detail: string };
   type VerbsObservation = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[]; site_skills?: SiteSkillMatch[]; site_skill_notes?: SiteSkillError[] };
   type ObservationPage = VerbsObservation & { next?: string | null };

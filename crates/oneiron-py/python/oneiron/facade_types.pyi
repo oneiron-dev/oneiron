@@ -21195,7 +21195,7 @@ class SiteSkillMatch(TypedDict):
     revision: str
     knowledge: str
     seeds: NotRequired[list[SeedCandidate]]
-SiteSkillErrorCode = Literal["no_lease", "origin", "loader", "unresolved", "not_issued", "digest_mismatch", "no_loader"]
+SiteSkillErrorCode = Literal["no_lease", "origin", "loader", "unresolved", "digest_mismatch", "no_loader"]
 class SiteSkillError(TypedDict):
     code: SiteSkillErrorCode
     detail: str

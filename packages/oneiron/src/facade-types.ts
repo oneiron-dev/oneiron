@@ -8131,7 +8131,7 @@ export type SeedCandidate = { candidate: string; path: string; digest: string; l
 /** `oneiron_browser::site::SiteSkillMatch` */
 export type SiteSkillMatch = { skill_id: string; revision: string; knowledge: string; seeds?: SeedCandidate[] }
 /** `oneiron_browser::site::SiteSkillErrorCode` */
-export type SiteSkillErrorCode = "no_lease" | "origin" | "loader" | "unresolved" | "not_issued" | "digest_mismatch" | "no_loader"
+export type SiteSkillErrorCode = "no_lease" | "origin" | "loader" | "unresolved" | "digest_mismatch" | "no_loader"
 /** `oneiron_browser::site::SiteSkillError` */
 export type SiteSkillError = { code: SiteSkillErrorCode; detail: string }
 /** `oneiron_browser::verbs::Observation` */

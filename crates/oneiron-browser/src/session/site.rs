@@ -18,7 +18,7 @@ pub(super) struct SiteSkills {
     /// The last open's matches, for the answer of the call that made it.
     pending: Option<Opened>,
     /// Every seed candidate an open or a find of this session listed, by
-    /// its handle, as it was listed.
+    /// its handle, as it was listed: the digest its resolve must give.
     issued: BTreeMap<String, SeedCandidate>,
 }
 
@@ -209,9 +209,10 @@ impl BrowserSession {
     }
 
     /// The seed `candidate` names, as the host resolved it (CALL 3, CALL
-    /// 7): the host's resolver checks the exact bytes against their
-    /// import's digest; here the digest it gives must be the one this
-    /// browser listed the candidate with.
+    /// 7): the host's resolver checks the exact bytes against the digest
+    /// the handle pins. A candidate this browser listed must resolve at the
+    /// digest it was listed with; one it never listed relies on the
+    /// resolver's raw-byte check.
     fn resolved_seed(&self, candidate: &str) -> Result<SeedBody, SiteSkillError> {
         let loader = self.sites.loader.as_ref().ok_or_else(|| {
             SiteSkillError::new(
@@ -219,14 +220,10 @@ impl BrowserSession {
                 "this browser's host loads no site skills",
             )
         })?;
-        let issued = self.sites.issued.get(candidate).ok_or_else(|| {
-            SiteSkillError::new(
-                SiteSkillErrorCode::NotIssued,
-                format!("no open or find of this browser listed candidate {candidate}"),
-            )
-        })?;
         let body = loader.seed(candidate)?;
-        if body.seed.digest != issued.digest {
+        if let Some(issued) = self.sites.issued.get(candidate)
+            && body.seed.digest != issued.digest
+        {
             return Err(SiteSkillError::new(
                 SiteSkillErrorCode::DigestMismatch,
                 format!(

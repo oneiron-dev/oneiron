@@ -177,8 +177,6 @@ pub enum SiteSkillErrorCode {
     Loader,
     /// The host resolves no seed by that handle.
     Unresolved,
-    /// No `open` or `find` of this browser listed the candidate.
-    NotIssued,
     /// The resolved seed's digest is not the one its candidate was listed
     /// with: its bytes changed (CALL 7).
     DigestMismatch,
@@ -194,7 +192,6 @@ impl SiteSkillErrorCode {
             Self::Origin => "origin",
             Self::Loader => "loader",
             Self::Unresolved => "unresolved",
-            Self::NotIssued => "not_issued",
             Self::DigestMismatch => "digest_mismatch",
             Self::NoLoader => "no_loader",
         }
