@@ -201,10 +201,11 @@ pub struct OpSpan {
 const TRUST_STAMPED: &str = "stamped";
 const TRUST_REGISTERED: &str = "registered";
 const TRUST_DEVICE_PEER: &str = "device_peer";
+const TRUST_UNKNOWN: &str = "unknown";
 
 /// How an [`OpSpan`]'s actor was resolved.
 ///
-/// The three arms are ordered by trust, and the ladder never guesses: an
+/// The arms are ordered by trust, and the ladder never guesses: an
 /// unresolvable span lands on [`OpAttribution::DevicePeer`] rather than being
 /// charged to one of two candidate actors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,15 +220,18 @@ pub enum OpAttribution {
     /// No binding covers the change's peer at commit time, or two tie: the span
     /// is charged to the device peer, never guessed onto an actor.
     DevicePeer,
+    /// The stamp spells an erased actor: no one, never the peer's binding
+    /// (FIX 10933).
+    Unknown,
 }
 
 impl OpAttribution {
-    /// The resolved actor, or `None` for the device-peer fallback.
+    /// The resolved actor, or `None` for the device-peer and unknown arms.
     #[must_use]
     pub const fn actor(&self) -> Option<WriteActor> {
         match self {
             Self::Stamped(actor) | Self::Registered(actor) => Some(*actor),
-            Self::DevicePeer => None,
+            Self::DevicePeer | Self::Unknown => None,
         }
     }
 
@@ -238,6 +242,7 @@ impl OpAttribution {
             Self::Stamped(_) => TRUST_STAMPED,
             Self::Registered(_) => TRUST_REGISTERED,
             Self::DevicePeer => TRUST_DEVICE_PEER,
+            Self::Unknown => TRUST_UNKNOWN,
         }
     }
 }
@@ -741,6 +746,9 @@ fn decode_attribution(entries: &[(Value, Value)]) -> Result<OpAttribution> {
     let trust = field_str(entries, SPAN_KEY_TRUST)?;
     if trust == TRUST_DEVICE_PEER {
         return Ok(OpAttribution::DevicePeer);
+    }
+    if trust == TRUST_UNKNOWN {
+        return Ok(OpAttribution::Unknown);
     }
     let entity_ref = field_entity_id(entries, SPAN_KEY_ACTOR)?;
     let class = actor_class_from_token(field_str(entries, SPAN_KEY_CLASS)?).ok_or_else(corrupt)?;

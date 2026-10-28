@@ -417,7 +417,8 @@ impl KeptAgentRows {
     /// The bundle of the kept agent `id`, whose stored bundle carries
     /// `fork_hash`, rebuilt from these rows with the export's builder in its
     /// knowledge form, as the row the export's writer writes: each text
-    /// member in the row. Its own omission is noted in `declared`.
+    /// member in the row, through the writer's own document credential pass
+    /// for a source-tree row. Its own omission is noted in `declared`.
     fn rebuild(
         &self,
         id: EntityId,
@@ -438,7 +439,8 @@ impl KeptAgentRows {
             forked,
             omission: bundle.omission,
         });
-        serde_json::to_value(&bundle).map_err(|_| invalid())
+        let row = serde_json::to_value(&bundle).map_err(|_| invalid())?;
+        Ok(crate::serialize::null_document_tree_row(&row))
     }
 }
 

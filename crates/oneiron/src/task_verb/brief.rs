@@ -20,6 +20,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::decision::Reversibility;
 use crate::llm::decision::questions::OutcomeBinding;
+use crate::llm::decision::questions::QuestionCriteria;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 use super::ask_types::{TaskAskDefault, TaskAskTarget};
@@ -39,8 +40,9 @@ const WORKFLOW_HANDLE_PREFIX: &str = "workflow:";
 const BRIEF_RECORD_SLOTS: &[&str] = &[
     "/context/pack/pack_ref",
     "/context/read_first/*/target",
-    "/success/yes_if_all/*/evidence_ref",
-    "/success/no_if_any/*/evidence_ref",
+    "/success/criteria/yes_if_all/*/evidence_ref",
+    "/success/criteria/no_if_any/*/evidence_ref",
+    "/success/criteria/not_a_reason_to_say_no/*/evidence_ref",
     "/constraints/policy_refs/*",
     "/constraints/budget_ref",
     "/settled/*",
@@ -277,17 +279,17 @@ pub struct Criterion {
     pub evidence_ref: Option<EntityId>,
 }
 
-/// Done means: one typed question, yes if all of these and no if any of
-/// these, plus the outcome binding an ask already carries, so done-means and
-/// asks never drift as prose twins.
+/// Done means: one typed question, judged by the same criteria triple a
+/// typed question carries (OF-506): yes if all of these, no if any of these,
+/// and the lines that are never a reason to say no, each criterion with its
+/// evidence ref; plus the outcome binding an ask already carries, so
+/// done-means and asks never drift as prose twins.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DoneMeans {
     pub question: String,
     #[serde(default)]
-    pub yes_if_all: Vec<Criterion>,
-    #[serde(default)]
-    pub no_if_any: Vec<Criterion>,
+    pub criteria: QuestionCriteria<Criterion>,
     #[serde(default)]
     pub outcome_binding: Option<OutcomeBinding>,
     /// The checks the host reads, at the rule tier with no model, on the page
@@ -304,6 +306,27 @@ pub struct DoneMeans {
     /// way. The owner or an agent turns it on in the brief.
     #[serde(default)]
     pub strict_verified_reuse: bool,
+}
+
+impl DoneMeans {
+    /// The criteria as a typed question's providers read them: each line's
+    /// text, the triple whole. The authored criteria stay the truth; this is
+    /// their projection.
+    #[must_use]
+    pub fn question_criteria(&self) -> QuestionCriteria {
+        self.criteria.map_lines(|criterion| criterion.text.clone())
+    }
+
+    /// Every criterion's evidence ref, in criteria order, each once.
+    #[must_use]
+    pub fn criteria_evidence(&self) -> Vec<EntityId> {
+        let mut seen = std::collections::BTreeSet::new();
+        self.criteria
+            .lines()
+            .filter_map(|criterion| criterion.evidence_ref)
+            .filter(|id| seen.insert(*id))
+            .collect()
+    }
 }
 
 /// What makes the work ask up.
@@ -560,17 +583,13 @@ impl QueueTaskBrief {
         require_text(&self.success.question, "done-means question")?;
         // A bound TASK's browser checks alone are a whole goal (Engine C1).
         let typed_goal = self.context.workflow.is_some() && !self.success.browser_checks.is_empty();
-        if self.success.yes_if_all.is_empty() && self.success.no_if_any.is_empty() && !typed_goal {
+        let criteria = &self.success.criteria;
+        if criteria.yes_if_all.is_empty() && criteria.no_if_any.is_empty() && !typed_goal {
             return Err(MemoryError::bad_request(
                 "task brief done-means needs at least one criterion",
             ));
         }
-        for criterion in self
-            .success
-            .yes_if_all
-            .iter()
-            .chain(&self.success.no_if_any)
-        {
+        for criterion in criteria.lines() {
             require_text(&criterion.text, "criterion")?;
         }
         if let Some(binding) = &self.success.outcome_binding {
@@ -648,10 +667,12 @@ impl QueueTaskBrief {
         };
         let done = &self.success;
         let held = done
+            .criteria
             .yes_if_all
             .iter()
             .map(|criterion| fold(&criterion.text));
         let none = done
+            .criteria
             .no_if_any
             .iter()
             .map(|criterion| fold(&criterion.text))

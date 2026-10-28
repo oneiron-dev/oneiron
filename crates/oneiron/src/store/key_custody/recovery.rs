@@ -128,6 +128,7 @@ impl Store {
     /// a connector call's resume key (FIX 9157): each is required by its
     /// call row when one names it, never by the whole census. Nor is an
     /// erasable key (FIX 8875): each is planned by the ref its row names.
+    /// Nor is an inference snapshot's key: a missing one is a cold recompute.
     /// Nor is the host issuer seed's escrow (FIX-LIST 10770), optional.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
@@ -154,6 +155,7 @@ impl Store {
                                 | CustodyKind::CustodyTransition
                                 | CustodyKind::CustodyRequestInput
                                 | CustodyKind::ConnectorResume
+                                | CustodyKind::InferenceSnapshot
                                 | CustodyKind::ErasableKey
                                 | CustodyKind::HostIssuerSeed
                         )

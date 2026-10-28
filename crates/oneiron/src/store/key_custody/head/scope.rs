@@ -70,6 +70,10 @@ impl CompartmentScope {
             // claim key is (HostReadable, Engine 10-23).
             | CustodyKind::ErasableKey => Self::HostReadable,
             CustodyKind::HostIssuerSeed => HOST_ISSUER_SEED_CUSTODY_SCOPE,
+            // An inference snapshot's key is one the host engine opens in
+            // its own process to import the snapshot into its worker, as a
+            // body instance's is, and no owner kit is present at that point.
+            CustodyKind::InferenceSnapshot => Self::HostReadable,
             // A credential's value and its carriers' keys (KS-6, CALLS
             // `KS-6 entry eligibility`): only the owner's kit opens them; a
             // head carries one only where [`CustodyRecipients::keeps_local`]

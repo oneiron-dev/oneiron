@@ -185,6 +185,10 @@ fn recall_within_ceiling(
             ..Default::default()
         },
     )?;
+    // The rendering budget, resolved once before the query embeds (FIX 9962).
+    let render_budget = Some(
+        memory.recall_render_budget(input.token_budget, input.reader_agent_ref.as_deref()),
+    );
     let deadline =
         budget.map(|budget| crate::retrieval_depth::RetrievalDeadline::hard(door.arrived, budget));
     // A paid effort's packs say what its rerank stage did; one cut before
@@ -251,6 +255,7 @@ fn recall_within_ceiling(
                 query_affect,
                 door_fallback: fallback.as_ref(),
                 rerank_unavailable: true,
+                render_budget,
                 ..Default::default()
             },
             &pin,
@@ -327,6 +332,7 @@ fn recall_within_ceiling(
                     .map(|on_cut| on_cut as &(dyn Fn(crate::memory::MemoryPack) + Sync)),
                 door_fallback: fallback.as_ref(),
                 rerank_unavailable: unreranked,
+                render_budget,
                 ..Default::default()
             },
             &pin,

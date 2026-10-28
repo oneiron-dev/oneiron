@@ -372,6 +372,8 @@ async fn recall(
         scope: None,
         limit: Some(RECALL_LIMIT),
         format: Some("md".to_owned()),
+        token_budget: None,
+        reader_agent_ref: None,
         as_of: None,
         deadline_ms: clock.recall_deadline_ms(server.vault.call_mode_deadline()),
         media: None,

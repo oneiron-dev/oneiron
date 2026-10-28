@@ -47,7 +47,10 @@ use probe::HouseProbe;
 
 #[cfg(unix)]
 pub(super) use session::open_turn;
-pub(crate) use session::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+pub(crate) use session::{
+    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
+    reply_committed, turn_admitted,
+};
 
 /// The process's one worker host, made when the first worker is configured
 /// or the process is marked as the one that launches them.
@@ -128,6 +131,54 @@ pub(crate) fn permit_worker_launch() {
     for worker in managed {
         worker.start();
     }
+}
+
+/// Attaches this process's snapshot port to `vault` (V2-R3): its lock
+/// waits for every session of it here to be released, under the owner's
+/// bound, and its erases drop them. Off Unix no session runs, so none is
+/// attached and a lock only closes the vault's own admission.
+pub(crate) fn install_snapshot_runtime(vault: &Arc<oneiron::Vault>) {
+    #[cfg(unix)]
+    session::install_snapshots(vault);
+    #[cfg(not(unix))]
+    let _ = vault;
+}
+
+/// Takes up the configured `[models.snapshots]` policy.
+pub(super) fn snapshot_policy(policy: &crate::config::models::snapshots::SnapshotPolicy) {
+    #[cfg(unix)]
+    session::set_snapshot_policy(policy);
+    #[cfg(not(unix))]
+    let _ = policy;
+}
+
+/// The device ledger of the device managed worker `worker_id` launches on,
+/// when its launch names one: what a snapshot transfer may take there.
+#[cfg(unix)]
+fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
+    let host = HOST.get()?;
+    let device = host
+        .lock()
+        .get(worker_id)?
+        .row
+        .launch
+        .as_ref()?
+        .device
+        .clone()?;
+    host.ledgers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&device)
+        .cloned()
+}
+
+/// Sealed snapshot parking as this process stands; `None` off Unix.
+pub(super) fn snapshot_status() -> Option<super::SnapshotStatus> {
+    #[cfg(unix)]
+    let status = Some(session::snapshot_status());
+    #[cfg(not(unix))]
+    let status = None;
+    status
 }
 
 /// Puts `rows` under the process's supervisors, starting what is new, and

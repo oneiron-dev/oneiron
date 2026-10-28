@@ -67,7 +67,7 @@ impl ProposalTextArtifact {
                         .and_then(|(_, json)| serde_json::from_str::<MadeBy>(json).ok())
                         .filter(|made_by| Some(made_by.at) == u64::try_from(meta.timestamp).ok())
                         .filter(|made_by| {
-                            let Some((_, actor)) = parse_stamp(meta.message.as_deref()) else {
+                            let Some((kind, actor)) = parse_stamp(meta.message.as_deref()) else {
                                 return false;
                             };
                             if actor.entity_ref() != made_by.process.actor
@@ -101,6 +101,18 @@ impl ProposalTextArtifact {
                                         return false;
                                     }
                                 }
+                            }
+                            // A generated birth names a Prompt input and a valid trigger
+                            // (FIX 9810); later edits may omit both.
+                            let is_generated_birth = kind == StampKind::Open
+                                && made_by.process.class == MadeByClass::Concluded;
+                            let names_birth = made_by
+                                .inputs
+                                .iter()
+                                .any(|input| input.role == MadeByInputRole::Prompt)
+                                && made_by.trigger.is_some();
+                            if is_generated_birth && !names_birth {
+                                return false;
                             }
                             match crate::edit_distance::peer_actor_stamp_is_honored(
                                 vault,
