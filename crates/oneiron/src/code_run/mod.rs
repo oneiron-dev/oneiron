@@ -124,8 +124,8 @@ pub(crate) use self::storage::{
     response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
-    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, ResultSpeech,
-    executor_compaction_session_id, executor_speech_message_id_in_run,
+    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
+    SessionInstanceBind, executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
@@ -149,7 +149,9 @@ pub(crate) use self::storage::{
     code_run_inline_body_of_row, code_run_row_inline, deliver_wait_in_txn,
     deliver_wait_listing_in_txn, lift_code_run_file_hold_in_txn, settled_wait_reply_in_txn,
 };
-pub(crate) use self::storage::{StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn};
+pub(crate) use self::storage::{
+    StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn, session_type_diagnostics_row,
+};
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
     put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,

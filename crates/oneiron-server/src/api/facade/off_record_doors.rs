@@ -44,6 +44,7 @@
 use std::sync::Arc;
 
 use oneiron::authority::VerifiedSlip;
+use oneiron::code_run::ProgramStepFeedbackRelease;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
     CommitReceipt, Effort, EntityRefReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -631,6 +632,13 @@ async fn off_record_execute(
         next_step_seq,
         steps_run: outcome.steps_run,
         bridge_calls: outcome.replay_record.bridge_calls.len(),
+        // Each step's feedback the run keeps on the session's route, whole:
+        // the reply's destination release judges each apart (FIX 10389).
+        program_steps: outcome
+            .program_steps
+            .into_iter()
+            .map(ProgramStepFeedbackRelease::Released)
+            .collect(),
     })
 }
 
