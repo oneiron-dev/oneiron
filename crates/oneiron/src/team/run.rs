@@ -370,15 +370,13 @@ pub(crate) fn record_led_team(
     }
     let observed = team_run_observations(vault, leader, &members)?;
     // The leader's model, and each member's newest try's, as measured beside
-    // its calls and spend (FIX 10192); a model nobody recorded stays out.
+    // its calls and spend (FIX 10192); a model nobody recorded stays out, and
+    // a team with none recorded records its models as unknown.
     let mut models: BTreeSet<String> = observed.models.iter().cloned().collect();
     models.extend(crate::skill_attribution::run_executor_model(
         vault,
         &lead.attempt,
     )?);
-    if models.is_empty() {
-        return Ok(Err("team_record_no_models"));
-    }
     let receipt = TeamReceipt {
         team_ref: input.team_ref.clone(),
         project: lead_input.project_ref,
