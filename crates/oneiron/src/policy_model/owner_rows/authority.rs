@@ -205,6 +205,35 @@ impl Vault {
         is_live_vault_owner_in_txn(self, &txn, person)
     }
 
+    /// Whether `holder` is a recorded owner of this vault and a live vault
+    /// owner now, read inside the caller's transaction: the embedded owner
+    /// actor, or an Owner a conferring grant names in a shared vault, whose
+    /// PERSON is live. The in-transaction form of what
+    /// [`Self::authenticate_recorded_owner`] plus [`Self::is_live_vault_owner`]
+    /// answer with their own transactions, for a caller that already holds
+    /// the write transaction. A holder the vault never recorded reads false,
+    /// as does one whose PERSON no longer lives.
+    pub fn recorded_owner_is_live_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<bool> {
+        let recorded = holder == crate::vault::embedded_owner_actor_id()?
+            || shared_members_in_txn(self, txn, false)?
+                .is_some_and(|members| members.owners.contains(&holder));
+        if !recorded {
+            return Ok(false);
+        }
+        // The in-transaction form of what `authenticate_owner` resolves for
+        // a fresh proof: a live human PERSON, neither merged, split nor
+        // deleted, the same check `revalidate_person_in_txn` runs with no
+        // credential bound.
+        if !crate::consent::person_is_live_in_txn(self, txn, &holder)? {
+            return Ok(false);
+        }
+        is_live_vault_owner_in_txn(self, txn, &holder)
+    }
+
     /// Authenticates `actor` only if this vault records it as an owner: its
     /// embedded owner, or an Owner-role member a conferring grant names in a
     /// shared vault, whether or not that member's PERSON is still live. `None`
