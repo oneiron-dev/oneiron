@@ -232,21 +232,20 @@ pub(super) fn newest_for_task_in(
     Ok(newest.map(|(_, id)| id))
 }
 
-/// The outcome the newest write that settled `task` recorded, its terminal
-/// disposition token (`completed`, `failed`, ...), read in `txn`. `None` while
-/// no kept write settled the TASK. The anchored task outcome a run's measured
-/// work is paired with (ED-07 routing, FIX 7828).
-pub(crate) fn settled_outcome_in(
+/// The receipt of the newest write that settled `task`, read in `txn`: its
+/// `outcome` is the terminal disposition token (`completed`, `failed`, ...)
+/// and its `actor` the reporter that settled it. `None` while no kept write
+/// settled the TASK. ED-07 routing pairs a run's measured work with it when
+/// an anchor stands behind it (FIX 7828).
+pub(crate) fn settled_receipt_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task: EntityId,
-) -> crate::Result<Option<String>> {
+) -> crate::Result<Option<ReceiptRecord>> {
     for row in BY_TASK.iter_rev_from(&vault.store, txn, task.as_bytes())? {
         let ((_, _, id), role) = row?;
         if role == ROLE_SETTLED {
-            return Ok(RECEIPTS
-                .get(&vault.store, txn, &id)?
-                .map(|receipt| receipt.outcome));
+            return RECEIPTS.get(&vault.store, txn, &id);
         }
     }
     Ok(None)

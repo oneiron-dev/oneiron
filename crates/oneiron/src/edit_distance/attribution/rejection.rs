@@ -7,7 +7,9 @@
 //! actor; `environment`, `preference_shift` and `unclear` charge nobody, and
 //! an `unclear` share files its note in the unclear ledger for the Dreamer.
 //! The judgment row is the record either way, and a charged share lands on
-//! its subject's `learning.edit_cost` cell counted rejected.
+//! its subject's `learning.edit_cost` cell counted rejected. The generating
+//! actor's cell, and the skill's when the proposal rode one, count the
+//! rejection even where no share charges them (FIX 9797).
 
 use super::cells::{charge_judgment_in_txn, learning_scope};
 use super::evidence_judge::judgment_row;
@@ -101,13 +103,16 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
         type_ref: None,
         attempt_receipt: None,
         judge: trace.revision,
+        judge_model: trace.model,
+        actor: Some(rejection.actor),
+        skill: rejection.skill,
         rejected: true,
     };
     JUDGMENT.put(
         &vault.store,
         wtxn,
         &judgment.receipt_id,
-        &judgment_row(&judgment, rejection.skill),
+        &judgment_row(&judgment),
     )?;
     // A rejection has no Δ to mine, so a `preference_shift` share files no
     // preference note, and a `discovery` share mints no edit proposal here.

@@ -2,6 +2,7 @@
 use super::{ProposalTextArtifact, StampKind, parse_stamp, stamp};
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
+use crate::entity_doc::EntityDoc;
 use crate::error::{Error, Result};
 use crate::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
@@ -220,6 +221,22 @@ pub(super) fn receipted_message(
         stamp(kind, actor)
     );
     Ok(message)
+}
+
+/// The process the birth receipt of `doc` names: the receipt on its causally
+/// earliest opening commit, kept only when it is that commit's stamped
+/// actor's and dated at the commit. `None` for an opening with no such
+/// receipt, and for a history with no single earliest opening. It reads the
+/// history alone and authenticates no peer stamp.
+pub(crate) fn birth_process(doc: &EntityDoc) -> Option<MadeByProcess> {
+    let (opening, _) = super::earliest_opening(&doc.doc).ok()?;
+    let message = opening.message.as_deref()?;
+    let (_, actor) = parse_stamp(Some(message))?;
+    let (_, json) = message.split_once(RECEIPT_PREFIX)?;
+    let made_by = serde_json::from_str::<MadeBy>(json).ok()?;
+    (made_by.process.actor == actor.entity_ref()
+        && Some(made_by.at) == u64::try_from(opening.timestamp).ok())
+    .then_some(made_by.process)
 }
 
 /// A message [`receipted_message`] spells (`<prefix> <open|edit>

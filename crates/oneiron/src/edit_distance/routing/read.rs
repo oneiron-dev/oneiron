@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use super::keys::{AGGREGATE, AggregateKey, StoredAggregate, peer_prefix, routing_scope};
+use super::keys::{
+    AGGREGATE, AggregateKey, StoredAggregate, peer_prefix, routing_scope, version_prefix,
+};
 use super::ladder::{rollout_rung, rung_in_txn};
 use super::prior::{carried_prior, head_mean, mean_of};
 use super::scope::{RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint};
@@ -21,6 +23,10 @@ use crate::error::Result;
 /// A head with no own runs reads from the most recent other executor's head
 /// of its task class and task type, marked UNTESTED (ARCH-0056 §8).
 ///
+/// A typed `key` reads its exact head. An untyped one reads each executor's
+/// heads across every task type of its task class and measurement version as
+/// one head, as routing read them before heads were typed.
+///
 /// # Errors
 ///
 /// [`Error::InvalidClaimBody`](crate::Error::InvalidClaimBody) on an unusable scope; storage errors;
@@ -29,14 +35,31 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
     if rollout_rung(vault, &key.task_class)? != RolloutRung::Graduated {
         return Ok(None);
     }
-    let prefix = peer_prefix(key)?;
     let rtxn = vault.store.env.read_txn()?;
-    let peers: Vec<(String, StoredAggregate)> = AGGREGATE
-        .scan_from(&vault.store, &rtxn, &prefix)?
-        .into_iter()
-        .map(|(key, aggregate)| (key.executor, aggregate))
-        .collect();
+    let peers = peers_in_txn(vault, &rtxn, key)?;
     Ok(hint_of(&key.executor, &peers))
+}
+
+/// Every executor's head the read of `key` compares: its task type's heads,
+/// or for an untyped `key` each executor's heads in every task type folded
+/// into one.
+fn peers_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &RoutingScopeKey,
+) -> Result<Vec<(String, StoredAggregate)>> {
+    if key.type_ref.is_some() {
+        return Ok(AGGREGATE
+            .scan_from(&vault.store, txn, &peer_prefix(key)?)?
+            .into_iter()
+            .map(|(key, aggregate)| (key.executor, aggregate))
+            .collect());
+    }
+    let mut heads: BTreeMap<String, StoredAggregate> = BTreeMap::new();
+    for (key, aggregate) in AGGREGATE.scan_from(&vault.store, txn, &version_prefix(key)?)? {
+        heads.entry(key.executor).or_default().absorb(&aggregate);
+    }
+    Ok(heads.into_iter().collect())
 }
 
 /// Every head of a task class promoted to at least [`RolloutRung::DataBar`],
