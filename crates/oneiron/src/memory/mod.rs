@@ -192,6 +192,7 @@ pub use dreamer::{
     ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView, DreamerParkCauseView,
     DreamerParkedAttemptView,
 };
+pub use conflict_settle::DreamerDecidedCandidateView;
 pub use dreamer_wake_read::{
     ConsolidationWakeStatusRequest, DreamerWakeCallEndView, DreamerWakeCallStateView,
     DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeEndView, DreamerWakeGenerationView,
