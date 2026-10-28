@@ -1,15 +1,16 @@
 //! The vault data key's public side, shared by `oneiron vault-key`, `oneiron
 //! restore` and `/v1/owner/vault-key` (OF-570 E1): the wraps as an owner reads
-//! them, whether the pages are sealed, a passkey's PRF input, and the
-//! checkpoint signer pin a host with no vault trusts a backup by. No secret
-//! passes through here.
+//! them and the escrow labels retired, whether the pages are sealed, a
+//! passkey's PRF input, and the checkpoint signer pin a host with no vault
+//! trusts a backup by. No secret passes through here.
 
 use std::path::Path;
 
 use base64::Engine as _;
 use oneiron::recovery::checkpoint::{ArtifactKind, ArtifactUnlocks, CheckpointSigner};
 use oneiron::world_keys::{
-    HybridSecretKey, ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo, VaultKeyWrapKind,
+    EscrowRetirement, HybridSecretKey, ResealedEscrowCapsule, VaultKeyStatus, VaultKeyWrapInfo,
+    VaultKeyWrapKind,
 };
 use oneiron_vault_contract::escrow::{
     ESCROW_REPORT_SCHEMA_VERSION, ESCROW_REPORT_TYPE, EscrowCapsuleReport,
@@ -64,6 +65,32 @@ pub(crate) struct VaultKeyReport {
     /// The maximum tier's warning, while the pages are sealed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) warning: Option<&'static str>,
+    /// Every escrow label retired here, with its receipt: no wrap is sealed
+    /// to one again (FIX 2859).
+    pub(crate) retired: Vec<RetiredEscrowView>,
+}
+
+/// One escrow recipient retired after its secret was released, as the
+/// owner reads its receipt. Ids and times only.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct RetiredEscrowView {
+    pub(crate) label: String,
+    pub(crate) receipt_id: String,
+    /// The vault still carried the label's wrap, and the retirement
+    /// removed it.
+    pub(crate) removed_wrap: bool,
+    pub(crate) retired: String,
+}
+
+impl From<EscrowRetirement> for RetiredEscrowView {
+    fn from(retired: EscrowRetirement) -> Self {
+        Self {
+            label: retired.label,
+            receipt_id: retired.receipt_id,
+            removed_wrap: retired.removed_wrap,
+            retired: rfc3339_secs(retired.retired_at),
+        }
+    }
 }
 
 pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> {
@@ -87,6 +114,11 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<VaultKeyReport> 
         warning: vault
             .vault_pages_sealed()
             .then_some(oneiron::PAGE_SEAL_WARNING),
+        retired: vault
+            .vault_key_escrow_retirements()?
+            .into_iter()
+            .map(RetiredEscrowView::from)
+            .collect(),
     })
 }
 
