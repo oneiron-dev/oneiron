@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1161 facade rows, 4155 generated types.
+// UniFFI census: 1161 facade rows, 4156 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1113.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -9399,6 +9399,18 @@ pub struct RecallRequest {
     pub limit: Option<u64>,
     #[serde(rename = "format", default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    #[serde(
+        rename = "token_budget",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_budget: Option<u64>,
+    #[serde(
+        rename = "reader_agent_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reader_agent_ref: Option<String>,
     #[serde(rename = "as_of", default, skip_serializing_if = "Option::is_none")]
     pub as_of: Option<u64>,
     #[serde(
@@ -21878,6 +21890,16 @@ pub struct FilesLimitCrossed {
     pub observed: u64,
 }
 
+/// `oneiron::verbs::files::FilesOriginalsUnkept`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesOriginalsUnkept {
+    #[serde(rename = "files")]
+    pub files: u64,
+    #[serde(rename = "first_error")]
+    pub first_error: String,
+}
+
 /// `oneiron::verbs::files::FilesRescanView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -21896,6 +21918,12 @@ pub struct FilesRescanView {
         skip_serializing_if = "Option::is_none"
     )]
     pub limits_crossed: Option<Vec<FilesLimitCrossed>>,
+    #[serde(
+        rename = "originals_unkept",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub originals_unkept: Option<FilesOriginalsUnkept>,
 }
 
 /// `oneiron::verbs::files::FilesSourceAttachAnswer`.
