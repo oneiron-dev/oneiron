@@ -134,6 +134,38 @@ fn connect_action(
     })
 }
 
+/// The intake check of a peer's half (FIX 7907, 7958): `action`'s digest,
+/// derived here from the opening key, nonce and canonical scope the offer
+/// carries, must be the one `offer`'s gesture signs. The key's holder
+/// checks the scope-to-digest binding once, before anything is admitted.
+pub(super) fn require_offer_signs(
+    action: &FederationLifecycleAction,
+    offer: &ConnectOffer,
+    local: &AuthorityVaultId,
+) -> Result<()> {
+    let digest = action.scope_digest.ok_or_else(invalid_authority)?;
+    let transcript = crate::authority::federation_pact_transcript(
+        action.kind,
+        &action.pact_id,
+        local,
+        &offer.from_vault,
+        action.pact_epoch,
+        &digest,
+        None,
+        &action.pact_nonce,
+    )?;
+    let signature = crate::authority::AuthoritySignature {
+        suite: offer.gesture.signer.suite(),
+        public_key: offer.gesture.signer.clone(),
+        signature: offer.gesture.signature.clone(),
+    };
+    if crate::authority::verify_authority_signature(&signature, &transcript) {
+        Ok(())
+    } else {
+        Err(invalid_authority())
+    }
+}
+
 /// This vault's id, once `issuer` is its live host root.
 pub(super) fn local_vault_id(
     fold: &AuthorityFold,
@@ -278,6 +310,7 @@ impl Vault {
                 offer.pact_scope.clone(),
                 &offer.scope_key,
             )?;
+            require_offer_signs(&action, offer, &local)?;
             action.gesture = Some(offer.gesture.clone());
             let counter = offer_for(issuer, &action, local, &offer.scope_key)?;
             let logged = fold.federation_pacts.get(&offer.pact_id).filter(|pact| {

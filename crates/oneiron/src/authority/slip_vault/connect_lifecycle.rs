@@ -2,7 +2,7 @@
 use ed25519_dalek::Signer;
 use rand_core::{OsRng, RngCore};
 
-use super::connect::{ScopeOpeningKey, local_vault_id, offer_for};
+use super::connect::{ScopeOpeningKey, local_vault_id, offer_for, require_offer_signs};
 use super::{HostSlipIssuer, require_host};
 use crate::Vault;
 use crate::authority::{
@@ -127,6 +127,7 @@ impl Vault {
                 &offered.offer.pact_scope,
             )?;
             let mut action = rescope_action(&state, offered)?;
+            require_offer_signs(&action, &offered.offer, &local)?;
             action.gesture = Some(offered.offer.gesture.clone());
             let counter = ConnectRescopeOffer {
                 epoch: offered.epoch,
