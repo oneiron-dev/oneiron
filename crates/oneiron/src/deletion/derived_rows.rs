@@ -34,6 +34,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
     crate::saved_query::erase_memos_for_source_in_txn,
+    // FIX 10466: every inference snapshot whose dependency set reaches it.
+    crate::inference_snapshot::erase_in_txn,
     // FIX 10260: a MESSAGE's kept reply assertions.
     crate::memory::erase_reply_assertions_in_txn,
     // FIX 7608 S3F: a derived text's index copy, and the copies derived from it.
@@ -45,6 +47,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::memory::release_asset_blob_in_txn,
     // FIX 10219: a subject's recognition prints, samples and active pointer.
     crate::voice_identity::erase_recognition_for_subject_in_txn,
+    // FIX 9918: a typed question's copies of an erased judgment answer.
+    crate::llm::decision::questions::erase_question_source_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.

@@ -25,6 +25,8 @@ pub(crate) struct LadderCall<'a> {
     pub(crate) label: &'a str,
     /// Where a person ask goes; none is the vault's owners.
     pub(crate) ask_to: Option<&'a AskTo>,
+    /// The unit's own work, so each unit keeps its own person ask.
+    pub(crate) correlation: Option<EntityId>,
     /// The question's posture where it is stricter than the vault's
     /// ([`question_posture`](super::question_posture)).
     pub(crate) posture: Option<HostingPrivacyPosture>,
@@ -56,6 +58,7 @@ pub(crate) fn ladder_decide(server: &SyncServer, call: LadderCall<'_>) -> Result
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
     ladder.ask_to = call.ask_to;
+    ladder.correlation = call.correlation;
     let ladder = under_question_posture(server, ladder, call.posture, &mut dial);
     ladder.run_images(
         call.question,
@@ -95,6 +98,7 @@ pub(crate) fn ladder_located(server: &SyncServer, call: LadderCall<'_>) -> Resul
         ladder.local = Some(rung as &dyn DecisionProvider);
     }
     ladder.ask_to = call.ask_to;
+    ladder.correlation = call.correlation;
     let ladder = under_question_posture(server, ladder, call.posture, &mut dial);
     ladder.run_located(
         call.question,
