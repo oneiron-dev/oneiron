@@ -57,6 +57,7 @@
 use crate::comm::CommError;
 use crate::error::Error;
 
+mod delivery_outcome;
 mod dial;
 mod interview;
 mod signature;
@@ -64,6 +65,7 @@ mod signature_store;
 mod transport;
 mod vocab;
 
+pub(crate) use self::delivery_outcome::{SignatureDeliveryOutcome, record_signature_delivery};
 pub(crate) use self::dial::publisher_enabled_in_txn;
 pub use self::dial::{
     PUBLISHER_ENABLED_COMPILED_DEFAULT, publisher_enabled, set_publisher_enabled,

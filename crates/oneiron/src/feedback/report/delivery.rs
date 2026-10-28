@@ -28,7 +28,8 @@ use self::wire::{SignatureSink, signature_request, wire_body};
 use super::{ReportDisclosure, ReportIssue, ReportRoute, ReportRoutedPayload, ReportStatus};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edit_distance::publisher::{
-    IssueSignature, PublisherError, emit_issue_signature_in_txn,
+    IssueSignature, PublisherError, SignatureDeliveryOutcome, emit_issue_signature_in_txn,
+    record_signature_delivery,
 };
 use crate::outbound::{
     OutboundDispatchOutcome, OutboundExecutionOutcome, OutboundExecutionRequest, connector_actor_id,
@@ -367,6 +368,7 @@ impl Vault {
             .as_ref()
             .is_some_and(ReportDeliveryOutcome::is_final)
         {
+            self.settle_signature_send(&record)?;
             return Ok(Some(record));
         }
         record.updated_at = now;
@@ -392,6 +394,7 @@ impl Vault {
         if record.hold.is_none() {
             self.dispatch_report_signature(&mut record, transport, now)?;
             self.with_write_txn_grouped(|txn| DELIVERIES.put(&self.store, txn, &row, &record))?;
+            self.settle_signature_send(&record)?;
         }
         Ok(Some(record))
     }
@@ -532,6 +535,25 @@ impl Vault {
             Err(error) => record.last_error = Some(error.to_string()),
         }
         Ok(())
+    }
+
+    /// Writes the lane's last send outcome back onto its ED-08 signature, so
+    /// its send state says what the outbound path answered (FIX 7690). A lane
+    /// with no outcome yet writes nothing, and a settled one is a no-op: the
+    /// finished-lane replay settles a lane whose write-back never ran.
+    fn settle_signature_send(&self, record: &ReportDeliveryRecord) -> Result<()> {
+        let (Some(signature), Some(send), Some(outcome)) =
+            (&record.signature, &record.send, &record.outcome)
+        else {
+            return Ok(());
+        };
+        let outcome = match outcome {
+            ReportDeliveryOutcome::Delivered => SignatureDeliveryOutcome::Delivered,
+            ReportDeliveryOutcome::Uncertain => SignatureDeliveryOutcome::Uncertain,
+            ReportDeliveryOutcome::NotDelivered { .. } => SignatureDeliveryOutcome::NotDelivered,
+        };
+        record_signature_delivery(self, signature.signature, &send.send_ref, outcome)
+            .map_err(engine_error)
     }
 }
 
