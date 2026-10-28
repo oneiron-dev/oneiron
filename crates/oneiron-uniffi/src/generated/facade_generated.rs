@@ -4206,6 +4206,11 @@ export_facade! {
     let output = client.vault_receipts_context(&input)?;
     crate::codec::lift_record("vault.receipts.context", &output)
 };
+"vault.receipts.craft_reply_manifest" => fn vault_receipts_craft_reply_manifest(&self, input: CallReceiptRequest) -> Option<Vec<ManifestEntry>> = |client| {
+    let input: oneiron::receipt::CallReceiptRequest = crate::codec::lower_record("vault.receipts.craft_reply_manifest", input)?;
+    let output = client.vault_receipts_craft_reply_manifest(&input)?;
+    crate::codec::lift_record("vault.receipts.craft_reply_manifest", &output)
+};
 "ai.voice.asr.open" => fn ai_voice_asr_open(&self, input: AsrOpenRequest) -> AsrSession = |client| {
     let input: oneiron::task_verb::sdk::AsrOpenRequest = crate::codec::lower_record("ai.voice.asr.open", input)?;
     let output = client.ai_voice_asr_open(&input)?;

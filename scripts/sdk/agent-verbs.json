@@ -702,7 +702,7 @@
     },
     {
       "name": "self.grants.ask",
-      "description": "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it.",
+      "description": "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it.",
       "input": "crate::memory::GrantAskRequest",
       "output": "crate::memory::GrantAskReceipt",
       "call": "memory.grants_ask(&input)?",
@@ -13237,6 +13237,19 @@
       "openapi": true
     },
     {
+      "name": "vault.receipts.craft_reply_manifest",
+      "description": "Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack.",
+      "input": "crate::receipt::CallReceiptRequest",
+      "output": "Option<Vec<crate::attempt_queue::ManifestEntry>>",
+      "call": "memory.craft_reply_manifest(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.voice.asr.open",
       "description": "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline.",
       "input": "crate::task_verb::sdk::AsrOpenRequest",
@@ -16423,10 +16436,9 @@
     },
     {
       "name": "vault.artifacts.body.fork.open",
-      "description": "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own.",
+      "description": "Opens a fork of the live body at its head for machine work; a DOCX or XLSX fork joins the named proposal or opens its own.",
       "refs": [
         "/artifact_ref",
-        "/run_root_ref",
         "/proposal_ref"
       ],
       "input": "crate::office_body::OfficeBodyForkOpenRequest",

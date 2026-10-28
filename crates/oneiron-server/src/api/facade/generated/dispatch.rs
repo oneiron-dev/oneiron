@@ -26529,6 +26529,28 @@ async fn vault_receipts_context(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_receipts_craft_reply_manifest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.receipts.craft_reply_manifest",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn ai_voice_asr_open(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38070,6 +38092,9 @@ pub(crate) async fn call_verb(
         "ai.streams.terminal" => ai_streams_terminal(server, call, input).await,
         "ai.reply" => ai_reply(server, call, input).await,
         "vault.receipts.context" => vault_receipts_context(server, call, input).await,
+        "vault.receipts.craft_reply_manifest" => {
+            vault_receipts_craft_reply_manifest(server, call, input).await
+        }
         "ai.voice.asr.open" => ai_voice_asr_open(server, call, input).await,
         "ai.voice.asr.hypothesis" => ai_voice_asr_hypothesis(server, call, input).await,
         "ai.voice.asr.finalize" => ai_voice_asr_finalize(server, call, input).await,

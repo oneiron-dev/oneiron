@@ -4650,6 +4650,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
             ),
             (
+                "vault.receipts.craft_reply_manifest",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
                 "ai.voice.asr.open",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrOpenRequest>(
                 ),
@@ -7259,6 +7263,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.streams.terminal",
     "ai.reply",
     "vault.receipts.context",
+    "vault.receipts.craft_reply_manifest",
     "ai.voice.asr.open",
     "ai.voice.asr.hypothesis",
     "ai.voice.asr.finalize",
@@ -9223,6 +9228,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::ContextEmitReceipt>,
+        >(),
+        "vault.receipts.craft_reply_manifest" => crate::code_run::vault_read::request_schema::<
+            Option<Vec<crate::attempt_queue::ManifestEntry>>,
         >(),
         "ai.voice.asr.open" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrSession>()
@@ -15862,6 +15870,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.receipts.craft_reply_manifest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.voice.asr.open" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20907,6 +20922,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.receipts.context" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
         }
+        "vault.receipts.craft_reply_manifest" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
         "ai.voice.asr.open" => {
             let _input: crate::task_verb::sdk::AsrOpenRequest = decode(value.clone())?;
         }
@@ -23786,6 +23804,9 @@ pub fn invoke(
         "ai.streams.terminal" => encode(ai_streams_terminal(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
+        "vault.receipts.craft_reply_manifest" => {
+            encode(vault_receipts_craft_reply_manifest(memory, decode(value)?)?)
+        }
         "ai.voice.asr.open" => encode(ai_voice_asr_open(memory, decode(value)?)?),
         "ai.voice.asr.hypothesis" => encode(ai_voice_asr_hypothesis(memory, decode(value)?)?),
         "ai.voice.asr.finalize" => encode(ai_voice_asr_finalize(memory, decode(value)?)?),
@@ -31549,6 +31570,12 @@ pub fn vault_receipts_context(
 ) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
     memory.context_emit_receipt(&input.receipt_ref)
 }
+pub fn vault_receipts_craft_reply_manifest(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<Vec<crate::attempt_queue::ManifestEntry>>> {
+    memory.craft_reply_manifest(&input.receipt_ref)
+}
 pub fn ai_voice_asr_open(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::AsrOpenRequest,
@@ -32948,7 +32975,7 @@ pub fn vault_artifacts_body_fork_open(
         memory,
         "vault.artifacts.body.fork.open",
         &input,
-        &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
+        &["/artifact_ref", "/proposal_ref"],
     )?;
     memory.artifacts_body_fork_open(&input)
 }
@@ -34558,7 +34585,7 @@ pub fn receipt_declared_refs(
                 memory,
                 "vault.artifacts.body.fork.open",
                 &input,
-                &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
+                &["/artifact_ref", "/proposal_ref"],
             )?;
         }
         "vault.artifacts.body.fork.edit" => {

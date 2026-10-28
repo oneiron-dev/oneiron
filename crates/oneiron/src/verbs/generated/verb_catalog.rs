@@ -845,6 +845,7 @@ pub enum AgentVerb {
     AiStreamsTerminal,
     AiReply,
     VaultReceiptsContext,
+    VaultReceiptsCraftReplyManifest,
     AiVoiceAsrOpen,
     AiVoiceAsrHypothesis,
     AiVoiceAsrFinalize,
@@ -2031,6 +2032,7 @@ impl AgentVerb {
         Self::AiStreamsTerminal,
         Self::AiReply,
         Self::VaultReceiptsContext,
+        Self::VaultReceiptsCraftReplyManifest,
         Self::AiVoiceAsrOpen,
         Self::AiVoiceAsrHypothesis,
         Self::AiVoiceAsrFinalize,
@@ -3244,6 +3246,7 @@ impl AgentVerb {
             Self::AiStreamsTerminal => "ai.streams.terminal",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
+            Self::VaultReceiptsCraftReplyManifest => "vault.receipts.craft_reply_manifest",
             Self::AiVoiceAsrOpen => "ai.voice.asr.open",
             Self::AiVoiceAsrHypothesis => "ai.voice.asr.hypothesis",
             Self::AiVoiceAsrFinalize => "ai.voice.asr.finalize",
@@ -4436,6 +4439,7 @@ impl AgentVerb {
                 | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::VaultReceiptsCraftReplyManifest
                 | Self::AiVoiceAsrOpen
                 | Self::AiVoiceAsrHypothesis
                 | Self::AiVoiceAsrFinalize
@@ -5651,6 +5655,7 @@ impl AgentVerb {
                 | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::VaultReceiptsCraftReplyManifest
                 | Self::AiVoiceAsrOpen
                 | Self::AiVoiceAsrHypothesis
                 | Self::AiVoiceAsrFinalize
@@ -6960,6 +6965,7 @@ impl AgentVerb {
                 | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::VaultReceiptsCraftReplyManifest
                 | Self::AiVoiceAsrOpen
                 | Self::AiVoiceAsrHypothesis
                 | Self::AiVoiceAsrFinalize
@@ -8862,6 +8868,7 @@ impl AgentVerb {
             Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::VaultReceiptsCraftReplyManifest => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
             Self::AiVoiceAsrHypothesis => &["spec"],
             Self::AiVoiceAsrFinalize => &["spec"],
@@ -10049,6 +10056,7 @@ impl AgentVerb {
             Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::VaultReceiptsCraftReplyManifest => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
             Self::AiVoiceAsrHypothesis => &["spec"],
             Self::AiVoiceAsrFinalize => &["spec"],
@@ -10523,7 +10531,7 @@ impl AgentVerb {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
             }
             Self::SelfGrantsAsk => {
-                "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."
+                "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."
             }
             Self::VaultCompanionsAccessRequestsAnswer => {
                 "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
@@ -12869,6 +12877,9 @@ impl AgentVerb {
             Self::VaultReceiptsContext => {
                 "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."
             }
+            Self::VaultReceiptsCraftReplyManifest => {
+                "Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack."
+            }
             Self::AiVoiceAsrOpen => {
                 "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline."
             }
@@ -13346,7 +13357,7 @@ impl AgentVerb {
                 "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."
             }
             Self::VaultArtifactsBodyForkOpen => {
-                "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own."
+                "Opens a fork of the live body at its head for machine work; a DOCX or XLSX fork joins the named proposal or opens its own."
             }
             Self::VaultArtifactsBodyForkEdit => {
                 "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body."

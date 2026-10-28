@@ -933,6 +933,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.streams.terminal", post(facade_route))
         .route("/ai.reply", post(facade_route))
         .route("/vault.receipts.context", post(facade_route))
+        .route("/vault.receipts.craft_reply_manifest", post(facade_route))
         .route("/ai.voice.asr.open", post(facade_route))
         .route("/ai.voice.asr.hypothesis", post(facade_route))
         .route("/ai.voice.asr.finalize", post(facade_route))

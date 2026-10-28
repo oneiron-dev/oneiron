@@ -1442,6 +1442,9 @@ class Oneiron:
         def context(self, spec):
             """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
             return json.loads(_translate(lambda: self._client.vault_receipts_context(json.dumps(spec))))
+        def craft_reply_manifest(self, spec):
+            """Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack."""
+            return json.loads(_translate(lambda: self._client.vault_receipts_craft_reply_manifest(json.dumps(spec))))
     class _VaultAssetsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5485,7 +5488,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ask(self, spec):
-            """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
+            """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
         def answer(self, spec):
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
