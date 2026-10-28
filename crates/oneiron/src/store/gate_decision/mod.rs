@@ -24,6 +24,8 @@ mod vet;
 pub(crate) use self::actor_erase::erase_gate_decision_actor_in_txn;
 pub use self::actor_erase::{ACTOR_ERASE_GATE_ATTRIBUTION, GateAttributionErase};
 pub(in crate::store) use self::checkpoint_custody::archived_by;
+#[cfg(feature = "sync")]
+pub(crate) use self::checkpoint_custody::put_back_pad_objects_in_txn;
 pub(crate) use self::checkpoint_custody::{
     ExpectedPadObjects, LiveCustody, MadeDestination, PAD_SOURCE_IDENTITY, PadObjectsCapture,
     PadObjectsLanding, PadSourceIdentity, UncapturedPadObjects, admit_existing_vault_root,

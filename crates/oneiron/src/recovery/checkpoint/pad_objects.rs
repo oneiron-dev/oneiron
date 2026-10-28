@@ -5,14 +5,16 @@
 //! transaction its custody is read in (`store` `PadObjectsCapture`), then
 //! installed over the copy's own once its rows landed, while the copy still
 //! holds what it read there, and read back in the install's transaction and
-//! again after it committed. A kept generation whose object is still not
-//! whole here takes its bytes from that capture when it carries the same
-//! object ([`refill_pad_object`], its current provider source).
+//! again after it committed; the copy's own objects, captured before the
+//! install, go back when the read after the commit fails. A kept generation
+//! whose object is still not whole here takes its bytes from that capture
+//! when it carries the same object ([`refill_pad_object`], its current
+//! provider source).
 //!
-//! An install never brings back a generation the copy does not keep, never
-//! touches a bundle, and never stands for a pad: a world key pad lands only
-//! through `pad_custody`, and the epoch's pad debt is reconciled apart by
-//! the shared resolver. An erase's rewrite the source holds takes the place
+//! An install never brings back a generation the copy does not keep (each
+//! one the source keeps is named not carried), never touches a bundle, and
+//! never stands for a pad: a world key pad lands only through `pad_custody`,
+//! and the epoch's pad debt is reconciled apart by the shared resolver. An erase's rewrite the source holds takes the place
 //! of the copy's older object, so an exact key the source's erase retired
 //! does not come back from the copy's (restricts, ruled). Every new fault
 //! keeps what the copy holds, with a value-free note: never a refusal.
@@ -86,12 +88,16 @@ pub enum PadObjectNote {
     /// Nothing was installed, for `reason`: the vault keeps the objects its
     /// image or archive held, as before.
     Kept { reason: String },
-    /// The objects installed did not read back after their commit: read
-    /// them again, or restore again.
+    /// The objects installed did not read back after their commit, nor did
+    /// the vault's own go back: read them again, or restore again.
     NotReadBack,
     /// A kept generation's pad object is not whole here, and its source did
     /// not give it whole: owed until a machine of the owner's refills it.
     Owed { generation: String },
+    /// The source keeps a generation the vault does not: its pad object, and
+    /// the bundle it belongs to, were not carried, owed until a copy carries
+    /// current generations.
+    NotCarried { generation: String },
 }
 
 impl std::fmt::Display for PadObjectNote {
@@ -114,6 +120,11 @@ impl std::fmt::Display for PadObjectNote {
                 "pad object of generation {generation} not whole: owed until a machine of the \
                  owner's refills it"
             ),
+            Self::NotCarried { generation } => write!(
+                f,
+                "generation {generation} the source keeps was not carried: owed until a copy \
+                 carries current generations"
+            ),
         }
     }
 }
@@ -127,6 +138,16 @@ impl PadObjectNote {
     }
 }
 
+/// Says `note` where it is made, once, value free, so no note is only
+/// carried on a report nothing shows yet.
+#[cfg(feature = "sync")]
+fn push_note(notes: &mut Vec<PadObjectNote>, note: PadObjectNote) {
+    if !notes.contains(&note) {
+        tracing::warn!(%note, "a restore's or an activation's pad objects");
+        notes.push(note);
+    }
+}
+
 /// Why nothing was installed, as a note names it.
 #[cfg(feature = "sync")]
 mod kept {
@@ -134,6 +155,8 @@ mod kept {
         "the vault's objects or the source's moved since they were read";
     pub(super) const NOT_WHOLE: &str = "a source object is not whole";
     pub(super) const NOT_READ_BACK: &str = "the install did not read back in its transaction";
+    pub(super) const PUT_BACK: &str =
+        "the install did not read back once committed, and the vault's own objects went back";
     pub(super) const FAULT: &str = "a storage fault";
 }
 
@@ -298,7 +321,7 @@ fn finish(
         let captured = match capture {
             PadObjectsCapture::Captured(captured) => captured,
             PadObjectsCapture::NotCaptured { reason } => {
-                notes.push(PadObjectNote::kept(reason.as_str()));
+                push_note(notes, PadObjectNote::kept(reason.as_str()));
                 return false;
             }
         };
@@ -306,44 +329,106 @@ fn finish(
             return false;
         }
         let installed = match landing {
-            PadObjectsLanding::Installed(after) => {
-                let read = vault
-                    .store
-                    .env
-                    .read_txn()
-                    .map_err(Error::from)
-                    .and_then(|txn| {
-                        read_back_captured_in_txn(&vault.store, &txn, &after, captured)
-                    });
-                if !matches!(read, Ok(true)) {
-                    notes.push(PadObjectNote::NotReadBack);
-                }
-                true
+            PadObjectsLanding::Installed { after, baseline } => {
+                read_back_or_put_back(vault, captured, &after, &baseline, notes)
             }
             PadObjectsLanding::CurrentChanged => {
-                notes.push(PadObjectNote::kept(kept::CURRENT_CHANGED));
+                push_note(notes, PadObjectNote::kept(kept::CURRENT_CHANGED));
                 false
             }
             PadObjectsLanding::Unavailable => {
-                notes.push(PadObjectNote::kept(kept::NOT_WHOLE));
+                push_note(notes, PadObjectNote::kept(kept::NOT_WHOLE));
                 false
             }
             PadObjectsLanding::NotReadBack => {
-                notes.push(PadObjectNote::kept(kept::NOT_READ_BACK));
+                push_note(notes, PadObjectNote::kept(kept::NOT_READ_BACK));
                 false
             }
             PadObjectsLanding::NotAttempted | PadObjectsLanding::Fault => {
-                notes.push(PadObjectNote::kept(kept::FAULT));
+                push_note(notes, PadObjectNote::kept(kept::FAULT));
                 false
             }
         };
         refill_short(vault, captured, notes);
+        note_not_carried(vault, captured, notes);
         installed
     }
     #[cfg(not(feature = "sync"))]
     {
         let _ = (vault, capture, landing, notes);
         false
+    }
+}
+
+/// Reads back, in a fresh transaction, what an install of `captured` wrote
+/// (`after`); when it does not read, puts the vault's own objects
+/// (`baseline`) back in a writer of its own. Whether the install stands.
+#[cfg(feature = "sync")]
+fn read_back_or_put_back(
+    vault: &Vault,
+    captured: &CapturedPadObjects,
+    after: &CurrentPadObjects,
+    baseline: &CapturedPadObjects,
+    notes: &mut Vec<PadObjectNote>,
+) -> bool {
+    let read = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(Error::from)
+        .and_then(|txn| read_back_captured_in_txn(&vault.store, &txn, after, captured));
+    if matches!(read, Ok(true)) {
+        return true;
+    }
+    let back = vault
+        .with_write_txn_grouped(|wtxn| {
+            Ok(crate::store::put_back_pad_objects_in_txn(
+                &vault.store,
+                wtxn,
+                after,
+                baseline,
+            ))
+        })
+        .unwrap_or(false);
+    let note = if back {
+        PadObjectNote::kept(kept::PUT_BACK)
+    } else {
+        PadObjectNote::NotReadBack
+    };
+    push_note(notes, note);
+    false
+}
+
+/// Names each generation `captured` carries that `vault` does not keep: the
+/// install skips it, so it is owed, never counted carried.
+#[cfg(feature = "sync")]
+fn note_not_carried(vault: &Vault, captured: &CapturedPadObjects, notes: &mut Vec<PadObjectNote>) {
+    let held = vault
+        .store
+        .env
+        .read_txn()
+        .map_err(Error::from)
+        .and_then(|txn| index_in(vault, &txn));
+    let held = match held {
+        Ok(held) => held,
+        Err(error) => {
+            warn_fault(
+                &error,
+                "a vault's pad object index did not read for its carry",
+            );
+            return;
+        }
+    };
+    for source in &captured.index().entries {
+        let generation = source.entry.generation;
+        if !held
+            .entries
+            .iter()
+            .any(|meta| meta.entry.generation == generation)
+        {
+            let generation = sealed_generation_hex(&generation);
+            push_note(notes, PadObjectNote::NotCarried { generation });
+        }
     }
 }
 
@@ -377,18 +462,18 @@ fn refill_short(vault: &Vault, captured: &CapturedPadObjects, notes: &mut Vec<Pa
                     .map_err(Error::from)
                     .and_then(|txn| read_back_generation_in(vault, &txn, &after, generation));
                 if !matches!(read, Ok(Some(_))) {
-                    notes.push(owed);
+                    push_note(notes, owed);
                 }
                 expected = after;
             }
             Ok(PadObjectInstall::CurrentChanged) => {
-                notes.push(PadObjectNote::kept(kept::CURRENT_CHANGED));
+                push_note(notes, PadObjectNote::kept(kept::CURRENT_CHANGED));
                 return;
             }
-            Ok(PadObjectInstall::Unavailable(_)) => notes.push(owed),
+            Ok(PadObjectInstall::Unavailable(_)) => push_note(notes, owed),
             Err(error) => {
                 warn_fault(&error, "a kept pad object did not refill");
-                notes.push(owed);
+                push_note(notes, owed);
             }
         }
     }

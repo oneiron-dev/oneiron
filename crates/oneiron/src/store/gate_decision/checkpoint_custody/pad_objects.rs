@@ -18,8 +18,8 @@ use crate::side_table;
 use crate::store::Store;
 #[cfg(feature = "sync")]
 use crate::sync::residence::{
-    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, install_captured_pad_objects_in_txn,
-    read_back_captured_in_txn,
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, capture_current_pad_objects_in_txn,
+    install_captured_pad_objects_in_txn, read_back_captured_in_txn,
 };
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -152,9 +152,14 @@ pub(crate) enum ExpectedPadObjects {}
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(crate) enum PadObjectsLanding {
     /// Installed and read back in its own transaction: the objects after it,
-    /// to read back once committed.
+    /// to read back once committed, and the store's own objects as that
+    /// transaction read them before the install, put back should that read
+    /// fail.
     #[cfg(feature = "sync")]
-    Installed(CurrentPadObjects),
+    Installed {
+        after: CurrentPadObjects,
+        baseline: CapturedPadObjects,
+    },
     /// Nothing to install: no capture, an empty one, or no index expected.
     NotAttempted,
     /// The store holds other objects than expected, or the source keeps
@@ -192,19 +197,46 @@ pub(crate) fn install_source_pad_objects_in_txn(
     PadObjectsLanding::NotAttempted
 }
 
+/// Puts `baseline`, a store's own pad objects as an install read them, back
+/// over what that install wrote (`installed`), in a savepoint of `wtxn`, when
+/// the install did not read back once committed. Whether they are back and
+/// read back in it.
+#[cfg(feature = "sync")]
+pub(crate) fn put_back_pad_objects_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    installed: &CurrentPadObjects,
+    baseline: &CapturedPadObjects,
+) -> bool {
+    match install_in_savepoint(store, wtxn, installed, baseline) {
+        Ok(PadObjectsLanding::Installed { .. }) => true,
+        Ok(_) => false,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a store's own pad objects did not go back after an install that did not read back"
+            );
+            false
+        }
+    }
+}
+
 /// How an install over a store's own pad objects is staged (CALLS: PAD-1
 /// install staging).
 #[cfg(feature = "sync")]
 enum PadObjectInstallStaging {
     /// In a savepoint of the caller's writer, committed only once what it
     /// wrote reads back in it, so the store's own objects stay until then;
-    /// an activation's runs before its archive lifts, in the same writer.
-    SavepointCommittedOnReadBack,
+    /// those objects, captured in the same savepoint first, are kept apart
+    /// and put back when the read after the commit fails. An activation's
+    /// install runs before its archive lifts, in the same writer, and its
+    /// read after the commit comes before the vault is returned.
+    SavepointCommittedOnReadBackBaselineKept,
 }
 
 #[cfg(feature = "sync")]
 const PAD_OBJECT_INSTALL_STAGING: PadObjectInstallStaging =
-    PadObjectInstallStaging::SavepointCommittedOnReadBack;
+    PadObjectInstallStaging::SavepointCommittedOnReadBackBaselineKept;
 
 #[cfg(feature = "sync")]
 fn install_in_savepoint(
@@ -214,14 +246,16 @@ fn install_in_savepoint(
     captured: &CapturedPadObjects,
 ) -> crate::error::Result<PadObjectsLanding> {
     match PAD_OBJECT_INSTALL_STAGING {
-        PadObjectInstallStaging::SavepointCommittedOnReadBack => {}
+        PadObjectInstallStaging::SavepointCommittedOnReadBackBaselineKept => {}
     }
     let mut savepoint = store.env.nested_write_txn(wtxn)?;
+    let baseline =
+        capture_current_pad_objects_in_txn(store, &savepoint, expected.vault_id, expected.home)?;
     let landing =
         match install_captured_pad_objects_in_txn(store, &mut savepoint, expected, captured)? {
             PadObjectInstall::Installed(after) => {
                 if read_back_captured_in_txn(store, &savepoint, &after, captured)? {
-                    PadObjectsLanding::Installed(after)
+                    PadObjectsLanding::Installed { after, baseline }
                 } else {
                     PadObjectsLanding::NotReadBack
                 }
@@ -229,7 +263,7 @@ fn install_in_savepoint(
             PadObjectInstall::CurrentChanged => PadObjectsLanding::CurrentChanged,
             PadObjectInstall::Unavailable(_) => PadObjectsLanding::Unavailable,
         };
-    if matches!(landing, PadObjectsLanding::Installed(_)) {
+    if matches!(landing, PadObjectsLanding::Installed { .. }) {
         savepoint.commit()?;
     }
     Ok(landing)

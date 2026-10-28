@@ -39,6 +39,8 @@ use crate::store::root_directory::{
 use crate::store::{Store, not_an_existing_root, read_existing_custody_pad_rows};
 
 pub(crate) use self::destination::{MadeDestination, replace_host_holds_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use self::pad_objects::put_back_pad_objects_in_txn;
 pub(crate) use self::pad_objects::{
     ExpectedPadObjects, PAD_SOURCE_IDENTITY, PadObjectsCapture, PadObjectsLanding,
     PadSourceIdentity, UncapturedPadObjects, install_source_pad_objects_in_txn,

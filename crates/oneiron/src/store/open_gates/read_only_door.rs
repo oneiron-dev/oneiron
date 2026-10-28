@@ -14,10 +14,8 @@ use super::open_version_keys::MODEL_ID_KEY;
 use super::vault_root_bind::vault_root_preflight_error;
 
 /// Rows of one existing vault's metadata database (its `vault_meta`, or the
-/// `hnsw_meta` that holds its model pin), and the canonical root they were
-/// read from.
+/// `hnsw_meta` that holds its model pin).
 pub(in crate::store) struct VaultMetaRows {
-    pub(in crate::store) root: PathBuf,
     pub(in crate::store) rows: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
@@ -78,9 +76,8 @@ pub(crate) fn read_existing_embedding_model(path: &Path) -> Result<Option<String
         .transpose()
 }
 
-/// The rows under `prefixes` of one named database of the vault at `path`,
-/// and the canonical root they were read from. `database` pairs the name
-/// with the refusal for a vault that lacks it.
+/// The rows under `prefixes` of one named database of the vault at `path`.
+/// `database` pairs the name with the refusal for a vault that lacks it.
 fn read_existing_rows(
     path: &Path,
     database: (&str, &'static str),
@@ -105,7 +102,7 @@ fn read_existing_rows(
     // The environment closes before its path registration is released.
     drop(env);
     drop(registered);
-    Ok(VaultMetaRows { root, rows: rows? })
+    Ok(VaultMetaRows { rows: rows? })
 }
 
 /// The canonical root at `path`; a missing one refuses with nothing created.
