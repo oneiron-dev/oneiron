@@ -20,7 +20,7 @@
 //! registered model stack and a numbered artifact version, which these
 //! receipts do not carry.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,7 @@ use super::cells::charges_subject;
 use super::evidence_judge::amendment_judgments_in_txn;
 use super::stored::{EVIDENCE, EVIDENCE_ROW_LABEL, hex_entity};
 use super::taxonomy::AmendmentJudgment;
+use super::worsening::outcomes_in_txn;
 use crate::Vault;
 use crate::claim::ClaimSource;
 use crate::edit_distance::delta::amendment_recorded_in_txn;
@@ -133,7 +134,7 @@ pub struct TriageReceipt {
     /// reads it); `None` when none is recorded, as for a rejection.
     pub delta_ref: Option<String>,
     pub rejected: bool,
-    /// The edit mass the judgment charged from.
+    /// The judgment's edit mass.
     pub d_norm: f32,
     pub at: u64,
     /// The terminal pack receipt of the attempt the proposal came from.
@@ -210,7 +211,8 @@ pub struct TriagePacket {
     pub scope: String,
     pub publisher: ArtifactPublisher,
     /// The newest failing receipts, oldest first: the judged receipts in this
-    /// scope that charge the subject.
+    /// scope that charge the subject or left an amended or rejected outcome
+    /// on its cells.
     pub receipts: Vec<TriageReceipt>,
     pub agent_definitions: Vec<AgentDefinitionRef>,
     /// Each skill at each version the receipts name.
@@ -218,12 +220,12 @@ pub struct TriagePacket {
     /// Each executor stamp the receipts name.
     pub executors: Vec<String>,
     pub recent_changes: RecentChanges,
-    /// The time of the judgment whose charge fired it.
+    /// When the outcome that fired it landed.
     pub at: u64,
 }
 
-/// The packet `signal` mints for `subject` in `judgment`'s scope, read from
-/// the judgment ledger and the records it names in `txn`.
+/// The packet `signal` mints for `subject` in `scope` at `at`, read from the
+/// judgment ledger, the subject's cells and the records they name in `txn`.
 ///
 /// # Errors
 ///
@@ -231,15 +233,25 @@ pub struct TriagePacket {
 pub(super) fn packet_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    judgment: &AmendmentJudgment,
     subject: EntityId,
     subject_kind: TriageSubject,
+    scope: &str,
+    at: u64,
     signal: WorseningSignal,
 ) -> Result<TriagePacket> {
+    // A count-only outcome charges nobody, yet it is the subject's failure.
+    let marked: BTreeSet<String> = outcomes_in_txn(vault, txn, &subject, scope)?
+        .into_iter()
+        .filter(|outcome| outcome.failed())
+        .map(|outcome| outcome.receipt)
+        .collect();
     let mut failing: Vec<AmendmentJudgment> = amendment_judgments_in_txn(vault, txn)?
         .into_iter()
         .map(|(row, _)| row)
-        .filter(|row| row.scope == judgment.scope && charges_subject(row, &subject))
+        .filter(|row| {
+            row.scope == scope
+                && (charges_subject(row, &subject) || marked.contains(&row.receipt_id))
+        })
         .collect();
     failing.sort_by(|a, b| (a.at, &a.receipt_id).cmp(&(b.at, &b.receipt_id)));
     let skip = failing.len().saturating_sub(MAX_TRIAGE_RECEIPTS);
@@ -301,19 +313,19 @@ pub(super) fn packet_in_txn(
         }
     }
     let half_life = crate::learning::project::window_in_txn(vault, txn)?.half_life;
-    let recent_changes = recent_changes(&receipts, judgment.at.saturating_sub(half_life));
+    let recent_changes = recent_changes(&receipts, at.saturating_sub(half_life));
     Ok(TriagePacket {
         signal,
         subject: subject.to_hex(),
         subject_kind,
-        scope: judgment.scope.clone(),
+        scope: scope.to_owned(),
         publisher,
         receipts,
         agent_definitions,
         skills,
         executors,
         recent_changes,
-        at: judgment.at,
+        at,
     })
 }
 
