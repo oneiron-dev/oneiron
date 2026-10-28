@@ -120,8 +120,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/ai/chat/compaction.rs` | src | m | 18 crate-vis | — | A self agent's chat turn on its own live fork (FIX 4465 D) |
 | `src/api/ai/chat/delivery.rs` | src | s | 3 crate-vis | — | Chat response delivery and producer driving |
 | `src/api/ai/chat/hook_ask.rs` | src | s | 2 crate-vis | — | The hook pause a chat turn's retry resumes (FIX 5526): the ask handle a hook's Pending gave, named in… |
-| `src/api/ai/chat/hooks.rs` | src | s | 6 crate-vis | — | Chat generation and witness hook boundaries |
-| `src/api/ai/chat/recall.rs` | src | s | 2 crate-vis | — | The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the… |
+| `src/api/ai/chat/hooks.rs` | src | s | 7 crate-vis | — | Chat generation and witness hook boundaries |
+| `src/api/ai/chat/recall.rs` | src | s | 6 crate-vis | — | The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the… |
 | `src/api/ai/chat/segments.rs` | src | m | 6 crate-vis | — | A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the call's messages in the order the turn… |
 | `src/api/ai/chat/sitting.rs` | src | s | 1 crate-vis | — | Whether a chat turn signals its caller's durable sitting (FIX 5564; Engine #1968: an anonymous off-record… |
 | `src/api/ai/chat/sources.rs` | src | s | 6 crate-vis | — | The rows a live chat turn's call is read from (FIX 6935), ids only, for its run's permits and metered… |
@@ -959,7 +959,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/files_intake/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/files_intake/mod.rs` | src | s | 7 crate-vis | — | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
 | `src/files_intake/reader.rs` | src | m | 18 crate-vis | — | The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a… |
-| `src/files_intake/source.rs` | src | s | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
+| `src/files_intake/source.rs` | src | m | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
 | `src/files_intake/worker.rs` | src | s | 1 crate-vis | — | `oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one… |
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
@@ -1224,8 +1224,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/native_exl3/buffer.rs` | src | s | 13 crate-vis | — | A native call's regions |
 | `src/models/native_exl3/mod.rs` | src | m | 9 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
 | `src/models/native_exl3/session_ops.rs` | src | s | 5 crate-vis | — | The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection… |
-| `src/models/native_exl3/transport.rs` | src | m | 15 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
-| `src/models/native_exl3/wire.rs` | src | s | 14 crate-vis | — | Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload… |
+| `src/models/native_exl3/transport.rs` | src | m | 18 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
+| `src/models/native_exl3/wire.rs` | src | s | 15 crate-vis | — | Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload… |
 | `src/models/offer.rs` | src | s | 1 struct · 1 enum · 2 fn · 4 crate-vis | OfferEndpoint, ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
 | `src/models/openai.rs` | src | m | 4 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
 | `src/models/outbound_wait.rs` | src | s | 2 crate-vis | — | Server policy for shedding during a long journaled model wait |
@@ -1338,7 +1338,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/imports.rs` | src | s | 9 crate-vis | — | Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202) |
 | `src/owner/location.rs` | src | s | 5 crate-vis | — | Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything… |
 | `src/owner/mod.rs` | src | s | 32 crate-vis | — | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
-| `src/owner/note_imports.rs` | src | s | 11 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
+| `src/owner/note_imports.rs` | src | s | 12 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
 | `src/owner/note_tombstones.rs` | src | s | 7 crate-vis | — | NOTE tombstone review (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed for archived NOTEs… |
 | `src/owner/off_record.rs` | src | m | 19 crate-vis | — | Off-record sessions (ARCH-0052, OF-326): enter a room whose writes land in an in-memory overlay, witness… |
 | `src/owner/pack_drift.rs` | src | s | 2 crate-vis | — | Pack drift (ARCH-0059 §4): what the repair ladder did to saved queries when a pack moved under them: a… |

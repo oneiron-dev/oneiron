@@ -599,6 +599,11 @@ impl AgentDispatcher<'_> {
             .to_string()),
             AgentDispatchTarget::Workflow(id) => {
                 let definition = self.workflow_definition_in_txn(txn, *id)?;
+                // FIX 9180: every leaf seats one agent, noted before the
+                // first leaf check below can fail.
+                for step in &definition.steps {
+                    self.observe_seat(*step);
+                }
                 let mut leaves = Vec::with_capacity(definition.steps.len());
                 for id in &definition.steps {
                     let leaf = self

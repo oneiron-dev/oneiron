@@ -153,6 +153,10 @@ impl AgentDispatcher<'_> {
         task: Option<&WorkflowTaskBinding>,
     ) -> Result<AgentDispatchOutcome> {
         let (definition, mut intent) = self.workflow_intent(txn, &input, &spawn)?;
+        // FIX 9180: every leaf seats one agent, noted before any check below.
+        for step in &definition.steps {
+            self.observe_seat(*step);
+        }
         intent.task = task.cloned();
         // FIX 2314: the request as the side-row wall stores it, before any
         // compare, frozen step, wrapper payload or status is derived from

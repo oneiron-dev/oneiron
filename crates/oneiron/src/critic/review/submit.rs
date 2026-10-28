@@ -33,7 +33,7 @@ pub struct CriticReviewSubmit {
     /// The task type's node the critics' reliability is learned at.
     pub type_node: String,
     /// The task-type tree version that node is in.
-    pub type_tree_version: u32,
+    pub type_tree_version: u64,
     /// The reliability axis.
     pub axis: String,
     /// The confidence, in `0..=1`, at which a merged finding resolves without
@@ -51,6 +51,12 @@ pub struct CriticReviewSubmit {
     /// replayed review keeps the run first declared for it.
     #[serde(default)]
     pub spawn_attempt_ref: Option<String>,
+    /// The project the reviewed run works in, 32-hex: the critics'
+    /// reliability counts in that project's cells (FIX 6038); absent, the
+    /// vault's. The caller's declaration: the branch attempt derived from
+    /// `run_ref` is never read for it.
+    #[serde(default)]
+    pub project_ref: Option<String>,
 }
 
 /// One lens's stored skill and the actor executing it.
@@ -116,6 +122,11 @@ impl CriticReviewSubmit {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
+        let project = self
+            .project_ref
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
         let digest = blake3::hash(self.run_ref.as_bytes());
         let request = ReviewRequest {
             actor,
@@ -133,6 +144,7 @@ impl CriticReviewSubmit {
             critics,
             at,
             spawn_attempt,
+            project,
         };
         Ok((request, catalog))
     }

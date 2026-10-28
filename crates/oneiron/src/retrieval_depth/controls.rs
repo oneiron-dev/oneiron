@@ -349,4 +349,7 @@ pub struct RecallExecution<'a> {
     pub rerank_unavailable: bool,
     /// The caller's opt-in stage capture and exact turn linkage.
     pub telemetry: Option<&'a crate::task_verb::sdk::RecallTelemetry>,
+    /// The token budget the pack is assembled and rendered under, as its
+    /// door resolved it (FIX 9962); `None` is the 4,000-token default.
+    pub render_budget: Option<usize>,
 }

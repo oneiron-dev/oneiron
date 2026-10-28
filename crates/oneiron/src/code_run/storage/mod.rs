@@ -16,6 +16,7 @@ mod response_erase;
 mod response_owners;
 mod routing;
 mod session_write;
+mod spawn_erase;
 mod speech_identity;
 mod type_diagnostics;
 mod wait_delivery;
@@ -57,6 +58,7 @@ pub(crate) use self::replay_capsule::{
 pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn};
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
+pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;
 pub(in crate::code_run) use self::speech_identity::derived_executor_id;

@@ -1,4 +1,4 @@
-//! Leaf payload structs with per-atom validate, fallback, and budget impls.
+//! Leaf payload structs with per-atom validate and fallback impls.
 
 use std::collections::HashSet;
 
@@ -10,14 +10,12 @@ use crate::lens::generated_ui::{
 };
 use crate::lens::self_ui::{SelfUiAction, SelfUiOption};
 use crate::lens::validate::{
-    LensBudget, validate_lens_collection_len, validate_required_lens_text,
-    validate_selected_option, validate_self_ui_options,
+    validate_required_lens_text, validate_selected_option, validate_self_ui_options,
 };
 use crate::lens::wire_ids::{
     LensHandleName, LensHandleRef, LensMediaHandle, LensResultSetRowId, SelfUiActionId,
     SelfUiControlId, SelfUiOptionValue,
 };
-use crate::lens::wire_limits::deserialize_limited_vec;
 use crate::{Error, Result};
 
 /// One rendered row of a result set. `id` is an opaque echo token the client hands
@@ -50,10 +48,9 @@ pub enum GeneratedUiResultSetSelectAll {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GeneratedUiResultSetAtom {
-    #[serde(deserialize_with = "deserialize_limited_vec")]
     pub rows: Vec<GeneratedUiResultSetRow>,
     pub select_all: GeneratedUiResultSetSelectAll,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub action_bar: Vec<SelfUiActionId>,
 }
 
@@ -63,10 +60,7 @@ pub struct GeneratedUiResultSetAtom {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratedUiResultSetSelection {
-    Explicit {
-        #[serde(deserialize_with = "deserialize_limited_vec")]
-        row_ids: Vec<LensResultSetRowId>,
-    },
+    Explicit { row_ids: Vec<LensResultSetRowId> },
     AllWithinFilter {},
 }
 
@@ -81,9 +75,6 @@ pub struct GeneratedUiResultSetActionEvent {
 
 impl GeneratedUiResultSetAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("result set rows", self.rows.len())?;
-        validate_lens_collection_len("result set action bar", self.action_bar.len())?;
-
         let mut row_ids = HashSet::with_capacity(self.rows.len());
         for row in &self.rows {
             if !row_ids.insert(row.id.as_str()) {
@@ -133,11 +124,6 @@ impl GeneratedUiResultSetAtom {
         }
         Ok(())
     }
-
-    pub(super) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
-        budget.add_collection("result set rows", self.rows.len())?;
-        budget.add_collection("result set action bar", self.action_bar.len())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
@@ -153,7 +139,6 @@ impl<'de> Deserialize<'de> for TextBlockAtom {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct TextBlockAtomWire {
-            #[serde(deserialize_with = "deserialize_limited_vec")]
             spans: Vec<LensTextSpan>,
         }
 
@@ -189,7 +174,6 @@ pub struct MediaAtom {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LedgerRowAtom {
-    #[serde(deserialize_with = "deserialize_limited_vec")]
     pub cells: Vec<LedgerCell>,
     #[serde(default)]
     pub status: Option<StatusDotAtom>,
@@ -279,7 +263,7 @@ pub struct MetaLineAtom {
 #[serde(deny_unknown_fields)]
 pub struct SectionAtom {
     pub title: LensText,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub lines: Vec<LensText>,
 }
 
@@ -297,7 +281,7 @@ pub struct ThreadEntryAtom {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct CollectionAtom {
     pub title: LensText,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub rows: Vec<LedgerRowAtom>,
 }
 
@@ -310,7 +294,7 @@ impl<'de> Deserialize<'de> for CollectionAtom {
         #[serde(deny_unknown_fields)]
         struct CollectionAtomWire {
             title: LensText,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             rows: Vec<LedgerRowAtom>,
         }
 
@@ -320,9 +304,6 @@ impl<'de> Deserialize<'de> for CollectionAtom {
             rows: wire.rows,
         };
         atom.validate().map_err(de::Error::custom)?;
-        let mut budget = LensBudget::default();
-        atom.count_collection_items(&mut budget)
-            .map_err(de::Error::custom)?;
         Ok(atom)
     }
 }
@@ -331,7 +312,7 @@ impl<'de> Deserialize<'de> for CollectionAtom {
 #[serde(deny_unknown_fields)]
 pub struct ReceiptAtom {
     pub title: LensText,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub lines: Vec<MetaLineAtom>,
     #[serde(default)]
     pub seal: Option<SealAtom>,
@@ -357,7 +338,7 @@ pub struct PackLineAtom {
 pub struct AnswerSheetAtom {
     pub question: LensText,
     pub answer: LensText,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub citations: Vec<LensHandleRef>,
 }
 
@@ -370,9 +351,9 @@ pub struct TwoClocksAtom {
 
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct NeighborhoodGraphAtom {
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub nodes: Vec<GraphNode>,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub edges: Vec<GraphEdge>,
 }
 
@@ -384,9 +365,9 @@ impl<'de> Deserialize<'de> for NeighborhoodGraphAtom {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct NeighborhoodGraphAtomWire {
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             nodes: Vec<GraphNode>,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             edges: Vec<GraphEdge>,
         }
 
@@ -469,9 +450,9 @@ impl<'de> Deserialize<'de> for QuickFilterAtom {
         struct QuickFilterAtomWire {
             id: SelfUiControlId,
             label: LensText,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             options: Vec<SelfUiOption>,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             selected: Vec<SelfUiOptionValue>,
             action: SelfUiAction,
         }
@@ -485,9 +466,6 @@ impl<'de> Deserialize<'de> for QuickFilterAtom {
             action: wire.action,
         };
         atom.validate().map_err(de::Error::custom)?;
-        let mut budget = LensBudget::default();
-        atom.count_collection_items(&mut budget)
-            .map_err(de::Error::custom)?;
         Ok(atom)
     }
 }
@@ -495,7 +473,7 @@ impl<'de> Deserialize<'de> for QuickFilterAtom {
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct InspectorAtom {
     pub title: LensText,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub sections: Vec<SectionAtom>,
 }
 
@@ -508,7 +486,7 @@ impl<'de> Deserialize<'de> for InspectorAtom {
         #[serde(deny_unknown_fields)]
         struct InspectorAtomWire {
             title: LensText,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             sections: Vec<SectionAtom>,
         }
 
@@ -518,16 +496,12 @@ impl<'de> Deserialize<'de> for InspectorAtom {
             sections: wire.sections,
         };
         atom.validate().map_err(de::Error::custom)?;
-        let mut budget = LensBudget::default();
-        atom.count_collection_items(&mut budget)
-            .map_err(de::Error::custom)?;
         Ok(atom)
     }
 }
 
 impl TextBlockAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("text block spans", self.spans.len())?;
         if self.spans.is_empty() {
             return Err(Error::InvalidConfig(
                 "text block must contain at least one span".to_string(),
@@ -568,29 +542,20 @@ impl MediaAtom {
 
 impl LedgerRowAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("ledger row cells", self.cells.len())
+        Ok(())
     }
 }
 
 impl SectionAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("lens section lines", self.lines.len())
+        Ok(())
     }
 }
 
 impl CollectionAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("lens collection rows", self.rows.len())?;
         for row in &self.rows {
             row.validate()?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
-        budget.add_collection("lens collection rows", self.rows.len())?;
-        for row in &self.rows {
-            budget.add_collection("ledger row cells", row.cells.len())?;
         }
         Ok(())
     }
@@ -598,21 +563,18 @@ impl CollectionAtom {
 
 impl ReceiptAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("receipt lines", self.lines.len())
+        Ok(())
     }
 }
 
 impl AnswerSheetAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("answer sheet citations", self.citations.len())
+        Ok(())
     }
 }
 
 impl NeighborhoodGraphAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("neighborhood graph nodes", self.nodes.len())?;
-        validate_lens_collection_len("neighborhood graph edges", self.edges.len())?;
-
         let mut node_ids = HashSet::with_capacity(self.nodes.len());
         for node in &self.nodes {
             if !node_ids.insert(node.id.as_str()) {
@@ -637,7 +599,6 @@ impl NeighborhoodGraphAtom {
 impl QuickFilterAtom {
     pub(super) fn validate(&self) -> Result<()> {
         validate_self_ui_options("quick filter options", &self.options)?;
-        validate_lens_collection_len("quick filter selected values", self.selected.len())?;
         let mut selected_values = HashSet::with_capacity(self.selected.len());
         for selected in &self.selected {
             if !selected_values.insert(selected.as_str()) {
@@ -649,27 +610,12 @@ impl QuickFilterAtom {
         }
         self.action.validate()
     }
-
-    pub(super) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
-        budget.add_collection("quick filter options", self.options.len())?;
-        budget.add_collection("quick filter selected values", self.selected.len())?;
-        budget.add_collection("self.ui action args", self.action.args.len())
-    }
 }
 
 impl InspectorAtom {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("inspector sections", self.sections.len())?;
         for section in &self.sections {
             section.validate()?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
-        budget.add_collection("inspector sections", self.sections.len())?;
-        for section in &self.sections {
-            budget.add_collection("lens section lines", section.lines.len())?;
         }
         Ok(())
     }

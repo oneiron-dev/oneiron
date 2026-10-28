@@ -145,8 +145,8 @@ pub struct MinedSkillEditDecision {
 pub enum MinedSkillEditVerdict {
     /// The edit was applied through the gated apply door.
     Accepted,
-    /// The decider refused it. The cluster goes quiet for
-    /// [`MINER_REJECTION_COOLDOWN_SECS`](crate::edit_distance::miner::MINER_REJECTION_COOLDOWN_SECS).
+    /// The decider refused it. The cluster goes quiet for the policy
+    /// manifest's `miner_rejection_wait_seconds` row.
     Rejected,
 }
 

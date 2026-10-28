@@ -651,7 +651,8 @@ side_tables! {
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;
     /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
     /// identity tuple. Key: hash32.
-    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored;
+    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored
+        => crate::learning::erase_review_scope_in_txn;
     /// Index from a review verdict claim id back to its CRITIC_REVIEW_RESULT row key. Key: id16.
     CRITIC_REVIEW_RESULT_ID: VaultMeta b"review:result_id:v1:" Raw;
     /// Claim-before-speaking receipt naming which actor may respond to one addressed turn. Key: id16
