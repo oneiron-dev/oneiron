@@ -30,6 +30,9 @@ use super::constants::{
 use super::store::DreamerRunnerStore;
 use super::types::{DreamerDurableMilestone, DreamerMilestoneClaim, DreamerMilestoneKind};
 
+#[cfg(feature = "sync")]
+mod verified_read;
+
 /// Marker that the one-time durable-milestone-index backfill pass has run.
 pub(super) const MILESTONE_INDEX_BACKFILLED: SideTable<(), Vec<u8>, Raw> =
     SideTable::new(&side_table::DREAMER_MILESTONE_INDEX_BACKFILLED);
@@ -285,7 +288,8 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
 ///   claim replicated from a peer has nothing local to bind against —
 ///   indexing it would let a peer's (or a forger's) claim decide this
 ///   device's resume point. `latest_durable_milestone` is only meaningful on
-///   the device holding the row, so nothing legitimate is lost;
+///   the device holding the row; a replicated milestone's coarse progress is
+///   read through the verified claim lookup instead (FIX 8715);
 /// * unreadable/undecodable local row or payload → NOT bound (fail closed);
 /// * non-dreamer or non-agent-dispatch attempt → bound (today's semantics for
 ///   milestones that carry no agent attribution);

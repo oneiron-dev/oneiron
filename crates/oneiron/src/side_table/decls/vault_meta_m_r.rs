@@ -28,8 +28,10 @@ side_tables! {
     /// (FIX 10260): its turn, conversation and writer, and the ids and types its turn asserted.
     /// Key: id16(message).
     MESSAGE_REPLY_ASSERTIONS: VaultMeta b"message_reply_assertions:v1:" Named Engine;
-    /// In-flight streamed message recovery seed. Key: id16.
-    MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named;
+    /// In-flight streamed message recovery seed. Key: id16. FIX 10668: this entry's scrub takes
+    /// the signed slip out of a Retry seed's action its erased requester asked.
+    MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named
+        => crate::memory::scrub_stream_seed_actor_in_txn;
     /// Vault default message-streaming policy. Key: ().
     MESSAGE_STREAM_POLICY: VaultMeta b"message_stream_policy:v1" Named;
     /// Latest terminal stream receipt of a message. Key: id16.

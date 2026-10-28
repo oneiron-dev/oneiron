@@ -60054,8 +60054,8 @@ pub struct FreeTimePolicyRow {
     pub pinned_split: Option<FreeTimeSplit>,
     #[serde(rename = "cap_shown_at_ms")]
     pub cap_shown_at_ms: u64,
-    #[serde(rename = "set_by")]
-    pub set_by: String,
+    #[serde(rename = "set_by", default, skip_serializing_if = "Option::is_none")]
+    pub set_by: Option<String>,
     #[serde(rename = "set_at")]
     pub set_at: u64,
 }
