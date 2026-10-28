@@ -12,8 +12,9 @@ A command that reads a secret from stdin asks for it on stderr when stdin is a t
 turns the terminal's echo off until the read ends. The secret does not show on the screen or in
 the scrollback. A password, a PRF output, a seed or a kit passphrase ends at the line break you
 type. A secret value (`secrets register`, `secrets rotate`) and a recovery kit
-(`secrets anchor-sign`) end at Ctrl-D, and a value is kept exactly as typed. A pipe or a file is
-read as before.
+(`secrets anchor-sign`) end at Ctrl-D, and a value is kept exactly as typed. Ctrl-C, Ctrl-\, a
+hangup or a termination during the read turns the echo back on before the command ends. A pipe or
+a file is read as before. On Windows the console still echoes.
 
 ## Unlock the vault key for any vault-key command
 
@@ -42,7 +43,9 @@ oneiron recovery-kit confirm --piece p1.txt --piece p2.txt --unlock password < o
 The `--unlock-*` names are kept apart from the secret the command enrolls (`--secret-file`,
 `--box-dir`) and from a kit's `--piece`. One command reads at most one secret from stdin. When
 both the unlock and the new secret would come from stdin, the command asks you to put one of them
-in a file. `vault-key prf-input` opens no key and reads no `--unlock`.
+in a file. A recovery box program (`--unlock-box-command`) counts as reading stdin, because it may
+read its sign-in there; the command's own secret then comes from its file. `vault-key prf-input`
+opens no key and reads no `--unlock`.
 
 `vault-key add-device` keeps its own flags (`--unlock`, `--credential`, `--label`, `--piece`,
 `--vault-id`, `--secret-file`, `--box-dir`, `--box-command`). It also takes `--capsule REPORT`
@@ -107,7 +110,9 @@ oneiron api raw POST /v1/owner/secrets/anchor-sign --data @push.json
 ```
 
 Add `"passphrase"` when one piece and the kit passphrase open the kit. The kit is the proof for
-this call alone. It is not stored, logged or put in a receipt. The rules of the CLI form hold: the
+this call alone. It is not stored, logged or put in a receipt. The body is read in memory, up to
+64 KiB, and never spooled to disk; that buffer, the recovery codes and the passphrase are wiped
+when the call ends. The rules of the CLI form hold: the
 engine takes the push only from an install with no live machine profile, against the root this
 vault pins. A hosted or managed install takes no kit (`kit_requires_owner_device`). A `target`
 that is not this install's machine id is refused as `kit_target_elsewhere`.
@@ -139,6 +144,7 @@ oneiron guests revoke <grant> --peer https://former-peer.example
 
 Once the revoke commits, the command queues the same courtesy-delete asks as
 `POST /v1/owner/guests/revoke`. Each ask goes to the peer, once for each pact the revoke ended,
-and is signed with this host's key. A verb hook that rewrites `peer` is followed. A peer that
-fails the origin check skips the asks only, and the answer and your inbox say why. An ask that
-does not queue never undoes the revoke.
+and is signed with this host's key. A verb hook that rewrites `peer` is followed. A typed
+`--peer` that fails the origin check is refused before the revoke runs. A hook-rewritten peer that
+fails it skips the asks only, and the answer and your inbox say why. An ask that does not queue
+never undoes the revoke.
