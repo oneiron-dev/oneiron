@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1161 facade rows, 4155 generated types.
+// UniFFI census: 1161 facade rows, 4157 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1113.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -28628,6 +28628,67 @@ pub struct HostRuleRef {
     pub revision: u32,
 }
 
+/// `oneiron::llm::decision::ladder::roles::RoleRank`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RoleRank {
+    #[serde(rename = "responsible")]
+    Responsible,
+    #[serde(rename = "board")]
+    Board,
+    #[serde(rename = "owner")]
+    Owner,
+}
+
+/// `oneiron::llm::decision::ladder::roles::AskAct`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AskAct {
+    #[serde(rename = "judgment")]
+    Judgment,
+    #[serde(rename = "e_signature")]
+    ESignature,
+    #[serde(rename = "payment")]
+    Payment,
+}
+
+/// `oneiron::llm::decision::ladder::roles::HolderKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HolderKind {
+    #[serde(rename = "person")]
+    Person,
+    #[serde(rename = "agent")]
+    Agent,
+}
+
+/// `oneiron::llm::decision::types::ReceiptAnswerer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptAnswerer {
+    #[serde(rename = "role")]
+    pub role: RoleRank,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(rename = "kind")]
+    pub kind: HolderKind,
+}
+
+/// `oneiron::llm::decision::types::ReceiptAsk`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptAsk {
+    #[serde(rename = "seq", default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(rename = "role")]
+    pub role: RoleRank,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(rename = "ceiling")]
+    pub ceiling: RoleRank,
+    #[serde(rename = "act")]
+    pub act: AskAct,
+    #[serde(rename = "answered", default, skip_serializing_if = "Option::is_none")]
+    pub answered: Option<ReceiptAnswerer>,
+}
+
 /// `oneiron::llm::decision::types::DecisionReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -28678,6 +28739,8 @@ pub struct DecisionReceipt {
     pub person_row: Option<u32>,
     #[serde(rename = "rule", default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<HostRuleRef>,
+    #[serde(rename = "asked", default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<ReceiptAsk>,
 }
 
 /// `oneiron::llm::decision::types::HumanAskReason`.
@@ -51314,28 +51377,6 @@ pub enum AskRole {
     Owner,
 }
 
-/// `oneiron::llm::decision::ladder::roles::RoleRank`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum RoleRank {
-    #[serde(rename = "responsible")]
-    Responsible,
-    #[serde(rename = "board")]
-    Board,
-    #[serde(rename = "owner")]
-    Owner,
-}
-
-/// `oneiron::llm::decision::ladder::roles::AskAct`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum AskAct {
-    #[serde(rename = "judgment")]
-    Judgment,
-    #[serde(rename = "e_signature")]
-    ESignature,
-    #[serde(rename = "payment")]
-    Payment,
-}
-
 /// `oneiron::llm::decision::ladder::roles::AskTo`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -51346,15 +51387,6 @@ pub struct AskTo {
     pub ceiling: RoleRank,
     #[serde(rename = "act")]
     pub act: AskAct,
-}
-
-/// `oneiron::llm::decision::ladder::roles::HolderKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum HolderKind {
-    #[serde(rename = "person")]
-    Person,
-    #[serde(rename = "agent")]
-    Agent,
 }
 
 /// `oneiron::llm::decision::ladder::roles::RoleHolder`.
@@ -51435,6 +51467,12 @@ pub struct DecisionAsk {
         skip_serializing_if = "Option::is_none"
     )]
     pub withdrawn_at: Option<u64>,
+    #[serde(
+        rename = "pack_state",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pack_state: Option<crate::WireJson>,
 }
 
 /// `oneiron::receipt::decision_asks::DecisionAskClimbRequest`.

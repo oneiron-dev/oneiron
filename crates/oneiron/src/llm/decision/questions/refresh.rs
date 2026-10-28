@@ -335,6 +335,7 @@ fn refresh_with(
                         think_row: None,
                         person_row: None,
                         rule: None,
+                        asked: None,
                     },
                     human_ask: None,
                 },

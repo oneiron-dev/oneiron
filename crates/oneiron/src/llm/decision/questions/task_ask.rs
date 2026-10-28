@@ -113,6 +113,7 @@ pub(crate) fn bind_task_answer_in_txn(
                 think_row: None,
                 person_row: None,
                 rule: None,
+                asked: None,
             },
             human_ask: None,
         },
