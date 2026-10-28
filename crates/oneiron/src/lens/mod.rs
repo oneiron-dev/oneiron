@@ -59,7 +59,7 @@ pub use regen::{
     LensRegenEnactment, enact_lens_regeneration_embedded, regenerate_and_enact_lens_embedded,
 };
 mod sdk;
-pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};
+pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource};
 mod record_ref;
 pub use record_ref::{
     LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_LINKS_TURN_PAGE_MAX,
