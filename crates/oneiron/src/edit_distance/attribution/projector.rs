@@ -3,8 +3,12 @@
 //! and their retraction.
 
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
-use super::cells::{charge_judgment_in_txn, charges_subject, withdraw_receipt_in_txn};
+use super::cells::{
+    charge_judgment_in_txn, judgment_rows, receipt_cells_in_txn, receipt_rows_stand_in_txn,
+    settle_receipt_rows_in_txn, withdraw_receipt_in_txn,
+};
 use super::evidence_judge::{amendment_judgment_in_txn, amendment_judgments_in_txn};
 use super::stored::{ROW_VERSION, StoredTarget, TARGET, TARGET_ROW_LABEL, TargetKey, hex_entity};
 use super::taxonomy::{AmendmentClass, AmendmentJudgment};
@@ -17,7 +21,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::learning::PREDICATE_LEARNING_EDIT_COST;
+use crate::learning::{LearningCell, LearningEvidence, PREDICATE_LEARNING_EDIT_COST};
 use crate::ports::EntityStoreRead;
 use crate::side_table::HexId;
 use crate::skill_reliability::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
@@ -43,19 +47,26 @@ use crate::temporal::TimeRange;
 ///
 /// **One family, one write path** (FIX 9797). Each charging share is one
 /// evidence row per receipt per cell: the subject's cell at its executor, in
-/// the receipt's consent scope and task type. The learning projector
-/// recomputes the cell's estimate — mean edit mass and spread, own runs,
-/// prior, labels with the untouched / amended / rejected counts, window and
-/// estimator version — from every row the cell holds, so a replay overwrites
-/// its own rows and the pass is idempotent. No parallel scalar head is kept.
+/// the receipt's consent scope and task type, measured under its engine
+/// version. The generating actor's and the skill's cells count the outcome
+/// with a count-only row where no share charges them. The learning projector
+/// recomputes the cell's estimate — mean edit mass and spread over one
+/// measurement version, own runs, prior, labels with the untouched / amended
+/// / rejected counts, window and estimator version — from every row the cell
+/// holds, so a replay overwrites its own rows and the pass is idempotent. No
+/// parallel scalar head is kept.
 ///
 /// **Every pass reconciles before it writes.** The judgment ledger is
 /// overwrite-by-receipt, so a re-judgment can move a receipt off the subject
 /// it used to charge — and nothing in the new judgment names the old one. The
 /// subjects each receipt has charged are therefore kept as their own ledger,
-/// and a receipt's evidence on a subject no judgment charges any more is
-/// WITHDRAWN here. A re-judgment onto another executor, scope or task type
-/// moves the receipt's row off the old cell as it lands the new one.
+/// and every row a receipt holds is checked against the rows its current
+/// judgment lands — cell, share, mass, version and label — whether or not
+/// that judgment is in this pass: a row no judgment stands behind is
+/// WITHDRAWN, a moved or changed one is landed again as judged.
+///
+/// The heads returned are read once, after every write of the pass: one
+/// current head per cell the given judgments land on.
 ///
 /// # Errors
 ///
@@ -64,9 +75,9 @@ pub fn project_edit_cost_claims(
     vault: &Vault,
     judgments: &[AmendmentJudgment],
 ) -> Result<Vec<EntityId>> {
-    retract_unsupported_targets(vault)?;
+    reconcile_targets(vault)?;
     vault.with_write_txn_grouped(|wtxn| {
-        let mut heads = Vec::new();
+        let mut cells: Vec<LearningCell> = Vec::new();
         for judgment in judgments {
             // Grounded is not authorization: this row must also BE the row
             // this module routed for that receipt.
@@ -76,12 +87,16 @@ pub fn project_edit_cost_claims(
                 continue;
             }
             for cell in charge_judgment_in_txn(vault, wtxn, judgment)? {
-                for (head, _, _) in
-                    crate::learning::project::active_heads_in_txn(vault, wtxn, &cell)?
-                {
-                    if !heads.contains(&head) {
-                        heads.push(head);
-                    }
+                if !cells.contains(&cell) {
+                    cells.push(cell);
+                }
+            }
+        }
+        let mut heads = Vec::new();
+        for cell in &cells {
+            for (head, _, _) in crate::learning::project::active_heads_in_txn(vault, wtxn, cell)? {
+                if !heads.contains(&head) {
+                    heads.push(head);
                 }
             }
         }
@@ -180,7 +195,7 @@ pub fn project_amendment_lessons(
     vault: &Vault,
     judgments: &[AmendmentJudgment],
 ) -> Result<Vec<EntityId>> {
-    retract_unsupported_targets(vault)?;
+    reconcile_targets(vault)?;
     let mut written = Vec::new();
     for judgment in judgments {
         let Some(actor) = lapse_actor(judgment) else {
@@ -280,54 +295,113 @@ fn recorded_targets_in_txn(
     Ok(out)
 }
 
-/// Withdraws every landed row the judgment ledger no longer supports.
+/// Brings every landed row in line with the judgment ledger.
 ///
-/// A receipt re-judged onto another class or subject, or withdrawn, orphans
-/// what it was holding up: without this the old charge would stand in the
-/// subject's cell forever, and an old lesson would keep standing. A lesson is
-/// retracted, not deleted, so it stays readable as history; an edit-cost row
-/// is withdrawn from its cell, which the learning projector recomputes.
+/// A receipt re-judged onto another class, subject, cell, share or mass, or
+/// withdrawn, leaves what it was holding up stale: without this the old
+/// charge would stand in the subject's cell forever, and an old lesson would
+/// keep standing. A lesson no lapse earns is retracted, not deleted, so it
+/// stays readable as history. An edit-cost row is checked against the rows
+/// the receipt's current judgment lands on that subject: one no judgment
+/// stands behind is withdrawn from its cell, and a moved or changed one lands
+/// again through the same cell writer; the learning projector recomputes
+/// each cell it touches.
 ///
-/// Support is read first and decided again under the writer that retracts: a
-/// pass with nothing to withdraw — the common case — costs no write
-/// transaction, and a tuple a concurrent pass has just earned is not retracted
-/// on a stale read.
-fn retract_unsupported_targets(vault: &Vault) -> Result<()> {
+/// The ledger is read first and decided again under the writer that
+/// reconciles: a pass with nothing to change — the common case — costs no
+/// write transaction, and a tuple a concurrent pass has just earned is not
+/// retracted on a stale read.
+fn reconcile_targets(vault: &Vault) -> Result<()> {
     {
         let rtxn = vault.store.env.read_txn()?;
-        if unsupported_targets_in_txn(vault, &rtxn)?.is_empty() {
+        if unsettled_targets_in_txn(vault, &rtxn)?.is_empty() {
             return Ok(());
         }
     }
     let now = vault.store.clock.now_recorded_at();
     vault.with_write_txn_grouped(|wtxn| {
-        for (predicate, subject, scope) in unsupported_targets_in_txn(vault, wtxn)? {
-            retract_target_in_txn(vault, wtxn, predicate, &subject, &scope, now)?;
+        for target in unsettled_targets_in_txn(vault, wtxn)? {
+            if target.rows.is_empty() {
+                retract_target_in_txn(
+                    vault,
+                    wtxn,
+                    target.predicate,
+                    &target.subject,
+                    &target.scope,
+                    now,
+                )?;
+            } else {
+                settle_receipt_rows_in_txn(
+                    vault,
+                    wtxn,
+                    &target.subject,
+                    &target.scope,
+                    &target.rows,
+                    now,
+                )?;
+            }
         }
         Ok(())
     })
 }
 
-/// The landed tuples no persisted judgment supports any more.
-fn unsupported_targets_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Vec<(&'static str, EntityId, String)>> {
+/// One landed tuple whose rows the judgment ledger no longer stands behind as
+/// written, and the edit-cost rows its receipt's current judgment lands on
+/// the subject: none when nothing supports the tuple any more.
+struct UnsettledTarget {
+    predicate: &'static str,
+    subject: EntityId,
+    scope: String,
+    rows: Vec<(LearningCell, LearningEvidence)>,
+}
+
+/// The landed tuples whose rows differ from what the persisted judgments
+/// land now.
+fn unsettled_targets_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<UnsettledTarget>> {
     let persisted: BTreeMap<String, AmendmentJudgment> = amendment_judgments_in_txn(vault, txn)?
         .into_iter()
         .map(|(judgment, _)| (judgment.receipt_id.clone(), judgment))
         .collect();
-    let mut unsupported = recorded_targets_in_txn(vault, txn)?;
+    // Each subject's cells are read once, however many receipts it holds.
+    let mut held: BTreeMap<EntityId, BTreeMap<String, Vec<LearningCell>>> = BTreeMap::new();
+    let mut unsettled = Vec::new();
     // Both kinds of target key on the receipt they were learned from.
-    unsupported.retain(|(predicate, subject, scope)| {
-        let judgment = persisted.get(scope);
-        if *predicate == PREDICATE_ACTOR_LESSON {
-            judgment.is_none_or(|row| lapse_actor(row) != Some(*subject))
+    for (predicate, subject, scope) in recorded_targets_in_txn(vault, txn)? {
+        let judgment = persisted.get(&scope);
+        let rows = if predicate == PREDICATE_ACTOR_LESSON {
+            if judgment.is_some_and(|row| lapse_actor(row) == Some(subject)) {
+                continue;
+            }
+            Vec::new()
         } else {
-            judgment.is_none_or(|row| !charges_subject(row, subject))
-        }
-    });
-    Ok(unsupported)
+            let rows: Vec<(LearningCell, LearningEvidence)> = judgment
+                .map(judgment_rows)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(cell, _)| cell.subject == subject)
+                .collect();
+            if !rows.is_empty() {
+                let by_receipt = match held.entry(subject) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        entry.insert(receipt_cells_in_txn(vault, txn, &subject)?)
+                    }
+                };
+                let holders = by_receipt.get(&scope).map_or(&[][..], Vec::as_slice);
+                if receipt_rows_stand_in_txn(vault, txn, &subject, &rows, holders)? {
+                    continue;
+                }
+            }
+            rows
+        };
+        unsettled.push(UnsettledTarget {
+            predicate,
+            subject,
+            scope,
+            rows,
+        });
+    }
+    Ok(unsettled)
 }
 
 /// Withdraws one tuple's rows and forgets the tuple, in the caller's
@@ -348,7 +422,7 @@ fn retract_target_in_txn(
     now: u64,
 ) -> Result<()> {
     if predicate == PREDICATE_LEARNING_EDIT_COST {
-        withdraw_receipt_in_txn(vault, wtxn, subject, scope, None, now)?;
+        withdraw_receipt_in_txn(vault, wtxn, subject, scope, &[], now)?;
         TARGET.delete(&vault.store, wtxn, &target_key(predicate, subject, scope))?;
         return Ok(());
     }
