@@ -83,6 +83,8 @@ mod projector;
 mod rejection;
 mod stored;
 mod taxonomy;
+mod triage;
+mod worsening;
 
 pub use self::audit::{
     AmendmentAuditFixture, AmendmentAuditRecord, held_out_amendment_fixtures, judge_audit_records,
@@ -100,6 +102,10 @@ pub use self::projector::{
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
     HunkLabel, PreferenceProposal, classify_amendment, validate_share_vector,
+};
+pub use self::triage::{
+    AgentDefinitionRef, ArtifactPublisher, RecentChange, RecentChanges, SkillAtVersion,
+    TriagePacket, TriageReceipt, TriageSubject, WorseningSignal, triage_packet,
 };
 
 pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;

@@ -160,7 +160,11 @@ pub(super) fn charge_judgment_in_txn(
             judgment.at,
         )?;
     }
-    Ok(rows.into_iter().map(|(cell, _)| cell).collect())
+    // Charged and count-only rows both reach the worsening check, so a
+    // rejection that charges nobody still extends its subject's run.
+    let cells: Vec<LearningCell> = rows.into_iter().map(|(cell, _)| cell).collect();
+    super::worsening::observe_charge_in_txn(vault, txn, judgment, &cells);
+    Ok(cells)
 }
 
 /// Every row `judgment` lands, each on its cell.
