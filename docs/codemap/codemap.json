@@ -24501,6 +24501,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/person_about/sources.rs",
+     "purpose": "The `about` line a reader sees, with the CLAIM ids it stands on (FIX 3515)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -79347,7 +79357,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 142,
+     "files": 143,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80406,7 +80416,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5335,
+   "source_files": 5336,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85390,7 +85400,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 58,
+      "const": 59,
       "crate-vis": 1
      }
     },
