@@ -16,6 +16,8 @@ pub(super) enum PolicyValueKey {
     ProviderCooldownMaxSeconds,
     ProviderCooldownMaxWaitSeconds,
     ScopePrecedence,
+    SessionIdleFloorSeconds,
+    SessionLifetimeCeilingSeconds,
 }
 impl PolicyValueKey {
     fn parse(value: &str) -> Option<Self> {
@@ -31,6 +33,8 @@ impl PolicyValueKey {
             "provider_cooldown_max_seconds" => Some(Self::ProviderCooldownMaxSeconds),
             "provider_cooldown_max_wait_seconds" => Some(Self::ProviderCooldownMaxWaitSeconds),
             "scope_precedence" => Some(Self::ScopePrecedence),
+            "session_idle_floor_seconds" => Some(Self::SessionIdleFloorSeconds),
+            "session_lifetime_ceiling_seconds" => Some(Self::SessionLifetimeCeilingSeconds),
             _ => None,
         }
     }
@@ -47,6 +51,8 @@ impl PolicyValueKey {
             Self::ProviderCooldownMaxSeconds => "provider_cooldown_max_seconds",
             Self::ProviderCooldownMaxWaitSeconds => "provider_cooldown_max_wait_seconds",
             Self::ScopePrecedence => "scope_precedence",
+            Self::SessionIdleFloorSeconds => "session_idle_floor_seconds",
+            Self::SessionLifetimeCeilingSeconds => "session_lifetime_ceiling_seconds",
         }
     }
 
@@ -66,7 +72,8 @@ impl PolicyValueKey {
             // A held answer's proposer is woken on the vault's clock, and a
             // Dreamer Retry park resumes on it (FIX 8716). The edit-distance
             // ledger and miner read their thresholds with no world or project
-            // (FIX 9802, 9809).
+            // (FIX 9802, 9809). A sitting closes on the vault's clock until
+            // trusted session axes exist (FIX 8600).
             Self::ArtifactAnswerQuietSeconds
             | Self::CommOptOutPosture
             | Self::DreamerRetryParkSeconds
@@ -76,7 +83,9 @@ impl PolicyValueKey {
             | Self::ProviderCooldownDefaultSeconds
             | Self::ProviderCooldownMaxSeconds
             | Self::ProviderCooldownMaxWaitSeconds
-            | Self::ScopePrecedence => scope == PolicyRowScope::Vault,
+            | Self::ScopePrecedence
+            | Self::SessionIdleFloorSeconds
+            | Self::SessionLifetimeCeilingSeconds => scope == PolicyRowScope::Vault,
         }
     }
 }
@@ -115,6 +124,8 @@ pub(super) enum PolicyValue {
     ProviderCooldownMaxSeconds(u64),
     ProviderCooldownMaxWaitSeconds(u64),
     ScopePrecedence(PolicyPrecedence),
+    SessionIdleFloorSeconds(u64),
+    SessionLifetimeCeilingSeconds(u64),
 }
 impl PolicyValue {
     fn restrict(self, other: Self) -> Self {
@@ -160,6 +171,14 @@ impl PolicyValue {
             (Self::ProviderCooldownMaxWaitSeconds(a), Self::ProviderCooldownMaxWaitSeconds(b)) => {
                 Self::ProviderCooldownMaxWaitSeconds(a.min(b))
             }
+            // A shorter idle floor or lifetime ceiling never keeps a sitting
+            // open longer than any trusted row allows.
+            (Self::SessionIdleFloorSeconds(a), Self::SessionIdleFloorSeconds(b)) => {
+                Self::SessionIdleFloorSeconds(a.min(b))
+            }
+            (Self::SessionLifetimeCeilingSeconds(a), Self::SessionLifetimeCeilingSeconds(b)) => {
+                Self::SessionLifetimeCeilingSeconds(a.min(b))
+            }
             _ => unreachable!("policy values for different keys never compose"),
         }
     }
@@ -175,7 +194,9 @@ impl PolicyValue {
             | Self::ProposalCheckThreshold(value)
             | Self::ProviderCooldownDefaultSeconds(value)
             | Self::ProviderCooldownMaxSeconds(value)
-            | Self::ProviderCooldownMaxWaitSeconds(value) => value.to_string(),
+            | Self::ProviderCooldownMaxWaitSeconds(value)
+            | Self::SessionIdleFloorSeconds(value)
+            | Self::SessionLifetimeCeilingSeconds(value) => value.to_string(),
             Self::ScopePrecedence(value) => value.as_str().to_owned(),
         }
     }
@@ -397,6 +418,14 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                         }
                         PolicyValueKey::ScopePrecedence => {
                             PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
+                        }
+                        // A zero floor or ceiling would end every sitting at once.
+                        PolicyValueKey::SessionIdleFloorSeconds => {
+                            PolicyValue::SessionIdleFloorSeconds(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::SessionLifetimeCeilingSeconds => {
+                            let seconds = raw.as_u64().filter(|v| *v > 0)?;
+                            PolicyValue::SessionLifetimeCeilingSeconds(seconds)
                         }
                     };
                 let Value::Map(scope_entries) = field(entries, "scope")? else {

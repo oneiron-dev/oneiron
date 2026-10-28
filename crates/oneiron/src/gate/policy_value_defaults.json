@@ -9,5 +9,7 @@
   {"row_ref":"default.provider_cooldown_default_seconds","key":"provider_cooldown_default_seconds","value":600,"scope":{"level":"vault"}},
   {"row_ref":"default.provider_cooldown_max_seconds","key":"provider_cooldown_max_seconds","value":691200,"scope":{"level":"vault"}},
   {"row_ref":"default.provider_cooldown_max_wait_seconds","key":"provider_cooldown_max_wait_seconds","value":60,"scope":{"level":"vault"}},
-  {"row_ref":"default.scope_precedence","key":"scope_precedence","value":"nested_narrowing","scope":{"level":"vault"}}
+  {"row_ref":"default.scope_precedence","key":"scope_precedence","value":"nested_narrowing","scope":{"level":"vault"}},
+  {"row_ref":"default.session_idle_floor_seconds","key":"session_idle_floor_seconds","value":1200,"scope":{"level":"vault"}},
+  {"row_ref":"default.session_lifetime_ceiling_seconds","key":"session_lifetime_ceiling_seconds","value":43200,"scope":{"level":"vault"}}
 ]
