@@ -242,7 +242,9 @@ impl Child {
     /// ([`Child::held_to_list`]). Its pick runs inside its parent's clock
     /// where that clock binds ([`Child::seat_parent_at`], FIX 8230), and a
     /// canonical job whose birth fails under it ends at its cutoff
-    /// ([`Child::unseated`]).
+    /// ([`Child::unseated`]). A child its host profiled is born on its
+    /// profile's model (FIX 9013), the one the profile's backend serves,
+    /// never another the pick would choose.
     fn seat(
         &self,
         vault: &Vault,
@@ -254,6 +256,7 @@ impl Child {
     ) -> Result<Option<ModelSeat>, Unseated> {
         let job = &self.job;
         let parent_at = self.seat_parent_at();
+        let profiled = self.profile().map(|profile| profile.model);
         let born = || -> Result<Option<ModelSeat>, String> {
             let inherited = &job.binding.listed;
             let prior = if inherited.is_empty() {
@@ -277,7 +280,7 @@ impl Child {
                         required: Vec::new(),
                         min_context_tokens,
                         locality,
-                        override_model: None,
+                        override_model: profiled.clone(),
                         override_effort: None,
                         listed,
                     };

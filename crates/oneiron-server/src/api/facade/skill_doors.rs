@@ -16,6 +16,7 @@ use serde::Deserialize;
 use super::host_doors::support::{Listed, credential_listing, owner_proof, refused};
 use super::hub_doors::owner_call;
 use crate::auth::CoreAuth;
+use crate::models::Seat;
 use crate::server::SyncServer;
 
 pub(crate) async fn vault_skills_get(
@@ -323,20 +324,18 @@ impl SkillRefiner for HostSkillRefiner<'_> {
             .map(|said| said.source)
             .chain(brief.neighbors.iter().map(|neighbor| neighbor.entity))
             .collect();
-        let failed =
-            |message: &str| oneiron::Error::InvalidConfig(format!("skill conversion: {message}"));
         let seat = self
             .server
             .ai
             .chat_seat()
-            .ok_or_else(|| failed("no generative seat"))?;
+            .ok_or_else(|| refine_failed("no generative seat"))?;
         let prompt = self
             .server
             .config
             .skills
             .conversion_prompt
             .as_ref()
-            .ok_or_else(|| failed("no conversion prompt configured"))?;
+            .ok_or_else(|| refine_failed("no conversion prompt configured"))?;
         let said: Vec<_> = brief
             .said
             .iter()
@@ -355,52 +354,24 @@ impl SkillRefiner for HostSkillRefiner<'_> {
                 })
             })
             .collect();
+        // FIX 8989: every selected utterance and neighbour is read. A
+        // selection that fits the seat's window, or one whose window is
+        // unknown, goes in one request, as it always has; a longer one goes
+        // a page at a time, each answered over the pages before it.
         let data = serde_json::json!({"said": said, "hint": brief.hint, "neighbors": neighbors});
-        let purpose = oneiron::skill_convert::skill_convert_call_purpose();
-        let mut request = LlmRequest {
-            model: seat.model.clone(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                scope: Default::default(),
-                tier: TierPrecedence::for_purpose(
-                    &purpose,
-                    ModelTierRef(
-                        oneiron::skill_convert::SKILL_CONVERT_CALL_PURPOSE_NAME.to_owned(),
-                    ),
-                ),
-                purpose,
-                class: CallClass::BestEffort,
-                response_format: ResponseFormat::Text,
-                locality: seat.locality,
-            },
-            messages: vec![
-                message(LlmMessageRole::System, prompt.clone()),
-                message(LlmMessageRole::User, data.to_string()),
-            ],
-            tools: Vec::new(),
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-            host_segments: None,
+        let window = refine_window(self.server.vault(), seat)
+            .filter(|window| !fits(*window, prompt, &data.to_string()));
+        let refined = match window {
+            None => self.ask(seat, prompt, &data)?.1,
+            Some(window) => {
+                let selection = Selection {
+                    said: &said,
+                    hint: brief.hint.as_deref(),
+                    neighbors: &neighbors,
+                };
+                self.ask_in_pages(seat, prompt, window, &selection)?
+            }
         };
-        let (ladder, run) = crate::api::llm::admit(self.server, self.auth, &mut request)
-            .map_err(|response| failed(&format!("inference refused ({})", response.status())))?;
-        let response = self
-            .handle
-            .block_on(ladder.generate(&run, request, None))
-            .map_err(|error| failed(&error.to_string()))?;
-        let text: String = response
-            .message
-            .content
-            .iter()
-            .filter_map(|part| match part {
-                ContentPart::Text { text } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
-        let refined: RefinedSkillWire = serde_json::from_str(&text)
-            .map_err(|_| failed("refiner did not return its typed JSON result"))?;
-        // Recheck the caller after the remote call, before the engine lands the candidate.
-        self.owner.revalidate(self.server.vault())?;
         Ok(RefinedSkill {
             skill_id: refined.skill_id,
             desc: refined.desc,
@@ -421,6 +392,227 @@ impl SkillRefiner for HostSkillRefiner<'_> {
             },
         })
     }
+}
+
+/// A selection's refiner input, each utterance and neighbour as its request
+/// carries it.
+struct Selection<'a> {
+    said: &'a [serde_json::Value],
+    hint: Option<&'a str>,
+    neighbors: &'a [serde_json::Value],
+}
+
+/// What a paged selection's request says of its part, beside its page.
+const REFINE_PART_NOTE: &str = "The selection is read in parts, in order. `draft` is your answer \
+     over the parts before this one, or null on the first. Answer with the same JSON shape: the \
+     draft updated with this part's said and neighbors, keeping all that earlier parts gave it, \
+     its verdict judged against every neighbor read so far. `last` marks the final part.";
+
+impl HostSkillRefiner<'_> {
+    /// The refined skill over `selection` read a page at a time (FIX
+    /// 8989): each page takes as many of the utterances left, then of the
+    /// neighbours left, in order, as fit `window` beside the prompt and the
+    /// answer over the pages before it, and at least one. None is left out
+    /// and none is cut; the last page's answer is the result.
+    fn ask_in_pages(
+        &self,
+        seat: &Seat,
+        prompt: &str,
+        window: u64,
+        selection: &Selection<'_>,
+    ) -> oneiron::Result<RefinedSkillWire> {
+        let (said, neighbors) = (selection.said, selection.neighbors);
+        let (mut said_at, mut neighbors_at) = (0, 0);
+        let mut draft = serde_json::Value::Null;
+        let mut index = 0_u64;
+        loop {
+            index += 1;
+            let frame = page_data(selection.hint, &[], &[], index, &draft, false).to_string();
+            let mut left = window.saturating_sub(tokens(&[prompt, frame.as_str()].join("\n")));
+            let mut said_end = said_at + take(&said[said_at..], &mut left);
+            let mut neighbors_end = neighbors_at;
+            if said_end == said.len() {
+                neighbors_end += take(&neighbors[neighbors_at..], &mut left);
+            }
+            if said_end == said_at && neighbors_end == neighbors_at {
+                if said_at < said.len() {
+                    said_end += 1;
+                } else if neighbors_at < neighbors.len() {
+                    neighbors_end += 1;
+                }
+            }
+            let last = said_end == said.len() && neighbors_end == neighbors.len();
+            let data = page_data(
+                selection.hint,
+                &said[said_at..said_end],
+                &neighbors[neighbors_at..neighbors_end],
+                index,
+                &draft,
+                last,
+            );
+            let (answer, refined) = self.ask(seat, prompt, &data)?;
+            if last {
+                return Ok(refined);
+            }
+            draft = answer;
+            (said_at, neighbors_at) = (said_end, neighbors_end);
+        }
+    }
+
+    /// One refiner request over `data` on the caller's admitted inference
+    /// ladder: its answer as JSON, and as the typed result it must parse
+    /// to. The caller is checked again after the remote call, before the
+    /// engine lands the candidate or a next page is asked.
+    fn ask(
+        &self,
+        seat: &Seat,
+        prompt: &str,
+        data: &serde_json::Value,
+    ) -> oneiron::Result<(serde_json::Value, RefinedSkillWire)> {
+        let purpose = oneiron::skill_convert::skill_convert_call_purpose();
+        let mut request = LlmRequest {
+            model: seat.model.clone(),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(
+                    &purpose,
+                    ModelTierRef(
+                        oneiron::skill_convert::SKILL_CONVERT_CALL_PURPOSE_NAME.to_owned(),
+                    ),
+                ),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: seat.locality,
+            },
+            messages: vec![
+                message(LlmMessageRole::System, prompt.to_owned()),
+                message(LlmMessageRole::User, data.to_string()),
+            ],
+            tools: Vec::new(),
+            params: BTreeMap::new(),
+            provider_options: BTreeMap::new(),
+            host_segments: None,
+        };
+        let (ladder, run) =
+            crate::api::llm::admit(self.server, self.auth, &mut request).map_err(|response| {
+                refine_failed(&format!("inference refused ({})", response.status()))
+            })?;
+        let response = self
+            .handle
+            .block_on(ladder.generate(&run, request, None))
+            .map_err(|error| refine_failed(&error.to_string()))?;
+        let text: String = response
+            .message
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        let typed = || refine_failed("refiner did not return its typed JSON result");
+        let answer: serde_json::Value = serde_json::from_str(&text).map_err(|_| typed())?;
+        let refined = RefinedSkillWire::deserialize(&answer).map_err(|_| typed())?;
+        self.owner.revalidate(self.server.vault())?;
+        Ok((answer, refined))
+    }
+}
+
+/// A paged selection's request data: today's shape, its page of
+/// utterances and neighbours, with the part it is (`index`, from one), the
+/// answer over the parts before it (`draft`) and whether it is the `last`.
+fn page_data(
+    hint: Option<&str>,
+    said: &[serde_json::Value],
+    neighbors: &[serde_json::Value],
+    index: u64,
+    draft: &serde_json::Value,
+    last: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "said": said,
+        "hint": hint,
+        "neighbors": neighbors,
+        "part": {"index": index, "last": last, "draft": draft, "note": REFINE_PART_NOTE},
+    })
+}
+
+/// How many of `items`, in order, fit in what is `left` of a page's window,
+/// each counted as its request sends it; `left` keeps what they leave.
+fn take(items: &[serde_json::Value], left: &mut u64) -> usize {
+    let mut taken = 0;
+    for item in items {
+        let cost = tokens(&item.to_string()).saturating_add(1);
+        if cost > *left {
+            break;
+        }
+        *left -= cost;
+        taken += 1;
+    }
+    taken
+}
+
+/// `text`'s tokens in the engine's count.
+fn tokens(text: &str) -> u64 {
+    u64::try_from(oneiron::count_context_pack_tokens(text)).unwrap_or(u64::MAX)
+}
+
+/// Whether the System `prompt` and the User `data` fit `window`, counted as
+/// one text.
+fn fits(window: u64, prompt: &str, data: &str) -> bool {
+    tokens(&[prompt, data].join("\n")) <= window
+}
+
+/// What the provider's tokenizer may count above the engine's on a model
+/// whose ratio was never measured, and the reply frame that margin leaves,
+/// as a Coach triage part's window takes them (FIX 10305).
+const UNMEASURED_COUNT_FACTOR: u64 = 2;
+const REPLY_FRAME_TOKENS: u64 = 64;
+
+/// The tokens one refiner request may fill on `seat` (FIX 8989): the
+/// smallest window any of its rungs may serve it on, less the prompt the
+/// rung prepends, else its own model's. `None` while no window is known.
+fn refine_window(vault: &oneiron::Vault, seat: &Seat) -> Option<u64> {
+    seat.rung_models()
+        .into_iter()
+        .filter_map(|(model, prompt)| {
+            let input = input_tokens(vault, &model)?;
+            Some(input.saturating_sub(prompt.as_deref().map_or(0, tokens)))
+        })
+        .min()
+        .or_else(|| input_tokens(vault, &seat.model))
+}
+
+/// `model`'s window less the output its catalog row reserves, in the
+/// engine's count: divided by the tokens its tokenizer counts per o200k
+/// token where it counts more, and while that ratio is unmeasured, cut to
+/// what twice the engine's count and a reply frame fill. `None` while its
+/// row or window is unknown.
+fn input_tokens(vault: &oneiron::Vault, model: &oneiron::ModelId) -> Option<u64> {
+    let row = vault.model_registry_row(model).ok().flatten()?;
+    let context = row.catalog.context_window_tokens;
+    if context == 0 {
+        return None;
+    }
+    let output = row
+        .catalog
+        .max_output_tokens
+        .filter(|output| *output < context)
+        .unwrap_or(0);
+    let input = context - output;
+    Some(match row.tokens_per_o200k {
+        Some(ratio) if ratio > 1.0 => (input as f64 / ratio) as u64,
+        Some(_) => input,
+        None => (input / UNMEASURED_COUNT_FACTOR).saturating_sub(REPLY_FRAME_TOKENS),
+    })
+}
+
+/// A skill conversion's failure, for `message`, a static reason or a
+/// typed status.
+fn refine_failed(message: &str) -> oneiron::Error {
+    oneiron::Error::InvalidConfig(format!("skill conversion: {message}"))
 }
 
 fn message(role: LlmMessageRole, text: String) -> LlmMessage {

@@ -4,9 +4,8 @@
 //! locality and the offer that pays.
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
-
-use serde::Serialize;
 
 use super::super::media::{MediaBackend, MediaRequest};
 use super::super::{
@@ -22,7 +21,10 @@ use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, Teache
 use super::settle::CallOutcome;
 
 mod denied;
+mod origin;
 pub use denied::RunDenied;
+pub(super) use origin::CallOrigin;
+pub use origin::RunAttribution;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
 /// the row keeps none of the selector's bytes.
@@ -75,6 +77,8 @@ pub(super) struct RunInner {
     pub(super) payer: Option<PayerPerson>,
     /// The item a bound run serves (FIX 4453), fixed when the run starts.
     pub(super) attribution: Option<RunAttribution>,
+    /// The host marked the run as memory work (FIX 11003).
+    memory_work: AtomicBool,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
@@ -86,19 +90,6 @@ pub(super) struct RunInner {
 struct Revisioned {
     revision: u32,
     declaration: RunDeclaration,
-}
-
-/// What a bound run's calls serve, as the engine stamped it before the run
-/// began (FIX 4453): the agent, its free-time cycle and item, the label every
-/// call carries and the spend scope its spend lands on. Fixed for the run's
-/// life; never read from a prompt or from the run's name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RunAttribution {
-    pub agent: crate::EntityId,
-    pub cycle: crate::EntityId,
-    pub item: crate::EntityId,
-    pub purpose: crate::llm::CallPurpose,
-    pub spend_scope: String,
 }
 
 pub(super) struct CallFacts {
@@ -211,6 +202,7 @@ impl RunAdmission {
                 host,
                 payer,
                 attribution,
+                memory_work: AtomicBool::new(false),
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
                 paid: Mutex::new(BTreeSet::new()),
@@ -262,12 +254,6 @@ impl RunAdmission {
             initiator: actor,
             ..self.clone()
         }
-    }
-
-    /// `permit` naming this handle's initiator.
-    fn initiated(&self, mut permit: RunPermit) -> RunPermit {
-        permit.facts.initiator = self.initiator;
-        permit
     }
 
     /// The run's budget line as its meter reads now.
@@ -369,16 +355,9 @@ impl RunAdmission {
             ..call
         };
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self
-            .inner
-            .admit_model(
-                &declaration,
-                revision,
-                call,
-                request_digest,
-                self.sources.clone(),
-            )
-            .map(|permit| self.initiated(permit));
+        let admitted =
+            self.inner
+                .admit_model(&declaration, revision, call, request_digest, self.origin());
         self.inner.receipt_for(
             revision,
             call.selector,
@@ -396,16 +375,9 @@ impl RunAdmission {
         quantity: u64,
     ) -> Result<RunPermit, RunDenied> {
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self
-            .inner
-            .admit_connector(
-                &declaration,
-                revision,
-                connector,
-                quantity,
-                self.sources.clone(),
-            )
-            .map(|permit| self.initiated(permit));
+        let admitted =
+            self.inner
+                .admit_connector(&declaration, revision, connector, quantity, self.origin());
         self.inner
             .receipt_for(revision, None, &connector.connector, admitted, None)
     }
@@ -462,8 +434,7 @@ impl RunAdmission {
         let declaration = declaration.with_reserve(reserve_units);
         let admitted = self
             .inner
-            .admit_model(&declaration, revision, call, None, self.sources.clone())
-            .map(|permit| self.initiated(permit));
+            .admit_model(&declaration, revision, call, None, self.origin());
         self.inner.receipt_for(
             revision,
             selector,

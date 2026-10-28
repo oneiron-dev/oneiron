@@ -677,9 +677,12 @@ after `models.dreamer.idle_floor_secs` (1200) without activity, or after
 `session_ceiling_secs` (43200). Apps send `{"event":"open"}` and
 `{"event":"activity"}`; chat turns send them for you. Per-pass spend is
 `models.dreamer.pass_budget_units` (400000), metered through the usual budget
-guard. If the server is killed mid-pass, the next start requeues the
-interrupted attempt and runs it once more; durable steps that already have a
-response are not paid for again. A pass that ran out of budget is parked on a
+guard. Each stewardship follow-up draft is written on
+`models.dreamer.drafting.role` (`generative_reasoner`) and may spend
+`models.dreamer.drafting.budget_units` (the pass budget when unset). If the
+server is killed mid-pass, the next start requeues the interrupted attempt
+and runs it once more; durable steps that already have a response are not paid
+for again. A pass that ran out of budget is parked on a
 budget trap instead, and a restart leaves it parked: only the trap's resume
 signal lets it spend again. Once that signal (or a consent answer, or a
 person's response) is sent, here or on a peer that syncs it in, the next pass
@@ -2353,17 +2356,31 @@ keeps it:
   names, or, naming none, for a backoff that doubles with each refusal in a
   row from the vault's default rest, with jitter, up to the longest rest.
 - **A spent usage window** ("usage limit", a weekly or monthly allowance, or a
-  wait of 15 minutes or more) is parked until the reset it names.
+  wait of 15 minutes or more) is parked until the reset it names, whether it
+  names a reset time or a `Retry-After`, however far; the longest rest caps
+  only a rate limit.
 - **Spent prepaid credit** (a 402, "insufficient_quota", "credit balance",
   "billing", Anthropic's `billing_error`) is parked until the owner tops up
   or clears it. The same words in an error inside an open stream read the
   same way.
 
 While only rests stop a call, it waits for the first offer back and tries the
-chain again, until its waits pass the vault's longest wait in all (a caller
-with its own deadline passes its own budget). A call whose every offer is
-parked on credit fails `quota_spent`; one that ran out of wait fails
-`rate_limited` with the earliest reset.
+chain again, until its waits pass the vault's longest wait in all. A call
+whose caller has its own deadline carries that one deadline through every
+send, wait and owner's fallback instead: the Big rung's decision clock is
+one. Past it the call ends `timeout`, each rung it admitted settled (one that
+went out keeps its reservation as spend). A raw call
+(`/v1/llm/generate`, `/v1/llm/stream`, and the mesh's calls) and an `ai.*`
+media call have no deadline but their caller's connection: no longest wait
+ends them early, and they wait for an offer back while the caller holds
+them. A call whose every offer is parked on credit fails `quota_spent`; one
+that ran out of the vault's longest wait fails `rate_limited` with the
+earliest reset.
+
+A house-model decision read probe (`/v1/llm/decision_read`) that its
+provider refuses for rate keeps its turn and goes out again after a backoff
+of at least 1 s plus up to 1 s of jitter, until its caller hangs up; each
+attempt is one permit, dispatched and settled once.
 
 Once every rung of a call has parked, each offer parked on a spent window or
 spent credit leaves the owner a question in `GET /v1/ai/status`

@@ -322,10 +322,23 @@ fn turn_wake_due_in_txn(
     })
 }
 
+/// The wake policy's surprise floor (OF-138): how far a re-tag must move its
+/// turn beside the set it replaced to be a surprise.
+pub(crate) fn surprise_floor_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<f32> {
+    Ok(f32::from(super::policy::policy_in_txn(vault, txn)?.surprise_permille) / 1000.0)
+}
+
+/// Whether a re-tag's measured `surprise` is a surprise at `floor`.
+pub(crate) fn surprises(surprise: f32, floor: f32) -> bool {
+    surprise > 0.0 && surprise >= floor
+}
+
 /// An agent's surprise signal, read from the window's saved tags (OF-138).
 /// A turn whose re-tag moved at least the policy's surprise floor beside the
 /// set it replaced sets it; a first tag set measures nothing. The caller's
-/// own signal stands either way, and the vault's wake takes no signals.
+/// own signal stands either way, and the vault's wake takes no signals. A
+/// surprising re-tag of a turn a window already read puts the turn back in
+/// the next window (FIX 901, [`crate::tagging`]'s save).
 fn measured_surprise_in_txn(
     vault: &Vault,
     txn: &heed::RwTxn<'_>,
@@ -336,11 +349,11 @@ fn measured_surprise_in_txn(
         return Ok(subject);
     };
     if !signals.surprise {
-        let floor = f32::from(super::policy::policy_in_txn(vault, txn)?.surprise_permille) / 1000.0;
+        let floor = surprise_floor_in_txn(vault, txn)?;
         for turn in turns {
             let measured = crate::tagging::readable_view_in_txn(&vault.store, txn, &turn)?
                 .and_then(|tags| tags.surprise);
-            if measured.is_some_and(|surprise| surprise > 0.0 && surprise >= floor) {
+            if measured.is_some_and(|surprise| surprises(surprise, floor)) {
                 signals.surprise = true;
                 break;
             }

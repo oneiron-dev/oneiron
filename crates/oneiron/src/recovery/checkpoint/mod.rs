@@ -31,6 +31,7 @@ mod image;
 mod landing;
 mod landing_lengths;
 mod pad_custody;
+mod pad_objects;
 mod pad_reopen;
 mod payload;
 mod rebuild;
@@ -64,6 +65,7 @@ pub(crate) use epochs::{prune_carried_pads, reconcile_restore_pad_notes_in_txn};
 pub use host_holds::{BackupHoldVisibility, BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
+pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -234,26 +236,6 @@ impl SideRestoreSource<'_> {
             Source::Disk { page_seal, .. } => page_seal.as_ref(),
         }
     }
-    /// The source's live custody state, read now, at a restore's start.
-    fn capture(&self) -> Result<LiveCustody> {
-        match &self.0 {
-            Source::Open(vault) => vault.store.live_custody(),
-            Source::Disk {
-                dir,
-                first,
-                page_seal,
-                ..
-            } => {
-                let live = crate::store::read_live_custody(dir, page_seal.as_ref())?;
-                if !first.same_vault(&live) {
-                    return Err(Error::InvalidConfig(
-                        "the vault read as this side restore's source has changed".into(),
-                    ));
-                }
-                Ok(live)
-            }
-        }
-    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RestoreReason {
@@ -314,6 +296,9 @@ pub struct RestoreReport {
     /// readable, by handle and generation, each with its remedy (KS-6 part
     /// 2, CALLS `KS-6 restore note form`); empty when every one landed.
     pub credential_notes: Vec<CredentialRestoreNote>,
+    /// What it did not carry of its source's current pad objects (PAD-1);
+    /// empty when it carried them all, or had none to carry.
+    pub pad_object_notes: Vec<PadObjectNote>,
 }
 /// What a restore over a live vault says about a table a home move carries
 /// (FIX 5661 C2b).
@@ -520,7 +505,7 @@ impl Vault {
         // A pad its forked custody lacks or cannot read comes from the
         // source's live row (KS-5).
         let pads = source.live_pads(&image);
-        let (made, forked, mut vault, report) = Self::restore_image(
+        let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
             checkpoint_id,
             bodies,
@@ -532,6 +517,7 @@ impl Vault {
             &BTreeSet::new(),
             budget,
         )?;
+        pad_objects::land_on_restore(&vault, &live.pad_objects, &mut report);
         forked.keep();
         made.keep(&mut vault);
         Ok((vault, report))
@@ -617,14 +603,15 @@ impl Vault {
         crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
         let archive = Self::open_owned(path, config.clone())?;
-        let (dropped_gate_decisions, erased_pads, credentials) =
-            archive.store.activate_archived(&live)?;
+        let expected = pad_objects::expected_of(&archive, &live.pad_objects);
+        let (dropped_gate_decisions, erased_pads, credentials, landing) =
+            archive.store.activate_archived(&live, expected.as_ref())?;
         let restored_at = archive.now_recorded_at();
         let pad_notes: Vec<_> = erased_pads.iter().map(PadRestoreNote::erased).collect();
         drop(archive);
         // Reopened, it reads what it holds under its own custody.
         let vault = Self::open_owned(path, config)?;
-        Ok(RestoreReport {
+        let mut report = RestoreReport {
             epoch: RestoreEpoch {
                 checkpoint_id: String::new(),
                 restored_at,
@@ -642,7 +629,10 @@ impl Vault {
             checkpoint_sequence: None,
             opaque_responses: 0,
             credential_notes: credential_custody::notes(&vault.store, credentials),
-        })
+            pad_object_notes: Vec::new(),
+        };
+        pad_objects::finish_activation(&vault, &live.pad_objects, landing, &mut report);
+        Ok(report)
     }
     /// Historical content restore beside a live vault: the image's content
     /// with `current`'s live authority, consent, policy, credential and
@@ -720,8 +710,9 @@ impl Vault {
         let erased = crate::deletion::hard_erased_ids_in(current)?;
         let installed = current.installed_pack_sources()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
-        // The carried rows hold `current`'s custody binding and retirements.
-        let home_table_notes =
+        // The carried rows hold `current`'s custody binding and retirements,
+        // and its pad objects are captured in the read that carried them.
+        let (home_table_notes, current_pads) =
             authority_plane::carry_current_authority(&mut image.databases, current)?;
         // A Live family's response row came with it, and its binding: the
         // image's copy is passed over (KS-2B2).
@@ -755,6 +746,7 @@ impl Vault {
         // made for it, still under the copy's lease (review r3, Sol F4).
         authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))?;
+        pad_objects::land_on_restore(&vault, &current_pads, &mut report);
         forked.keep();
         made.keep(&mut vault);
         Ok((vault, report))

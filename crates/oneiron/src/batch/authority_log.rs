@@ -188,9 +188,14 @@ pub(crate) fn validate_replicated_authority_log_for_local_vault(
             )))?,
     };
     // The vault's own fold, under its hosting posture: a Hosted vault's
-    // cloud root is a root here too.
-    let local_fold =
-        crate::authority::authority_fold_readonly_for_store_in_txn(store, posture, wtxn)?;
+    // cloud root is a root here too. Where it needs history this row
+    // supplies, the fold with the row in judges it (FIX 2535).
+    let local_fold = crate::authority::preflight_authority_rows_in_txn(
+        store,
+        posture,
+        wtxn,
+        &[(entry_hash, &entry)],
+    )?;
     let local_vault_id =
         local_fold
             .vault_id

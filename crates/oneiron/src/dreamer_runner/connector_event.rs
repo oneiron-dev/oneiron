@@ -62,6 +62,33 @@ impl ConnectorEventWake {
         }
         Ok(Self { agent, event })
     }
+    /// The agent a connector-event input names, read as
+    /// [`Self::from_attempt`] reads it: the `agent_ref` of the three-field
+    /// `tool_output` map. The event body is not validated here; only the
+    /// agent is needed, and only it is returned.
+    pub(crate) fn agent_of_input(input: &Value) -> Result<EntityId> {
+        let Value::Map(fields) = input else {
+            return Err(invalid());
+        };
+        if fields.len() != 3 {
+            return Err(invalid());
+        }
+        let one = |name: &str| -> Result<&Value> {
+            let mut values = fields.iter().filter(|(key, _)| key.as_str() == Some(name));
+            let (_, value) = values.next().ok_or_else(invalid)?;
+            if values.next().is_some() {
+                return Err(invalid());
+            }
+            Ok(value)
+        };
+        if one("source")?.as_str() != Some("tool_output") {
+            return Err(invalid());
+        }
+        let Value::Binary(agent) = one("agent_ref")? else {
+            return Err(invalid());
+        };
+        EntityId::from_bytes(agent.as_slice().try_into().map_err(|_| invalid())?)
+    }
     pub const fn source(&self) -> ClaimSource {
         ClaimSource::ToolOutput
     }

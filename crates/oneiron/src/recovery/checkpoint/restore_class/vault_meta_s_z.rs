@@ -289,6 +289,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // What a kept TURN lacks is this vault's residency, not history: a restore
     // neither promotes a demoted window nor rebuilds the list (FIX 3859).
     (&t::TURN_MISSING_MESSAGES, LIVE),
+    // A tag pass a tear left owed is owed on the turn as the image holds it,
+    // as the sieve's owed reads are (FIX 6262).
+    (&t::TURN_TAG_OWED, CONTENT),
     (&t::TYPED_BODY_DOC, CONTENT),
     (&t::TYPED_BODY_FORK, CONTENT),
     (&t::TYPED_BODY_FORK_DOC, CONTENT),

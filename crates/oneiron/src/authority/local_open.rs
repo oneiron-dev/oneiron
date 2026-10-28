@@ -112,7 +112,9 @@ impl Vault {
     /// its seed is drawn ([`Self::bootstrap_host_slip_issuer`]); the caller
     /// sets it only for a store its own open created as a new local-origin
     /// vault. Any other open loads the seed it holds
-    /// ([`Self::load_host_slip_issuer`]). Then
+    /// ([`Self::load_host_slip_issuer`]), once an empty slot took back the
+    /// vault's escrowed seed of its live root, where custody holds one
+    /// ([`Self::prepare_host_issuer_custody_logged`], FIX-LIST 10770). Then
     /// [`Self::ensure_serving_install_profile`] as `Unanswered`, whose
     /// refusals come back with their reason. Over a profile that already
     /// stands, an issuer that is not the vault's settled root is reported in
@@ -139,6 +141,9 @@ impl Vault {
             self.ensure_host_root_slip(&issuer)?;
             issuer
         } else {
+            // Never a refusal: a mismatch or a fault is warned, and the load
+            // answers as before.
+            self.prepare_host_issuer_custody_logged();
             match self.load_host_slip_issuer() {
                 Ok(issuer) => issuer,
                 // No issuer of this vault on this install: over a profile

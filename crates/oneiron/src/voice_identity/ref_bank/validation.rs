@@ -83,10 +83,12 @@ pub(super) struct VoicePackIntake {
     pub(super) crossed: Vec<&'static str>,
 }
 
-/// Measures a new pack against `limits`. A row it goes past is reported, and
-/// the pack is banked whole all the same: a count or size row measures and
-/// paces new intake, and never refuses valid work (Rule 5).
-pub(super) fn measure_pack_intake(pack: &VoiceRefPack, limits: VoiceRefLimits) -> VoicePackIntake {
+/// Each intake row `pack` goes past under `limits`, in row order, without
+/// tracing: the inspection reads it, the bank traces it where it banks.
+pub(super) fn pack_intake_crossed(
+    pack: &VoiceRefPack,
+    limits: VoiceRefLimits,
+) -> Vec<&'static str> {
     let clips = pack.clips.len() as u64;
     let audio_bytes = pack.clips.iter().fold(0u64, |total, clip| {
         total.saturating_add(clip.audio.len() as u64)
@@ -117,6 +119,18 @@ pub(super) fn measure_pack_intake(pack: &VoiceRefPack, limits: VoiceRefLimits) -
     {
         crossed.push("max_design_vendor_bytes");
     }
+    crossed
+}
+
+/// Measures a new pack against `limits`. A row it goes past is reported, and
+/// the pack is banked whole all the same: a count or size row measures and
+/// paces new intake, and never refuses valid work (Rule 5).
+pub(super) fn measure_pack_intake(pack: &VoiceRefPack, limits: VoiceRefLimits) -> VoicePackIntake {
+    let clips = pack.clips.len() as u64;
+    let audio_bytes = pack.clips.iter().fold(0u64, |total, clip| {
+        total.saturating_add(clip.audio.len() as u64)
+    });
+    let crossed = pack_intake_crossed(pack, limits);
     let intake = VoicePackIntake {
         clips,
         audio_bytes,
