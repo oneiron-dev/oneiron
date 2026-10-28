@@ -535,8 +535,8 @@ class Connection:
             self.send("refused", request_id, Refusal("invalid_input", f"{op} carries no descriptor").body())
             return
         if op == "hello":
-            threading.Thread(target=lambda: self.send("hello", request_id, self.server.hello()),
-                             name="exl3-native-hello", daemon=True).start()
+            # The hello waits for the owner thread's stats: a thread of its own.
+            threading.Thread(target=self.hello, args=(request_id,), name="exl3-native-hello", daemon=True).start()
         elif op == "cancel":
             self.cancel(request_id)
         elif op == SCHEDULE_OP and op in self.server.ops():
@@ -681,6 +681,14 @@ class Connection:
             self.send("cancel_ack", request_id, {"found": False})
             return
         call.cancel(ack=True)
+
+    def hello(self, request_id):
+        try:
+            body = self.server.hello()
+        except Exception as error:  # a hello that cannot be built is refused, never left unanswered
+            self.send("refused", request_id, Refusal("server_error", f"{type(error).__name__}: {error}").body())
+            return
+        self.send("hello", request_id, body)
 
     def schedule(self, envelope):
         """A `schedule` for one of this connection's calls: applied on the
