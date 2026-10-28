@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4174 declarations.
-Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1162 fully typed, 120 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1164 facade rows, 4178 declarations.
+Inputs: 1099 of 1164 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1044 of 1164 fully typed, 120 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 106; unread shapes: 0.
 """
 
@@ -2335,6 +2335,23 @@ class RsiTopUpShare(TypedDict):
     share: str
     units: int
 RsiTopUp = RsiTopUpTokens | RsiTopUpExploration | RsiTopUpShare
+class ResidentSharesRequest(TypedDict):
+    ...
+class ResidentShareView(TypedDict):
+    resident: str
+    units: NotRequired[int | None]
+    pinned: bool
+    allocation: NotRequired[str | None]
+    allocation_generation: NotRequired[int | None]
+    used_units: int
+    overdraft_units: int
+    overdrafts: int
+class ResidentSharesView(TypedDict):
+    residents: list[ResidentShareView]
+class SetResidentShareRequest(TypedDict):
+    resident: str
+    units: NotRequired[int | None]
+    pinned: NotRequired[bool]
 SeatAuth = Literal["vendor_login", "api_key"]
 class RunnerSeat(TypedDict):
     runner: str

@@ -591,6 +591,11 @@ export class Oneiron {
           resume: (input: Facade.RsiLineRequest): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiHoldResume(input) as Facade.RsiLineView),
         }),
       }),
+      /** The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on. */
+      resident_shares: Object.assign((input: Facade.ResidentSharesRequest): Facade.ResidentSharesView => this.#call(() => this.#client.vaultBudgetsResidentShares(input) as Facade.ResidentSharesView), {
+        /** The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands. */
+        set: (input: Facade.SetResidentShareRequest): Facade.ResidentSharesView => this.#call(() => this.#client.vaultBudgetsResidentSharesSet(input) as Facade.ResidentSharesView),
+      }),
     },
     runners: {
       seats: {

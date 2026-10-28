@@ -870,6 +870,8 @@ class Oneiron:
             """The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."""
         @property
         def rsi(self) -> "Oneiron._VaultBudgetsRsiVerbs": ...
+        @property
+        def resident_shares(self) -> "Oneiron._VaultBudgetsResidentSharesVerbs": ...
     class _VaultBudgetsLeaseVerbs:
         def __call__(self, spec: Facade.SpendScopeRequest) -> Facade.SpendLeaseView:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
@@ -896,6 +898,11 @@ class Oneiron:
             """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
         def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
+    class _VaultBudgetsResidentSharesVerbs:
+        def __call__(self, spec: Facade.ResidentSharesRequest) -> Facade.ResidentSharesView:
+            """The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on."""
+        def set(self, spec: Facade.SetResidentShareRequest) -> Facade.ResidentSharesView:
+            """The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands."""
     class _VaultRunnersVerbs:
         @property
         def seats(self) -> "Oneiron._VaultRunnersSeatsVerbs": ...

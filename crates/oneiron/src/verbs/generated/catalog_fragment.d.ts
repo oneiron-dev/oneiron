@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4234 declarations.
-// Replies: 1090 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1215 code-mode rows (1175 host rows, 40 run rows), 4238 declarations.
+// Replies: 1092 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 106; unread shapes: none.
 declare namespace Sdk {
@@ -447,6 +447,10 @@ declare namespace Sdk {
   type RsiLineView = { work_line: RsiWorkLineView; shares: RsiShareView[]; exposure_line: RsiExposureLineView; suspended: boolean };
   type RsiLineRequest = Record<string, never>;
   type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
+  type ResidentSharesRequest = Record<string, never>;
+  type ResidentShareView = { resident: string; units?: number | null; pinned: boolean; allocation?: string | null; allocation_generation?: number | null; used_units: number; overdraft_units: number; overdrafts: number };
+  type ResidentSharesView = { residents: ResidentShareView[] };
+  type SetResidentShareRequest = { resident: string; units?: number | null; pinned?: boolean };
   type SeatAuth = "vendor_login" | "api_key";
   type RunnerSeat = { runner: string; auth: SeatAuth; egress_profile_ref: string; credential_handles?: string[] };
   type RunnerSeatQuotasRequest = { seats: RunnerSeat[] };
@@ -5035,6 +5039,11 @@ declare const vault: Sdk.VaultHost & {
     local(input: Sdk.LocalRunnerBudgetRequest): Promise<Sdk.LocalRunnerBudgetView | StoredResult>;
     /** The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it. */
     reservations(input: Sdk.RunnerBudgetReservationsRequest): Promise<Sdk.RunnerBudgetReservationsView | StoredResult>;
+    /** The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on. */
+    resident_shares: ((input: Sdk.ResidentSharesRequest) => Promise<Sdk.ResidentSharesView | StoredResult>) & {
+      /** The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands. */
+      set(input: Sdk.SetResidentShareRequest): Promise<Sdk.ResidentSharesView | StoredResult>;
+    };
     /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
     rsi: ((input: Sdk.RsiLineRequest) => Promise<Sdk.RsiLineView | StoredResult>) & {
       /** The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend. */

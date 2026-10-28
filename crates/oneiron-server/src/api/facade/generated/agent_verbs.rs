@@ -79,6 +79,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.budgets.rsi.top_up", post(facade_route))
         .route("/vault.budgets.rsi.hold", post(facade_route))
         .route("/vault.budgets.rsi.hold.resume", post(facade_route))
+        .route("/vault.budgets.resident_shares", post(facade_route))
+        .route("/vault.budgets.resident_shares.set", post(facade_route))
         .route("/vault.runners.seats.quotas", post(facade_route))
         .route("/vault.runners.seats.top_up", post(facade_route))
         .route("/vault.fanout.resume", post(facade_route))

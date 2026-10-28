@@ -108,6 +108,8 @@ vaultBudgetsRsi(input: unknown): unknown
 vaultBudgetsRsiTopUp(input: unknown): unknown
 vaultBudgetsRsiHold(input: unknown): unknown
 vaultBudgetsRsiHoldResume(input: unknown): unknown
+vaultBudgetsResidentShares(input: unknown): unknown
+vaultBudgetsResidentSharesSet(input: unknown): unknown
 vaultRunnersSeatsQuotas(input: unknown): unknown
 vaultRunnersSeatsTopUp(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
