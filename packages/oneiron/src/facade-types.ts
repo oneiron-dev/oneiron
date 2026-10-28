@@ -6045,15 +6045,15 @@ export type SettledHunkView = { before: string; after: string; edit_mass: number
 /** `oneiron::verbs::skill_attribution::AmendmentShareView` */
 export type AmendmentShareView = { class: AttributionLabel; share: number; subject?: EntityId | null }
 /** `oneiron::verbs::skill_attribution::AmendmentJudgmentView` */
-export type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; at: number }
+export type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaSettlement` */
-export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref: EntityId; proposed_text: string; final_text: string; delta: AmendmentDeltaView; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
+export type ProposalDeltaSettlement = { receipt_id: string; artifact_ref: EntityId; proposed_text?: string | null; final_text?: string | null; delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] }
 /** `oneiron::verbs::skill_attribution::ProposalDeltaReadRequest` */
 export type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null }
 /** `oneiron::verbs::skill_attribution::ProposalOpSpanView` */
-export type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text: string; after_text: string; lamport: number; timestamp: number }
+export type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text?: string | null; after_text?: string | null; lamport: number; timestamp: number }
 /** `oneiron::verbs::skill_attribution::ProposalArtifactView` */
-export type ProposalArtifactView = { artifact_ref: EntityId; proposed_text: string; final_text: string; source_turn_ref?: EntityId | null; spans: ProposalOpSpanView[] }
+export type ProposalArtifactView = { artifact_ref: EntityId; proposed_text?: string | null; final_text?: string | null; source_turn_ref?: EntityId | null; spans: ProposalOpSpanView[] }
 /** `oneiron::verbs::skill_attribution::AmendmentEvidenceView` */
 export type AmendmentEvidenceView = { receipt_id: string; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number }
 /** `oneiron::verbs::skill_attribution::PreferenceProposalView` */

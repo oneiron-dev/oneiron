@@ -6,6 +6,8 @@
 //! records the amendment evidence, judges it hunk by hunk and projects each
 //! share to its own consumer. The attempt-lane doors beside it record outcome
 //! evidence and run the attribution and positive projectors.
+mod artifact_view;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -17,8 +19,11 @@ use crate::edit_distance::attribution::{
     project_amendment_reliability, project_edit_cost_claims, record_amendment_evidence,
     validate_share_vector,
 };
-use crate::edit_distance::delta::{AmendmentDelta, OpsSummary, amendment_delta};
-use crate::edit_distance::{FinalizedProposalText, ProposalArtifactRef, finalized_proposal_text};
+use crate::edit_distance::delta::{
+    AmendmentDelta, OpsSummary, amendment_delta, put_amendment_delta_in_txn,
+    put_amendment_uncaptured_in_txn,
+};
+use crate::edit_distance::{ProposalArtifactRef, RetainedProposal, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
@@ -202,8 +207,8 @@ impl From<OpsSummary> for OpsSummaryView {
 impl From<AmendmentDelta> for AmendmentDeltaView {
     fn from(delta: AmendmentDelta) -> Self {
         Self {
-            proposed_ref: delta.proposed_ref,
-            final_ref: delta.final_ref,
+            proposed_ref: delta.proposed_ref.token(),
+            final_ref: delta.final_ref.token(),
             source: delta.source.as_str().to_owned(),
             d_norm: delta.d_norm,
             ops_summary: delta.ops_summary.into(),
@@ -226,6 +231,7 @@ pub struct AmendmentJudgmentView {
     pub scope: String,
     pub evidence_receipts: Vec<String>,
     pub d_norm: f32,
+    pub engine_ver: String,
     pub at: u64,
 }
 
@@ -245,6 +251,7 @@ impl From<AmendmentJudgment> for AmendmentJudgmentView {
             scope: judgment.scope,
             evidence_receipts: judgment.evidence_receipts,
             d_norm: judgment.d_norm,
+            engine_ver: judgment.engine_ver,
             at: judgment.at,
         }
     }
@@ -265,9 +272,11 @@ pub struct SettledHunkView {
 pub struct ProposalDeltaSettlement {
     pub receipt_id: String,
     pub artifact_ref: EntityId,
-    pub proposed_text: String,
-    pub final_text: String,
-    pub delta: AmendmentDeltaView,
+    /// `None` when the retained document no longer holds that end.
+    pub proposed_text: Option<String>,
+    pub final_text: Option<String>,
+    /// `None` when the recorded ops could not be measured.
+    pub delta: Option<AmendmentDeltaView>,
     pub hunks: Vec<SettledHunkView>,
     /// Absent when the judge abstained; the delta and evidence still stand.
     pub judgment: Option<AmendmentJudgmentView>,
@@ -345,13 +354,16 @@ pub fn skill_attribution_settle_as_owner(
             ));
         }
     }
-    let record = record_proposal_ops(vault, owner, owner_actor, input, &expected_final)?;
-    let artifact_ref = record.artifact_ref.entity_id();
+    let retained = record_proposal_ops(vault, owner, owner_actor, input, &expected_final)?;
+    let artifact_ref = retained.record.artifact_ref.entity_id();
     let receipt_id = settlement_receipt(artifact_ref);
-    let delta = crate::edit_distance::delta::delta_from_recorded_ops(&record);
+    let delta = crate::edit_distance::delta::delta_from_recorded_ops(&retained).ok();
     vault.with_write_txn_grouped(|wtxn| {
         owner.revalidate_in_txn(vault, wtxn)?;
-        crate::edit_distance::delta::put_amendment_delta_in_txn(vault, wtxn, &receipt_id, &delta)?;
+        match &delta {
+            Some(delta) => put_amendment_delta_in_txn(vault, wtxn, &receipt_id, delta)?,
+            None => put_amendment_uncaptured_in_txn(vault, wtxn, &receipt_id)?,
+        };
         Ok(())
     })?;
     let mut evidence =
@@ -362,8 +374,11 @@ pub fn skill_attribution_settle_as_owner(
     evidence.followed_skill = input.followed_skill;
     evidence.skill_covered_step = input.skill_covered_step;
     // The evidence door resolves the receipt's measured delta, the actor and
-    // the skill inside its own checks before its write lands.
-    record_amendment_evidence(vault, &evidence)?;
+    // the skill inside its own checks before its write lands. An unmeasured
+    // window records none, so nothing below judges it.
+    if delta.is_some() {
+        record_amendment_evidence(vault, &evidence)?;
+    }
     let hunks: Vec<EditHunk<'_>> = input
         .replacements
         .iter()
@@ -410,15 +425,15 @@ pub fn skill_attribution_settle_as_owner(
         .iter()
         .enumerate()
         .map(|(index, replacement)| {
-            let span = record.ops_by_actor.get(index);
+            let span = retained.record.ops_by_actor.get(index);
             SettledHunkView {
                 before: replacement.before.clone(),
                 after: replacement.after.clone(),
-                edit_mass: crate::edit_distance::delta::delta_from_reconstructed(
+                edit_mass: crate::edit_distance::myers::myers_line_diff(
                     &replacement.before,
                     &replacement.after,
                 )
-                .ops_summary
+                .ops
                 .edit_mass(),
                 actor: span.and_then(|(attribution, _)| {
                     attribution.actor().map(|actor| actor.entity_ref())
@@ -430,9 +445,9 @@ pub fn skill_attribution_settle_as_owner(
     Ok(ProposalDeltaSettlement {
         receipt_id,
         artifact_ref,
-        proposed_text: record.proposed_text.clone(),
-        final_text: record.final_text.clone(),
-        delta: delta.into(),
+        proposed_text: retained.proposed_text().into_text(),
+        final_text: retained.final_text().into_text(),
+        delta: delta.map(Into::into),
         hunks,
         judgment: judgment.map(Into::into),
         edit_cost_claims,
@@ -448,7 +463,7 @@ fn record_proposal_ops(
     owner_actor: EntityId,
     input: &ProposalDeltaSettleRequest,
     expected_final: &str,
-) -> MemoryResult<FinalizedProposalText> {
+) -> MemoryResult<RetainedProposal> {
     use crate::edge::EdgeActorClass;
     use crate::edit_distance::proposal_text::ProposalTextArtifact;
     use crate::write_envelope::WriteActor;
@@ -473,15 +488,17 @@ fn record_proposal_ops(
     }
     // The owner proof is rechecked before the recorded window is frozen.
     owner.revalidate(vault)?;
-    let record = artifact.finalize(vault)?;
-    if record.final_text != expected_final {
+    if artifact.text() != expected_final {
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             "the recorded proposal ops did not land the settled final text",
             &[],
         ));
     }
-    Ok(record)
+    let record = artifact.finalize(vault)?;
+    // The texts read back through the document finalize retained.
+    let retained = retained_proposal(vault, record.artifact_ref)?;
+    Ok(retained.ok_or(Error::InvariantViolation("finalized proposal not stored"))?)
 }
 
 #[cfg(not(feature = "sync"))]
@@ -491,7 +508,7 @@ fn record_proposal_ops(
     _owner_actor: EntityId,
     _input: &ProposalDeltaSettleRequest,
     _expected_final: &str,
-) -> MemoryResult<FinalizedProposalText> {
+) -> MemoryResult<RetainedProposal> {
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         "proposal delta settlement records CRDT ops, which a build without the sync feature cannot",
@@ -513,8 +530,9 @@ pub struct ProposalDeltaReadRequest {
 pub struct ProposalOpSpanView {
     pub actor: Option<EntityId>,
     pub trust: String,
-    pub before_text: String,
-    pub after_text: String,
+    /// `None` when the retained document no longer holds that version.
+    pub before_text: Option<String>,
+    pub after_text: Option<String>,
     pub lamport: u32,
     pub timestamp: i64,
 }
@@ -522,33 +540,11 @@ pub struct ProposalOpSpanView {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProposalArtifactView {
     pub artifact_ref: EntityId,
-    pub proposed_text: String,
-    pub final_text: String,
+    /// `None` when the retained document no longer holds that end.
+    pub proposed_text: Option<String>,
+    pub final_text: Option<String>,
     pub source_turn_ref: Option<EntityId>,
     pub spans: Vec<ProposalOpSpanView>,
-}
-
-impl From<FinalizedProposalText> for ProposalArtifactView {
-    fn from(record: FinalizedProposalText) -> Self {
-        Self {
-            artifact_ref: record.artifact_ref.entity_id(),
-            proposed_text: record.proposed_text,
-            final_text: record.final_text,
-            source_turn_ref: record.source_turn_ref,
-            spans: record
-                .ops_by_actor
-                .into_iter()
-                .map(|(attribution, span)| ProposalOpSpanView {
-                    actor: attribution.actor().map(|actor| actor.entity_ref()),
-                    trust: attribution.as_str().to_owned(),
-                    before_text: span.before_text,
-                    after_text: span.after_text,
-                    lamport: span.lamport,
-                    timestamp: span.timestamp,
-                })
-                .collect(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -666,7 +662,7 @@ pub fn skill_attribution_read_as_owner(
                 .strip_prefix("proposal-delta:")
                 .and_then(|hex| EntityId::from_hex(hex).ok())
         })
-        .map(|id| finalized_proposal_text(vault, ProposalArtifactRef::new(id)))
+        .map(|id| retained_proposal(vault, ProposalArtifactRef::new(id)))
         .transpose()?
         .flatten()
         .map(Into::into);

@@ -47576,6 +47576,8 @@ pub struct AmendmentJudgmentView {
     pub evidence_receipts: Vec<String>,
     #[serde(rename = "d_norm")]
     pub d_norm: f64,
+    #[serde(rename = "engine_ver")]
+    pub engine_ver: String,
     #[serde(rename = "at")]
     pub at: u64,
 }
@@ -47587,12 +47589,20 @@ pub struct ProposalDeltaSettlement {
     pub receipt_id: String,
     #[serde(rename = "artifact_ref")]
     pub artifact_ref: String,
-    #[serde(rename = "proposed_text")]
-    pub proposed_text: String,
-    #[serde(rename = "final_text")]
-    pub final_text: String,
-    #[serde(rename = "delta")]
-    pub delta: AmendmentDeltaView,
+    #[serde(
+        rename = "proposed_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposed_text: Option<String>,
+    #[serde(
+        rename = "final_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub final_text: Option<String>,
+    #[serde(rename = "delta", default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<AmendmentDeltaView>,
     #[serde(rename = "hunks")]
     pub hunks: Vec<SettledHunkView>,
     #[serde(rename = "judgment", default, skip_serializing_if = "Option::is_none")]
@@ -47626,10 +47636,18 @@ pub struct ProposalOpSpanView {
     pub actor: Option<String>,
     #[serde(rename = "trust")]
     pub trust: String,
-    #[serde(rename = "before_text")]
-    pub before_text: String,
-    #[serde(rename = "after_text")]
-    pub after_text: String,
+    #[serde(
+        rename = "before_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub before_text: Option<String>,
+    #[serde(
+        rename = "after_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_text: Option<String>,
     #[serde(rename = "lamport")]
     pub lamport: u32,
     #[serde(rename = "timestamp")]
@@ -47641,10 +47659,18 @@ pub struct ProposalOpSpanView {
 pub struct ProposalArtifactView {
     #[serde(rename = "artifact_ref")]
     pub artifact_ref: String,
-    #[serde(rename = "proposed_text")]
-    pub proposed_text: String,
-    #[serde(rename = "final_text")]
-    pub final_text: String,
+    #[serde(
+        rename = "proposed_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposed_text: Option<String>,
+    #[serde(
+        rename = "final_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub final_text: Option<String>,
     #[serde(
         rename = "source_turn_ref",
         default,

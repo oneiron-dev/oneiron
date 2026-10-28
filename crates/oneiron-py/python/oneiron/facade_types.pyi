@@ -15203,13 +15203,14 @@ class AmendmentJudgmentView(TypedDict):
     scope: str
     evidence_receipts: list[str]
     d_norm: float
+    engine_ver: str
     at: int
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
     artifact_ref: EntityId
-    proposed_text: str
-    final_text: str
-    delta: AmendmentDeltaView
+    proposed_text: NotRequired[str | None]
+    final_text: NotRequired[str | None]
+    delta: NotRequired[AmendmentDeltaView | None]
     hunks: list[SettledHunkView]
     judgment: NotRequired[AmendmentJudgmentView | None]
     edit_cost_claims: list[EntityId]
@@ -15221,14 +15222,14 @@ class ProposalDeltaReadRequest(TypedDict):
 class ProposalOpSpanView(TypedDict):
     actor: NotRequired[EntityId | None]
     trust: str
-    before_text: str
-    after_text: str
+    before_text: NotRequired[str | None]
+    after_text: NotRequired[str | None]
     lamport: int
     timestamp: int
 class ProposalArtifactView(TypedDict):
     artifact_ref: EntityId
-    proposed_text: str
-    final_text: str
+    proposed_text: NotRequired[str | None]
+    final_text: NotRequired[str | None]
     source_turn_ref: NotRequired[EntityId | None]
     spans: list[ProposalOpSpanView]
 class AmendmentEvidenceView(TypedDict):
