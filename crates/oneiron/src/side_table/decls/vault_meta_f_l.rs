@@ -301,6 +301,12 @@ side_tables! {
     /// Canonical caller-supplied text fields backing one document's bm25 index, used to rebuild
     /// postings. Key: id16.
     INDEX_SOURCE_TEXT: VaultMeta b"index_source:text:v1:" Named;
+    /// One inference snapshot this vault keeps sealed on disk: its manifest, its dependency
+    /// set, its byte lengths and hash, its class, reuse and pins. Ids, digests, enums and pins
+    /// only: never prompt text, tokens, tensors, credentials or keys. Key: id16 (the catalog id,
+    /// drawn at random).
+    INFERENCE_SNAPSHOT_CATALOG: VaultMeta b"inference_snapshot:catalog:v1:" Named Engine
+        => crate::inference_snapshot::erase_actor_in_txn;
     /// Blob birth fingerprint tree used for perceptual/exact duplicate detection on ingest. Key:
     /// id16.
     INGEST_FINGERPRINT: VaultMeta b"ingest-fingerprint:v1:" LegacyJson;
