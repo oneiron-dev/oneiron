@@ -8,8 +8,9 @@ use crate::Vault;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
-    AmendmentDelta, DeltaCaptureContext, OUTCOME_APPROVED_AMENDED, attach_amendment_deltas,
-    capture_delta_best, put_amendment_delta_in_txn,
+    AmendmentDelta, DeltaCaptureContext, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
+    attach_amendment_deltas, capture_delta_best, entity_endpoint_in_txn,
+    put_amendment_delta_in_txn,
 };
 use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
 use crate::entity_id::EntityId;
@@ -464,10 +465,16 @@ fn accept_member_with_amendment_in_txn(
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
     let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
-    let (delta, delta_reasons) = if amended_approval {
-        captured_amendment_delta(&approved_body(&reviewed)?, &approved)
+    // The Δ's proposed end is the claim's revision as reviewed; its final end
+    // is read once the accept has landed (FIX 7819).
+    let reviewed_end = if amended_approval {
+        Some((
+            entity_endpoint_in_txn(&vault.store, wtxn, *id)?,
+            approved_body(&reviewed)?,
+            approved.clone(),
+        ))
     } else {
-        (None, Vec::new())
+        None
     };
 
     if amended_approval && learning.is_some() {
@@ -522,6 +529,19 @@ fn accept_member_with_amendment_in_txn(
         }
     }
 
+    let (delta, delta_reasons) = match reviewed_end {
+        Some((reviewed_at, proposed, landed)) => captured_amendment_delta(
+            MeasuredEnd {
+                at: reviewed_at,
+                content: &proposed,
+            },
+            MeasuredEnd {
+                at: entity_endpoint_in_txn(&vault.store, wtxn, *id)?,
+                content: &landed,
+            },
+        ),
+        None => (None, Vec::new()),
+    };
     vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,
@@ -606,10 +626,10 @@ fn accept_member_with_amendment_in_txn(
 /// decider already made — and a receipt that says its Δ is missing is worth
 /// more than one that silently has none.
 pub(super) fn captured_amendment_delta(
-    proposed: &[u8],
-    approved: &[u8],
+    proposed: MeasuredEnd<'_, [u8]>,
+    approved: MeasuredEnd<'_, [u8]>,
 ) -> (Option<AmendmentDelta>, Vec<String>) {
-    match capture_delta_best(&DeltaCaptureContext::from_bodies(proposed, approved)) {
+    match capture_delta_best(DeltaCaptureContext::from_bodies(proposed, approved)) {
         Ok(delta) => (Some(delta), Vec::new()),
         Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
     }
