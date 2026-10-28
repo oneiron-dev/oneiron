@@ -33,7 +33,9 @@ mod intent;
 pub use crate::claim::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
-pub use guest::LensExecutionRuntime;
+pub use guest::{
+    LENS_GUEST_MEMORY_BYTES, LENS_GUEST_STEP_FUEL, LensExecutionRuntime, LensGuestPolicy,
+};
 pub use inspection::{
     INSPECTION_HANDLE_LEN, INSPECTION_HANDLE_VERSION, InspectionHandle, InspectionResolveRequest,
     InspectionResolved, InspectionState, decode_inspection_handle, encode_inspection_handle,
