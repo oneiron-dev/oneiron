@@ -12,9 +12,10 @@
 //! the line of the runtime that runs it, and holds its replies' bytes until
 //! its answer leaves the adapter ([`holding_replies`]): across the encoded
 //! reply and its decode, whose decoded answer is charged beside them at that
-//! boundary (FIX 10626). A chat call a ladder sends reads its JSON reply the
-//! same way on the vault's chat-reply line, `limits.chat_reply_bytes`
-//! ([`holding_chat_replies`]), until the call ends. A read no call scopes (a
+//! boundary (FIX 10626). A chat call a ladder sends reads its JSON reply on
+//! the vault's chat-reply line, `limits.chat_reply_bytes`
+//! ([`holding_chat_replies`]), until the call ends: charged as it arrives,
+//! never waited for, a crossing recorded. A read no call scopes (a
 //! health probe) keeps its bytes on the reply it returns, on a line of the
 //! row's default of its own: no process-wide line paces it. A parsed JSON
 //! tree is the call's, and not booked here.
@@ -80,7 +81,8 @@ pub(in crate::models) async fn holding_replies<F: Future>(
 
 /// Runs `call`, one chat rung's send on the runtime whose budgets are
 /// `budgets`, holding the bytes of every JSON reply read whole for it on
-/// that runtime's chat-reply line until it ends (FIX 10626).
+/// that runtime's chat-reply line until it ends (FIX 10626). They are
+/// charged as they arrive and never wait for room.
 pub(in crate::models) async fn holding_chat_replies<F: Future>(
     budgets: &ModelHostBudgets,
     call: F,
@@ -115,10 +117,11 @@ pub(in crate::models) async fn read_booked(
         .content_length()
         .and_then(|length| usize::try_from(length).ok())
         .unwrap_or(FIRST_ROOM);
-    // Only a call that holds nothing yet waits its turn: one that holds a
-    // reply already is charged, so no wait closes a cycle.
+    // Only a media call that holds nothing yet waits its turn: one that
+    // holds a reply already is charged, so no wait closes a cycle, and a
+    // chat reply is charged, never waited for.
     let waits = CALL
-        .try_with(|call| call.held.borrow().is_empty())
+        .try_with(|call| matches!(call.replies, Replies::Media) && call.held.borrow().is_empty())
         .unwrap_or(true);
     let mut held = if waits {
         line.reserve_alone(first, Duration::MAX, questions).await

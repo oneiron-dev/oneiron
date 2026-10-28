@@ -144,8 +144,9 @@ pub struct LimitsConfig {
     /// a size cap: no reply is refused for its size.
     pub media_reply_bytes: u64,
     /// Bytes the JSON replies a ladder's chat sends read whole may hold at
-    /// once (FIX 10626), paced as `media_reply_bytes` is; the same machine
-    /// share by default. No reply is refused for its size.
+    /// once (FIX 10626): charged as they arrive, never waited for, a
+    /// crossing recorded; the same machine share by default. No reply is
+    /// refused for its size.
     pub chat_reply_bytes: u64,
     /// Bytes one note to the open feedback inbox may carry: a POST body, or
     /// a GET link's query. A memory floor: a longer note is refused with 413

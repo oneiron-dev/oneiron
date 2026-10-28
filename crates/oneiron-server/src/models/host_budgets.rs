@@ -8,8 +8,9 @@
 //!   the media call they were read for until its answer leaves the adapter.
 //!   Its crossings ask on the vault's own `[limits]` row.
 //! - The chat-reply line (`limits.chat_reply_bytes`, FIX 10626): the bytes
-//!   the JSON replies a ladder's chat sends read whole hold, booked the same
-//!   way and held by the send they were read for until it ends.
+//!   the JSON replies a ladder's chat sends read whole hold, charged as they
+//!   arrive and held by the send they were read for until it ends. It never
+//!   waits: a crossing is recorded.
 //! - The model mesh's staging budget: what this node's mesh service holds
 //!   for other nodes' calls and what its mesh transports hold for its own,
 //!   one budget shared by the service, device sync's transport and the

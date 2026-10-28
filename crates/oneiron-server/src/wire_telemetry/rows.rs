@@ -63,8 +63,8 @@ pub enum LimitRow {
     /// whole line runs alone. Never a size refusal.
     MediaReplyBytes,
     /// Bytes the JSON replies a ladder's chat sends read whole hold at once,
-    /// until the send ends (FIX 10626): paced as the media line is. Never a
-    /// size refusal.
+    /// until the send ends (FIX 10626): charged as they arrive, never waited
+    /// for, a crossing recorded. Never a size refusal.
     ChatReplyBytes,
     /// An engine row on this server's vault (`oneiron::limit_ask`), measured
     /// where the engine serves the work, which carries on past it.
