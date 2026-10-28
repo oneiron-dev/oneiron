@@ -2306,7 +2306,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_distance/graduation/tests.rs` | test | m | — | — | ONE-1761 (ED-05) unit tests: the posterior guard's discrimination, threshold resolution across the three row… |
 | `src/edit_distance/graduation/threshold_policy.rs` | src | m | 1 struct · 9 fn · 2 const · 4 crate-vis | ThresholdRow | Threshold rows and graduation-policy resolution |
 | `src/edit_distance/graduation/trust_table.rs` | src | s | 1 struct · 1 fn | TrustTableRow | Trust-table join over ramp stats, policy, and offer state |
-| `src/edit_distance/miner/config.rs` | src | s | 3 const · 27 crate-vis | — | ED-04 miner dials, pinned keys, labels and the tone lexicon |
+| `src/edit_distance/miner/config.rs` | src | s | 3 const · 29 crate-vis | — | ED-04 miner dials, pinned keys, labels and the tone lexicon |
 | `src/edit_distance/miner/emission.rs` | src | m | 11 crate-vis | — | ED-04 preference-claim and skill-edit emission |
 | `src/edit_distance/miner/feedback.rs` | src | m | 1 fn · 6 crate-vis | — | Immutable, owner-bound decisions used by the preference miner |
 | `src/edit_distance/miner/influence.rs` | src | s | 1 fn · 2 crate-vis | — | Principal and decay checks at the miner/optimizer's actual read boundary |
