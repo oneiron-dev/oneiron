@@ -14073,7 +14073,7 @@
       "const": 4,
       "crate-vis": 1,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -16747,11 +16747,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "UnusableResolver"
+     ],
      "path": "src/code_sandbox/egress/dns.rs",
      "purpose": "DNS goes to the host's resolver through the same proxy",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -16794,7 +16798,7 @@
      "surface": {
       "enum": 1,
       "fn": 6,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -31683,6 +31687,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/quote_citation.rs",
+     "purpose": "Engine-issued span quotes as citation pins (FIX 9894, 9895)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -35564,8 +35578,8 @@
      "path": "src/genui/consent_eval.rs",
      "purpose": "DEC-0006 action vocabulary, request/decision/intent types and evaluation helpers",
      "surface": {
-      "const": 5,
-      "crate-vis": 10,
+      "const": 6,
+      "crate-vis": 11,
       "enum": 6,
       "fn": 11,
       "struct": 3
@@ -35608,7 +35622,7 @@
      "path": "src/genui/mod.rs",
      "purpose": "OF-336 generated-UI component contract",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 9
      }
     },
@@ -35722,6 +35736,7 @@
      "path": "src/genui/voice_offer.rs",
      "purpose": "Voice-only disclosure widening is an offer, not an authorization",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
@@ -38453,6 +38468,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lens/artifact.rs",
+     "purpose": "A proposed lens's vault rows (FIX 9896; dashboard-v2:D8, ARCH-0035 Rule A): the lens is a CODE kind=lens row…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -38461,7 +38486,7 @@
      "path": "src/lens/atom/atom_enum.rs",
      "purpose": "LensAtom closed enum with wire codec and primitive/validate/budget dispatch",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 5
      }
@@ -38505,9 +38530,9 @@
       "VoiceLineAtom"
      ],
      "path": "src/lens/atom/atom_leaves.rs",
-     "purpose": "Leaf payload structs with per-atom validate, fallback, and budget impls",
+     "purpose": "Leaf payload structs with per-atom validate and fallback impls",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 12,
       "enum": 6,
       "fn": 2,
       "struct": 27
@@ -38520,7 +38545,7 @@
       "LensNode"
      ],
      "path": "src/lens/atom/atom_node.rs",
-     "purpose": "LensNode depth-bounded tree type with allocation-guarded Deserialize seeds",
+     "purpose": "LensNode tree type with its Deserialize seeds: the tree decodes whole, at any width or depth its codec reads…",
      "surface": {
       "crate-vis": 1,
       "fn": 2,
@@ -38650,7 +38675,7 @@
      "purpose": "Regen request and outcome decision path over behavior fingerprints",
      "surface": {
       "enum": 2,
-      "fn": 14,
+      "fn": 15,
       "struct": 3,
       "trait": 1
      }
@@ -38716,13 +38741,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "LensExecutionRuntime"
+      "LensExecutionRuntime",
+      "LensGuestPolicy"
      ],
      "path": "src/lens/guest.rs",
      "purpose": "Sandboxed, read-only lens authoring",
      "surface": {
-      "fn": 3,
-      "struct": 1
+      "const": 2,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -38768,8 +38795,8 @@
      "purpose": "Vault-scoped lens intent records and the upgrade regeneration door",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
-      "fn": 5,
+      "crate-vis": 4,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -38808,7 +38835,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 25,
+      "fn": 26,
       "struct": 8
      }
     },
@@ -38821,7 +38848,7 @@
      "path": "src/lens/mediation/mediation_frame_read.rs",
      "purpose": "Read phase of the render frame: backing refs and read handles",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 11,
       "struct": 1
      }
@@ -38867,12 +38894,14 @@
      "kind": "src",
      "notable": [
       "LensQuoteHandle",
+      "LensQuoteProof",
       "LensQuoteRange"
      ],
      "path": "src/lens/mediation/mediation_quote.rs",
-     "purpose": "Revision-pinned quote pointers derived from engine-issued span selections",
+     "purpose": "Revision-pinned quote citations derived from engine-issued span selections",
      "surface": {
-      "fn": 6,
+      "enum": 1,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -38978,13 +39007,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LensRegenDecision",
       "LensRegenEnactment"
      ],
      "path": "src/lens/regen.rs",
      "purpose": "Enacting a regeneration outcome through the lens lifecycle (OF-250)",
      "surface": {
       "enum": 1,
-      "fn": 5
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -39040,7 +39071,7 @@
      "path": "src/lens/self_ui.rs",
      "purpose": "The `self.ui` control family: the [`SelfUiControl`] enum, its six control payloads, and the action/value…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 1,
       "struct": 8
@@ -39151,7 +39182,7 @@
      "path": "src/lens/validate.rs",
      "purpose": "Cross-cutting lens validators and the capability-degradation compiler used by [`super::atom`]…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 11
      }
     },
     {
@@ -39164,7 +39195,6 @@
      "path": "src/lens/wire_ids.rs",
      "purpose": "Bounded wire tokens shared by every other lens concern",
      "surface": {
-      "crate-vis": 2,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -39175,9 +39205,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/lens/wire_limits.rs",
-     "purpose": "Generic serde plumbing shared by every lens wire type: bounded-collection deserialization against the…",
+     "purpose": "Generic serde plumbing shared by the hand-rolled lens wire types: the externally-tagged map serializer their…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 1
      }
     },
     {
@@ -46515,7 +46545,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContextDefault",
@@ -46527,7 +46557,7 @@
      "purpose": "Vault-resident PACK descriptor records; the shipped kinds are data, not variants",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 4,
       "struct": 1
@@ -75784,7 +75814,7 @@
      "path": "src/web_fetch/client.rs",
      "purpose": "The readability rung's HTTP client as a host builds it (FIX 7123)",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -79552,7 +79582,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79762,7 +79792,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 52,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80520,7 +80550,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5345,
+   "source_files": 5347,
    "test_files": 902
   },
   "oneiron-android": {
