@@ -156,7 +156,10 @@ fn patch_document(render: &GeneratedUiRender) -> Result<Value> {
     let nodes = render
         .nodes
         .iter()
-        .map(|node| Ok((node.id.as_str().to_owned(), serde_json::to_value(node).map_err(encoding)?)))
+        .map(|node| {
+            let value = serde_json::to_value(node).map_err(encoding)?;
+            Ok((node.id.as_str().to_owned(), value))
+        })
         .collect::<Result<serde_json::Map<_, _>>>()?;
     document["nodes"] = Value::Object(nodes);
     Ok(document)

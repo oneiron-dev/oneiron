@@ -98,7 +98,9 @@ pub(super) fn heal_cut_json(text: &str) -> Option<String> {
             _ => {
                 let end = bytes[index..]
                     .iter()
-                    .position(|byte| matches!(byte, b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r'))
+                    .position(|byte| {
+                        matches!(byte, b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
+                    })
                     .map(|offset| index + offset);
                 let Some(end) = end else {
                     // A number or literal cut short may be missing digits: drop it.

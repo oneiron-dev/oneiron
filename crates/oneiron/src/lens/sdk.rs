@@ -19,9 +19,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, GeneratedUiSurfaceCapabilities,
-    HostedLensRender, LedgerCell, LedgerRowAtom, LensBackingRefToken, LensBackingTarget, LensHandleName, LensHandleRole,
-    LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
-    compose_default_vault,
+    HostedLensRender, LedgerCell, LedgerRowAtom, LensBackingRefToken, LensBackingTarget,
+    LensHandleName, LensHandleRole, LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText,
+    SectionAtom, compose_default_vault,
 };
 use crate::claim::{
     ClaimReadStatus, PointRead, ReadRow, ScopedRead, ScopedReadReceipt, ScopedReadResult,

@@ -215,16 +215,20 @@ pub(super) fn diff_json(
         let path = format!("/{}", pointer_token(name));
         match (before.get(name), after.get(name)) {
             (Some(old), Some(new)) if old == new => {}
-            (Some(Value::Object(old)), Some(Value::Object(new))) if keyed.contains(&name.as_str()) => {
+            (Some(Value::Object(old)), Some(Value::Object(new)))
+                if keyed.contains(&name.as_str()) =>
+            {
                 let keys = old.keys().chain(new.keys()).collect::<BTreeSet<_>>();
                 for key in keys {
                     let entry = format!("{path}/{}", pointer_token(key));
                     match (old.get(key), new.get(key)) {
                         (Some(a), Some(b)) if a == b => {}
-                        (Some(_), Some(b)) => operations.push(GeneratedUiJsonPatchOperation::Replace {
-                            path: entry,
-                            value: b.clone(),
-                        }),
+                        (Some(_), Some(b)) => {
+                            operations.push(GeneratedUiJsonPatchOperation::Replace {
+                                path: entry,
+                                value: b.clone(),
+                            });
+                        }
                         (None, Some(b)) => operations.push(GeneratedUiJsonPatchOperation::Add {
                             path: entry,
                             value: b.clone(),
