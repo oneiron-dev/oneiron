@@ -209,7 +209,7 @@ pub(crate) fn engine_batch(batch: NoteBatch) -> OwnerResult<ImportedNoteBatch> {
         notes: batch
             .notes
             .into_iter()
-            .map(|note| {
+            .map(|note| -> OwnerResult<ImportedNote> {
                 let original = note
                     .original
                     .map(|original| {
