@@ -259,13 +259,21 @@ impl Vault {
         Ok(())
     }
 
-    /// Drops the vault data key from this handle.
-    pub fn lock_vault_key(&self) {
+    /// Drops the vault data key from this handle once no plaintext copy of
+    /// this vault's inference snapshot state is left: snapshot admission
+    /// closes, the attached host runtime releases every copy within its
+    /// bound (aborting and restarting a worker that does not answer), and
+    /// then the key goes. The lock always lands; the receipt says what was
+    /// released. With no runtime attached, admission closes and the key goes
+    /// at once.
+    pub async fn lock_vault_key(&self) -> crate::inference_snapshot::SnapshotLockReceipt {
+        let receipt = self.release_inference_snapshots_for_lock().await;
         *self
             .world_keys
             .vault_key
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
+        receipt
     }
 
     /// Wraps the held vault data key to this device's keystore: the step after an
