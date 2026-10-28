@@ -57,8 +57,8 @@ use oneiron::EntityId;
 use oneiron::claim::ScopedReadResult;
 use oneiron::code_run::live_run::is_live_run_verb;
 use oneiron::lens::{
-    GeneratedUiActionEvent, GeneratedUiValidatedAction, LensDefaultRequest, LensFrameCard,
-    LensRenderId,
+    GeneratedUiActionEvent, GeneratedUiSurfaceCapabilities, GeneratedUiValidatedAction,
+    LensDefaultRequest, LensFrameCard, LensRenderId,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
@@ -86,9 +86,10 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 
 /// `vault.lenses.default` on this server: the default lens read under the
 /// credential's own key at its locality, lowered once for the surface the
-/// call names (FIX 7969: its own `surface`, or the profile its MCP session
-/// negotiated), else for the whole atom kit, its frame held beside exactly
-/// that render for the card's events before the answer leaves.
+/// call names (FIX 7969: its input's own `surface`, else `client_surface`,
+/// the profile its MCP call declared), else for the whole atom kit, its
+/// frame held beside exactly that render for the card's events before the
+/// answer leaves.
 /// Beside it, the rows its reads listed. A run-held render (`owner`, FIX
 /// 2612) holds its card for its creating run and subscription, replacing
 /// the card that run last rendered for it; any other holds it unowned.
@@ -96,13 +97,18 @@ pub(crate) async fn vault_lenses_default(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     owner: Option<CardOwner>,
+    client_surface: Option<GeneratedUiSurfaceCapabilities>,
     input: LensDefaultRequest,
 ) -> (MemoryResult<ScopedReadResult<LensFrameCard>>, Vec<EntityId>) {
     let (actor, class) = match facade_actor(server, auth) {
         Ok(bound) => bound,
         Err(refusal) => return (Err(refusal.into_memory_error()), Vec::new()),
     };
-    let surface = input.surface.clone().unwrap_or_default();
+    let surface = input
+        .surface
+        .clone()
+        .or(client_surface)
+        .unwrap_or_default();
     let rendered = {
         let server = Arc::clone(server);
         let auth = auth.clone();
