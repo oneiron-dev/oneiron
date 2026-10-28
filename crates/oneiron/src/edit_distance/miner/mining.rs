@@ -9,7 +9,7 @@ use super::emission::emit_cluster;
 use super::hunks::MinableHunks;
 use super::model::{
     AmendmentSource, ArtifactIndex, Bucket, ClusterKey, MinedOutcome, MinerRun, MinerWatermark,
-    Region, Substitution, SubstitutionClass, SubstitutionCluster,
+    Region, SourceEnds, Substitution, SubstitutionClass, SubstitutionCluster,
 };
 use super::store::{advance_watermark_in_txn, miner_watermark};
 use crate::Vault;
@@ -17,7 +17,7 @@ use crate::edge::EdgeActorClass;
 use crate::edit_distance::attribution::{
     AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
-use crate::edit_distance::delta::{DeltaSource, amendment_delta};
+use crate::edit_distance::delta::amendment_delta;
 use crate::edit_distance::{PROPOSAL_ARTIFACT, RetainedProposal, TextRead};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -262,7 +262,7 @@ fn clusters_from(
         {
             continue;
         }
-        for substitution in substitutions(source.delta_source, source.artifact) {
+        for substitution in substitutions(&source.ends) {
             if !minable.admits(&substitution) {
                 continue;
             }
@@ -357,10 +357,11 @@ fn clusters_from(
 /// * no recorded routing facts — the amendment has no scope axis and no actor,
 ///   and inventing either is the failure ED-03 is instrumented against;
 /// * no Δ — nothing measured this window, so there is nothing to read;
-/// * a Δ whose refs name no proposal artifact — the field-diff lane's ends are
+/// * a Δ whose refs name no retained text — the field-diff lane's ends are
 ///   structured bodies in an entity and a receipt, so it resolves to no text
-///   pair at all. A recorded-ops or reconstructed Δ over an artifact names its
-///   document at both ends, which is exactly what the refs are for.
+///   pair at all. A recorded-ops Δ names one artifact's window, a
+///   reconstructed one each end's retained row, which is what the refs are
+///   for.
 fn amendment_source<'a>(
     vault: &Vault,
     judgment: &AmendmentJudgment,
@@ -372,11 +373,10 @@ fn amendment_source<'a>(
     let Some(delta) = amendment_delta(vault, &judgment.receipt_id)? else {
         return Ok(None);
     };
-    Ok(artifacts.resolve(&delta).map(|artifact| AmendmentSource {
+    Ok(artifacts.resolve(&delta).map(|ends| AmendmentSource {
         actor: evidence.actor,
         skill: evidence.skill,
-        delta_source: delta.source,
-        artifact,
+        ends,
     }))
 }
 
@@ -405,25 +405,23 @@ fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
 // Substitution extraction
 // ---------------------------------------------------------------------------
 
-/// Extracts every substitution one artifact shows, through the lane its Δ was
-/// measured on.
+/// Extracts every substitution one amendment shows, through the lane its Δ
+/// was measured on.
 ///
-/// * [`DeltaSource::RecordedOps`] — one pair per recorded CHANGE, from the
-///   change's own before/after text read at its refs. Op runs see churn: a
-///   word typed, replaced, and typed again yields the substitution the
-///   decider actually performed.
-/// * [`DeltaSource::Reconstructed`] — the endpoint texts read at the record's
-///   refs are re-diffed here for line pairs. ED-02's `myers_line_diff` counts
-///   lines rather than naming them, so the pairing is done locally instead of
-///   widening that lane's API for one consumer.
+/// * A recorded window (`recorded_ops`) — one pair per recorded
+///   CHANGE, from the change's own before/after text read at its refs. Op
+///   runs see churn: a word typed, replaced, and typed again yields the
+///   substitution the decider actually performed.
+/// * Two endpoints (`reconstructed`) — the texts read through
+///   each end's ref are re-diffed here for line pairs. ED-02's
+///   `myers_line_diff` counts lines rather than naming them, so the pairing is
+///   done locally instead of widening that lane's API for one consumer.
 ///
-/// A text the retained document no longer holds yields no pair from it.
-/// * [`DeltaSource::FieldDiff`] — unreachable: that lane resolves to no
-///   artifact (see [`amendment_source`]). Answered rather than asserted, so a
-///   future body-retaining producer degrades to silence instead of a panic.
-fn substitutions(source: DeltaSource, artifact: &RetainedProposal) -> Vec<Substitution> {
-    match source {
-        DeltaSource::RecordedOps => artifact
+/// A change text the retained document no longer holds yields no pair. A
+/// field-diff Δ resolves to no text at all (see [`amendment_source`]).
+fn substitutions(ends: &SourceEnds<'_>) -> Vec<Substitution> {
+    match ends {
+        SourceEnds::Recorded(artifact) => artifact
             .record
             .ops_by_actor
             .iter()
@@ -434,11 +432,7 @@ fn substitutions(source: DeltaSource, artifact: &RetainedProposal) -> Vec<Substi
                 _ => None,
             })
             .collect(),
-        DeltaSource::Reconstructed => match (artifact.proposed_text(), artifact.final_text()) {
-            (TextRead::Text(before), TextRead::Text(after)) => line_substitutions(&before, &after),
-            _ => Vec::new(),
-        },
-        DeltaSource::FieldDiff => Vec::new(),
+        SourceEnds::Endpoints(before, after) => line_substitutions(before, after),
     }
 }
 
