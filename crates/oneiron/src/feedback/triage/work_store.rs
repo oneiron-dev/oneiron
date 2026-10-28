@@ -44,7 +44,7 @@ struct NodeInput {
 }
 
 /// The node a child's input names.
-struct NodeTarget {
+pub(crate) struct NodeTarget {
     source_ref: FeedbackTriageSourceRef,
     pub(crate) evidence: EntityId,
     generation: u32,
