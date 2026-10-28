@@ -22,11 +22,22 @@
 //! is kept here, so the whole epoch goes. Its releases run on the caller's
 //! runtime or the one this port was installed on; a worker that does not
 //! acknowledge one is aborted, as a lock aborts it.
+//!
+//! The host's plaintext copies of a vault's snapshots (a park's region and
+//! buffer, a restore's buffer and region) are counted per vault, and their
+//! owners drop them once the admission they ran under is gone or their op
+//! is cut. A lock waits for them inside the same total bound, after the
+//! releases that cut their ops, and its receipt says how many there were
+//! and how many were still held when it answered.
+//!
+//! A vault first served here has its kept snapshots brought back in step
+//! (its startup candidates), and a budget that is off or zero purges them.
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
+use oneiron::inference_snapshot::retention::SnapshotBudget;
 use oneiron::inference_snapshot::{
     SnapshotAdmission, SnapshotFuture, SnapshotRelease, SnapshotRuntime, SnapshotWorkerAbort,
 };
@@ -38,7 +49,7 @@ use tokio::task::JoinSet;
 
 use super::registry::{self, Place};
 use crate::config::models::snapshots::SnapshotPolicy;
-use crate::models::{SnapshotReceipt, SnapshotStatus};
+use crate::models::{SnapshotReceipt, SnapshotSkips, SnapshotStatus};
 
 /// This process's side of every served vault's snapshot lifecycle.
 #[derive(Default)]
@@ -51,12 +62,76 @@ struct Snapshots {
     lock_restarts: AtomicU64,
     erase_owed: AtomicU64,
     last_lock: Mutex<Option<SnapshotReceipt>>,
+    counts: Counts,
     /// The runtime the port was first installed on: an erase's releases
     /// run there when its caller is on none.
     runtime: OnceLock<Handle>,
 }
 
 static SNAPSHOTS: OnceLock<Snapshots> = OnceLock::new();
+
+/// What this process's parks and restores did since it started.
+#[derive(Default)]
+struct Counts {
+    parks: AtomicU64,
+    seals: AtomicU64,
+    opens: AtomicU64,
+    imports: AtomicU64,
+    replays: AtomicU64,
+    restores_cold: AtomicU64,
+    skips: [AtomicU64; 6],
+}
+
+/// One park or restore event, as the status counts it.
+#[derive(Clone, Copy)]
+pub(super) enum Counted {
+    /// A published checkpoint exported to be parked.
+    Park,
+    /// A parked snapshot sealed and kept.
+    Seal,
+    /// A kept snapshot opened for a restore.
+    Open,
+    /// A restore imported and made ready.
+    Import,
+    /// A restored session whose first attach fell below the frontier its
+    /// snapshot named: the suffix past the state it carried was replayed.
+    Replay,
+    /// A restore that matched a kept snapshot and ran cold.
+    RestoreCold,
+    Skipped(Skip),
+}
+
+/// Why a candidate was not parked.
+#[derive(Clone, Copy)]
+pub(super) enum Skip {
+    /// The vault's budget is off, zero, or full of pinned snapshots.
+    Budget,
+    /// The size it would take, or its device's room, is not known.
+    UnknownRoom,
+    /// Its device has no room for the copy past the headroom.
+    NoRoom,
+    /// It depends on a world whose sealed copies the owner keeps local.
+    KeptLocal,
+    /// It is larger than the vault's whole budget.
+    Oversize,
+    /// What it was computed with is not named whole.
+    Unsupported,
+}
+
+/// Counts `event`.
+pub(super) fn count(event: Counted) {
+    let counts = &snapshots().counts;
+    let counter = match event {
+        Counted::Park => &counts.parks,
+        Counted::Seal => &counts.seals,
+        Counted::Open => &counts.opens,
+        Counted::Import => &counts.imports,
+        Counted::Replay => &counts.replays,
+        Counted::RestoreCold => &counts.restores_cold,
+        Counted::Skipped(skip) => &counts.skips[skip as usize],
+    };
+    counter.fetch_add(1, Ordering::Relaxed);
+}
 
 fn snapshots() -> &'static Snapshots {
     SNAPSHOTS.get_or_init(Snapshots::default)
@@ -73,6 +148,18 @@ fn policy() -> Arc<SnapshotPolicy> {
             .read()
             .unwrap_or_else(PoisonError::into_inner),
     )
+}
+
+/// The owner's sealed-snapshot budget for `vault` now.
+pub(super) fn budget(vault: &VaultRef) -> SnapshotBudget {
+    policy().for_vault(&vault.0).budget()
+}
+
+/// The open vault `vault` names, while it is attached here.
+pub(super) fn vault(vault: &VaultRef) -> Option<Arc<Vault>> {
+    guard(&snapshots().vaults)
+        .get(vault)
+        .and_then(Weak::upgrade)
 }
 
 /// Takes up `policy`, as a model runtime built from the config resolved it:
@@ -102,6 +189,8 @@ impl SnapshotRuntime for HostPort {
                 aborted: release.aborted.clone(),
                 timed_out: release.timed_out,
                 elapsed_ms: release.elapsed_ms,
+                host_copies: release.host_copies,
+                host_copies_left: release.host_copies_left,
             });
             release
         })
@@ -113,7 +202,8 @@ impl SnapshotRuntime for HostPort {
 }
 
 /// Attaches the host's port to `vault`: its lock waits for this process's
-/// release, and its erases drop its sessions here.
+/// release, and its erases drop its sessions here. Its kept snapshots are
+/// brought back in step on a task of their own.
 pub(in crate::models::worker_host) fn install(vault: &Arc<Vault>) {
     if let Ok(runtime) = Handle::try_current() {
         let _ = snapshots().runtime.set(runtime);
@@ -121,6 +211,38 @@ pub(in crate::models::worker_host) fn install(vault: &Arc<Vault>) {
     let id = VaultRef(vault.vault_key_vault_id());
     guard(&snapshots().vaults).insert(id, Arc::downgrade(vault));
     vault.attach_snapshot_runtime(Arc::new(HostPort));
+    reconcile(id, Arc::downgrade(vault));
+}
+
+/// The startup candidates of `vault`: a row whose body is missing or cut
+/// short retires, a body no row names goes, and a budget that is off or
+/// zero purges every row (FIX 11214). Off any runtime it waits for the
+/// first park, whose reserve purges too.
+fn reconcile(id: VaultRef, vault: Weak<Vault>) {
+    let runtime = Handle::try_current()
+        .ok()
+        .or_else(|| snapshots().runtime.get().cloned());
+    let Some(runtime) = runtime else {
+        return;
+    };
+    runtime.spawn_blocking(move || {
+        let Some(vault) = vault.upgrade() else {
+            return;
+        };
+        let reconciled = vault.reconcile_inference_snapshots().and_then(|_| {
+            let budget = budget(&id);
+            if budget.limit() == 0 {
+                vault.snapshot_ledger().enforce_budget(budget, 0, &[])?;
+            }
+            Ok(())
+        });
+        if let Err(error) = reconciled {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a vault's kept inference snapshots were not brought in step; housekeeping retries"
+            );
+        }
+    });
 }
 
 /// What session work on a vault was admitted under.
@@ -152,6 +274,7 @@ pub(super) fn admission(vault: &VaultRef) -> Option<Admitted> {
 async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
     let started = Instant::now();
     let deadline = tokio::time::Instant::now() + bound;
+    let host_copies = registry::host_copies(&vault);
     let mut owed: BTreeMap<(String, String), (InferenceWorker, u64)> = BTreeMap::new();
     let mut releases = JoinSet::new();
     for (target, place) in registry::retire_vault(&vault) {
@@ -187,6 +310,9 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
         }
     }
     releases.abort_all();
+    // The releases cut every export or import in flight; their owners drop
+    // what they hold, inside the same bound.
+    registry::copies_dropped(&vault, deadline).await;
     // Every abort starts at once, each on a task of its own that also does
     // its cleanup, so it finishes even when the engine stops waiting.
     let aborts: Vec<_> = owed
@@ -220,6 +346,8 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
         aborted,
         timed_out,
         elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        host_copies,
+        host_copies_left: registry::host_copies(&vault),
     }
 }
 
@@ -278,6 +406,9 @@ pub(in crate::models::worker_host) fn status() -> SnapshotStatus {
         .values()
         .filter_map(Weak::upgrade)
         .collect();
+    let counts = &snapshots().counts;
+    let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+    let skip = |skip: Skip| read(&counts.skips[skip as usize]);
     let mut status = SnapshotStatus {
         enabled: policy.default.enabled,
         disk_budget_bytes: policy.default.disk_bytes,
@@ -290,6 +421,20 @@ pub(in crate::models::worker_host) fn status() -> SnapshotStatus {
         erase_copies_pending: snapshots().erase_owed.load(Ordering::Relaxed),
         lock_restarts: snapshots().lock_restarts.load(Ordering::Relaxed),
         last_lock: guard(&snapshots().last_lock).clone(),
+        parks: read(&counts.parks),
+        seals: read(&counts.seals),
+        opens: read(&counts.opens),
+        imports: read(&counts.imports),
+        replays: read(&counts.replays),
+        restores_cold: read(&counts.restores_cold),
+        skips: SnapshotSkips {
+            budget: skip(Skip::Budget),
+            unknown_room: skip(Skip::UnknownRoom),
+            no_room: skip(Skip::NoRoom),
+            kept_local: skip(Skip::KeptLocal),
+            oversize: skip(Skip::Oversize),
+            unsupported: skip(Skip::Unsupported),
+        },
     };
     let add = |total: &mut Option<u64>, part: Option<u64>| {
         *total = total

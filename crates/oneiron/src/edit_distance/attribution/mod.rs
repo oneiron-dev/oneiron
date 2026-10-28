@@ -88,7 +88,7 @@ pub use self::projector::{
 };
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    PreferenceProposal, classify_amendment, validate_share_vector,
+    HunkLabel, PreferenceProposal, classify_amendment, validate_share_vector,
 };
 
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;

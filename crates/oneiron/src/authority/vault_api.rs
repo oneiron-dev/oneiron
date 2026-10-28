@@ -442,6 +442,20 @@ impl Vault {
         Ok(self.authority_view_readonly_in_txn(&rtxn)?.vault_id)
     }
 
+    /// This vault's authority-row generation: it moves on every commit to
+    /// the authority log, a grant's revoke among them, and on nothing
+    /// outside it (a scope or world setting held elsewhere leaves it). A
+    /// kept inference snapshot restores only at the generation its read was
+    /// admitted at (V2-R3). It only reads.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn authority_generation(&self) -> Result<u64> {
+        let rtxn = self.store.env.read_txn()?;
+        authority_cache_generation(&self.store, &rtxn)
+    }
+
     pub(crate) fn authority_fold_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

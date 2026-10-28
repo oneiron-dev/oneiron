@@ -132,6 +132,12 @@ pub struct CorpusSplit {
     pub cohort: EvalCohort,
     pub rows: Vec<SplitRow>,
     pub exact_hash_overlaps: u64,
+    /// The sources with other people the owner ticked "I obtained consent"
+    /// for this run (ARCH-0053 #training-inputs), sorted; such a source not
+    /// here stayed out of the corpus.
+    pub consented_sources: Vec<EntityId>,
+    /// The pairs the export left out before the split, by reason code.
+    pub excluded: BTreeMap<String, u64>,
     /// A question run's split and consent receipts, from its detector-row
     /// ingress; a role run's reservoir corpus has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -382,6 +388,10 @@ pub struct TrainingPackDraft {
     pub split: SplitPolicy,
     pub compute: ComputeChoice,
     pub quantity: u64,
+    /// The sources with other people the owner selects for this run, each
+    /// ticked "I obtained consent". The owner's own sources need no tick.
+    #[serde(default)]
+    pub consented_sources: Vec<EntityId>,
 }
 
 /// A separate owner decision; an override keeps the failed checks on its receipt.

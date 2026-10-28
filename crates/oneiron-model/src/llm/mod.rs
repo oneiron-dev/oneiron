@@ -144,3 +144,9 @@ pub use self::session::{
     SessionResidency, SessionRestore, SessionRestored, SessionSuffixCommit, SessionSuffixStaged,
     SessionTarget, TokenDigest, VaultRef,
 };
+// DESIGN-V2 R3: the snapshot ops of the worker session wire.
+pub use self::session::{
+    RegionDescriptor, SNAPSHOT_ENCODING, SNAPSHOT_HASH, SNAPSHOT_SCHEMA, SNAPSHOT_SCHEMA_MINOR,
+    SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
+    SnapshotDigest, SnapshotMiss,
+};
