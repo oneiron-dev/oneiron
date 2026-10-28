@@ -3,8 +3,9 @@
 //! normal comm channel with that actor as counterparty". The actor is read
 //! off the same canonical import receipts and installed packs the metadata
 //! resolver reads the artifact from: the one hub the issue's publisher
-//! shipped that artifact through, and the foreign-publisher actor that hub
-//! admits it as. No hub, or more than one, names no actor.
+//! shipped that artifact through, and the actor it publishes there as, a
+//! configured hub's foreign publisher or the engine for its seeded packs. No
+//! hub, or more than one, names no actor.
 
 use std::collections::BTreeSet;
 
@@ -14,9 +15,9 @@ use crate::{EntityId, Result, Vault};
 
 impl Vault {
     /// The ACTOR `publisher_ref` published `artifact` as. `None` for an
-    /// artifact with no foreign publisher (owner-authored, local or
-    /// engine-seeded) and for one shipped through more than one hub: such a
-    /// signature has no outward channel.
+    /// artifact with no publisher actor (the owner's own or local packs) and
+    /// for one shipped through more than one hub: its delivery names no comm
+    /// counterparty, and none is invented.
     ///
     /// # Errors
     ///
