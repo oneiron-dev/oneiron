@@ -249,9 +249,13 @@ pub const FILES_WORLD: &[u8] = b"oneiron.files.world.v1";
 /// source install's MACHINE id, its Files world, the canonical folder.
 pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
 
+/// A turn or message VAD annotation claim (`affect::vad_annotation_claim_id`,
+/// FIX 9554). Parts: the annotated row's entity type, its id.
+pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 55] = [
+pub(crate) const ALL: [&[u8]; 56] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -307,4 +311,5 @@ pub(crate) const ALL: [&[u8]; 55] = [
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
     REPO_SECRET_MARK,
+    VAD_ANNOTATION_CLAIM,
 ];
