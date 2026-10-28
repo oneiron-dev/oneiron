@@ -152,12 +152,15 @@ impl Memory<'_> {
             }
         };
         // The candidate was regenerated from the decided lens's prompt.
-        let intent = self.vault().get_lens_intent(&decided_against)?.ok_or_else(|| {
-            invalid_state(
-                "the slot's active lens has no stored intent to carry to its candidate",
-                "Propose the candidate with its intent through vault.lenses.propose.",
-            )
-        })?;
+        let intent = self
+            .vault()
+            .get_lens_intent(&decided_against)?
+            .ok_or_else(|| {
+                invalid_state(
+                    "the slot's active lens has no stored intent to carry to its candidate",
+                    "Propose the candidate with its intent through vault.lenses.propose.",
+                )
+            })?;
         let proposal = self.lenses_propose(LensProposeRequest {
             slot: slot.clone(),
             pack_content_hash,
@@ -204,7 +207,9 @@ impl Memory<'_> {
         &self,
         slot: &LensSlot,
     ) -> MemoryResult<Option<(EntityId, super::GeneratedLens)>> {
-        Ok(self.vault().active_pack_lens(&slot.pack_name, &slot.skill()?)?)
+        Ok(self
+            .vault()
+            .active_pack_lens(&slot.pack_name, &slot.skill()?)?)
     }
 
     /// The lens `slot` selects now, rechecked against the live install.

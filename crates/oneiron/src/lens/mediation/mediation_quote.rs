@@ -198,15 +198,17 @@ impl LensRenderFrame {
         let citation = EntityId::from_hex(&quote.citation_ref)
             .map_err(|_| Error::InvalidConfig("quote names no citation".into()))?;
         let masked = !read.actor_key().reads_as_vault_owner();
-        let issued = read
-            .vault()
-            .issued_quote_in_sight(&quote.reply_to_message_id, &citation, masked)?;
+        let issued =
+            read.vault()
+                .issued_quote_in_sight(&quote.reply_to_message_id, &citation, masked)?;
         if issued.document != quote.document {
             return Err(Error::InvalidConfig(
                 "quote no longer names its message's document".into(),
             ));
         }
-        let live = issued.sight.is_some_and(|sight| sight.quote_hash == quote.quote_hash);
+        let live = issued
+            .sight
+            .is_some_and(|sight| sight.quote_hash == quote.quote_hash);
         Ok(if live {
             LensQuoteProof::Live
         } else {

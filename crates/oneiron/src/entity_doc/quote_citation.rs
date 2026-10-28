@@ -124,7 +124,11 @@ impl Vault {
     ) -> Result<IssuedSpan> {
         let txn = self.store.env.read_txn()?;
         let pin = ENTITY_DOC_PIN
-            .get(&self.store, &txn, &HexPair(HexId(*entity), HexId(*citation)))?
+            .get(
+                &self.store,
+                &txn,
+                &HexPair(HexId(*entity), HexId(*citation)),
+            )?
             .ok_or(invalid("quote citation is not pinned"))?;
         let h = storage::head(&self.store, &txn, entity)?;
         let doc = storage::load(&self.store, &txn, &h)?;
