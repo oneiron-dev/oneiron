@@ -5655,7 +5655,7 @@ class Oneiron:
         def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs":
             return Oneiron._SelfBrowserDemonstrationVerbs(self._client)
         def handover(self, spec):
-            """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
+            """Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
         def switch_engine(self, spec):
             """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""

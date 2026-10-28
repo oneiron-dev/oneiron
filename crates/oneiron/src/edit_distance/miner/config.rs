@@ -86,8 +86,10 @@ pub(super) const PREFERENCE_VALUE_KEY_CLASS: &str = "class";
 
 pub(super) const PREFERENCE_VALUE_KEY_RATIONALE: &str = "rationale";
 
+pub(super) const PREFERENCE_VALUE_KEY_UNATTRIBUTED: &str = "unattributed";
+
 /// Provenance-map keys of the miner's write envelope. `surface` and `run` are
-/// the two `gate.rs` parses for the inbox group key; the other two are this
+/// the two `gate.rs` parses for the inbox group key; the other three are this
 /// module's own trace.
 pub(super) const PROVENANCE_KEY_SURFACE: &str = "surface";
 
@@ -96,6 +98,8 @@ pub(super) const PROVENANCE_KEY_RUN: &str = "run";
 pub(super) const PROVENANCE_KEY_SESSION: &str = "session";
 
 pub(super) const PROVENANCE_KEY_CLUSTER: &str = "cluster";
+
+pub(super) const PROVENANCE_KEY_UNATTRIBUTED: &str = "unattributed";
 
 /// The only key of the dreamer attempt payload this job rides.
 ///
