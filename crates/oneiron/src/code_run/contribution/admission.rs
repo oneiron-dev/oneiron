@@ -1,14 +1,16 @@
-//! What a submitted pair's stored forks prove (FIX 3610): the A side records
-//! a contribution check as measured only when the fork receipts this runner
-//! kept for the pair's canonical candidate are the ones submitted, scored
-//! as submitted, and regenerated the run's first-step capsule as it stands,
-//! read on the caller's snapshot. A pair they do not prove is still recorded,
-//! as unmatched; nothing here refuses it.
+//! What a submitted pair's stored forks prove (FIX 3610, FIX 2870): the A
+//! side records a contribution check as measured only when the fork
+//! receipts this runner kept for the pair's canonical candidate are the ones
+//! submitted, scored as submitted for the candidate's outcome, and
+//! regenerated the capsule of the step the target's check regenerates as it
+//! stands, read on the caller's snapshot. A pair they do not prove is still
+//! recorded, as unmatched; nothing here refuses it.
 
 use serde::{Deserialize, Serialize};
 
 use super::super::storage::{fork_rows_in_txn, step_replay_capsules_in_txn};
-use super::{ContributionForkReceipt, FIRST_STEP, ForkTreatment, pair_digest, receipt_attempt};
+use super::ancestor::target_step;
+use super::{ContributionForkReceipt, ForkScoring, ForkTreatment, pair_digest, receipt_attempt};
 use crate::skill_attribution::{ContributionCandidate, ContributionFork};
 use crate::{Result, Vault};
 
@@ -29,10 +31,13 @@ pub enum ForkMismatch {
     OtherScore,
     /// The two forks were not scored against one anchor.
     AnchorDiverged,
-    /// A fork did not regenerate the run's first-step capsule as it stands:
-    /// another capsule, request, model, route prompt or seed, or the
-    /// capsule's content is gone.
+    /// A fork did not regenerate the capsule of the step the target's check
+    /// regenerates as it stands: another capsule, request, model, route
+    /// prompt or seed, or the capsule's content is gone.
     OtherCapsule,
+    /// A kept fork was scored for another outcome, goal revision or axis
+    /// than the candidate's.
+    OtherOutcome,
 }
 
 /// The facts a pair's kept forks prove: each side's score, as kept.
@@ -81,8 +86,12 @@ pub(crate) fn matched_contribution_facts_in_txn(
     if with_fork.anchor != without_fork.anchor {
         reasons.push(ForkMismatch::AnchorDiverged);
     }
-    if !regenerates_first_step(vault, txn, candidate, &with_fork)?
-        || !regenerates_first_step(vault, txn, candidate, &without_fork)?
+    let scoring = ForkScoring::of(candidate);
+    if with_fork.scoring != scoring || without_fork.scoring != scoring {
+        reasons.push(ForkMismatch::OtherOutcome);
+    }
+    if !regenerates_target_step(vault, txn, candidate, &with_fork)?
+        || !regenerates_target_step(vault, txn, candidate, &without_fork)?
     {
         reasons.push(ForkMismatch::OtherCapsule);
     }
@@ -100,10 +109,10 @@ pub(crate) fn matched_contribution_facts_in_txn(
     }
 }
 
-/// Whether `fork` regenerated the first-step capsule of `candidate`'s run,
-/// the one of its latest lease generation, as it stands in `txn`: its
+/// Whether `fork` regenerated the capsule of the step `candidate`'s target
+/// check regenerates ([`super::ancestor`]), as it stands in `txn`: its
 /// request, model, route prompt and seed, with its content still held.
-fn regenerates_first_step(
+fn regenerates_target_step(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     candidate: &ContributionCandidate,
@@ -112,11 +121,10 @@ fn regenerates_first_step(
     let Some(attempt) = receipt_attempt(&candidate.attempt_receipt) else {
         return Ok(false);
     };
-    let Some(capsule) = step_replay_capsules_in_txn(vault, txn, attempt)?
-        .into_iter()
-        .filter(|capsule| capsule.step == FIRST_STEP)
-        .max_by_key(|capsule| capsule.lease_generation)
-    else {
+    let Ok(capsule) = target_step(
+        step_replay_capsules_in_txn(vault, txn, attempt)?,
+        candidate.target,
+    ) else {
         return Ok(false);
     };
     let Some(binding) = &capsule.binding else {
