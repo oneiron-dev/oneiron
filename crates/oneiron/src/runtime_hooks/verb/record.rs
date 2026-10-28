@@ -37,6 +37,13 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     /// while the hook's current grant still shows each of them.
     #[serde(default, with = "crate::serialize::entity_ref::sequence")]
     pub(in crate::runtime_hooks) dependencies: Vec<EntityId>,
+    /// The input also showed content whose rows no host names: a replay runs
+    /// it again only under the grant it was built under ([`Self::grant`]).
+    #[serde(default)]
+    pub(in crate::runtime_hooks) unattributed: bool,
+    /// The digest of the grant the input was built under.
+    #[serde(default)]
+    pub(in crate::runtime_hooks) grant: String,
     /// How the body was prepared before it ran (FIX 9208).
     #[serde(default)]
     pub(in crate::runtime_hooks) preparation: Option<HookPreparation>,

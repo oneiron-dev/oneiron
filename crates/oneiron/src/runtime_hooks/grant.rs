@@ -45,6 +45,14 @@ impl HookGrant {
         }
     }
 
+    /// The grant's digest, lowercase hex: a saved verb input built under it
+    /// names it, so a replay knows whether the grant changed since (FIX
+    /// 10084).
+    pub(super) fn digest(&self) -> String {
+        let encoded = serde_json::to_vec(self).unwrap_or_default();
+        blake3::hash(&encoded).to_hex().to_string()
+    }
+
     /// Whether the grant shows `claim`, on top of what the reader's key admits.
     pub(super) fn admits(&self, claim: &ClaimBody) -> bool {
         (self.predicates.is_empty()

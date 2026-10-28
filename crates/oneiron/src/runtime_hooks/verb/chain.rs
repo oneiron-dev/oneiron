@@ -25,7 +25,7 @@ use crate::runtime_hooks::{HookBodyRuntime, filter, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
 use crate::task_verb::revoke_lands::Landing;
 use crate::work_line::TaskWorkTurn;
-use crate::{EntityId, Error, Result, Vault};
+use crate::{EntityId, Result, Vault};
 
 use super::state::{Carry, Entered, HookDepth, depth};
 use super::storage::VerbHookStorage;

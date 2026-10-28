@@ -127,6 +127,9 @@ struct Input<'i> {
 pub(super) struct ProjectedInput {
     pub(super) json: String,
     pub(super) dependencies: Vec<EntityId>,
+    /// It also shows content whose rows no host names: a hook that saw what
+    /// its caller did saw it whole.
+    pub(super) unattributed: bool,
 }
 
 impl Chain<'_> {
@@ -141,9 +144,12 @@ impl Chain<'_> {
         seen: &HookView<'_>,
     ) -> Result<ProjectedInput> {
         let mut dependencies = Vec::new();
-        let args = self.project_args(args, seen);
+        let mut unattributed = false;
+        let args = self.project_args(args, seen, &mut unattributed);
         let result = match result {
-            Some(result) => Some(self.project_result(result, seen, &mut dependencies)?),
+            Some(result) => {
+                Some(self.project_result(result, seen, &mut dependencies, &mut unattributed)?)
+            }
             None => None,
         };
         let tail = self.project_tail(seen, &mut dependencies)?;
@@ -174,7 +180,11 @@ impl Chain<'_> {
         };
         let json = serde_json::to_string(&input)
             .map_err(|_| Error::InvariantViolation("hook input encode"))?;
-        Ok(ProjectedInput { json, dependencies })
+        Ok(ProjectedInput {
+            json,
+            dependencies,
+            unattributed,
+        })
     }
 
     /// Whether the post-hook `binding` (id `id`) runs on `result`: a hook
@@ -202,17 +212,15 @@ impl Chain<'_> {
             cap: cap.as_ref().map(Option::as_ref),
             grant: &grant,
         };
-        let shown = self.project_result(result, &seen, &mut Vec::new())?;
+        let shown = self.project_result(result, &seen, &mut Vec::new(), &mut false)?;
         Ok(served::admits(&binding.selector.served, &shown))
     }
 
     /// The caller's args as the hook sees them: the caller's own, whole; a
     /// host verb's free text withheld from a hook narrower than its caller.
-    fn project_args(&self, args: &Value, seen: &HookView<'_>) -> Value {
+    fn project_args(&self, args: &Value, seen: &HookView<'_>, unattributed: &mut bool) -> Value {
         let mut args = args.clone();
-        if seen.narrows() {
-            self.withhold_host_text(&mut args);
-        }
+        self.host_text(&mut args, seen, unattributed);
         args
     }
 
@@ -233,27 +241,33 @@ impl Chain<'_> {
         result: &Value,
         seen: &HookView<'_>,
         dependencies: &mut Vec<EntityId>,
+        unattributed: &mut bool,
     ) -> Result<Value> {
-        if !seen.narrows() {
-            return Ok(result.clone());
-        }
+        let narrows = seen.narrows();
         let mut shown = result.clone();
         if self.call.verb.starts_with("host.") {
-            self.withhold_host_text(&mut shown);
+            self.host_text(&mut shown, seen, unattributed);
             return Ok(shown);
         }
         if self.call.domain == VerbDomain::Write {
             return Ok(shown);
         }
         if shown.get("pack_version").is_none() {
-            return Ok(withheld());
+            if narrows {
+                return Ok(withheld());
+            }
+            *unattributed = true;
+            return Ok(shown);
         }
         let mut every = true;
         if let Some(items) = shown.get_mut("items").and_then(Value::as_array_mut) {
             for item in items {
                 let rows = self.item_rows(item);
-                if seen.shows_all(rows.as_deref())? {
-                    dependencies.extend(rows.unwrap_or_default());
+                if !narrows || seen.shows_all(rows.as_deref())? {
+                    match rows {
+                        Some(rows) => dependencies.extend(rows),
+                        None => *unattributed = true,
+                    }
                 } else {
                     *item = withheld();
                     every = false;
@@ -305,11 +319,18 @@ impl Chain<'_> {
         Ok(tail)
     }
 
-    /// Withholds this host verb's free text in `value`, in place.
-    fn withhold_host_text(&self, value: &mut Value) {
+    /// This host verb's free text in `value`: withheld in place from a hook
+    /// narrower than its caller; else shown, as content no host names rows
+    /// for.
+    fn host_text(&self, value: &mut Value, seen: &HookView<'_>, unattributed: &mut bool) {
         for (verb, path) in HOST_FREE_TEXT {
-            if self.call.verb == verb {
+            if self.call.verb != verb {
+                continue;
+            }
+            if seen.narrows() {
                 withhold_at(value, path);
+            } else {
+                *unattributed = true;
             }
         }
     }

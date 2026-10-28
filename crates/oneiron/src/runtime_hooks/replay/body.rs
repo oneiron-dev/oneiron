@@ -88,6 +88,12 @@ impl Replay<'_> {
                 reason: "a row the saved input held is not shown to this hook now".to_owned(),
             };
         }
+        if saved.unattributed && saved.grant != self.grant.digest() {
+            return HookReplayResult::MissingHistory {
+                reason: "the saved input holds content its hook's grant has changed for since"
+                    .to_owned(),
+            };
+        }
         let mut reads = PinnedReads::new(&saved.reads);
         let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let result = match &self.body {

@@ -45,6 +45,10 @@ pub(super) struct RunRecord<'c> {
     pub(super) input: String,
     /// The rows whose content that input showed.
     pub(super) dependencies: Vec<EntityId>,
+    /// That input also showed content whose rows no host names.
+    pub(super) unattributed: bool,
+    /// The digest of the grant the input was built under.
+    pub(super) grant: String,
     /// How the body was prepared before it ran (FIX 9208).
     pub(super) preparation: Option<HookPreparation>,
     pub(super) reads: Vec<HookReadPin>,
@@ -147,6 +151,8 @@ impl<'c> Chain<'c> {
             usage: verdict.usage,
             input: input.json,
             dependencies: input.dependencies,
+            unattributed: input.unattributed,
+            grant: grant.digest(),
             preparation: verdict.preparation.clone(),
             reads: pins,
             outcome_json: verdict.outcome_json.clone(),
