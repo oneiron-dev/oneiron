@@ -43,7 +43,7 @@ pub use wire::VoiceWireBindings;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oneiron::llm::{BudgetGuard, LlmBackend, LlmError};
-use oneiron::speculative::SpeculativeSessionConfig;
+use oneiron::speculative::{SpeculativeSessionConfig, SpeculativeThreads};
 use oneiron::voice_cascade::{
     AsrEvent, AsrEventKind, AsrUpdate, OutputStop, PreparedAsr, UtteranceHandle,
     VoiceCascadeSession, VoiceSessionConfig,
@@ -108,6 +108,9 @@ pub struct VoiceHost {
     /// The container the session is bound to, whose attendees' entries
     /// stop the call's output (OF-365 P5); `None` for no room's call.
     container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
+    /// The call's speculative passes that missed their deadline and run on:
+    /// joined before the call's write admission drops (FIX 3814).
+    speculative: SpeculativeThreads,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -172,6 +175,7 @@ impl VoiceHost {
         Ok(Self {
             call_deadline,
             container,
+            speculative: SpeculativeThreads::default(),
             state: Arc::new(Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,
@@ -221,6 +225,7 @@ impl VoiceHost {
                 fire_limit: 8,
                 final_limit: 32,
                 deadline: Some(self.call_deadline),
+                threads: Some(self.speculative.clone()),
             },
         )?;
         // Connection-local, monotonically unique correlation. Not authentication.
@@ -281,6 +286,22 @@ impl VoiceHost {
         state.open = None;
         Ok(state.core.end())
     }
+
+    /// Whether no speculative pass of the call still runs past its deadline.
+    fn speculative_at_rest(&self) -> bool {
+        self.speculative.at_rest()
+    }
+}
+
+/// Joins the speculative passes `threads` keeps, off the async runtime: a
+/// pass that missed its deadline still writes its telemetry and embedding
+/// jobs when its query ends, so its call waits for it before its write
+/// admission drops (FIX 3814). Each stops at its next deadline checkpoint.
+async fn join_speculative(threads: SpeculativeThreads) {
+    if threads.at_rest() {
+        return;
+    }
+    let _ = tokio::task::spawn_blocking(move || threads.join()).await;
 }
 
 impl Drop for VoiceHost {
