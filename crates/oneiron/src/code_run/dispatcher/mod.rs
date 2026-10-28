@@ -24,6 +24,7 @@ mod repo;
 mod repo_sources;
 mod routed_entry;
 mod session_verbs;
+mod spawn_capture;
 mod summarize;
 mod team_submit;
 mod team_submit_output;
@@ -180,6 +181,9 @@ pub struct HostSelfDispatcher<'a> {
     /// reaches it.
     pub(super) repo_review_policy:
         Option<std::sync::Arc<dyn crate::memory::repo_doors::RepoReviewPolicy>>,
+    /// The seats each open spawn call resolved (FIX 9180): host-only, one
+    /// frame per call, taken by the recorder of the call's row.
+    spawn_capture: spawn_capture::SpawnCapture,
 }
 
 /// One bridge call's place in a durable engine-executor run.

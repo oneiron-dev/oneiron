@@ -62,6 +62,10 @@ impl AgentDispatcher<'_> {
         at: u64,
     ) -> Result<PlannedIntentView> {
         let view = self.plan_reserved_spawn_for_attempt(leased, actor, request, host, at)?;
+        // FIX 9180: the seat its plan resolved, in every phase it answers.
+        if let Some(plan) = &view.plan {
+            self.observe_seat(plan.plan.agent_def);
+        }
         if view.phase != SpawnPhase::Planned {
             return Ok(view);
         }

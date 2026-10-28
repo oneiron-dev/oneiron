@@ -55,6 +55,9 @@ impl HostSelfDispatcher<'_> {
         call: SelfCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
+        // This call's own frame of the seats it resolves (FIX 9180): it
+        // closes on every exit, and an outer call's frame stays as it was.
+        let _seats = self.spawn_capture.open();
         // A hook's view of an earlier call is never this call's, nor is its
         // read-world capture (FIX 6130).
         *self.hook_view.borrow_mut() = None;

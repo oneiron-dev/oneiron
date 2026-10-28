@@ -332,6 +332,8 @@ impl CodeRunBridgeCall {
         }
         let stamped = call.clone().with_bridge_stamp(self.seq, self.started_at_ms);
         let request = self_call_request_value(&stamped)?;
+        // A spawn row's erased ask answers only from a coherent row (FIX 9180).
+        self.validate_spawn_coherence()?;
         Ok(
             match replay_request_match(self.effect, &self.request, &request)? {
                 ReplayRequestMatch::Hit => ProgramRowAnswer::Settled(Box::new(
