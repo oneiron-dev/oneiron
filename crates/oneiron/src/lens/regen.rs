@@ -129,7 +129,8 @@ impl Memory<'_> {
             outcome,
         } = decision;
         let (active_ref, active_lens) = self.active_lens_for(&slot)?;
-        let slot_moved = active_ref != decided_against || outcome.last_good().lens() != &active_lens;
+        let slot_moved =
+            active_ref != decided_against || outcome.last_good().lens() != &active_lens;
         let (candidate, auto_adopt) = match outcome {
             LensRegenOutcome::RolledBack { failure, .. } => {
                 return Ok(LensRegenEnactment::RolledBack {
@@ -156,6 +157,8 @@ impl Memory<'_> {
             compiled: serde_json::to_value(&candidate)
                 .map_err(|_| Error::InvalidConfig("regenerated lens did not encode".into()))?,
             intent_prompt: intent.prompt().to_owned(),
+            // An upgrade, not a task, ask, run or skill, caused it.
+            trigger: None,
         })?;
         if !auto_adopt {
             return Ok(LensRegenEnactment::ProposedForStamp {

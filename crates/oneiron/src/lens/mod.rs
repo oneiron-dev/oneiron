@@ -21,6 +21,7 @@
 
 mod activation;
 mod actor_erase;
+mod artifact;
 pub use actor_erase::{ACTOR_ERASE_UNSELECTED_LENS_PROPOSAL, UnselectedLensProposalErase};
 pub(crate) use actor_erase::{erase_proposal_actor_in_txn, erase_slot_actor_in_txn};
 mod atom;

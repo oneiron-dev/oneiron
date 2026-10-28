@@ -4099,7 +4099,7 @@ export type InferenceDefaultsReplaceRequest = { defaults: unknown; idempotency_k
 /** `oneiron::lens::proposal::LensSlot` */
 export type LensSlot = { pack_name: string; skill_id: string }
 /** `oneiron::lens::proposal::LensProposeRequest` */
-export type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string }
+export type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string; trigger?: MadeByTrigger | null }
 /** `oneiron::receipt::lens::LensApproval` */
 export type LensApproval = "proposed"
 /** `oneiron::receipt::lens::LensProposalReceipt` */

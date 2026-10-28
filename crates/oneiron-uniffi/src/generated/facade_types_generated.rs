@@ -31370,6 +31370,8 @@ pub struct LensProposeRequest {
     pub compiled: crate::WireJson,
     #[serde(rename = "intent_prompt")]
     pub intent_prompt: String,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<MadeByTrigger>,
 }
 
 /// `oneiron::receipt::lens::LensApproval`.
