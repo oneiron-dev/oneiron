@@ -434,7 +434,6 @@ pub(super) fn validate_generated_ui_interactivity(
     actions: &[GeneratedUiActionDeclaration],
     state: &GeneratedUiStateSnapshot,
 ) -> Result<()> {
-
     let by_id = elements
         .iter()
         .map(|element| (element.id.as_str(), element))
@@ -557,7 +556,6 @@ pub(in crate::lens) fn apply_generated_ui_state_patch(
     current: &GeneratedUiStateSnapshot,
     patch: &[GeneratedUiStatePatch],
 ) -> Result<GeneratedUiStateSnapshot> {
-
     for (key, value) in current.values() {
         let declared = schema.get(key).ok_or_else(|| {
             Error::InvalidConfig(

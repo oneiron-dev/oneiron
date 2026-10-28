@@ -171,9 +171,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                 let state_bindings = seq
                     .next_element::<Vec<SelfUiBinding>>()?
                     .unwrap_or_default();
-                let children = seq
-                    .next_element_seed(LensChildrenSeed)?
-                    .unwrap_or_default();
+                let children = seq.next_element_seed(LensChildrenSeed)?.unwrap_or_default();
                 if seq.next_element::<de::IgnoredAny>()?.is_some() {
                     return Err(de::Error::invalid_length(6, &self));
                 }
