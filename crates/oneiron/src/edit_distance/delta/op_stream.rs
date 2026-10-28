@@ -51,18 +51,40 @@ enum Origin {
 /// One run a change inserted.
 struct InsertedRun {
     content: String,
+    /// What the run was charged, in collapsed characters.
+    mass: u32,
     /// No later change deleted any of its characters.
     survives: bool,
+}
+
+/// One run a change deleted.
+struct DeletedRun {
+    content: String,
+    /// What the run was charged, in collapsed characters.
+    mass: u32,
+    /// Every character it took was proposal text: a move candidate.
+    proposed_only: bool,
+}
+
+/// The runs one edit site laid down: consecutive inserts and deletes with no
+/// retained text between them, so a replacement is one site.
+struct Site {
+    separators_before: u32,
+    inserted: Vec<usize>,
+    deleted: Vec<usize>,
 }
 
 /// Reads every recorded change of `record`'s window out of `document` and
 /// counts its runs.
 ///
-/// Inserted and deleted characters count in the whitespace-collapsed frame:
-/// non-whitespace characters, plus the word separators a change adds or
-/// removes, so re-spacing or re-wrapping counts nothing. Text typed and then
-/// deleted again by a later change counts on both sides; that churn is what
-/// this lane sees and an endpoint diff cannot.
+/// Runs count in the whitespace-collapsed frame: each run's non-whitespace
+/// characters, plus the word separators its edit site adds or removes, which
+/// go to the site's first inserted (or deleted) run with content. A site whose
+/// runs are all whitespace (re-spacing, re-wrapping, a word split by a space)
+/// counts nothing. Text typed and then deleted again by a later change counts
+/// on both sides; that churn is what this lane sees and an endpoint diff
+/// cannot. A move pairs the two runs' charges, so it leaves `ins` and `del`
+/// in the unit they were charged in.
 ///
 /// # Errors
 ///
@@ -77,30 +99,38 @@ pub(super) fn read_window(
     let mut chars: Vec<char> = proposed.chars().collect();
     let mut origins = vec![Origin::Proposed; chars.len()];
     let mut inserted: Vec<InsertedRun> = Vec::new();
-    let mut cut: Vec<String> = Vec::new();
-    let (mut ins, mut del) = (0_u32, 0_u32);
+    let mut deleted: Vec<DeletedRun> = Vec::new();
     let body = ContainerID::new_root(BODY_TEXT, ContainerType::Text);
     for (_, span) in &record.ops_by_actor {
-        let separators_before = separators(&chars);
         let mut cursor = 0_usize;
+        let mut site: Option<Site> = None;
         for delta in change_deltas(document, span, &body)? {
+            if let TextDelta::Retain { retain, .. } = delta {
+                close_site(site.take(), &chars, &mut inserted, &mut deleted);
+                cursor += retain;
+                continue;
+            }
+            let open = site.get_or_insert_with(|| Site {
+                separators_before: separators(&chars),
+                inserted: Vec::new(),
+                deleted: Vec::new(),
+            });
+            let at = cursor.min(chars.len());
             match delta {
-                TextDelta::Retain { retain, .. } => cursor += retain,
                 TextDelta::Insert { insert, .. } => {
                     let run: Vec<char> = insert.chars().collect();
-                    let at = cursor.min(chars.len());
-                    ins = ins.saturating_add(non_whitespace(&run));
                     let typed = std::iter::repeat_n(Origin::Typed(inserted.len()), run.len());
                     origins.splice(at..at, typed).for_each(drop);
                     cursor = at + run.len();
-                    chars.splice(at..at, run).for_each(drop);
+                    open.inserted.push(inserted.len());
                     inserted.push(InsertedRun {
+                        mass: non_whitespace(&run),
                         content: insert,
                         survives: true,
                     });
+                    chars.splice(at..at, run).for_each(drop);
                 }
                 TextDelta::Delete { delete } => {
-                    let at = cursor.min(chars.len());
                     let end = at.saturating_add(delete).min(chars.len());
                     let removed: Vec<char> = chars.drain(at..end).collect();
                     let mut proposed_only = true;
@@ -112,16 +142,17 @@ pub(super) fn read_window(
                             }
                         }
                     }
-                    del = del.saturating_add(non_whitespace(&removed));
-                    if proposed_only {
-                        cut.push(removed.into_iter().collect());
-                    }
+                    open.deleted.push(deleted.len());
+                    deleted.push(DeletedRun {
+                        mass: non_whitespace(&removed),
+                        content: removed.into_iter().collect(),
+                        proposed_only,
+                    });
                 }
+                TextDelta::Retain { .. } => {}
             }
         }
-        let separators_after = separators(&chars);
-        ins = ins.saturating_add(separators_after.saturating_sub(separators_before));
-        del = del.saturating_add(separators_before.saturating_sub(separators_after));
+        close_site(site, &chars, &mut inserted, &mut deleted);
     }
     let final_text: String = chars.iter().collect();
     if final_text != text_at(document, &record.final_ref)? {
@@ -129,7 +160,13 @@ pub(super) fn read_window(
             "recorded ops do not replay onto the final text",
         ));
     }
-    let moved = pair_moves(&cut, &inserted);
+    let ins = inserted
+        .iter()
+        .fold(0_u32, |total, run| total.saturating_add(run.mass));
+    let del = deleted
+        .iter()
+        .fold(0_u32, |total, run| total.saturating_add(run.mass));
+    let moved = pair_moves(&deleted, &inserted);
     let kept: String = chars
         .iter()
         .zip(&origins)
@@ -144,6 +181,53 @@ pub(super) fn read_window(
         before_len: collapsed_len(&proposed),
         after_len: collapsed_len(&final_text),
     })
+}
+
+/// Charges one closed edit site: a site of whitespace only costs nothing;
+/// otherwise the separators it added go to its first inserted run with
+/// content, the separators it removed to its first deleted run with content.
+fn close_site(
+    site: Option<Site>,
+    chars: &[char],
+    inserted: &mut [InsertedRun],
+    deleted: &mut [DeletedRun],
+) {
+    let Some(site) = site else {
+        return;
+    };
+    let has_content = |content: &str| content.chars().any(|c| !c.is_whitespace());
+    let first_inserted = site
+        .inserted
+        .iter()
+        .copied()
+        .find(|index| has_content(&inserted[*index].content));
+    let first_deleted = site
+        .deleted
+        .iter()
+        .copied()
+        .find(|index| has_content(&deleted[*index].content));
+    if first_inserted.is_none() && first_deleted.is_none() {
+        return;
+    }
+    let after = separators(chars);
+    if let Some(index) = first_inserted.or(first_deleted)
+        && after > site.separators_before
+    {
+        let added = after - site.separators_before;
+        match first_inserted {
+            Some(_) => inserted[index].mass = inserted[index].mass.saturating_add(added),
+            None => deleted[index].mass = deleted[index].mass.saturating_add(added),
+        }
+    }
+    if let Some(index) = first_deleted.or(first_inserted)
+        && site.separators_before > after
+    {
+        let removed = site.separators_before - after;
+        match first_deleted {
+            Some(_) => deleted[index].mass = deleted[index].mass.saturating_add(removed),
+            None => inserted[index].mass = inserted[index].mass.saturating_add(removed),
+        }
+    }
 }
 
 /// The text deltas one recorded change applied to the body, read between the
@@ -166,13 +250,14 @@ fn change_deltas(
         .unwrap_or_default())
 }
 
-/// Characters relocated by a deleted run of proposal text and a kept
-/// inserted run of the same collapsed content, each run paired at most once.
-fn pair_moves(cut: &[String], inserted: &[InsertedRun]) -> u32 {
+/// Charges relocated: a deleted run of proposal text paired with a kept
+/// inserted run of the same collapsed content, each run paired at most once,
+/// moves the smaller of their two charges.
+fn pair_moves(deleted: &[DeletedRun], inserted: &[InsertedRun]) -> u32 {
     let mut paired = vec![false; inserted.len()];
     let mut moved = 0_u32;
-    for removed in cut {
-        let content = collapse_whitespace(removed);
+    for removed in deleted.iter().filter(|run| run.proposed_only) {
+        let content = collapse_whitespace(&removed.content);
         if content.is_empty() {
             continue;
         }
@@ -181,7 +266,7 @@ fn pair_moves(cut: &[String], inserted: &[InsertedRun]) -> u32 {
         });
         if let Some(index) = candidate {
             paired[index] = true;
-            moved = moved.saturating_add(collapsed_len(&content));
+            moved = moved.saturating_add(removed.mass.min(inserted[index].mass));
         }
     }
     moved
