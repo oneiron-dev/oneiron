@@ -99,7 +99,7 @@ pub use self::config::PREDICATE_PREFERENCE_PHRASING;
 pub(crate) use self::erase::{erase_principal_decision_entity_in_txn, erase_source_claim_in_txn};
 pub use self::feedback::bind_amendment_preference_principal;
 pub(crate) use self::feedback::record_inbox_learning_in_txn;
-pub(in crate::edit_distance) use self::hunks::hunk_substitution_ref;
+pub(in crate::edit_distance) use self::hunks::hunk_substitution_refs;
 pub use self::influence::mined_preferences_for_principal;
 pub(crate) use self::influence::{is_mined_preference, preference_receipts_in_force};
 pub use self::mining::{

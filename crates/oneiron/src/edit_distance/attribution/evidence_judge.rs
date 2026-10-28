@@ -316,7 +316,7 @@ fn persist_amendment_split(
             .zip(&split.hunks)
             .map(|(hunk, class)| HunkLabel {
                 class: *class,
-                substitution_ref: crate::edit_distance::miner::hunk_substitution_ref(
+                substitution_refs: crate::edit_distance::miner::hunk_substitution_refs(
                     hunk.before,
                     hunk.after,
                 ),
@@ -357,7 +357,7 @@ fn persist_amendment_split(
             .iter()
             .map(|hunk| StoredHunk {
                 class: hunk.class.as_str().to_owned(),
-                substitution: hunk.substitution_ref.clone(),
+                substitutions: hunk.substitution_refs.clone(),
             })
             .collect(),
     };
@@ -544,7 +544,7 @@ fn judgment_from_row(
             Ok(HunkLabel {
                 class: AmendmentClass::parse(&hunk.class)
                     .ok_or(Error::CorruptedIndex(JUDGMENT_ROW_LABEL))?,
-                substitution_ref: hunk.substitution.clone(),
+                substitution_refs: hunk.substitutions.clone(),
             })
         })
         .collect::<Result<_>>()?;

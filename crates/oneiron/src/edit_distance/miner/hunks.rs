@@ -1,9 +1,10 @@
 //! Per-hunk mining of a partly unclear amendment (FIX 9808).
 //!
-//! The judgment keeps each changed hunk's label beside the identity of the
-//! substitution that hunk made. A judgment with an unclear share then mines
-//! only what its clear hunks made; the unclear hunks stay held in the unclear
-//! ledger, and nothing of theirs is taken.
+//! The judgment keeps each changed hunk's label beside the identities of the
+//! substitutions that hunk made, at the miner's own extraction granularity. A
+//! judgment with an unclear share then mines only what its clear hunks made;
+//! the unclear hunks stay held in the unclear ledger, and nothing of theirs is
+//! taken, not even a substitution a clear hunk also made.
 
 use std::collections::BTreeSet;
 
@@ -15,12 +16,21 @@ use crate::entity_id::bytes_to_hex_lower;
 /// cluster handle or another unit's hash.
 const HUNK_SUBSTITUTION_DOMAIN: &[u8] = b"oneiron:edit-distance-hunk-substitution:v1";
 
-/// The identity of the substitution one changed hunk made, or `None` when the
-/// hunk is not a substitution. The judge records it beside the hunk's label,
-/// and the miner meets it through the same normalization; it is a digest,
-/// never the hunk's text.
-pub(in crate::edit_distance) fn hunk_substitution_ref(before: &str, after: &str) -> Option<String> {
-    super::mining::substitution_pair(before, after).map(|pair| substitution_ref(&pair))
+/// The identities of the substitutions one changed hunk made, at the miner's
+/// own extraction granularity: the hunk's whole changed run, as a recorded
+/// change is read, and each line it replaced one for one, as a reconstructed
+/// re-diff is read. Empty when the hunk makes no substitution. The judge
+/// records them beside the hunk's label; they are digests, never the hunk's
+/// text.
+pub(in crate::edit_distance) fn hunk_substitution_refs(before: &str, after: &str) -> Vec<String> {
+    let mut refs: Vec<String> = super::mining::substitution_pair(before, after)
+        .into_iter()
+        .chain(super::mining::line_substitutions(before, after))
+        .map(|pair| substitution_ref(&pair))
+        .collect();
+    refs.sort();
+    refs.dedup();
+    refs
 }
 
 fn substitution_ref(substitution: &Substitution) -> String {
@@ -32,24 +42,36 @@ fn substitution_ref(substitution: &Substitution) -> String {
     bytes_to_hex_lower(hasher.finalize().as_bytes())
 }
 
+/// The substitution identities the clear hunks of `judgment` made, or with
+/// `clear` false its unclear hunks.
+fn refs_where(judgment: &AmendmentJudgment, clear: bool) -> BTreeSet<&str> {
+    judgment
+        .hunks
+        .iter()
+        .filter(|hunk| (hunk.class != AmendmentClass::Unclear) == clear)
+        .flat_map(|hunk| hunk.substitution_refs.iter().map(String::as_str))
+        .collect()
+}
+
 /// Which of a judged amendment's substitutions the miner may take.
 pub(super) enum MinableHunks {
     /// No share is unclear: every substitution the amendment shows.
     Whole,
-    /// A share is unclear: only the substitutions a clear hunk made.
+    /// A share is unclear: only the substitutions a clear hunk made and no
+    /// unclear hunk did.
     Clear(BTreeSet<String>),
 }
 
 impl MinableHunks {
     /// What `judgment` lets the miner take, or `None` when it is held whole:
-    /// every hunk unclear, or no clear hunk made a substitution.
+    /// every hunk unclear, or no clear hunk made a substitution of its own.
     pub(super) fn of(judgment: &AmendmentJudgment) -> Option<Self> {
         if judgment.share_of(AmendmentClass::Unclear) > 0.0 {
-            let clear: BTreeSet<String> = judgment
-                .hunks
-                .iter()
-                .filter(|hunk| hunk.class != AmendmentClass::Unclear)
-                .filter_map(|hunk| hunk.substitution_ref.clone())
+            let held = refs_where(judgment, false);
+            let clear: BTreeSet<String> = refs_where(judgment, true)
+                .into_iter()
+                .filter(|reference| !held.contains(reference))
+                .map(str::to_owned)
                 .collect();
             (!clear.is_empty()).then_some(Self::Clear(clear))
         } else {

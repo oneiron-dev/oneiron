@@ -214,13 +214,14 @@ pub struct AmendmentJudgment {
 }
 
 /// One changed hunk as judged: the label it stands at after the floor, and
-/// the identity of the substitution it made.
+/// the identities of the substitutions it made.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HunkLabel {
     pub class: AmendmentClass,
-    /// The miner's digest of the hunk's normalized substitution, `None` when
-    /// the hunk is not a substitution. An identity, never the hunk's text.
-    pub substitution_ref: Option<String>,
+    /// The miner's digests of the hunk's normalized substitutions, at the
+    /// miner's own extraction granularity; empty when the hunk makes none.
+    /// Identities, never the hunk's text.
+    pub substitution_refs: Vec<String>,
 }
 
 impl AmendmentJudgment {
