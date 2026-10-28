@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::learning::TypeRef;
+use crate::learning::{PriorOrigin, TypeRef};
 use crate::learning_setting::{self, SETTING_CATALOG, SettingMode, SettingRow, SettingScope};
 use crate::learning_setting_choice::{self as choice, ChoiceRow, ChoiceValue, SpawnChoice};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
@@ -59,8 +59,9 @@ pub enum LearningSettingScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningChoiceValue {
-    /// A model id (`provider/name@revision`); it counts only where a seat
-    /// serves that model.
+    /// A model id (`provider/name@revision`). A seed counts only where a
+    /// seat serves that model. A pin stands even where none does: the spawn
+    /// is then refused as unavailable, never given another model.
     Model(String),
     /// Agents in the spawn, at least one.
     Width(u32),
@@ -181,6 +182,53 @@ pub struct LearningSettingRowView {
     /// Unix seconds it was set.
     pub at: u64,
     pub why: String,
+    /// What the planner learned under a spawn choice where this row applies
+    /// (FIX 3159), beside the owner's value and never it; `None` for a
+    /// catalog knob's row.
+    pub learned: Option<LearnedChoiceView>,
+}
+
+/// What the planner learned under one spawn choice in a row's scope, from
+/// the anchored outcomes of its team runs: the learned value beside the
+/// owner's seed or pin. A pin is never read as one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearnedChoiceView {
+    /// Each value the runs used, in the planner's shared ranking order.
+    pub values: Vec<LearnedChoiceValueView>,
+    /// The scope's own runs, faded at the learning window; zero when the
+    /// vault's runs stand in.
+    pub own_runs: f64,
+    /// `shipped` over the scope's own runs (or none yet); `parent` when the
+    /// vault's runs stand in for a scope with none of its own.
+    pub origin: PriorOrigin,
+}
+
+/// One value's learned weight: the counts of its runs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearnedChoiceValueView {
+    pub choice: LearningChoiceValue,
+    /// Its anchored runs, faded at the learning window.
+    pub runs: f64,
+    /// Its runs over the runs of every value of the choice.
+    pub share: f64,
+}
+
+impl From<crate::team::LearnedChoice> for LearnedChoiceView {
+    fn from(learned: crate::team::LearnedChoice) -> Self {
+        Self {
+            values: learned
+                .values
+                .into_iter()
+                .map(|value| LearnedChoiceValueView {
+                    choice: value.value.into(),
+                    runs: value.runs,
+                    share: value.share,
+                })
+                .collect(),
+            own_runs: learned.own_runs,
+            origin: learned.origin,
+        }
+    }
 }
 
 /// One catalog knob: its bounds and seed, and what the vault reads for it
@@ -285,10 +333,16 @@ fn row_view(scope: SettingScope, row: SettingRow, by: String) -> LearningSetting
         by,
         at: row.at,
         why: row.why,
+        learned: None,
     }
 }
 
-fn choice_view(scope: SettingScope, row: ChoiceRow, by: String) -> LearningSettingRowView {
+fn choice_view(
+    scope: SettingScope,
+    row: ChoiceRow,
+    by: String,
+    learned: LearnedChoiceView,
+) -> LearningSettingRowView {
     let (kind, goal, project, task_type) = scope_view(scope);
     LearningSettingRowView {
         key: row.value.choice().as_str().to_owned(),
@@ -303,11 +357,13 @@ fn choice_view(scope: SettingScope, row: ChoiceRow, by: String) -> LearningSetti
         by,
         at: row.at,
         why: row.why,
+        learned: Some(learned),
     }
 }
 
 /// The catalog and the owner's rows, or one key's. Owner-only: a row keeps
-/// the owner's own reason.
+/// the owner's own reason. A spawn choice's row carries what the planner
+/// learned under it in its scope, read in the rows' snapshot (FIX 3159).
 ///
 /// # Errors
 ///
@@ -329,17 +385,25 @@ pub fn learning_settings_as_owner(
             value: learning_setting::setting_value(vault, spec)?,
         });
     }
-    let mut rows: Vec<LearningSettingRowView> = learning_setting::list_setting_rows(vault)?
-        .into_iter()
-        .filter(|(_, row, _)| wanted(&row.key))
-        .map(|(scope, row, by)| row_view(scope, row, by))
-        .collect();
-    rows.extend(
-        choice::list_choice_rows(vault)?
+    let rtxn = vault.store.env.read_txn()?;
+    let mut rows: Vec<LearningSettingRowView> =
+        learning_setting::list_setting_rows_in_txn(vault, &rtxn)?
             .into_iter()
-            .filter(|(_, row, _)| wanted(row.value.choice().as_str()))
-            .map(|(scope, row, by)| choice_view(scope, row, by)),
-    );
+            .filter(|(_, row, _)| wanted(&row.key))
+            .map(|(scope, row, by)| row_view(scope, row, by))
+            .collect();
+    let choices: Vec<_> = choice::list_choice_rows_in_txn(vault, &rtxn)?
+        .into_iter()
+        .filter(|(_, row, _)| wanted(row.value.choice().as_str()))
+        .collect();
+    if !choices.is_empty() {
+        let learning =
+            crate::team::ChoiceLearning::read_in_txn(vault, &rtxn, crate::unix_seconds_now())?;
+        rows.extend(choices.into_iter().map(|(scope, row, by)| {
+            let learned = learning.learned(row.value.choice(), &scope).into();
+            choice_view(scope, row, by, learned)
+        }));
+    }
     Ok(LearningSettingsView { catalog, rows })
 }
 
