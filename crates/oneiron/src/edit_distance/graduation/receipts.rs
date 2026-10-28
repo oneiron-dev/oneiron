@@ -51,7 +51,7 @@ pub(crate) fn answer_receipts_in_txn(
 }
 
 fn answer_receipt_record(id: &EntityId, row: &StoredAnswer) -> ReceiptRecord {
-    let fields = std::collections::BTreeMap::from([
+    let mut fields = std::collections::BTreeMap::from([
         (
             crate::receipt::FIELD_OP_KIND.to_owned(),
             row.op_kind.clone(),
@@ -65,6 +65,12 @@ fn answer_receipt_record(id: &EntityId, row: &StoredAnswer) -> ReceiptRecord {
             row.actor.clone(),
         ),
     ]);
+    if let Some(answerer) = &row.answerer {
+        fields.insert("answerer".to_owned(), answerer.clone());
+    }
+    if let Some(decision_ref) = &row.decision_ref {
+        fields.insert("decision_ref".to_owned(), decision_ref.clone());
+    }
 
     ReceiptRecord {
         receipt_id: format!("{ANSWER_RECEIPT_PREFIX}{}", id.to_hex()),

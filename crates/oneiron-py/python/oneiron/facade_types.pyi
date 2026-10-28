@@ -4,14 +4,15 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4172 declarations.
+Census: 1162 facade rows, 4173 declarations.
 Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1044 of 1162 fully typed, 118 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 104; unread shapes: 0.
+Results: 1042 of 1162 fully typed, 120 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 106; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
 
+Line = TypeVar("Line")
 Q = TypeVar("Q")
 T = TypeVar("T")
 
@@ -1917,6 +1918,10 @@ class BriefContext(TypedDict):
     pack: NotRequired[PinnedPack | None]
     read_first: NotRequired[list[PinnedRef]]
     workflow: NotRequired[WorkflowBinding | None]
+class QuestionCriteria(TypedDict, Generic[Line]):
+    yes_if_all: NotRequired[list[Line]]
+    no_if_any: NotRequired[list[Line]]
+    not_a_reason_to_say_no: NotRequired[list[Line]]
 class Criterion(TypedDict):
     text: str
     evidence_ref: NotRequired[EntityId | None]
@@ -1929,8 +1934,7 @@ class ExpectInput(TypedDict):
     absent: NotRequired[bool]
 class DoneMeans(TypedDict):
     question: str
-    yes_if_all: NotRequired[list[Criterion]]
-    no_if_any: NotRequired[list[Criterion]]
+    criteria: NotRequired[QuestionCriteria[Criterion]]
     outcome_binding: NotRequired[OutcomeBinding | None]
     browser_checks: NotRequired[list[ExpectInput]]
     strict_verified_reuse: NotRequired[bool]
@@ -16220,10 +16224,6 @@ class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
 HostingPrivacyPosture = Literal["managed", "relay", "self-host"]
-class QuestionCriteria(TypedDict):
-    yes_if_all: list[str]
-    no_if_any: list[str]
-    not_a_reason_to_say_no: list[str]
 class GraphAskRequest(TypedDict):
     question: DecisionQuestion
     units: NotRequired[list[EntityId]]
@@ -16231,7 +16231,7 @@ class GraphAskRequest(TypedDict):
     ceiling: NotRequired[DecisionRung | None]
     unit_deadline_ms: NotRequired[int | None]
     posture: NotRequired[HostingPrivacyPosture | None]
-    criteria: NotRequired[QuestionCriteria | None]
+    criteria: NotRequired[QuestionCriteria[str] | None]
 SourceConflict = Literal["facet", "project", "world", "relationship", "scope_term", "principal", "unrepresentable"]
 class OmittedNeighbor(TypedDict):
     id: str
@@ -16292,7 +16292,7 @@ class QuestionDefinition(TypedDict, Generic[Q]):
     delivery: str
     learning: bool
     binding: NotRequired[OutcomeBinding | None]
-    criteria: NotRequired[QuestionCriteria]
+    criteria: NotRequired[QuestionCriteria[str]]
     audience: NotRequired[QuestionAudience]
     posture: NotRequired[HostingPrivacyPosture | None]
     media: NotRequired[QuestionMedia]
@@ -16348,6 +16348,17 @@ class ArtifactAskStandingFailed(TypedDict):
 class ArtifactAskStandingDetailsOmitted(TypedDict):
     state: Literal["details_omitted"]
 ArtifactAskStanding = ArtifactAskStandingUnanswered | ArtifactAskStandingWaiting | ArtifactAskStandingKept | ArtifactAskStandingClosed | ArtifactAskStandingFailed | ArtifactAskStandingDetailsOmitted
+class ArtifactUnitReceiptAbstained(TypedDict):
+    status: Literal["abstained"]
+    unit: Any
+    decision: NotRequired[TypedDecision | None]
+class ArtifactUnitReceiptRefused(TypedDict):
+    status: Literal["refused"]
+    unit: Any
+    reason: str
+class ArtifactUnitReceiptOmitted(TypedDict):
+    status: Literal["omitted"]
+ArtifactUnitReceipt = ArtifactUnitReceiptAbstained | ArtifactUnitReceiptRefused | ArtifactUnitReceiptOmitted
 class ArtifactAskRecord(TypedDict):
     artifact: EntityId
     question_version: int
@@ -16359,6 +16370,7 @@ class ArtifactAskRecord(TypedDict):
     failed: NotRequired[str | None]
     parent_proposal_ref: NotRequired[str | None]
     details_omitted: NotRequired[bool]
+    units: NotRequired[list[ArtifactUnitReceipt]]
 class QuestionAnswerGraph(AnswerRecord):
     kind: Literal["graph"]
 class QuestionAnswerArtifact(ArtifactAskRecord):
@@ -20836,7 +20848,10 @@ class RecordingGapKindCaptureLost(TypedDict):
     why: Literal["capture_lost"]
 class RecordingGapKindUnrecordedNavigation(TypedDict):
     why: Literal["unrecorded_navigation"]
-RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost | RecordingGapKindUnrecordedNavigation
+class RecordingGapKindNotStarted(TypedDict):
+    why: Literal["not_started"]
+    refusal: str
+RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost | RecordingGapKindUnrecordedNavigation | RecordingGapKindNotStarted
 class RecordingGap(TypedDict):
     seq: NotRequired[int | None]
     tab: NotRequired[str | None]
@@ -21438,6 +21453,7 @@ class LibraryRunOutput(TypedDict):
 BrowserLibraryRunOutput = BrowserAnswer
 class HandoverInput(TypedDict):
     reason: str
+    demonstrate: NotRequired[bool]
 class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
