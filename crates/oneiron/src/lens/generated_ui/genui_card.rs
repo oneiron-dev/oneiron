@@ -206,11 +206,15 @@ impl GeneratedUiCard {
         Ok(self.render()?.segments())
     }
 
+    /// The card's stream for `surface`, framed in the stream profile the
+    /// surface negotiated (FIX 7968).
     pub fn segments_for_surface(
         &self,
         surface: &GeneratedUiSurfaceCapabilities,
     ) -> Result<Vec<GeneratedUiSegment>> {
-        Ok(self.render_for_surface(surface)?.segments())
+        Ok(self
+            .render_for_surface(surface)?
+            .segments_for_profile(surface.stream))
     }
 
     pub fn content_parts(&self) -> Result<Vec<ContentPart>> {

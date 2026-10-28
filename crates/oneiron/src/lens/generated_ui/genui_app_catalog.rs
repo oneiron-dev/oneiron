@@ -78,7 +78,7 @@ impl schemars::JsonSchema for GeneratedUiCatalog {
     }
 
     fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        String::json_schema(generator)
+        <String as schemars::JsonSchema>::json_schema(generator)
     }
 }
 
