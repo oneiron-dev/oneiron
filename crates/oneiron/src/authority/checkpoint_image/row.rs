@@ -53,8 +53,11 @@ pub struct AuthorityCheckpointRow {
 /// owner's own device key enrollment among them, FIX 4920), the root records
 /// that name owner anchors, the actor revocations a signer's
 /// revocations count, and the world edits, grant travel choices and frontier
-/// joins that may be a stranger's; and each owner handover, whose signed
-/// grant ids a restore across it reads (FIX 5765).
+/// joins that may be a stranger's; each owner handover, whose signed
+/// grant ids a restore across it reads (FIX 5765); and each row whose
+/// transition reads the install's pin or its admitted peers' roots, which a
+/// fold under another pin or peer set judges again (a home candidacy, a
+/// federation lifecycle act; FIX 3004, 3005).
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
@@ -73,6 +76,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::AgentGrantAct(_)
                 | AuthorityOp::FrontierJoin(_)
                 | AuthorityOp::OwnerHandover(_)
+                | AuthorityOp::HomeCandidacy(_)
+                | AuthorityOp::FederationLifecycle(_)
         )
 }
 

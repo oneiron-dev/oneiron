@@ -617,6 +617,7 @@ fn fold_adopted_in_txn(
             observations: &observations,
             posture,
             pin: key.pin.as_ref(),
+            keep_replay: false,
         },
     )?;
     Ok(match folded {
