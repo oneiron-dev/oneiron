@@ -112,9 +112,7 @@ impl Residents {
         allocation_units: u64,
         units: u64,
     ) -> Result<ResidentDraw, RunDenied> {
-        let standing = self
-            .ledger
-            .standing(resident, allocation, allocation_units);
+        let standing = self.ledger.standing(resident, allocation, allocation_units);
         let mut in_flight = self.lock();
         let key = (resident, allocation.clone());
         let held = in_flight.get(&key).copied().unwrap_or(0);

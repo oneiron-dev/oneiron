@@ -156,7 +156,13 @@ pub(super) async fn decision_read(
     let read = tokio::task::spawn_blocking(move || {
         let _turn = turn;
         let questions = request.questions(&probe);
-        read_retained(&door, &request.label_read(&questions), reserve, &run, &present)
+        read_retained(
+            &door,
+            &request.label_read(&questions),
+            reserve,
+            &run,
+            &present,
+        )
     })
     .await;
     drop(caller);
