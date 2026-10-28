@@ -36,7 +36,8 @@ use crate::{
 /// A session's demonstrations: the one that runs, those that ended and
 /// wait to be given, the last id given, whether a verb's act runs now
 /// (from which receipt), and a person's span (CUA E9b): the reason of the
-/// ask that opted in, until its take, then the span that take started.
+/// ask that opted in, until its take, then the span that take started, and
+/// the one the browser's going away ended, for the seat's end.
 #[derive(Default)]
 pub(super) struct Demonstrations {
     active: Option<Recording>,
@@ -45,6 +46,7 @@ pub(super) struct Demonstrations {
     acting: Option<u64>,
     asked: Option<String>,
     takeover: Option<TakeoverSpan>,
+    abandoned: Option<DemonstrationOutput>,
 }
 
 /// A recording that ended: why, and when; a person's span, with the draft
@@ -284,6 +286,20 @@ impl BrowserSession {
             })?;
         let ended = self.demos.ended.remove(at);
         self.demonstration_delivery_policy(ended, Some(input))
+    }
+
+    /// Ends a person's span as the browser goes away (CUA E9b), drafted
+    /// with what it kept, for the seat's end to land with the abandoned
+    /// takeover.
+    pub(super) fn takeover_abandoned(&mut self) {
+        self.demos.abandoned =
+            self.takeover_end_policy(DemonstrationStopCause::Abandoned, Vec::new());
+    }
+
+    /// The person's span the browser's going away ended, once (CUA E9b):
+    /// the seat's end lands it in the abandoned takeover's receipt.
+    pub fn take_abandoned_demonstration(&mut self) -> Option<DemonstrationOutput> {
+        self.demos.abandoned.take()
     }
 
     /// A demonstration that ended since the agent's last answer, once, with

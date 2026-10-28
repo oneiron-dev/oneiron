@@ -383,7 +383,7 @@ impl BrowserSession {
     /// what it held so far; `None` while the agent has the browser. A
     /// person's span ends first, drafted with what it kept (CUA E9b).
     pub fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
-        let _ = self.takeover_end_policy(DemonstrationStopCause::Abandoned, Vec::new());
+        self.takeover_abandoned();
         match std::mem::replace(&mut self.takeover, Takeover::Agent) {
             Takeover::Agent => None,
             state => Some(AbandonedTakeover {
