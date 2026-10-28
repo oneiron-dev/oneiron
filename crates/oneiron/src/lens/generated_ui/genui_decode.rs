@@ -45,8 +45,9 @@ impl GeneratedUiRender {
 }
 
 fn parse(text: &str) -> Result<Value> {
-    serde_json::from_str(text)
-        .map_err(|error| Error::InvalidConfig(format!("generated-ui envelope is not JSON: {error}")))
+    serde_json::from_str(text).map_err(|error| {
+        Error::InvalidConfig(format!("generated-ui envelope is not JSON: {error}"))
+    })
 }
 
 /// Decode `value` as `T` when its `protocolVersion` is this build's, else
@@ -66,7 +67,10 @@ pub(super) fn decode_staged<T: DeserializeOwned>(
 /// The fallback of an envelope that names a protocol version other than
 /// this build's; `None` when it names this build's, or none, which the
 /// typed decode then judges.
-pub(super) fn unsupported_fallback(value: &Value, kind: &str) -> Result<Option<GeneratedUiFallback>> {
+pub(super) fn unsupported_fallback(
+    value: &Value,
+    kind: &str,
+) -> Result<Option<GeneratedUiFallback>> {
     let Some(protocol_version) = value.get("protocolVersion").and_then(Value::as_u64) else {
         return Ok(None);
     };

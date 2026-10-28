@@ -130,7 +130,10 @@ impl GeneratedUiRender {
     /// renders at its `card_state_update` as before, and ready waits on
     /// nothing.
     #[must_use]
-    pub fn segments_for_profile(&self, profile: GeneratedUiStreamProfile) -> Vec<GeneratedUiSegment> {
+    pub fn segments_for_profile(
+        &self,
+        profile: GeneratedUiStreamProfile,
+    ) -> Vec<GeneratedUiSegment> {
         let mut segments = self.segments();
         if profile == GeneratedUiStreamProfile::Patch {
             segments.push(GeneratedUiSegment::CardReady(GeneratedUiCardReady {
