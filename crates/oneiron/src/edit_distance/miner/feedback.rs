@@ -16,8 +16,9 @@ use crate::store::GateDecisionRecord;
 const LABEL: &str = "principal-bound inbox decision";
 
 /// Immutable owner-bound decision on an inbox/amendment intake item, keyed by
-/// receipt id.
-const DECISION: SideTable<String, PrincipalDecision, Raw> =
+/// receipt id. Its reviewed copies leave with their source claim, its actor or
+/// its principal (`erase.rs`, FIX 9805).
+pub(super) const DECISION: SideTable<String, PrincipalDecision, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PRINCIPAL_DECISION);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

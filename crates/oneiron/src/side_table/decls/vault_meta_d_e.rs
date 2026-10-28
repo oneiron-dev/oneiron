@@ -352,8 +352,6 @@ side_tables! {
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
-    /// Dial: agreeing-ruling count needed to auto-propose a standing escalation policy. Key: ().
-    EDIT_DISTANCE_ESCALATION_STANDING_N: VaultMeta b"edit_distance/escalation/standing_n/dial/v1" Raw;
     /// Append-only ruled-escalation ledger row, scope-major (scope digest then UUIDv7 row id) so one
     /// scope's history is a contiguous range. Key: id16 + id16.
     EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw;
@@ -383,7 +381,8 @@ side_tables! {
     EDIT_DISTANCE_PREFERENCE_PROPOSAL: VaultMeta b"edit_distance/preference_proposal/v1\0" Raw;
     /// Immutable owner-bound decision on an inbox/amendment intake item, keyed by receipt id. Key:
     /// string.
-    EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw;
+    EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw
+        => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
     EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored;

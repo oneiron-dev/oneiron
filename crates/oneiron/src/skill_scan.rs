@@ -201,23 +201,18 @@ pub fn run_static_skill_scan(package: &HubPackage, scanned_at: u64) -> Result<Sk
 
 /// Scan the pack tree itself, independent of any bundled SKILL records.
 /// An unknown verdict is evidence of coverage, never a declaration of safety.
+///
+/// The whole in-memory source is read (FIX 11142): a local pack takes any
+/// size, so a scan envelope would label an ordinary source `Partial`. Only an
+/// empty tree still reads `Partial` — there is nothing to scan.
 pub(crate) fn run_static_pack_scan(
     source: &crate::skill_hub::pack_catalog::PackSource,
     scanned_at: u64,
 ) -> Result<SkillScanReceipt> {
     let mut risk = ScanRiskLevel::None;
-    let mut complete = !source.files().is_empty();
-    let mut remaining = MAX_SCAN_BYTES_PER_PACKAGE;
-    for file in source.files() {
-        let budget = MAX_SCAN_BYTES_PER_FILE.min(remaining);
-        let scanned = if file.content.len() > budget {
-            complete = false;
-            &file.content[..budget]
-        } else {
-            file.content.as_slice()
-        };
-        remaining -= scanned.len();
-        if carries_credential(scanned)? {
+    let files = source.files();
+    for file in files {
+        if carries_credential(&file.content)? {
             risk = ScanRiskLevel::High;
         }
     }
@@ -230,10 +225,10 @@ pub(crate) fn run_static_pack_scan(
             ScanVerdict::Unknown
         },
         risk,
-        if complete {
-            ScanCompleteness::Complete
-        } else {
+        if files.is_empty() {
             ScanCompleteness::Partial
+        } else {
+            ScanCompleteness::Complete
         },
         if risk >= ScanRiskLevel::High {
             SkillGovernance::Discouraged

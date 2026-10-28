@@ -406,7 +406,7 @@ impl Vault {
         Ok(())
     }
 
-    /// One bounded static pass per exact pack tree, knowledge-only facets
+    /// One whole-source static pass per exact pack tree, knowledge-only facets
     /// included. A refetch of identical bytes reuses the existing provider row;
     /// a new hash starts with no evidence carried over from any older tree.
     pub(super) fn scan_and_ingest_pack_source_in_txn(
