@@ -90,6 +90,12 @@ impl Vault {
         loop {
             match self.import_page_in(decoded.clone(), true) {
                 Ok(PageVerdict::Landed(written)) => {
+                    // The evidence a local append kept waits on this
+                    // history: put it again (FIX 2989). A retry that still
+                    // fails leaves it waiting and the landed page stands.
+                    if let Err(error) = self.retry_pending_authority_history() {
+                        tracing::warn!(target: "oneiron::authority::history", %error, "pending authority evidence retry failed");
+                    }
                     return Ok(AuthorityRepairOutcome::Applied { written, refused });
                 }
                 Ok(PageVerdict::Retired(hash)) => {
