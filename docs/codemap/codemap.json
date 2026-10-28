@@ -21108,7 +21108,7 @@
      "path": "src/context_pack/builder/scoped.rs",
      "purpose": "Candidate narrowing passthrough to the existing retrieval pipeline",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -42008,7 +42008,7 @@
      "surface": {
       "const": 12,
       "crate-vis": 1,
-      "fn": 14
+      "fn": 15
      }
     },
     {
@@ -42113,20 +42113,16 @@
      "kind": "src",
      "notable": [
       "ChatAbstentionReason",
-      "ChatComposeRequest",
-      "ChatComposer",
       "ChatOptions",
       "ChatResponse",
-      "ChatScope",
-      "ComposedChatAnswer"
+      "ChatScope"
      ],
      "path": "src/memory/chat.rs",
      "purpose": "The `.chat` answer verb (OF-228/OF-096): depth-as-cost tiers over [`Memory::recall`], answering only with…",
      "surface": {
       "enum": 3,
       "fn": 3,
-      "struct": 3,
-      "trait": 1,
+      "struct": 1,
       "type": 1
      }
     },
@@ -42137,6 +42133,22 @@
      "path": "src/memory/chat/tests.rs",
      "purpose": "`.chat` acceptance tests: depth→effort mapping, composer call counts, the zero-model minimal tier, the typed…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ChatComposeRequest",
+      "ChatComposer",
+      "ComposedChatAnswer"
+     ],
+     "path": "src/memory/chat_composer.rs",
+     "purpose": "The host's composition seam for [`Memory::chat`], and the two things chat settles before it composes: the…",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2,
+      "trait": 1
+     }
     },
     {
      "bucket": "s",
@@ -43512,7 +43524,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 27,
-      "re-export": 58
+      "re-export": 59
      }
     },
     {
@@ -44026,7 +44038,7 @@
      "purpose": "Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 11,
       "re-export": 5,
@@ -44073,6 +44085,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/render_budget.rs",
+     "purpose": "The token budget a rendered pack is cut to (FIX 9962): one resolver for every door that renders a recall or…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -46359,7 +46381,22 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 7,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FileOriginal",
+      "OriginalBytes"
+     ],
+     "path": "src/note/folder_source/original.rs",
+     "purpose": "The kept original of each imported folder file (FIX 7779): the exact bytes the host opened, as one version…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -73498,6 +73535,7 @@
       "FilesFileState",
       "FilesFileView",
       "FilesLimitCrossed",
+      "FilesOriginalsUnkept",
       "FilesRescanAnswer",
       "FilesRescanCounts",
       "FilesRescanView",
@@ -73518,7 +73556,7 @@
      "surface": {
       "enum": 1,
       "fn": 9,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -79728,7 +79766,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 285,
+     "files": 287,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79749,7 +79787,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -80416,7 +80454,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5336,
+   "source_files": 5339,
    "test_files": 902
   },
   "oneiron-android": {
@@ -105092,7 +105130,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/files_intake/source.rs",
@@ -109144,7 +109182,7 @@
      "path": "src/owner/note_imports.rs",
      "purpose": "A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -113425,6 +113463,7 @@
       "FilesFileState",
       "FilesFileView",
       "FilesLimitCrossed",
+      "FilesOriginalsUnkept",
       "FilesRescanAnswer",
       "FilesRescanCounts",
       "FilesRescanView",
@@ -116101,7 +116140,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1025,
-      "struct": 3130
+      "struct": 3131
      }
     },
     {
