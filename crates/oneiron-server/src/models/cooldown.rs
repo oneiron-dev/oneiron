@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use super::ladder::OfferLadder;
 use super::status::{HealthState, LimitHold, RungHealth};
 
+mod reply_budgets;
 mod world_hold;
 
 /// The engine's `MODEL_OFFER_COOLDOWN` side table: never replicated, and
@@ -314,29 +315,6 @@ impl OfferCooldowns {
     #[must_use]
     pub fn in_vault(vault: Arc<Vault>) -> Arc<Self> {
         Self::in_vault_with(vault, super::ModelHostBudgets::unhosted())
-    }
-
-    /// [`Self::in_vault`], its ladders' chat replies read on `budgets`, the
-    /// vault's own (FIX 10626).
-    #[must_use]
-    pub(crate) fn in_vault_with(vault: Arc<Vault>, budgets: super::ModelHostBudgets) -> Arc<Self> {
-        Arc::new(Self {
-            vault: Some(vault),
-            fallbacks: RwLock::default(),
-            health: Mutex::default(),
-            probes: AtomicU64::new(0),
-            health_changed: tokio::sync::watch::Sender::new(0),
-            recovered: tokio::sync::watch::Sender::new(0),
-            warmth: super::ladder::cache_warmth::CacheWarmth::default(),
-            budgets,
-            #[cfg(test)]
-            waits_move: None,
-        })
-    }
-
-    /// The budgets its ladders' chat replies are read on.
-    pub(super) fn reply_budgets(&self) -> &super::ModelHostBudgets {
-        &self.budgets
     }
 
     /// [`Self::in_vault`] for a vault on the test's `clock`: a call that
