@@ -5924,7 +5924,7 @@ impl OneironClient {
     }
     pub fn vault_weave_lens(
         &self,
-        input: &oneiron::claim::WeaveReportRequest,
+        input: &oneiron::lens::WeaveLensRequest,
     ) -> Result<oneiron::lens::LensFrameCard, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(

@@ -7630,7 +7630,7 @@ async fn execute_agent_verb_row(
             oneiron::task_verb::sdk::validate_input("vault.weave.lens", &input)
                 .map_err(mcp_facade_error)?;
             let owner = surface.lens_owner("vault.weave.lens", &input);
-            let input: oneiron::claim::WeaveReportRequest =
+            let input: oneiron::lens::WeaveLensRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = crate::api::facade::host_doors::vault_weave_lens(
                 server,

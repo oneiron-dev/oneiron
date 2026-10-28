@@ -90,13 +90,17 @@ impl GeneratedUiCard {
         self
     }
 
-    /// Attach a manifest and `$state` to an already-valid card.
+    /// Attach a manifest and `$state` to an already-valid card. The card
+    /// keeps its catalog and catalog version (FIX 9893).
     pub fn with_interactivity(
-        self,
+        mut self,
         actions: Vec<GeneratedUiActionDeclaration>,
         state: GeneratedUiStateSnapshot,
     ) -> Result<Self> {
-        Self::interactive(self.card_id, self.tree, actions, state)
+        self.actions = actions;
+        self.state = state;
+        self.validate()?;
+        Ok(self)
     }
 
     pub fn render(&self) -> Result<GeneratedUiRender> {

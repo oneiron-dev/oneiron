@@ -2038,6 +2038,11 @@ UNIFFI_LENS_ROOTS = {
     'oneiron_remote::CloseLensFrameReply': 'CloseLensFrameReply',
 }
 
+# FIX 7968, 9891: a card's segment stream and the catalog descriptor an app
+# declares reach no row; they are generated records here too, as they are
+# roots of the TypeScript and Python types.
+UNIFFI_STREAM_ROOTS = ('crate::lens::GeneratedUiSegment', 'crate::lens::GeneratedUiCatalogDescriptor')
+
 def uniffi_record(value, records):
     'The UniFFI type an engine type crosses as, or None when it has no record.'
     for container in ('Option', 'Vec'):
@@ -2139,6 +2144,9 @@ def uniffi_facade(facade_rows):
     for text, name in UNIFFI_LENS_ROOTS.items():
         if types.root(text) != name:
             raise ValueError(f'{text}: lib.rs crosses it as the generated record {name}, which it does not read as')
+    for text in UNIFFI_STREAM_ROOTS:
+        if types.root(text) is None:
+            raise ValueError(f'{text}: no generated UniFFI record reads it')
     count = lambda *sides: len(census.get(sides, []))
     lines = [
         f'UniFFI census: {len(facade_rows)} facade rows, {len(types.items)} generated types.',

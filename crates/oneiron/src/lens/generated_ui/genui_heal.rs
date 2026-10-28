@@ -1,27 +1,71 @@
 //! Healing a generated-UI segment cut mid-stream (FIX 7970; ARCH-0048 G4
-//! healing-tolerant parse): a cut display-text string is closed where it was
-//! cut, and every other cut construct (an id, a ref, a pointer path, a key, a
-//! number or a literal) is dropped back to the last complete member, so the
-//! healed text never holds a half-formed reference. Open containers are then
-//! closed. The result is still decoded and validated as a typed segment.
+//! healing-tolerant parse): a cut string the atom kit's own schema types as
+//! display text is closed where it was cut, and every other cut construct (an
+//! id, a ref, a pointer path, a key, a number, a literal, or anything in an
+//! app component's props, whose meaning only its app knows) is dropped back
+//! to the last complete member, so the healed text never holds a half-formed
+//! reference. Open containers are then closed. The result is still decoded
+//! and validated as a typed segment.
 
-/// The keys whose string values are display text a reader may show cut short.
-/// Ids, refs, paths, tokens and span values are never among them.
-const FREE_TEXT_KEYS: &[&str] = &[
-    "fallbackText",
-    "title",
-    "body",
-    "text",
-    "summary",
-    "answer",
-    "alt",
-    "caption",
-];
+use crate::lens::atom::GENERATED_LENS_ATOM_KINDS;
+
+/// A node's whole display text, outside any atom's props.
+const NODE_TEXT_KEY: &str = "fallbackText";
+
+/// The members of built-in atoms' props that the kit types as display text
+/// (`LensText`): sheet and section titles, a thread entry's body, a voice
+/// line's text, a pack line's summary, an answer sheet's answer, media alt
+/// text.
+const KIT_TEXT_KEYS: &[&str] = &["title", "body", "text", "summary", "answer", "alt"];
+
+/// The atom kind an app component carries; its props are opaque here.
+const COMPONENT_KIND: &str = "component";
 
 struct Frame {
     array: bool,
     key: Option<String>,
     expect_key: bool,
+    /// The `kind` this object named, when it named one before its props.
+    kind: Option<String>,
+    /// Inside some atom's `props`.
+    in_props: bool,
+    /// Inside the props of a built-in atom whose kind came first.
+    kit_props: bool,
+}
+
+impl Frame {
+    /// A container opened as the current member of `parent`.
+    fn open(array: bool, parent: Option<&Self>) -> Self {
+        let (in_props, kit_props) = parent.map_or((false, false), |parent| {
+            let props = !parent.array && parent.key.as_deref() == Some("props");
+            let kit = props
+                && parent.kind.as_deref().is_some_and(|kind| {
+                    kind != COMPONENT_KIND && GENERATED_LENS_ATOM_KINDS.contains(&kind)
+                });
+            (
+                parent.in_props || props,
+                if props { kit } else { parent.kit_props },
+            )
+        });
+        Self {
+            array,
+            key: None,
+            expect_key: !array,
+            kind: None,
+            in_props,
+            kit_props,
+        }
+    }
+
+    /// Whether a string value of the current member is display text the
+    /// kit's schema lets a reader show cut short.
+    fn holds_display_text(&self) -> bool {
+        !self.array
+            && self.key.as_deref().is_some_and(|key| {
+                (key == NODE_TEXT_KEY && !self.in_props)
+                    || (self.kit_props && KIT_TEXT_KEYS.contains(&key))
+            })
+    }
 }
 
 /// `text`, one JSON value cut short, closed into JSON as described above;
@@ -36,11 +80,8 @@ pub(super) fn heal_cut_json(text: &str) -> Option<String> {
         match bytes[index] {
             b' ' | b'\t' | b'\n' | b'\r' => index += 1,
             open_byte @ (b'{' | b'[') => {
-                stack.push(Frame {
-                    array: open_byte == b'[',
-                    key: None,
-                    expect_key: open_byte == b'{',
-                });
+                let frame = Frame::open(open_byte == b'[', stack.last());
+                stack.push(frame);
                 index += 1;
                 safe = Some((index, open_kinds(&stack)));
             }
@@ -66,14 +107,7 @@ pub(super) fn heal_cut_json(text: &str) -> Option<String> {
                 let (end, closed) = string_end(bytes, index + 1);
                 let is_key = stack.last().is_some_and(|frame| !frame.array && frame.expect_key);
                 if !closed {
-                    let free_text = !is_key
-                        && stack.last().is_some_and(|frame| {
-                            !frame.array
-                                && frame
-                                    .key
-                                    .as_deref()
-                                    .is_some_and(|key| FREE_TEXT_KEYS.contains(&key))
-                        });
+                    let free_text = !is_key && stack.last().is_some_and(Frame::holds_display_text);
                     if !free_text {
                         break;
                     }
@@ -88,6 +122,12 @@ pub(super) fn heal_cut_json(text: &str) -> Option<String> {
                     }
                     index = end + 1;
                 } else {
+                    if let Some(frame) = stack.last_mut()
+                        && !frame.array
+                        && frame.key.as_deref() == Some("kind")
+                    {
+                        frame.kind = Some(text[index + 1..end].to_owned());
+                    }
                     index = end + 1;
                     if stack.is_empty() {
                         return Some(text[..index].to_owned());
