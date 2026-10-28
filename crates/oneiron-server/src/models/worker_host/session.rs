@@ -30,15 +30,22 @@
 //!
 //! Each served vault attaches this process's snapshot port (V2-R3): its
 //! lock releases every session of it under one total bound, aborting a
-//! worker that does not answer, and its erases drop its sessions.
+//! worker that does not answer, and its erases drop its sessions. A
+//! session idle after its commit parks: its checkpoint is sealed into the
+//! vault's snapshot store and the device copy released (`park.rs`); a later
+//! turn whose binding has no session restores it (`restore.rs`).
 #[cfg(unix)]
 mod commit;
 #[cfg(unix)]
 mod lifecycle;
 #[cfg(unix)]
+mod park;
+#[cfg(unix)]
 mod policy;
 #[cfg(unix)]
 mod registry;
+#[cfg(unix)]
+mod restore;
 #[cfg(unix)]
 mod turn;
 

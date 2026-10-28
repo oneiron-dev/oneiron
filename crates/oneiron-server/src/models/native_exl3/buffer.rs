@@ -78,10 +78,6 @@ pub(in crate::models) struct SnapshotRegion {
 
 impl SnapshotRegion {
     /// A region holding `bytes`, sealed as an input region is, to import.
-    #[expect(
-        dead_code,
-        reason = "the R3 restore path is its caller (worker_host/session); it is not built yet"
-    )]
     pub(in crate::models) fn from_bytes(bytes: &[u8]) -> io::Result<Self> {
         let region = SharedRegion::from_bytes(bytes)?;
         let len = region.len();
@@ -129,10 +125,6 @@ impl SnapshotRegion {
     }
 
     /// The snapshot's bytes, read whole.
-    #[expect(
-        dead_code,
-        reason = "the R3 park path is its caller (worker_host/session); it is not built yet"
-    )]
     pub(in crate::models) fn read(&self) -> io::Result<Vec<u8>> {
         let len = usize::try_from(self.len).map_err(|_| invalid("the snapshot is too long"))?;
         let mut bytes = vec![0_u8; len];
