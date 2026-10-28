@@ -880,7 +880,7 @@ fn live_board_view(
 /// A board refusal as the run's door states it: the verb's own refusal is
 /// the caller's, anything else the host's.
 fn run_board_error(error: McpGatewayError) -> oneiron::memory::MemoryError {
-    if error.kind == "verb_dispatch_failed" {
+    let mut refusal = if error.kind == "verb_dispatch_failed" {
         oneiron::memory::MemoryError::bad_request(error.message)
     } else {
         oneiron::memory::MemoryError::new(
@@ -888,5 +888,8 @@ fn run_board_error(error: McpGatewayError) -> oneiron::memory::MemoryError {
             error.message,
             &["Report this host-door failure."],
         )
-    }
+    };
+    // FIX 7398: the refusal's reason codes ride back to the run.
+    refusal.reason_codes = error.reason_codes;
+    refusal
 }

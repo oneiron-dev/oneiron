@@ -24,6 +24,7 @@ impl FacadeApiError {
                     hook: None,
                     retry_after: None,
                     resets_at: Vec::new(),
+                    reason_codes: Vec::new(),
                 },
                 narrowing: None,
             },
@@ -167,6 +168,7 @@ impl From<MemoryError> for FacadeApiError {
                     hook: error.hook,
                     retry_after: error.retry_after,
                     resets_at: error.resets_at,
+                    reason_codes: error.reason_codes,
                 },
                 narrowing: error.read_receipt,
             },
@@ -215,6 +217,7 @@ impl FacadeApiError {
         refusal.hook = error.hook;
         refusal.retry_after = error.retry_after;
         refusal.resets_at = error.resets_at;
+        refusal.reason_codes = error.reason_codes;
         refusal
     }
 }

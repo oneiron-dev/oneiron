@@ -401,6 +401,10 @@ struct FacadeErrorBody {
     /// source said (FIX 8190).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     resets_at: Vec<u64>,
+    /// The refusal's stable reason codes, in its producer's order, when it
+    /// named any (FIX 7398).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    reason_codes: Vec<String>,
 }
 
 /// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
@@ -432,4 +436,5 @@ pub(crate) struct MemoryErrorBodySchema {
     receipt_ref: Option<String>,
     retry_after: Option<u64>,
     resets_at: Option<Vec<u64>>,
+    reason_codes: Option<Vec<String>>,
 }

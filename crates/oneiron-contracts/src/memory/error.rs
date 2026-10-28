@@ -214,6 +214,13 @@ pub struct MemoryError {
     /// order its source said them (FIX 8190); empty where it said none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resets_at: Vec<u64>,
+    /// The stable reason codes behind this refusal, in the order and
+    /// spelling its producer gave them (FIX 7398): a room's upkeep voice
+    /// refusal names its `gate.rooms.upkeep.*` code here, so no client parses
+    /// it out of `message`. Empty, and absent on the wire, where the producer
+    /// named none. A Gate write rejection's codes stay in `gate_denial`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -258,6 +265,7 @@ impl MemoryError {
             hook: None,
             retry_after: None,
             resets_at: Vec::new(),
+            reason_codes: Vec::new(),
         }
     }
 

@@ -54301,6 +54301,12 @@ pub struct MemoryError {
     pub retry_after: Option<u64>,
     #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<Vec<u64>>,
+    #[serde(
+        rename = "reason_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reason_codes: Option<Vec<String>>,
     #[serde(flatten)]
     pub memory_wrong_root: Option<MemoryWrongRoot>,
 }

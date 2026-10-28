@@ -568,7 +568,9 @@ pub(crate) async fn execute_facade_row<T: serde::Serialize>(
         SelfDispatchOutcome::Denied(denied) => Err(match dispatch.refusal {
             Some(row) => {
                 let suggestions: Vec<&str> = row.suggestions.iter().map(String::as_str).collect();
-                MemoryError::new(&row.code, row.message, &suggestions)
+                let mut refusal = MemoryError::new(&row.code, row.message, &suggestions);
+                refusal.reason_codes = row.reason_codes;
+                refusal
             }
             None => MemoryError::new(&denied.outcome, "the action was refused", &[]),
         }
