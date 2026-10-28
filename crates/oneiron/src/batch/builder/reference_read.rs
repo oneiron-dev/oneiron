@@ -145,7 +145,10 @@ pub(super) struct StagedDenial {
 /// which already gave it. For the CLAIM it finds, the claim gate's reader-bound
 /// door is asked in a savepoint that is always rolled back, only for the
 /// receipt the gate records with that denial; a door that answers with
-/// another verdict there leaves the denial standing without one.
+/// another verdict there leaves the denial standing without one. The whole
+/// staged run it replaces gave no item any other outcome: it dropped every
+/// other gate verdict and raised only a non-gate refusal, which here is each
+/// write envelope's own check, kept on this path for every CLAIM in order.
 pub(super) fn staged_reference_denial(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -154,6 +157,9 @@ pub(super) fn staged_reference_denial(
 ) -> Result<Option<StagedDenial>> {
     let mut found = None;
     for claim in claims {
+        if let Some(envelope) = &claim.envelope {
+            crate::gate::validate_write_envelope(envelope)?;
+        }
         if let Some(field) = crate::gate::unresolved_claim_reference(reader, &*txn, &claim.body)? {
             found = Some((claim, field));
             break;
