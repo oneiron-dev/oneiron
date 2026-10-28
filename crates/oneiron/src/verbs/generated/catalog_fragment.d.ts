@@ -1994,14 +1994,14 @@ declare namespace Sdk {
   type MeasuredLearningEstimate = MeasuredLearningValue & { runs: number; prior: LearningPriorView; untested: boolean; of: string; labels: EstimateLabels; window: EstimateWindow; ver: string };
   type LearningHeadView = { claim_ref: string; at: number; evidence_receipts: string[]; supersedes: string[] };
   type Anchor = { kind: "held_out" } | { kind: "owner_verdict" } | { kind: "world_outcome" } | { kind: "audit"; rate: number } | { kind: "retest" } | { kind: "fitting_check" };
-  type Observation = { kind: "success"; v: boolean } | { kind: "magnitude"; v: number } | { kind: "category"; v: string };
+  type Observation = { kind: "success"; v: boolean } | { kind: "magnitude"; v: number } | { kind: "category"; v: string } | { kind: "count_only"; v: string };
   type ContributionCheck = { receipt: string; contributed: boolean };
   type SkillContribution = { skill: EntityId; check: ContributionCheck };
   type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: ContributionCheck | null };
   type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean };
   type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions };
   type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields };
-  type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null };
+  type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null; measurement_version?: string | null };
   type LearningEvidenceView = { receipt: string; evidence: EvidenceRow };
   type LearningProvenanceView = { cell: LearningCellKey; heads: LearningHeadView[]; evidence: LearningEvidenceView[] };
   type MeasuredLearningView = { estimate: MeasuredLearningEstimate; own: boolean; borrowed_from?: LearningCellKey | null; attributed_outcome_receipts: string[]; provenance: LearningProvenanceView; prior_provenance?: LearningProvenanceView | null };
