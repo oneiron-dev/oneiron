@@ -404,7 +404,12 @@ fn pieces_body(
         }
         let Some((_, tail)) = head_and_tail(&served, &work, tokens) else {
             let message = "the answer's closing fields could not be encoded; every row was sent, and this answer is not complete";
-            end_unfinished(&pieces, error_terminal(&work, "encoding_failed", message), idle).await;
+            end_unfinished(
+                &pieces,
+                error_terminal(&work, "encoding_failed", message),
+                idle,
+            )
+            .await;
             return;
         };
         send(&tail).await;

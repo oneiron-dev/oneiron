@@ -16,8 +16,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-mod call_deadline;
 pub(super) mod cache_warmth;
+mod call_deadline;
 mod decision_posture;
 mod live_fork;
 mod shadow_capture;
@@ -1444,7 +1444,10 @@ impl OfferLadder {
         let operation = request.operation;
         if operation.is_job() {
             // The caller's deadline ends the send too (FIX 8134).
-            let Some(submitted) = call.deadline.bound(gate.submit(bound, permit.lease())).await
+            let Some(submitted) = call
+                .deadline
+                .bound(gate.submit(bound, permit.lease()))
+                .await
             else {
                 settle_failed(permit);
                 return Err(CallDeadline::expiry());
@@ -1546,28 +1549,28 @@ impl OfferLadder {
             deadline,
         };
         let mut walk = Walk::default();
-        let (start, wait) =
-            match (0..self.rungs.len()).find(|index| !self.passes_over(call, *index, &mut walk)) {
-                Some(start) => (start, None),
-                None => {
-                    if may_fall_back && let Some(target) = self.fallback(call, &walk) {
-                        let fallback = self.fallback_call(&target, &walk);
-                        let mut fell_request = request.clone();
-                        fell_request.model = fallback.model().clone();
-                        let selector = Some(selector.unwrap_or(self.name.as_str()));
-                        let fell =
-                            fallback.stream_from(run, fell_request, selector, false, deadline);
-                        if fell.is_err() {
-                            self.ask_parked(&walk, call.needs);
-                        }
-                        return fell;
+        let (start, wait) = match (0..self.rungs.len())
+            .find(|index| !self.passes_over(call, *index, &mut walk))
+        {
+            Some(start) => (start, None),
+            None => {
+                if may_fall_back && let Some(target) = self.fallback(call, &walk) {
+                    let fallback = self.fallback_call(&target, &walk);
+                    let mut fell_request = request.clone();
+                    fell_request.model = fallback.model().clone();
+                    let selector = Some(selector.unwrap_or(self.name.as_str()));
+                    let fell = fallback.stream_from(run, fell_request, selector, false, deadline);
+                    if fell.is_err() {
+                        self.ask_parked(&walk, call.needs);
                     }
-                    match self.waits_for(call, &mut walk) {
-                        Some(back) => (back.index, Some(back)),
-                        None => return Err(self.ended(call, walk)),
-                    }
+                    return fell;
                 }
-            };
+                match self.waits_for(call, &mut walk) {
+                    Some(back) => (back.index, Some(back)),
+                    None => return Err(self.ended(call, walk)),
+                }
+            }
+        };
         let first = self.admit(run, &self.rungs[start], &request, selector, true)?;
         let (ladder, run) = (Arc::clone(self), run.clone());
         let selector = selector.map(str::to_owned);

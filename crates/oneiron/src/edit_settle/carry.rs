@@ -1085,8 +1085,7 @@ impl Vault {
                         only_rows: Some(&rows),
                     },
                 )?;
-                let units =
-                    crate::llm::decision::questions::artifact_unit_receipts(&run);
+                let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
                 (run.proposal, units)
             }
             ReaskShape::FolderItems {
@@ -1119,8 +1118,7 @@ impl Vault {
                         sight: crate::secret_custody::SecretSight::Masked,
                     },
                 )?;
-                let units =
-                    crate::llm::decision::questions::artifact_unit_receipts(&run);
+                let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
                 (run.proposal, units)
             }
             ReaskShape::Paragraphs { author, labels } => {
@@ -1144,8 +1142,7 @@ impl Vault {
                         labels,
                     },
                 )?;
-                let units =
-                    crate::llm::decision::questions::artifact_unit_receipts(&run);
+                let units = crate::llm::decision::questions::artifact_unit_receipts(&run);
                 (run.proposal, units)
             }
             ReaskShape::Slides { author, labels } => {
@@ -1217,7 +1214,8 @@ impl Vault {
                     // The comment writer stamps epoch milliseconds.
                     at: now.saturating_mul(1000),
                 };
-                let run = self.review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
+                let run = self
+                    .review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
                     .map_err(|error| match error {
                         SlideReviewError::Vault(error) => error,
                         other => Error::InvalidConfig(other.to_string()),
@@ -1227,10 +1225,7 @@ impl Vault {
                 (run.proposal, Vec::new())
             }
         };
-        Ok((
-            Reasked::Asked { proposal, units },
-            reask_ref,
-        ))
+        Ok((Reasked::Asked { proposal, units }, reask_ref))
     }
 
     /// The refs the wakes of `proposal_ref`'s withdrawn answers asked again under, for a
