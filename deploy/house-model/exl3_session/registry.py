@@ -118,9 +118,10 @@ class Branch:
 
 class Commit:
     """One `session.suffix_commit` in flight: its plan, ids (the staged path
-    and a pad), the pages it reserves, and its answer."""
+    and a pad), the pages it reserves, its scheduling (exl3_executor), and
+    its answer."""
 
-    def __init__(self, session, op_id, staged, plan, ids, need):
+    def __init__(self, session, op_id, staged, plan, ids, need, work):
         self.session = session
         self.op_id = op_id
         self.staged = staged
@@ -128,6 +129,7 @@ class Commit:
         self.plan = plan
         self.ids = ids
         self.need = need
+        self.work = work
         self.job = None
         self.reserved = False
         self.done = threading.Event()
@@ -153,6 +155,9 @@ class Session:
         self.dropping = False
         # Exports and imports in flight on it.
         self.transfers = 0
+        # An import's pages while they are written, chunk by chunk, before
+        # its checkpoint is staged: evicted or dropped like any it holds.
+        self.importing = None
         self.used = time.monotonic()
 
     def anchors(self):
@@ -160,6 +165,8 @@ class Session:
         held = [checkpoint.anchor for checkpoint in (self.published, self.successor) if checkpoint is not None]
         held += [checkpoint.anchor for checkpoint in self.retired]
         held += [branch.carry for branch in self.branches.values() if branch.carry is not None]
+        if self.importing is not None:
+            held.append(self.importing)
         return held
 
     def evictable(self):
@@ -333,4 +340,7 @@ class Registry:
         for checkpoint in (session.published, session.successor):
             release += self.retire(session, checkpoint)
         session.published = session.successor = session.staged = None
+        if session.importing is not None:
+            release.append(session.importing)
+            session.importing = None
         return release

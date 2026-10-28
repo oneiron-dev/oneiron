@@ -41,7 +41,9 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::BudgetLease;
-use oneiron::llm::{INFERENCE_CALLS_KEY, SegmentManifest, WorkerBuildEvidence, WorkerFailure};
+use oneiron::llm::{
+    CallSchedule, INFERENCE_CALLS_KEY, SegmentManifest, WorkerBuildEvidence, WorkerFailure,
+};
 use oneiron_driver::WorkerActivity;
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
@@ -243,6 +245,10 @@ async fn begin(
         None => None,
     };
     let plain = session.is_some().then(|| params.clone());
+    // The call's scheduling (codec v1.3): none is named until the host's
+    // device admission grants one, and the worker runs it at the defaults.
+    // A plain retry after a refused session carries the same.
+    let schedule: Option<&CallSchedule> = None;
     let mut started = Call::start(
         &socket,
         &epoch,
@@ -251,6 +257,7 @@ async fn begin(
         stream,
         Some(lease),
         session,
+        schedule,
     )
     .await;
     let refused = matches!(
@@ -273,6 +280,7 @@ async fn begin(
             stream,
             Some(lease),
             None,
+            schedule,
         )
         .await;
     }
@@ -315,6 +323,8 @@ async fn execute(
     let last = loop {
         match sent.call.next().await {
             Ok(Event::Final(last)) => break last,
+            Ok(Event::Admitted(mark)) => report(&route, &mark),
+            Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
             Ok(Event::FirstToken | Event::Token { .. }) => {}
             Err(Cut(error)) => return Err(error),
         }
@@ -417,9 +427,17 @@ fn activity_of(stats: &JsonValue) -> Option<WorkerActivity> {
     })
 }
 
-/// Feeds a `final`'s cheap stats to the worker's supervisor.
+/// Feeds the cheap stats of a `final`, or of an `admitted`, to the worker's
+/// supervisor.
 fn report(route: &NativeRoute, last: &JsonValue) {
-    if let Some(activity) = last.get("stats").and_then(activity_of) {
+    report_stats(route, last.get("stats"));
+}
+
+/// Feeds cheap `stats` the worker took at an event (an admission, a
+/// `schedule` applied, a terminal) to its supervisor: reports between its
+/// polls.
+fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
+    if let Some(activity) = stats.and_then(activity_of) {
         route.worker.report(activity);
     }
 }
@@ -473,16 +491,27 @@ pub(super) async fn qualify(
         .ok_or(WorkerFailure::InvalidReply)?
         .to_owned();
     let (conversation, params) = wire::split_request(request);
-    let mut call = Call::start(socket, &epoch, &conversation, params, false, None, None)
-        .await
-        .map_err(|start| match start {
-            Start::Refused(_) => WorkerFailure::InvalidReply,
-            Start::NotSent(_) | Start::Cut(_) => WorkerFailure::Unreachable,
-        })?;
+    let mut call = Call::start(
+        socket,
+        &epoch,
+        &conversation,
+        params,
+        false,
+        None,
+        None,
+        None,
+    )
+    .await
+    .map_err(|start| match start {
+        Start::Refused(_) => WorkerFailure::InvalidReply,
+        Start::NotSent(_) | Start::Cut(_) => WorkerFailure::Unreachable,
+    })?;
     let last = loop {
         match call.next().await {
             Ok(Event::Final(last)) => break last,
-            Ok(Event::FirstToken | Event::Token { .. }) => {}
+            Ok(
+                Event::Admitted(_) | Event::FirstToken | Event::Token { .. } | Event::Scheduled(_),
+            ) => {}
             Err(Cut(_)) => return Err(WorkerFailure::Unreachable),
         }
     };
@@ -588,6 +617,8 @@ impl Live {
             }
             match self.sent.call.next().await {
                 Ok(Event::FirstToken) => {}
+                Ok(Event::Admitted(mark)) => report(&self.route, &mark),
+                Ok(Event::Scheduled(ack)) => report_stats(&self.route, ack.stats.as_ref()),
                 Ok(Event::Token { reasoning, text }) => {
                     if text.is_empty() {
                         continue;
