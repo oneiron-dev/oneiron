@@ -81,9 +81,9 @@
 //! is a pure disclosure requiring [`RESERVOIR_EXPORT_AUDIENCE`], so an
 //! uncovered export HIDES (the disclosure fail-safe) rather than asking, and
 //! revocation is immediate because the evaluator loads the grants live. That
-//! grant clears the door, not each source: every pair's input source passes
-//! the `eligibility` check before serialization, and one that fails is left
-//! out and counted on the receipt (FIX 9796).
+//! grant clears the door, not each pair: every pair and its input source pass
+//! the `eligibility` check before serialization, and a pair that fails is
+//! left out and counted on the receipt (FIX 9796).
 //!
 //! It is TWO-PHASE. Phase 1 takes the consent decision, enumerates, runs the
 //! fence tripwire, resolves every pair and serializes the whole corpus into
@@ -311,8 +311,8 @@ pub struct ExportManifest {
 /// never leaves a partial export behind.
 ///
 /// The export is a point-in-time snapshot. It is receipted and handed to the
-/// caller; nothing stores it as truth. `owner` reads each pair's input source
-/// and `corpus_use` says whether a run's consent ticks also apply.
+/// caller; nothing stores it as truth. `owner` reads each pair and its input
+/// source, and `corpus_use` says whether a run's consent ticks also apply.
 ///
 /// # Errors
 ///
@@ -347,7 +347,7 @@ pub fn export_reservoir(
     let (pairs, excluded) = {
         let rtxn = vault.store.env.read_txn()?;
         let pairs = resolve_candidates(vault, &rtxn, &scope)?;
-        eligibility::admitted_pairs_in(vault, &rtxn, &reader, corpus_use, pairs)?
+        eligibility::admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?
     };
     let mut body = Vec::new();
     for pair in &pairs {
