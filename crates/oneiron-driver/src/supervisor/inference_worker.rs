@@ -286,6 +286,22 @@ impl WorkerLease {
         self.incarnation
             .is_some_and(|incarnation| self.inner.lock().incarnation != incarnation)
     }
+
+    /// Waits until the incarnation this lease was granted on has ended, for
+    /// a lease held while that incarnation still charges a call it could not
+    /// release; at once for an external worker's lease.
+    pub async fn revocation(&self) {
+        if self.incarnation.is_none() {
+            return;
+        }
+        loop {
+            let mut changes = self.inner.changed.subscribe();
+            if self.revoked() {
+                return;
+            }
+            let _ = changes.changed().await;
+        }
+    }
 }
 
 impl Drop for WorkerLease {
