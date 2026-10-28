@@ -690,7 +690,8 @@ pub(super) fn undecodable_actor_steps_in_txn(
 }
 
 /// The steps an erase of one actor reaches: each settled step that keeps a
-/// body, and each step whose row does not decode.
+/// body, and each step whose row does not decode. A step already held as
+/// the erased marker is neither.
 struct ActorSteps {
     bodied: Vec<((EntityId, EntityId), TurnProgramStep)>,
     undecodable: Vec<(EntityId, EntityId)>,
@@ -722,7 +723,15 @@ fn actor_steps_in_txn(
             let Some(key) = <(EntityId, EntityId) as SideKey>::decode_key(&key) else {
                 continue;
             };
-            match STEP.decode_value(&bytes) {
+            // An erased marker (FIX 6227) is already out of reach: neither a
+            // body nor a row that does not decode, so its bytes stay and the
+            // step still reads as erased (FIX 10709).
+            let family = crate::store::ResponseFamily::ProgramStep;
+            let raw = match crate::store::ResponseRead::of(family, &STEP.key_bytes(&key), &bytes) {
+                crate::store::ResponseRead::ErasedOpaque(_) => continue,
+                crate::store::ResponseRead::Present(raw) => raw,
+            };
+            match STEP.decode_value(raw) {
                 Ok(step)
                     if matches!(
                         step.state,

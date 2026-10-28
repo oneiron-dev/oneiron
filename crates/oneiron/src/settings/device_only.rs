@@ -196,7 +196,8 @@ fn sources_worlds(
 /// its body's world, a NOTE in each world it has an `InWorld` edge to, a
 /// SUMMARY where `record_world_in` places it (unknown for an epoch it cannot
 /// place, never base) and in every world its withdrawal recorded. An epoch
-/// SUMMARY's `DerivedFrom` sources go to `sources`.
+/// SUMMARY's `DerivedFrom` sources, and a CLAIM's prompt inputs, go to
+/// `sources`.
 fn row_worlds(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -214,6 +215,11 @@ fn row_worlds(
             carried
                 .worlds
                 .extend(claim_world(store, txn, id, Some(raw))?);
+            // FIX 8192: a claim a model wrote from rows its prompt carried
+            // carries their words, so their worlds too.
+            sources.extend(crate::provenance::birth::prompted::prompt_sources_in_txn(
+                store, txn, id,
+            )?);
         }
         crate::registry::ENTITY_TYPE_NOTE => {
             for edge in

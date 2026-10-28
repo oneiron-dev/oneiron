@@ -1158,7 +1158,7 @@ declare namespace Sdk {
   type ChatContent = string | ChatPart[];
   type ChatMessage = { role: ChatRole; content: ChatContent; name?: string | null };
   type ChatStop = string | string[];
-  type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null };
+  type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null; deadline_ms?: number | null };
   type ChatCompletionObject = "chat.completion";
   type ChatCompletionRole = "assistant";
   type ChatCompletionMessage = { role: ChatCompletionRole; content: string };
@@ -3548,7 +3548,7 @@ declare namespace Sdk {
   type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
   type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };
   type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null };
-  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null };
+  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[] };
   type EsignDocumentTrail = { trail: "readable"; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] } | { trail: "unreadable"; error: MemoryError };
   type EsignDocumentView = EsignDocumentTrail & { document_ref: string; delivery_receipts: EsignDeliveryReceipt[] };
   type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
@@ -3870,7 +3870,7 @@ declare namespace Sdk {
   type FreeTimeCadence = "daily" | "nightly";
   type FreeTimeSchedule = { cadence: FreeTimeCadence; hour: number; minute: number; zone: string };
   type FreeTimeSplit = { for_human_units: number; own_time_units: number };
-  type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by: string; set_at: number };
+  type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by?: string | null; set_at: number };
   type FreeTimePolicyView = { agent: string; state: FreeTimePolicyState; revision: number; policy?: FreeTimePolicyRow | null };
   type FreeTimePolicyInput = { total_units: number; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number };
   type FreeTimePolicySetRequest = { agent: string; expected_revision: number; policy?: FreeTimePolicyInput | null };
