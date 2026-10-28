@@ -7,8 +7,11 @@
 //! and every link); decline writes a refusal receipt and admits nothing.
 //! Either one is the batch's only decision.
 
+use base64::Engine as _;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::note::{ImportedNote, ImportedNoteBatch, ImportedNoteLink, NOTES_IMPORT_SOURCE};
+use oneiron::note::{
+    ImportedNote, ImportedNoteBatch, ImportedNoteLink, NOTES_IMPORT_SOURCE, OriginalBytes,
+};
 use oneiron::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +30,19 @@ pub(crate) struct NoteFile {
     pub(crate) written_at: u64,
     /// The file as written.
     pub(crate) markdown: String,
+    /// The file's own bytes, kept as its original once the batch is
+    /// approved (FIX 7779); none for a continuation part.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) original: Option<NoteOriginal>,
+}
+
+/// A file's own bytes on the wire.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NoteOriginal {
+    pub(crate) media_type: String,
+    /// The bytes, standard base64.
+    pub(crate) bytes_base64: String,
 }
 
 /// A link between two notes, by path under the folder.
@@ -69,6 +85,11 @@ pub(crate) struct NoteApproved {
     pub(crate) request_id: String,
     pub(crate) notes: usize,
     pub(crate) links: usize,
+    /// Notes whose file's original was kept after the batch landed.
+    pub(crate) originals_kept: usize,
+    /// Notes whose original could not be kept; their text landed all the
+    /// same.
+    pub(crate) originals_unkept: usize,
 }
 
 /// A declined batch: one receipt, nothing admitted.
@@ -118,12 +139,27 @@ pub(crate) fn approve(
     let request_id = batch.request_id.clone();
     let exact = previewed(vault, owner, batch, digest)?;
     let receipt = vault.approve_imported_note_batch(owner, &exact)?;
+    // The originals the owner approved with the batch, each kept on its own
+    // once the notes landed: one that cannot be kept is counted, and never
+    // takes back what landed (FIX 7779).
+    let (mut originals_kept, mut originals_unkept) = (0, 0);
+    for note in &exact.notes {
+        let Some(original) = &note.original else {
+            continue;
+        };
+        match vault.keep_folder_file_original(owner, &exact.folder, &note.path, original) {
+            Ok(_) => originals_kept += 1,
+            Err(_) => originals_unkept += 1,
+        }
+    }
     Ok(NoteApproved {
         digest: receipt.approval_digest,
         approval: "approved",
         request_id,
         notes: receipt.note_ids.len(),
         links: receipt.links,
+        originals_kept,
+        originals_unkept,
     })
 }
 
@@ -173,14 +209,33 @@ pub(crate) fn engine_batch(batch: NoteBatch) -> OwnerResult<ImportedNoteBatch> {
         notes: batch
             .notes
             .into_iter()
-            .map(|note| ImportedNote {
-                path: note.path,
-                kind: note.kind,
-                title: note.title,
-                written_at: note.written_at,
-                markdown: note.markdown,
+            .map(|note| -> OwnerResult<ImportedNote> {
+                let original = note
+                    .original
+                    .map(|original| {
+                        Ok::<_, OwnerError>(OriginalBytes {
+                            media_type: original.media_type,
+                            bytes: base64::engine::general_purpose::STANDARD
+                                .decode(&original.bytes_base64)
+                                .map_err(|_| {
+                                    OwnerError::Invalid(format!(
+                                        "the original of {:?} is not standard base64",
+                                        note.path
+                                    ))
+                                })?,
+                        })
+                    })
+                    .transpose()?;
+                Ok(ImportedNote {
+                    path: note.path,
+                    kind: note.kind,
+                    title: note.title,
+                    written_at: note.written_at,
+                    markdown: note.markdown,
+                    original,
+                })
             })
-            .collect(),
+            .collect::<OwnerResult<Vec<_>>>()?,
         links: batch
             .links
             .into_iter()
@@ -208,6 +263,11 @@ impl From<ImportedNoteBatch> for NoteBatch {
                     title: note.title,
                     written_at: note.written_at,
                     markdown: note.markdown,
+                    original: note.original.map(|original| NoteOriginal {
+                        media_type: original.media_type,
+                        bytes_base64: base64::engine::general_purpose::STANDARD
+                            .encode(&original.bytes),
+                    }),
                 })
                 .collect(),
             links: batch

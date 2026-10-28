@@ -702,6 +702,8 @@ impl NativeClient {
         deadline_ms: Option<f64>,
         media: Option<NapiRecallMedia>,
         query_affect: Option<NapiQueryAffect>,
+        token_budget: Option<f64>,
+        reader_agent_ref: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
@@ -725,6 +727,10 @@ impl NativeClient {
             .transpose()
             .map_err(facade_error)?;
         let query_affect = query_affect.map(query_affect_to_engine);
+        let token_budget = token_budget
+            .map(oneiron_remote::check_token_budget_number)
+            .transpose()
+            .map_err(facade_error)?;
         let output = self
             .inner
             .vault_recall(
@@ -737,6 +743,8 @@ impl NativeClient {
                 deadline_ms,
                 media,
                 query_affect,
+                token_budget,
+                reader_agent_ref.as_deref(),
             )
             .map_err(facade_error)?;
         memory_pack_from_engine(output).map_err(boundary_error)

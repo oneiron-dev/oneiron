@@ -7,13 +7,9 @@ use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use rustix::fs::{AtFlags, CWD, Dir, FileType, Mode, OFlags, openat, statat};
-
-/// How far below the given path a history walk looks. A Claude Code subagent
-/// log sits four below `~/.claude/projects`.
-const MAX_WALK_DEPTH: usize = 6;
 
 fn directory_flags() -> OFlags {
     OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC
@@ -122,18 +118,15 @@ pub(super) enum WalkRefused {
 }
 
 /// The files a walk visits: their extensions, also in other case when
-/// `any_case`, or every file; whether hidden entries count; how deep it
-/// goes; and how many entries it lists before it is refused. Past `depth`, a
-/// log walk passes over the folder; a notes walk refuses, since a batch
-/// without those notes would read as the whole folder.
+/// `any_case`, or every file; whether hidden entries count; and how many
+/// entries it lists before it is refused. Every walk goes down every folder
+/// below where it starts, however deep (FIX 9474).
 #[derive(Clone, Copy)]
 pub(crate) struct Wanted {
     extensions: &'static [&'static str],
     every_file: bool,
     any_case: bool,
     hidden: bool,
-    depth: usize,
-    refuse_deeper: bool,
     entries: usize,
 }
 
@@ -142,8 +135,6 @@ pub(crate) const LOGS: Wanted = Wanted {
     every_file: false,
     any_case: false,
     hidden: true,
-    depth: MAX_WALK_DEPTH,
-    refuse_deeper: false,
     entries: usize::MAX,
 };
 
@@ -155,8 +146,6 @@ const NOTES: Wanted = Wanted {
     every_file: false,
     any_case: true,
     hidden: false,
-    depth: 32,
-    refuse_deeper: true,
     // A folder of any width is read (rule 5): its notes and their text are
     // measured against the import's `[limits]` rows instead.
     entries: usize::MAX,
@@ -164,7 +153,7 @@ const NOTES: Wanted = Wanted {
 
 /// A Files source's walk (FIX 6942): every regular file, hidden ones too,
 /// since what it passes over is the owner's exclusions, judged before any
-/// entry is opened. Its depth and width are a notes walk's.
+/// entry is opened. Its width is a notes walk's.
 const FILES: Wanted = Wanted {
     extensions: &[],
     every_file: true,
@@ -239,7 +228,7 @@ pub(crate) fn walk(
         excluded: &nothing_excluded,
         unopened: &mut nothing_unopened,
     };
-    walk_below(dir, shown, 0, wanted, &mut skips, &mut left, visit)
+    walk_below(dir.try_clone()?, shown, wanted, &mut skips, &mut left, visit)
 }
 
 /// What a walk passes over before it opens it, and whom it names a file
@@ -271,75 +260,115 @@ pub(crate) fn walk_files(
 ) -> anyhow::Result<()> {
     let mut left = FILES.entries;
     let mut skips = Skips { excluded, unopened };
-    walk_below(
-        &open_root(root)?,
-        root,
-        0,
-        FILES,
-        &mut skips,
-        &mut left,
-        visit,
-    )
+    walk_below(open_root(root)?, root, FILES, &mut skips, &mut left, visit)
 }
 
-/// One folder of a walk, `depth` below where it started, passing over what
+/// Every folder of a walk from `dir`, shown as `shown`, passing over what
 /// the walk excludes; `left` is how many more entries the walk may list.
 fn walk_below(
-    dir: &OwnedFd,
+    dir: OwnedFd,
     shown: &Path,
-    depth: usize,
     wanted: Wanted,
     skips: &mut Skips<'_>,
     left: &mut usize,
     visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
-    if depth > wanted.depth {
-        anyhow::ensure!(
-            !wanted.refuse_deeper,
-            "{} is more than {} folders deep; nothing was imported",
-            shown.display(),
-            wanted.depth
-        );
-        return Ok(());
-    }
-    let mut entries: Vec<(OsString, FileType)> = Vec::new();
-    for entry in Dir::read_from(dir)? {
-        let entry = entry?;
-        let name = OsStr::from_bytes(entry.file_name().to_bytes());
-        if name == "." || name == ".." {
-            continue;
+    let mut traversal = Traversal { open: Vec::new() };
+    traversal.enter(dir, shown.to_path_buf(), wanted, left)?;
+    while traversal.step(wanted, skips, left, visit)? {}
+    Ok(())
+}
+
+/// The folders a walk holds open, deepest last, each with the entries of it
+/// still to visit, in name order (FIX 9474). The walk is this explicit stack,
+/// never a recursion, so it reaches every folder below where it started
+/// however deep the tree goes: no folder is passed over or refused for its
+/// depth. Each step visits one entry, so a walk can stop after any step and
+/// go on from there.
+struct Traversal {
+    open: Vec<OpenFolder>,
+}
+
+/// One folder a [`Traversal`] holds open: the folder, its path as shown, and
+/// its entries not visited yet.
+struct OpenFolder {
+    dir: OwnedFd,
+    shown: PathBuf,
+    entries: std::vec::IntoIter<(OsString, FileType)>,
+}
+
+impl Traversal {
+    /// Lists the open folder `dir`, shown as `shown`, and holds it open
+    /// deepest; `left` is how many more entries the walk may list.
+    fn enter(
+        &mut self,
+        dir: OwnedFd,
+        shown: PathBuf,
+        wanted: Wanted,
+        left: &mut usize,
+    ) -> anyhow::Result<()> {
+        let mut entries: Vec<(OsString, FileType)> = Vec::new();
+        for entry in Dir::read_from(&dir)? {
+            let entry = entry?;
+            let name = OsStr::from_bytes(entry.file_name().to_bytes());
+            if name == "." || name == ".." {
+                continue;
+            }
+            *left = left
+                .checked_sub(1)
+                .ok_or_else(|| WalkRefused::TooManyEntries {
+                    folder: shown.display().to_string(),
+                    most: wanted.entries,
+                })?;
+            let hidden = name.as_bytes().first() == Some(&b'.');
+            if wanted.hidden || !hidden {
+                entries.push((name.to_owned(), entry.file_type()));
+            }
         }
-        *left = left
-            .checked_sub(1)
-            .ok_or_else(|| WalkRefused::TooManyEntries {
-                folder: shown.display().to_string(),
-                most: wanted.entries,
-            })?;
-        let hidden = name.as_bytes().first() == Some(&b'.');
-        if wanted.hidden || !hidden {
-            entries.push((name.to_owned(), entry.file_type()));
-        }
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        self.open.push(OpenFolder {
+            dir,
+            shown,
+            entries: entries.into_iter(),
+        });
+        Ok(())
     }
-    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
-    for (name, listed) in entries {
-        let path = shown.join(&name);
+
+    /// Visits the next entry of the deepest open folder, entering it when it
+    /// is a folder, or closes that folder once it has none left. `false`
+    /// once no folder is open: the walk is done.
+    fn step(
+        &mut self,
+        wanted: Wanted,
+        skips: &mut Skips<'_>,
+        left: &mut usize,
+        visit: &mut dyn FnMut(&Path, File) -> anyhow::Result<()>,
+    ) -> anyhow::Result<bool> {
+        let Some(folder) = self.open.last_mut() else {
+            return Ok(false);
+        };
+        let Some((name, listed)) = folder.entries.next() else {
+            self.open.pop();
+            return Ok(true);
+        };
+        let path = folder.shown.join(&name);
         if (skips.excluded)(&path) {
-            continue;
+            return Ok(true);
         }
         // A symbolic link is neither a folder nor a file here.
-        match kind(dir, &name, listed)? {
+        match kind(&folder.dir, &name, listed)? {
             FileType::Directory => {
-                let child = openat(dir, name.as_os_str(), directory_flags(), Mode::empty())
+                let child = openat(&folder.dir, name.as_os_str(), directory_flags(), Mode::empty())
                     .map_err(|error| {
                         anyhow::anyhow!(
                             "{} changed while it was being read; nothing under it was imported ({error})",
                             path.display()
                         )
                     })?;
-                walk_below(&child, &path, depth + 1, wanted, skips, left, visit)?;
+                self.enter(child, path, wanted, left)?;
             }
             FileType::RegularFile if wanted.visits(&name) => {
-                match open_file(dir, &name, &path) {
+                match open_file(&folder.dir, &name, &path) {
                     Ok(file) => visit(&path, file)?,
                     // A Files walk holds such a file by its name; any other
                     // walk refuses.
@@ -349,8 +378,8 @@ fn walk_below(
             }
             _ => {}
         }
+        Ok(true)
     }
-    Ok(())
 }
 
 #[cfg(test)]

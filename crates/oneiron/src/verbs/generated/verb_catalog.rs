@@ -10667,7 +10667,7 @@ impl AgentVerb {
                 "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."
             }
             Self::VaultRecall => {
-                "Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata."
+                "Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens."
             }
             Self::VaultRetrievalAgingGet => {
                 "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."

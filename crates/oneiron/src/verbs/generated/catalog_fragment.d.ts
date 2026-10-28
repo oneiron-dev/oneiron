@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4230 declarations.
+// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4231 declarations.
 // Replies: 1090 fully typed, 121 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 105; unread shapes: none.
@@ -514,7 +514,7 @@ declare namespace Sdk {
   type QueryAffect = { valence: number; arousal: number; dominance: number };
   type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number };
   type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
   type InputKind = "text" | "image" | "audio";
   type EmbeddingMatchEvidence = { space: string; embedding_kind: InputKind; query_kind: InputKind; score: number; floor: number; strong: number; matched: boolean };
   type VerdictBasis = "calibrated_model" | "deterministic_fallback";
@@ -1444,7 +1444,8 @@ declare namespace Sdk {
   type FilesSourceView = { source: EntityId; folder: string; world: EntityId; machine: EntityId; include?: string[]; exclude: string[]; kind: string; attached_at: number; last_rescan_at?: number | null; files: number; name_only: number; retracted: number; proposed: number };
   type FilesRescanCounts = { landed: number; links: number; unchanged: number; superseded: number; proposed: number; retracted: number; restored: number; removed: number; name_only: number; failed: number; first_error?: string | null };
   type FilesLimitCrossed = { row: string; limit: number; observed: number };
-  type FilesRescanView = { source: EntityId; folder: string; counts?: FilesRescanCounts | null; error?: string | null; limits_crossed?: FilesLimitCrossed[] };
+  type FilesOriginalsUnkept = { files: number; first_error: string };
+  type FilesRescanView = { source: EntityId; folder: string; counts?: FilesRescanCounts | null; error?: string | null; limits_crossed?: FilesLimitCrossed[]; originals_unkept?: FilesOriginalsUnkept | null };
   type FilesSourceAttachAnswer = { world: FilesWorldView; source: FilesSourceView; rescan: FilesRescanView };
   type FilesSourceRescanRequest = { source?: EntityId | null };
   type FilesRescanAnswer = { rescans: FilesRescanView[] };
@@ -6431,7 +6432,7 @@ declare const vault: Sdk.VaultHost & {
     /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
     schedule(input: Sdk.QuestionScheduleRequest): Promise<Sdk.QuestionScheduleHead | null | StoredResult>;
   };
-  /** Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata. */
+  /** Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens. */
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
   /** Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest. */
   receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.VaultReceiptsPage | StoredResult>) & {
