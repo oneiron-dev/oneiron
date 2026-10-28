@@ -73,10 +73,13 @@ use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod secret_anchor;
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/roots/requests/run", post(run))
         .route("/recovery-kit/pad-access", post(pad_access))
+        .merge(secret_anchor::routes())
 }
 
 /// The material for one pending root request, as the target's caller
