@@ -65,7 +65,8 @@ pub(crate) struct Note {
     pub(crate) title: Option<String>,
     /// The frontmatter's `type` or `metadata.type`.
     pub(crate) label: Option<String>,
-    /// The frontmatter as it decodes, for the secret scan.
+    /// The frontmatter as it decodes, for the secret scan; each part of a
+    /// file carries its file's.
     pub(crate) decoded: String,
     links: Vec<Link>,
     /// For a continuation part, its file's path: the first part's note.
@@ -305,7 +306,7 @@ pub(super) fn read_text(
     let Front {
         title,
         label,
-        mut decoded,
+        decoded,
     } = match front.map(markdown::frontmatter) {
         Some(Some(found)) => found,
         unread => {
@@ -352,7 +353,7 @@ pub(super) fn read_text(
                 written_at,
                 title: title.clone(),
                 label: label.clone(),
-                decoded: std::mem::take(&mut decoded),
+                decoded: decoded.clone(),
                 links,
                 markdown,
                 part_of: None,
@@ -366,7 +367,10 @@ pub(super) fn read_text(
                 written_at,
                 title: Some(format!("{named} (part {number})")),
                 label: label.clone(),
-                decoded: String::new(),
+                // The part's title and kind come from the file's
+                // frontmatter, so its scan reads that frontmatter too (FIX
+                // 9475): a secret in it keeps every part out, not the first.
+                decoded: decoded.clone(),
                 links,
                 markdown,
                 part_of: Some(path.clone()),

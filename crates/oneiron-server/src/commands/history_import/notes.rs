@@ -255,6 +255,8 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
 
 /// A frontmatter `type` as stdout shows it: a short name as it is, anything
 /// else (prose, a long value) as `(other)`, so no note text reaches stdout.
+/// A name the release filter reads as a credential is `(other)` too (FIX
+/// 9475), whatever the vault's secret scan is set to.
 fn shown_label(label: Option<&str>) -> &str {
     match label {
         None => "",
@@ -262,7 +264,10 @@ fn shown_label(label: Option<&str>) -> &str {
             if label.len() <= 64
                 && label
                     .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b)) =>
+                    .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
+                && !oneiron::batch::export::redact_credentials(&mut serde_json::Value::from(
+                    label,
+                )) =>
         {
             label
         }
