@@ -1802,6 +1802,18 @@ rungs = ["voxcpm2:voxcpm2", "cartesia:sonic-3.6"]
 tiers = { "tts-live" = "voxcpm2:voxcpm2" }
 ```
 
+The engine can run that worker itself (FIX 8318). A `[models.workers]` row
+with `kind = "vox_cpm2"` on the `voxcpm2` provider installs the pinned
+weights, builds the worker's environment from the row's `env_lock`, starts
+it on the provider's `base_url`, counts it ready after one real render,
+restarts it after a crash and, when `idle_stop_secs` asks, stops it when
+idle. A row with `kind = "asr"` on a `local-openai-compat` provider does the
+same for the local Whisper worker, from an operator's weights manifest. A
+call to a managed worker's rung waits while it starts and holds it through
+its renders or its transcription; the worker runs one inference at a time.
+`deploy/voxcpm2/README.md` and `deploy/asr/README.md` give the rows. A
+provider with no worker row is called as it always was.
+
 The two-way voice cascade speaks and hears on these seats too. Bind voice
 tiers to rungs on the speech and transcribe seats:
 
