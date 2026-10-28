@@ -1,5 +1,7 @@
 //! Pinned ledger keys and receipt fields.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::scope::RoutingScopeKey;
@@ -107,7 +109,7 @@ pub(super) const fn invalid(reason: &'static str) -> Error {
 // Stored rows
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct StoredAggregate {
     pub(super) v: u8,
     /// Judged amendments folded in.
@@ -130,6 +132,9 @@ pub(super) struct StoredAggregate {
     /// The newest folded judgment's stamp: which other executor's head a
     /// new head carries its prior from.
     pub(super) last_at: u64,
+    /// Folded runs per anchored task outcome: the settled disposition of the
+    /// TASK each run worked (FIX 7828). A run with no anchor counts nowhere.
+    pub(super) outcomes: BTreeMap<String, u64>,
 }
 
 impl StoredAggregate {

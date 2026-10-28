@@ -1,5 +1,7 @@
 //! Routing scope and rung types.
 
+use std::collections::BTreeMap;
+
 use crate::edit_distance::delta::MEASUREMENT_ENGINE_VERSION;
 use crate::learning::{PriorOrigin, TypeRef};
 use crate::llm::ModelId;
@@ -139,6 +141,10 @@ pub struct WeightHint {
     /// The UNTESTED display mark: own runs below the prior's weight; equality
     /// clears it.
     pub untested: bool,
+    /// Own runs per anchored outcome of the TASK each worked, as the write
+    /// that settled it recorded (`completed`, `failed`, ...). Paired with the
+    /// cost, never blended into it. `None` when no own run has an anchor.
+    pub outcomes: Option<BTreeMap<String, u64>>,
     /// The share of the judge's attributed weight labelled
     /// [`environment`](crate::skill_attribution::AttributionVerdict::Environment)
     /// or [`preference_shift`](crate::skill_attribution::AttributionVerdict::PreferenceShift):

@@ -100,6 +100,9 @@ fn hint_of(executor: &str, peers: &[(String, StoredAggregate)]) -> Option<Weight
         runs,
         prior,
         untested,
+        outcomes: own
+            .filter(|row| !row.outcomes.is_empty())
+            .map(|row| row.outcomes.clone()),
         // The sound share of what the judge could attribute: an unclear share
         // holds, so it weighs neither for nor against the head.
         sound_share: own.and_then(|row| {
