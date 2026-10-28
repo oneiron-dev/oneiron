@@ -228,10 +228,13 @@ pub(crate) fn erase_row_provenance_in_txn(
     // carry them, on every platform (FIX 7076), as do an erased asker's ask
     // and briefing.
     if erase {
+        // The asks of the spawns it seated leave the code-run replay rows and
+        // the step starts that carry them first, while those calls still name
+        // it (FIX 9180).
+        let erased = std::collections::BTreeSet::from([*row]);
+        crate::code_run::erase_spawn_targets_in_txn(store, txn, &erased)?;
         crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
-            store,
-            txn,
-            &std::collections::BTreeSet::from([*row]),
+            store, txn, &erased,
         )?;
         crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
     }

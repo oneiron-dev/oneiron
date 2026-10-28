@@ -259,36 +259,68 @@ def kv_shapes(cache, frontier):
     return shapes
 
 
-def gather_kv(cache, pages, frontier):
-    """The KV `pages` hold for tokens [0, frontier), in sequence order, as
-    (name, host tensor) pairs. On the scheduler thread: it reads pages."""
+def gather_kv(cache, pages, frontier, start=0, stop=None):
+    """The KV pages [start, stop) of `pages` hold for tokens below
+    `frontier` (every page by default), in sequence order, as (name, host
+    tensor) pairs; the rows of consecutive ranges, joined in order, are the
+    whole range's. On the scheduler thread: it reads pages."""
     count = -(-frontier // PAGE_SIZE)
-    indices = [page.page_index for page in pages[:count]]
+    stop = count if stop is None else min(stop, count)
+    first, last = start * PAGE_SIZE, min(stop * PAGE_SIZE, frontier)
+    indices = [page.page_index for page in pages[start:stop]]
     out = []
     for key, layer in cache.layers.items():
         index = torch.tensor(indices, dtype=torch.long, device=layer.qk.device)
         for field in KV_FIELDS:
             source = getattr(layer, field)
-            rows = source.index_select(0, index).reshape(count * PAGE_SIZE, source.shape[-1])[:frontier]
+            rows = source.index_select(0, index).reshape(len(indices) * PAGE_SIZE, source.shape[-1])[:last - first]
             out.append((f"kv.{layer_name(key)}.{field}", rows.to("cpu")))
     return out
 
 
-def fill_kv(cache, pages, frontier, tensors):
-    """Writes the KV rows `tensors` hold for tokens [0, frontier) into
-    `pages`, in sequence order. On the scheduler thread: it writes pages."""
+def fill_kv(cache, pages, frontier, tensors, start=0, stop=None):
+    """Writes the KV rows `tensors` hold for tokens below `frontier` into
+    pages [start, stop) of `pages` (every page by default), in sequence
+    order. On the scheduler thread: it writes pages."""
     full, tail = divmod(frontier, PAGE_SIZE)
+    stop = len(pages) if stop is None else stop
     indices = [page.page_index for page in pages]
+    whole = list(range(start, min(stop, full)))
     for key, layer in cache.layers.items():
         device = layer.qk.device
-        index = torch.tensor(indices[:full], dtype=torch.long, device=device)
+        index = torch.tensor([indices[n] for n in whole], dtype=torch.long, device=device)
         for field in KV_FIELDS:
             target = getattr(layer, field)
-            rows = tensors[f"kv.{layer_name(key)}.{field}"].to(device)
-            if full:
-                target.index_copy_(0, index, rows[:full * PAGE_SIZE].view(full, PAGE_SIZE, -1))
-            if tail:
-                target[indices[full], :tail].copy_(rows[full * PAGE_SIZE:])
+            source = tensors[f"kv.{layer_name(key)}.{field}"]
+            if whole:
+                rows = source[whole[0] * PAGE_SIZE:(whole[-1] + 1) * PAGE_SIZE].to(device)
+                target.index_copy_(0, index, rows.view(len(whole), PAGE_SIZE, -1))
+            if tail and start <= full < stop:
+                target[indices[full], :tail].copy_(source[full * PAGE_SIZE:].to(device))
+
+
+class KvCopy:
+    """An export's copy in progress: its header fields, the tensors it
+    takes whole (tokens, recurrent state), and the KV rows gathered so far,
+    a range of pages at a time in sequence order."""
+
+    def __init__(self, fields, tensors, pages, frontier):
+        self.fields = fields
+        self.whole = tensors
+        self.pages = pages
+        self.frontier = frontier
+        self.count = -(-frontier // PAGE_SIZE)
+        self.next = 0
+        self.parts = {}
+
+    def add(self, pairs):
+        for name, rows in pairs:
+            self.parts.setdefault(name, []).append(rows)
+
+    def tensors(self):
+        """Every tensor of the snapshot, each KV field's ranges joined."""
+        return self.whole + [(name, rows[0] if len(rows) == 1 else torch.cat(rows))
+                             for name, rows in self.parts.items()]
 
 
 def clear_pages(cache, pages):

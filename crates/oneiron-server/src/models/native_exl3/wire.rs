@@ -17,11 +17,25 @@
 //! snapshot. An export's answer passes the worker's sealed snapshot region
 //! on its own frame's first byte (`transport.rs` reads it with its
 //! descriptor), and an import's input is one as any input region is.
+//!
+//! Codec v1.3 (`oneiron::llm::SCHEDULING_SCHEMA_MINOR`) is scheduling: a
+//! call's `work_class`, `priority`, `deadline` and `admission` grant at its
+//! `generate` body's top level ([`generate_body`]), never in its `params`;
+//! the `schedule` op on the call's own connection; and the worker's
+//! `admitted`, `schedule_ack` and `scheduling` receipts. A worker advertises
+//! it as `capabilities.scheduling`; one that does not reads none of it.
+use std::time::Instant;
+
+use oneiron::llm::CallSchedule;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 /// The codec both sides speak.
 pub(super) const SCHEMA_VERSION: u64 = 1;
+
+/// The error code of a call's `final` whose Job the worker could not
+/// release: it keeps the call's pages, place and reservation charged.
+pub(super) const RELEASE_FAILED: &str = "release_failed";
 
 /// A frame's length prefix.
 pub(super) const HEADER_BYTES: usize = 8;
@@ -96,19 +110,25 @@ pub(super) fn split_request(body: &JsonValue) -> (JsonValue, JsonValue) {
     (JsonValue::Object(conversation), JsonValue::Object(params))
 }
 
-/// The `generate` body: the input region's description and the call's
-/// fields. `buffer_id` names the region on this connection.
+/// The `generate` body: the input region's description, the call's fields,
+/// and with `schedule` its scheduling at the top level, its deadline as the
+/// microseconds left now. `buffer_id` names the region on this connection.
 pub(super) fn generate_body(
     buffer_id: u64,
     length: u64,
     params: JsonValue,
     stream: bool,
+    schedule: Option<&CallSchedule>,
 ) -> JsonValue {
-    json!({
+    let mut body = json!({
         "input": input(buffer_id, length),
         "params": params,
         "stream": stream,
-    })
+    });
+    if let (Some(schedule), Some(fields)) = (schedule, body.as_object_mut()) {
+        fields.extend(schedule.body_fields(Instant::now()));
+    }
+    body
 }
 
 /// An input region's description: one `chat_json` region, the first

@@ -31,6 +31,16 @@ refused `snapshot_busy`), writes them, and stages the result. The layer
 advertises codec minor 2 and its snapshot format only where both work: a
 quantized KV layout, a portable recurrent state, a known model, tokenizer,
 template and runtime, and a sealed memfd to pass.
+
+Scheduling (R4, `exl3_executor.py`). A commit, an export and an import
+carry the class, priority and deadline their op names. A commit's Job is
+the executor's, its prefill bounded by its class; a background commit
+starts only where the class policy lets background work in. A background
+transfer copies its pages TRANSFER_CHUNK_PAGES at a time while foreground
+work is present, each chunk a scheduler chore with rounds between them, its
+checkpoint or its pages checked again before each; any other copies at
+once, as before. The snapshot format and the publication are the same
+either way.
 """
 import time
 
@@ -308,14 +318,36 @@ class SessionLayer(Registry):
             self.leaving.discard(session)
         self.release(release)
 
-    # Snapshots: the copies run on the scheduler thread.
+    # Snapshots: the copies run on the scheduler thread, at once or in
+    # chunks of pages (exl3_executor.TRANSFER_CHUNK_PAGES), each chunk a
+    # chore of its own with rounds between them.
 
-    def export_checkpoint(self, session, checkpoint):
-        """`session.export`'s copy: the header fields and host tensors of
-        `checkpoint`, while it is still `session`'s published checkpoint,
-        for the op to encode off this thread. The recurrent state is the
-        latest snapshot at or below its frontier: exact at the frontier for
-        GDN, the page boundary below it for an SWA frontier between two."""
+    def export_checkpoint(self, session, checkpoint, work):
+        """`session.export`'s copy, from the op's thread: the header fields
+        and host tensors of `checkpoint`, for the op to encode. Copied on the
+        scheduler thread at once, or, while the executor chunks a transfer
+        of `work`'s class (`Executor.transfer_chunk`), a chunk of pages per
+        chore, the checkpoint checked again before each: one that stops
+        serving between them refuses the export, a cache miss to the host.
+        The format is the same either way."""
+        run = self.scheduler.run_owned
+        progress = {"copy": None}
+
+        def step():
+            # One chore: the header, tokens and state first, then a chunk
+            # of pages; True once every page is copied.
+            copy = progress["copy"]
+            if copy is None:
+                copy = progress["copy"] = self._export_begin(session, checkpoint)
+            self._export_pages(session, checkpoint, copy, self.scheduler.executor.transfer_chunk(work))
+            return copy.next >= copy.count
+
+        while not run(step):
+            pass
+        copy = progress["copy"]
+        return copy.fields, copy.tensors()
+
+    def _export_check(self, session, checkpoint):
         with self.lock:
             if session.dropping:
                 raise Refused(UNKNOWN_SESSION, "the session was dropped")
@@ -323,18 +355,32 @@ class SessionLayer(Registry):
                 raise Refused(LOST_RESIDENCY, "the session's checkpoint is no longer held")
             if session.published is not checkpoint:
                 raise Refused(STALE_GENERATION, "another checkpoint is published")
-            anchor = checkpoint.anchor
-            below = [held for held in anchor.snapshots if held.position <= anchor.frontier]
+
+    def _export_begin(self, session, checkpoint):
+        """The export's header fields, tokens and recurrent state, while
+        `checkpoint` is still `session`'s published checkpoint. The
+        recurrent state is the latest snapshot at or below its frontier:
+        exact at the frontier for GDN, the page boundary below it for an SWA
+        frontier between two."""
+        self._export_check(session, checkpoint)
+        anchor = checkpoint.anchor
+        below = [held for held in anchor.snapshots if held.position <= anchor.frontier]
         if not below:
             raise Refused(SNAPSHOT_INCOMPATIBLE, "the checkpoint holds no recurrent state to carry")
         cache = self.generator.cache
         state_fields, state_tensors = state.capture_portable(cache, below[-1])
-        tensors = [("tokens", anchor.tokens.to(torch.int64).contiguous())]
-        tensors += snapshot.gather_kv(cache, anchor.owner.pages, anchor.frontier)
-        tensors += state_tensors
+        tensors = [("tokens", anchor.tokens.to(torch.int64).contiguous())] + state_tensors
         fields = {"checkpoint": checkpoint.ref(), "compatibility": self.compatibility,
                   "token_count": anchor.frontier, "kv": kv_extent(anchor.frontier), "state": state_fields}
-        return fields, tensors
+        return snapshot.KvCopy(fields, tensors, anchor.owner.pages, anchor.frontier)
+
+    def _export_pages(self, session, checkpoint, copy, chunk):
+        """The KV of the export's next `chunk` pages (all that are left for
+        None), its checkpoint checked again first."""
+        self._export_check(session, checkpoint)
+        stop = copy.count if chunk is None else min(copy.count, copy.next + chunk)
+        copy.add(snapshot.gather_kv(self.generator.cache, copy.pages, copy.frontier, copy.next, stop))
+        copy.next = stop
 
     def decode_import(self, payload, ref):
         """The snapshot `payload` as this worker rebuilds it, on any thread:
@@ -363,15 +409,52 @@ class SessionLayer(Registry):
             raise Refused(SNAPSHOT_INCOMPATIBLE, f"the snapshot holds tensors this worker does not: {sorted(tensors)}")
         return snapshot.Rebuilt(tokens, recurrent, kv, ref["head"], ref["parent"])
 
-    def import_checkpoint(self, session, op_id, generation, rebuilt, size, sha256):
-        """`session.import` here: `rebuilt` written into fresh pages and
-        staged as `session`'s successor, under the same checks the op made.
-        Refused `snapshot_busy` when its pages do not fit beside what is
-        reserved and held, idle sessions evicted first."""
+    def import_checkpoint(self, session, op_id, generation, rebuilt, size, sha256, work):
+        """`session.import` here, from the op's thread: `rebuilt` written
+        into fresh pages and staged as `session`'s successor, under the same
+        checks the op made. Refused `snapshot_busy` when its pages do not
+        fit beside what is reserved and held, idle sessions evicted first.
+        The pages are written on the scheduler thread at once, or, while the
+        executor chunks a transfer of `work`'s class, a chunk per chore; the
+        session holds them meanwhile (`importing`), and an eviction or a
+        drop between chunks refuses the import."""
         frontier = int(rebuilt.tokens.numel())
         count = -(-frontier // PAGE_SIZE)
+        run = self.scheduler.run_owned
+        progress = {"anchor": None, "written": 0}
+
+        def step():
+            # One chore: the pages first, then a chunk of KV, then the
+            # stage once every page is written; None until then.
+            anchor = progress["anchor"]
+            if anchor is None:
+                anchor = progress["anchor"] = self._import_begin(session, generation, rebuilt, count)
+            progress["written"] = self._import_pages(session, anchor, rebuilt, progress["written"],
+                                                     self.scheduler.executor.transfer_chunk(work))
+            if progress["written"] < count:
+                return None
+            return self._import_stage(session, op_id, generation, anchor, rebuilt, size, sha256)
+
+        try:
+            while True:
+                answer = run(step)
+                if answer is not None:
+                    return answer
+        except BaseException:
+            anchor = progress["anchor"]
+            if anchor is not None and not self.scheduler.post(lambda: self._import_abandon(session, anchor)):
+                with self.lock:
+                    if session.importing is anchor:
+                        session.importing = None
+            raise
+
+    def _import_begin(self, session, generation, rebuilt, count):
+        """The import's fresh pages, held by `session` while they are
+        written, with their tokens and zeroed draft KV."""
         with self.lock:
             self.import_target(session, generation)
+            if session.importing is not None:
+                raise Refused(STALE_GENERATION, "another import runs on this session")
         if not self.scheduler.room_for(count):
             raise Refused(SNAPSHOT_BUSY, f"the snapshot's {count} pages do not fit beside what runs")
         pages, _, _, _ = self.pagetable.allocate_pages([], count, None)
@@ -383,27 +466,54 @@ class SessionLayer(Registry):
         except BaseException:
             self.release([anchor])
             raise
-        refusal = None
         with self.lock:
+            session.importing = anchor
+        return anchor
+
+    def _import_pages(self, session, anchor, rebuilt, start, chunk):
+        """Writes the KV of the import's next `chunk` pages from `start`
+        (all that are left for None), once the session still holds them;
+        returns where the next chunk starts."""
+        with self.lock:
+            if session.dropping:
+                raise Refused(UNKNOWN_SESSION, "the session was dropped")
+            if anchor.released or session.importing is not anchor:
+                raise Refused(LOST_RESIDENCY, "the import's pages were evicted while it was written")
+        pages = anchor.owner.pages
+        stop = len(pages) if chunk is None else min(len(pages), start + chunk)
+        snapshot.fill_kv(self.generator.cache, pages, int(rebuilt.tokens.numel()), rebuilt.kv, start, stop)
+        return stop
+
+    def _import_stage(self, session, op_id, generation, anchor, rebuilt, size, sha256):
+        """Stages the written import as `session`'s successor and answers."""
+        with self.lock:
+            if anchor.released or session.importing is not anchor:
+                raise Refused(LOST_RESIDENCY, "the import's pages were evicted while it was written")
+            session.importing = None
             try:
                 self.import_target(session, generation)
-            except Refused as refused:
-                refusal = refused
-            else:
-                checkpoint = Checkpoint(anchor, rebuilt.head, rebuilt.parent)
-                session.successor = checkpoint
-                answer = {"staged": checkpoint.ref(), "imported_bytes": size, "snapshot_sha256": sha256,
-                          "residency": self.residency(session)}
-                self.remember(session, op_id, generation, answer)
-        if refusal is not None:
-            self.release([anchor])
-            raise refusal
+            except Refused:
+                session.importing = anchor
+                raise
+            checkpoint = Checkpoint(anchor, rebuilt.head, rebuilt.parent)
+            session.successor = checkpoint
+            answer = {"staged": checkpoint.ref(), "imported_bytes": size, "snapshot_sha256": sha256,
+                      "residency": self.residency(session)}
+            self.remember(session, op_id, generation, answer)
         return answer
 
+    def _import_abandon(self, session, anchor):
+        """An import that stopped: the pages it held go."""
+        with self.lock:
+            if session.importing is anchor:
+                session.importing = None
+        self.release([anchor])
+
     def place(self, pages, rebuilt):
-        """Writes `rebuilt`'s tokens and KV into fresh `pages`, in sequence
-        order, and zeroes their draft KV, which the draft rebuilds from the
-        frontier on. No page is a revert candidate once written to."""
+        """Writes `rebuilt`'s tokens into fresh `pages`, in sequence order,
+        and zeroes their draft KV, which the draft rebuilds from the frontier
+        on; their target KV is written next (`snapshot.fill_kv`). No page is
+        a revert candidate once written to."""
         tokens = rebuilt.tokens
         for page in pages:
             page.can_revert = False
@@ -413,7 +523,6 @@ class SessionLayer(Registry):
             page.sequence[:, :valid].copy_(tokens[start:start + valid].unsqueeze(0))
             page.kv_position = valid
             page.prev_hash = pages[index - 1].phash if index else None
-        snapshot.fill_kv(self.generator.cache, pages, int(tokens.numel()), rebuilt.kv)
         draft = getattr(self.generator, "draft_cache", None)
         if draft is not None:
             snapshot.clear_pages(draft, pages)
@@ -427,16 +536,27 @@ class SessionLayer(Registry):
     def running_commits(self):
         return len(self.running)
 
+    def foreground_commits(self):
+        """Commits of foreground work the host has not paused, waiting or
+        running: foreground work the executor sees present."""
+        with self.lock:
+            commits = list(self.waiting) + list(self.running.values())
+        return sum(1 for commit in commits if commit.work.foreground() and not commit.work.yielded)
+
+    def background_commits(self):
+        """Running commits of background work."""
+        return sum(1 for commit in list(self.running.values()) if not commit.work.foreground())
+
     def start_commit(self, commit):
-        """Enqueues the head commit's Job; False when it could not start (it
-        has been answered)."""
+        """Enqueues the head commit's Job, with its scheduling; False when it
+        could not start (it has been answered)."""
         with self.lock:
             if not self.waiting or self.waiting[0] is not commit:
                 return False
             self.waiting.pop(0)
         try:
             job = CommitJob(input_ids=commit.ids.unsqueeze(0), max_new_tokens=1,
-                            identifier=("session-commit", commit.op_id), plan=commit.plan)
+                            identifier=("session-commit", commit.op_id), plan=commit.plan, work=commit.work)
             serial = self.generator.enqueue(job)
         except Exception as error:
             self.finish_commit(commit, refusal=Refused(LOST_RESIDENCY, f"the commit could not start: {error}"))

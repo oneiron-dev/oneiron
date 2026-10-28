@@ -204,7 +204,13 @@ impl HostSelfDispatcher<'_> {
             ask,
             context,
         };
-        let view = AgentDispatcher::new(vault).launch_planned_spawn_for_attempt(
+        // FIX 9180: each seat the plan and its launch resolve is noted as it
+        // resolves; an erased target's answer keeps no ask (its row scrubs
+        // it), whether or not a seat is left to note.
+        let capture = &self.spawn_capture;
+        let observe = move |seat| capture.observe(seat);
+        let dispatcher = AgentDispatcher::new(vault).observing_seats(&observe);
+        let view = dispatcher.launch_planned_spawn_for_attempt(
             &leased,
             &self.actor.entity_ref(),
             &request,
@@ -287,6 +293,8 @@ impl HostSelfDispatcher<'_> {
             },
             at,
         )?;
+        // FIX 9180: the plan's seat, noted before anything below can fail.
+        self.spawn_capture.observe(receipt.plan.agent_def);
         // FIX 9181: the plan names the asker the host authenticated, so that
         // asker's erase takes the ask it carries.
         receipt.asker_ref = Some(self.actor.entity_ref());
