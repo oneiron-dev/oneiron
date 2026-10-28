@@ -5,12 +5,13 @@
 //! the vault's stored tree in force holds exactly, each measured cell the
 //! plan reads (solo reliability, each pattern skill's reliability, each
 //! width's anchored team outcomes) reads its own evidence plus `q` times the
-//! same cell keyed at the vault tree's type for that node, with `q` the
-//! shared fade ([`donor_weight`]). The primary read keeps its prior once,
-//! a borrowed backoff included; only the donor cell's measured outcomes are
-//! added, never its prior, and never as own runs. The blend lives in the
-//! plan's evidence alone: nothing is stored. A donor read that fails drops
-//! the whole overlay, and the plan reads what it read before.
+//! same cell keyed in the vault's scope at the vault tree's type for that
+//! node (FIX 6038), with `q` the shared fade ([`donor_weight`]). The primary
+//! read keeps its prior once, a borrowed backoff included; only the donor
+//! cell's measured outcomes are added, never its prior, and never as own
+//! runs. The blend lives in the plan's evidence alone: nothing is stored.
+//! A donor read that fails drops the whole overlay, and the plan reads what
+//! it read before.
 
 use std::collections::BTreeMap;
 
@@ -30,7 +31,7 @@ use super::super::task_type_tree::load_team_type_tree_in_txn;
 use super::width_outcomes::WidthOutcomes;
 
 /// What a spawn's stamp borrows: the vault tree's learning type for the same
-/// node, and the weight its measured outcomes carry.
+/// node, in the vault's scope, and the weight its measured outcomes carry.
 pub(super) struct Donor {
     type_ref: TypeRef,
     weight: f64,
@@ -43,15 +44,16 @@ impl Donor {
     /// donor's exact live path, or a vault tree that does not read; the plan
     /// then reads its own cells alone.
     ///
-    /// Key alias: when the project's type for the node and the vault tree's
-    /// are one learning type (the same node at the same version), the own
-    /// cell and the donor cell are one key, and the own read already holds
-    /// every run the donor would lend. Nothing is lent, so no run counts
-    /// twice.
+    /// Key alias: when the run's scope and type for the node and the
+    /// donor's (the vault scope at the vault tree's type) are one learning
+    /// key, the own read already holds every run the donor would lend.
+    /// Nothing is lent, so no run counts twice. A project's cell is never
+    /// the vault's key, whatever its type's version.
     pub(super) fn for_stamp(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         tree: &TaskTypeTree,
+        project: Option<EntityId>,
         own: &TypeRef,
     ) -> Option<Self> {
         // A vault tree borrows from nothing; it needs no second load.
@@ -61,7 +63,7 @@ impl Donor {
         let donor = load_team_type_tree_in_txn(vault, txn, None).ok()?;
         let weight = donor_weight(tree, &own.node_id, &donor).filter(|weight| *weight > 0.0)?;
         let type_ref = TypeRef::from(&donor.type_ref(&own.node_id));
-        (type_ref != *own).then_some(Self { type_ref, weight })
+        (project.is_some() || type_ref != *own).then_some(Self { type_ref, weight })
     }
 
     /// The solo rates and pattern candidates with the donor lent, staged
@@ -94,25 +96,20 @@ impl Donor {
         }
         for (model, card) in cards {
             for entry in &card.patterns {
-                let cell = pattern_cell(entry.skill, &card.executor_mix, &card.type_ref);
+                let cell = pattern_cell(
+                    entry.skill,
+                    &card.executor_mix,
+                    card.project,
+                    &card.type_ref,
+                );
                 if let Some(rate) = self.rate(vault, txn, &cell, &entry.read)?
                     && let Some(candidate) = admitted(&mut patterns, entry.skill)
                 {
                     candidate.rates.insert(model.clone(), rate);
                 }
             }
-            for ((skill, width), (wins, losses)) in outcomes.folded(&self.type_ref, card) {
-                if let Some(candidate) = admitted(&mut patterns, skill) {
-                    let lent = candidate
-                        .borrowed_widths
-                        .entry(width)
-                        .or_default()
-                        .entry(model.clone())
-                        .or_insert((0.0, 0.0));
-                    lent.0 += self.weight * wins;
-                    lent.1 += self.weight * losses;
-                }
-            }
+            let lent = outcomes.folded(None, &self.type_ref, card);
+            lend_widths(&mut patterns, model, lent, self.weight);
         }
         Ok((rates, patterns))
     }
@@ -120,8 +117,10 @@ impl Donor {
     /// `read`, the primary read of `cell`, with the donor cell's measured
     /// outcomes added at the borrow weight: `mean = (a + q*w) / (a + b +
     /// q*(w + l))` over the read's Beta `(a, b)`, own runs unchanged, and
-    /// `q*(w + l)` more weight. `None` where the donor cell has no own head,
-    /// or `read` is no success estimate; the primary read then stands.
+    /// `q*(w + l)` more weight. The donor cell is `cell` with both its type
+    /// and its scope replaced by the vault's. `None` where the donor cell
+    /// has no own head, `read` borrowed it already, or `read` is no success
+    /// estimate; the primary read then stands.
     fn rate(
         &self,
         vault: &Vault,
@@ -132,7 +131,14 @@ impl Donor {
         let EstimateValue::Beta { alpha, beta } = &read.estimate.value else {
             return Ok(None);
         };
-        let donor = cell.with_type(Some(self.type_ref.clone()));
+        let donor = cell
+            .with_type(Some(self.type_ref.clone()))
+            .with_project(None);
+        // A read that borrowed the donor cell already holds its runs as its
+        // prior; lending them again would count them twice.
+        if read.borrowed_from.as_ref() == Some(&donor) {
+            return Ok(None);
+        }
         let Some((wins, losses)) = measured_outcomes_in_txn(vault, txn, &donor)? else {
             return Ok(None);
         };
@@ -142,6 +148,29 @@ impl Donor {
             own_runs: if read.own { read.estimate.runs } else { 0.0 },
             weight_runs: read.estimate.runs + read.estimate.prior.weight_runs + wins + losses,
         }))
+    }
+}
+
+/// Adds `mass`, borrowed `(wins, losses)` per `(skill, width)`, at `weight`
+/// to each admitted candidate's borrowed widths on `model`: mass that never
+/// counts as own runs.
+pub(super) fn lend_widths(
+    patterns: &mut [PatternCandidate],
+    model: &ModelId,
+    mass: BTreeMap<(EntityId, u32), (f64, f64)>,
+    weight: f64,
+) {
+    for ((skill, width), (wins, losses)) in mass {
+        if let Some(candidate) = admitted(patterns, skill) {
+            let lent = candidate
+                .borrowed_widths
+                .entry(width)
+                .or_default()
+                .entry(model.clone())
+                .or_insert((0.0, 0.0));
+            lent.0 += weight * wins;
+            lent.1 += weight * losses;
+        }
     }
 }
 

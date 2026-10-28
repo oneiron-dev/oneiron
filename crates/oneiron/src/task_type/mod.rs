@@ -21,6 +21,7 @@
 //! retrieval — nothing here reads or writes it.
 
 mod placement;
+mod promote;
 mod split;
 
 use std::collections::BTreeMap;
@@ -41,8 +42,7 @@ pub use placement::{
 /// OF-397): re-exported from `learning`, never redefined here.
 /// [`TaskTypeRef`] is the spawn/task/receipt stamp spelling of the same
 /// `{node_id, tree_version}` pair; the `From` impls below convert between
-/// them (the receipt stamp keeps a `u64` version, the learning cell a
-/// `u32`).
+/// them losslessly (both keep a `u64` version, FIX 4432).
 pub use crate::learning::{ROOT_TYPE_NODE, TypeRef};
 
 /// The seven seed node ids, all children of the root, in canon order.
@@ -752,7 +752,8 @@ impl TaskTypeTree {
 
     /// Offers one leaf of this project fork back to `upstream`: promoted
     /// only when its held-out wins outnumber its held-out losses over at
-    /// least [`PROMOTE_MIN_HELD_OUT_RUNS`] runs ("useful upstream?").
+    /// least [`PROMOTE_MIN_HELD_OUT_RUNS`] runs ("useful upstream?"). A live
+    /// upstream twin of the leaf's split is the promoted type (FIX 9052).
     pub fn promote_leaf_to(&self, upstream: &mut Self, node_id: &str) -> Result<PromotionOutcome> {
         let leaf = self
             .nodes
@@ -768,6 +769,9 @@ impl TaskTypeTree {
         if upstream.nodes.contains_key(node_id) {
             return Ok(PromotionOutcome::Promoted(upstream.type_ref(node_id)));
         }
+        if let Some(twin) = upstream.live_split_twin(leaf) {
+            return Ok(PromotionOutcome::Promoted(upstream.type_ref(&twin)));
+        }
         upstream.nodes.insert(node_id.to_owned(), leaf.clone());
         upstream.version = upstream.version.saturating_add(1);
         Ok(PromotionOutcome::Promoted(upstream.type_ref(node_id)))
@@ -778,14 +782,14 @@ impl From<&TaskTypeRef> for TypeRef {
     fn from(stamp: &TaskTypeRef) -> Self {
         Self {
             node_id: stamp.node_id.clone(),
-            tree_version: u32::try_from(stamp.tree_version).unwrap_or(u32::MAX),
+            tree_version: stamp.tree_version,
         }
     }
 }
 
 impl From<&TypeRef> for TaskTypeRef {
     fn from(type_ref: &TypeRef) -> Self {
-        Self::new(type_ref.node_id.clone(), u64::from(type_ref.tree_version))
+        Self::new(type_ref.node_id.clone(), type_ref.tree_version)
     }
 }
 
@@ -857,8 +861,8 @@ impl TypeTree {
     }
 
     #[must_use]
-    pub fn version(&self) -> u32 {
-        u32::try_from(self.inner.version).unwrap_or(u32::MAX)
+    pub const fn version(&self) -> u64 {
+        self.inner.version
     }
 
     /// The unsure placement in this tree: its root.
@@ -953,12 +957,9 @@ pub fn type_tree(vault: &crate::Vault, project: Option<EntityId>) -> Result<Type
 pub fn type_tree_at(
     vault: &crate::Vault,
     project: Option<EntityId>,
-    version: u32,
+    version: u64,
 ) -> Result<Option<TypeTree>> {
-    Ok(
-        crate::agent_dispatch::load_team_type_tree_at(vault, project, u64::from(version))?
-            .map(TypeTree::from),
-    )
+    Ok(crate::agent_dispatch::load_team_type_tree_at(vault, project, version)?.map(TypeTree::from))
 }
 
 /// Missing is invalid, never untyped; an unknown node, a merged-away one,

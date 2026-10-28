@@ -33,9 +33,9 @@ use crate::{EntityId, Vault};
 
 pub use spawn::{SpawnAskKnob, SpawnIntentReply, SpawnIntentRequest, spawn_as_owner};
 
-/// The highest version an authored tree may carry: the learning cell's type
-/// stamp holds a `u32` version, so a higher one could not be read back as
-/// the same stamp.
+/// The highest version an authored tree may carry: the fixture format's
+/// bound (Engine 10-19 e). Learning stamps keep a `u64` version (FIX 4432),
+/// so this bounds authored fixtures alone, never a placed stamp.
 pub const FIXTURE_TREE_VERSION_MAX: u64 = u32::MAX as u64;
 
 /// What an authored structure must be, said on every refusal of one.
@@ -57,13 +57,13 @@ impl From<&TaskTypeRef> for TypeStamp {
     }
 }
 
-/// A learning, team or critic stamp holds a `u32` version: widened here, it
-/// reads exactly as stored, never saturated.
+/// A learning, team or critic stamp holds the same `u64` version (FIX
+/// 4432): it reads exactly as stored.
 impl From<&TypeRef> for TypeStamp {
     fn from(stamp: &TypeRef) -> Self {
         Self {
             node_id: stamp.node_id.clone(),
-            tree_version: u64::from(stamp.tree_version),
+            tree_version: stamp.tree_version,
         }
     }
 }
@@ -429,6 +429,9 @@ pub struct LearningCellView {
     pub executor: String,
     pub type_ref: TypeStamp,
     pub axis: String,
+    /// The receipt's frozen project the cell counts; `None` is the vault.
+    #[serde(default)]
+    pub project: Option<EntityId>,
 }
 
 /// The cell a borrowed prior came from, with its own qualifiers.
@@ -442,6 +445,9 @@ pub struct BorrowedCellView {
     pub type_ref: Option<TypeStamp>,
     #[serde(default)]
     pub axis: Option<String>,
+    /// The scope the borrowed cell counts: a project's, or the vault's.
+    #[serde(default)]
+    pub project: Option<EntityId>,
 }
 
 /// One admitted evidence row of the cell.
@@ -556,7 +562,7 @@ pub fn pin_tree_as(
     if !(1..=FIXTURE_TREE_VERSION_MAX).contains(&version) {
         return Err(MemoryError::bad_request_with(
             format!("tree_version {version} is outside 1..={FIXTURE_TREE_VERSION_MAX}"),
-            &["An authored tree's version is at least 1 and fits a u32 type stamp."],
+            &["An authored tree's version is at least 1 and within the fixture format's bound."],
         ));
     }
     check_structure(&input.nodes)?;
