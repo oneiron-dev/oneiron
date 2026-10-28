@@ -1,6 +1,6 @@
 //! Scoped clustering and authenticated judgments through the existing topology gate.
 
-use super::operation::{id, references, subject_ref};
+use super::operation::{Resolve, references, subject_ref};
 use super::*;
 use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{
@@ -103,16 +103,12 @@ impl Memory<'_> {
                 cohorts.push(ClusterCohort {
                     cohort_id: *cohort.cohort_id.as_bytes(),
                     partition: ClusterPartition {
-                        subject_ref: subject_ref(&cohort.partition.subject, &project)?,
+                        subject_ref: subject_ref(&cohort.partition.subject, &project),
                         predicate_root: cohort.partition.predicate_root,
-                        world_ref: cohort.partition.world.as_ref().map(project).transpose()?,
-                        facet_ref: cohort.partition.facet.as_ref().map(project).transpose()?,
+                        world_ref: cohort.partition.world.as_ref().map(project),
+                        facet_ref: cohort.partition.facet.as_ref().map(project),
                     },
-                    member_refs: cohort
-                        .member_ids
-                        .iter()
-                        .map(project)
-                        .collect::<MemoryResult<_>>()?,
+                    member_refs: cohort.member_ids.iter().map(project).collect(),
                     cohesion: cohort.cohesion,
                 });
             }
@@ -123,11 +119,13 @@ impl Memory<'_> {
     }
 
     /// `id` as the short ref the vault keeps for it in `txn`'s snapshot, else
-    /// its hex (FIX 9937).
-    fn cluster_ref_in_txn(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> MemoryResult<String> {
-        Ok(self
-            .short_ref_of_in_txn(txn, id)?
-            .unwrap_or_else(|| id.to_hex()))
+    /// its hex (FIX 9937). Outward only: a short-ref index that does not read
+    /// answers the hex the id already is, never an error.
+    fn cluster_ref_in_txn(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> String {
+        self.short_ref_of_in_txn(txn, id)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| id.to_hex())
     }
 
     /// The caller's own proof or its own named Grant. No engine-seal fallback.
@@ -137,13 +135,14 @@ impl Memory<'_> {
         &self,
         owner: Option<&AuthenticatedOwner>,
         grant: Option<&str>,
+        resolve: Resolve<'_>,
     ) -> MemoryResult<ActAuthority> {
         match (owner, grant) {
             (Some(owner), None) => Ok(ActAuthority::Owner(owner.clone(), self.owner_surface())),
             (None, Some(grant)) if self.actor_class() == EdgeActorClass::Agent => {
                 Ok(ActAuthority::Agent(self.vault().granted_act(
                     self.actor(),
-                    id(grant)?,
+                    resolve(grant)?,
                     OwnerActKind::TopologySeal,
                 )?))
             }
@@ -207,7 +206,7 @@ impl Memory<'_> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let resolve = |reference: &str| self.resolve_ref_in_lane(&lane, reference);
         let op = operation.into_engine(&resolve)?;
-        let authority = self.cluster_authority(owner, grant)?;
+        let authority = self.cluster_authority(owner, grant, &resolve)?;
         let seal = TopologySeal::decision(authority.clone());
         self.with_verified_actor_write_txn(|txn| {
             let write = self.cluster_writer_in_txn(txn, &authority, approval)?;
@@ -221,13 +220,13 @@ impl Memory<'_> {
             )?;
             match result {
                 IdentityOpOutcome::Applied { event, .. } => Ok(ClusterTopologyReceipt {
-                    receipt_ref: self.cluster_ref_in_txn(txn, &event)?,
+                    receipt_ref: self.cluster_ref_in_txn(txn, &event),
                     proposal_ref: None,
                     outcome: ClusterTopologyOutcome::Applied,
                 }),
                 IdentityOpOutcome::Parked { event } => Ok(ClusterTopologyReceipt {
-                    receipt_ref: self.cluster_ref_in_txn(txn, &event)?,
-                    proposal_ref: Some(self.cluster_ref_in_txn(txn, &event)?),
+                    receipt_ref: self.cluster_ref_in_txn(txn, &event),
+                    proposal_ref: Some(self.cluster_ref_in_txn(txn, &event)),
                     outcome: ClusterTopologyOutcome::Proposed,
                 }),
                 IdentityOpOutcome::Noop => Err(MemoryError::bad_request(
@@ -284,7 +283,7 @@ impl Memory<'_> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let resolve = |reference: &str| self.resolve_ref_in_lane(&lane, reference);
         let proposal = resolve(input.proposal_ref.as_str())?;
-        let authority = self.cluster_authority(owner, input.grant_ref.as_deref())?;
+        let authority = self.cluster_authority(owner, input.grant_ref.as_deref(), &resolve)?;
         let seal = TopologySeal::decision(authority.clone()).with_seen(Some(input.seen));
         let amended = match &input.ruling {
             ClusterRuling::AmendThenApprove { operation } => Some(operation.into_engine(&resolve)?),
@@ -320,8 +319,8 @@ impl Memory<'_> {
                 self.vault().now_recorded_at(),
             )?;
             Ok(ClusterTopologyReceipt {
-                receipt_ref: self.cluster_ref_in_txn(txn, &receipt)?,
-                proposal_ref: Some(self.cluster_ref_in_txn(txn, &proposal)?),
+                receipt_ref: self.cluster_ref_in_txn(txn, &receipt),
+                proposal_ref: Some(self.cluster_ref_in_txn(txn, &proposal)),
                 outcome: outcome(verdict),
             })
         })
@@ -383,7 +382,7 @@ impl Memory<'_> {
             );
             let project = |id: &EntityId| self.cluster_ref_in_txn(txn, id);
             Ok::<_, MemoryError>(ClusterProposalView {
-                proposal_ref: project(&proposal)?,
+                proposal_ref: project(&proposal),
                 operation: ClusterOperation::from_engine(&op, &project)?,
                 seen: crate::identity_topology::topology_seal_revision_for_store_in_txn(
                     &self.vault().store,

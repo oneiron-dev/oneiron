@@ -19,12 +19,7 @@ pub(super) type Resolve<'a> = &'a dyn Fn(&str) -> MemoryResult<EntityId>;
 
 /// One outbound id as the short ref the vault keeps for it, else its hex, in
 /// the snapshot the reply reads.
-pub(super) type Project<'a> = &'a dyn Fn(&EntityId) -> MemoryResult<String>;
-
-pub(super) fn id(text: &str) -> MemoryResult<EntityId> {
-    EntityId::from_hex(text)
-        .map_err(|_| MemoryError::bad_request("topology refs are full 32-hex entity ids"))
-}
+pub(super) type Project<'a> = &'a dyn Fn(&EntityId) -> String;
 
 /// Whether `field` is a whole full 32-hex id, one colon field; a short ref
 /// (`<presentation-id>:<hash>`) is two.
@@ -66,23 +61,23 @@ pub(super) fn subject(text: &str, resolve: Resolve<'_>) -> MemoryResult<ClaimSub
 
 /// `subject` as its outbound ref: its entity's, or
 /// `edge:<source-ref>:<kind-byte>:<target-ref>`.
-pub(super) fn subject_ref(subject: &ClaimSubject, project: Project<'_>) -> MemoryResult<String> {
+pub(super) fn subject_ref(subject: &ClaimSubject, project: Project<'_>) -> String {
     match subject {
         ClaimSubject::Entity(id) => project(id),
         ClaimSubject::Edge {
             source,
             kind,
             target,
-        } => Ok(format!(
+        } => format!(
             "edge:{}:{}:{}",
-            project(source)?,
+            project(source),
             *kind as u8,
-            project(target)?
-        )),
+            project(target)
+        ),
     }
 }
 
-fn refs(ids: &[EntityId], project: Project<'_>) -> MemoryResult<Vec<String>> {
+fn refs(ids: &[EntityId], project: Project<'_>) -> Vec<String> {
     ids.iter().map(|id| project(id)).collect()
 }
 
@@ -98,11 +93,11 @@ impl ClusterEvidence {
         })
     }
 
-    fn from_engine(evidence: &IdentityOpEvidence, project: Project<'_>) -> MemoryResult<Self> {
-        Ok(Self {
-            refs: refs(&evidence.refs, project)?,
+    fn from_engine(evidence: &IdentityOpEvidence, project: Project<'_>) -> Self {
+        Self {
+            refs: refs(&evidence.refs, project),
             rationale: evidence.rationale.clone(),
-        })
+        }
     }
 }
 
@@ -147,24 +142,24 @@ impl ClusterOperation {
     pub(super) fn from_engine(op: &IdentityTopologyOp, project: Project<'_>) -> MemoryResult<Self> {
         match op {
             IdentityTopologyOp::Merge(merge) => Ok(Self::Merge(ClusterMerge {
-                sources: refs(&merge.sources, project)?,
-                survivor: project(&merge.survivor)?,
-                evidence: ClusterEvidence::from_engine(&merge.evidence, project)?,
+                sources: refs(&merge.sources, project),
+                survivor: project(&merge.survivor),
+                evidence: ClusterEvidence::from_engine(&merge.evidence, project),
                 survivorship_plan: ClusterSurvivorship::ReadThrough,
             })),
             IdentityTopologyOp::Split(split) => Ok(Self::Split(ClusterSplit {
-                entity: project(&split.entity)?,
-                heads: refs(&split.heads, project)?,
+                entity: project(&split.entity),
+                heads: refs(&split.heads, project),
                 reassignment_map: split
                     .reassignment
                     .entries
                     .iter()
                     .map(|entry| {
                         Ok(ClusterReassignment {
-                            item: subject_ref(&entry.item, project)?,
+                            item: subject_ref(&entry.item, project),
                             target: match entry.target {
                                 ReassignmentTarget::Head(head) => ClusterReassignmentTarget::Head {
-                                    entity_ref: project(&head)?,
+                                    entity_ref: project(&head),
                                 },
                                 ReassignmentTarget::Residue => ClusterReassignmentTarget::Residue,
                                 ReassignmentTarget::Facet { .. } => {
@@ -176,7 +171,7 @@ impl ClusterOperation {
                         })
                     })
                     .collect::<MemoryResult<_>>()?,
-                evidence: ClusterEvidence::from_engine(&split.evidence, project)?,
+                evidence: ClusterEvidence::from_engine(&split.evidence, project),
             })),
             _ => Err(MemoryError::bad_request(
                 "clustering judgments are merge or split operations",
