@@ -285,7 +285,12 @@ impl Store {
             }
             for generation in 0..=intent.through {
                 let id = intent.subject.at(generation);
-                if custody.retired(&id)? && !custody.published(&id)? {
+                // A world pad's carried compartment left behind its marker
+                // still goes (PAD-3).
+                if custody.retired(&id)?
+                    && !custody.published(&id)?
+                    && !custody.carries(&intent.subject)?
+                {
                     continue;
                 }
                 custody.retire_local(&id)?;

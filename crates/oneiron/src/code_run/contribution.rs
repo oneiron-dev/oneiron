@@ -1,24 +1,30 @@
-//! The matched-fork contribution runner (FIX 3028, ARCH-0037 #lineage-credit,
-//! ARCH-0053): one sampled credited run's first step, regenerated from its
-//! replay capsule once as captured and once without one skill's body, on the
-//! capsule's own model with equal settings, both scored against the run's
-//! anchor by one rubric. The host lends the model call and the scorer; this
-//! runner picks the capsule, builds the two requests, keeps each fork's
-//! receipt and returns the scored pair. It records no check and publishes
-//! nothing from one fork: the Coach's recipe records the pair
-//! ([`crate::skill_attribution::record_contribution_pair`]).
+//! The matched-fork contribution runner (FIX 3028, FIX 2870, ARCH-0037
+//! #lineage-credit, ARCH-0053): one sampled credited run's step, regenerated
+//! from its replay capsule once as captured and once without one target's
+//! exposure, on the capsule's own model with equal settings, both scored
+//! against the run's anchor by one rubric. A loaded skill's check
+//! regenerates the run's first step without the skill's body; an ancestor
+//! check on one used edge regenerates the earliest step that exposed the
+//! edge's source without that source's body ([`ancestor`]). The host lends
+//! the model call and the scorer; this runner picks the capsule, builds the
+//! two requests, keeps each fork's receipt and returns the scored pair. It
+//! records no check and publishes nothing from one fork: the Coach's recipe
+//! records the pair ([`crate::skill_attribution::record_contribution_pair`]).
 //!
-//! In this slice a knowledge exposure is the one unit: a skill's body the
-//! host put in the first step's input. A callable, result-only or ancestor
-//! use, an anchor that cannot judge a new output, and any missing or
-//! ambiguous context are unavailable, never "did not contribute".
+//! A knowledge exposure is the one unit: a body the host put in the run's
+//! task, tagged where it went. A callable or result-only use, an ancestor
+//! the run read through a verb, an anchor that cannot judge a new output,
+//! and any missing or ambiguous context are unavailable, never "did not
+//! contribute".
 
 mod admission;
+mod ancestor;
 
 use serde::{Deserialize, Serialize};
 
 pub use self::admission::ForkMismatch;
 pub(crate) use self::admission::matched_contribution_facts_in_txn;
+use self::ancestor::{target_slots, target_step};
 use super::replay_capsule::{CapsuleRungBinding, ExposureSlot, StepReplayCapsule};
 use super::storage::{
     ForkRows, capsule_request, fork_response, fork_rows, put_fork, put_unavailable,
@@ -30,12 +36,12 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::learning::Anchor;
 use crate::receipt::attempt_pack_receipt_id;
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::skill_attribution::{ContributionCandidate, ContributionFork};
+use crate::skill_attribution::{ContributionCandidate, ContributionFork, Experiment};
 use crate::{ContentPart, EntityId, Error, LlmRequest, LlmResponse, ModelId, Result, Vault};
 
-/// The step a check regenerates: the run's first, the one input no answer of
-/// the run has touched yet. A skill body the host put in the task is in it,
-/// so its first exposure is there.
+/// The step a loaded skill's check regenerates: the run's first, the one
+/// input no answer of the run has touched yet. A skill body the host put in
+/// the task is in it, so its first exposure is there.
 const FIRST_STEP: u64 = 0;
 /// A fork receipt's prefix. The rest is a hash that names neither the
 /// fork's treatment nor its run, so a scorer reading it stays blind.
@@ -50,20 +56,22 @@ pub enum ContributionReplayUnavailable {
     AnchorNotReplayable,
     /// The anchor does not resolve to a frozen case and rubric now.
     AnchorUnresolved,
-    /// No capsule of the run's first step.
+    /// No capsule of the step the check regenerates.
     NoCapsule,
-    /// The first step's capsule was never finalized: no rung's answer was
+    /// That step's capsule was never finalized: no rung's answer was
     /// recorded for it.
     CapsuleNotFinalized,
     /// The capsule's or a fork's body is gone, withheld or no longer its
     /// hash, or its exposure no longer sits where it was captured.
     Unreadable,
-    /// No knowledge exposure of the skill in the first step. A callable,
-    /// result-only or ancestor use is not replayed in this slice.
+    /// No knowledge exposure of the target in a captured step: the skill's
+    /// body, or the edge's source's, as the host put it in the run's task. A
+    /// callable or result-only use, and an ancestor the run read through a
+    /// verb, is not replayed.
     NoExposure,
-    /// The first step carries the skill at more than one revision.
+    /// The step carries the target at more than one revision.
     AmbiguousExposure,
-    /// The skill's record is at another revision than the one the step saw.
+    /// The target's record is at another revision than the one the step saw.
     SkillRevisionMoved,
     /// A stored fork came from another capsule or was scored by another
     /// rubric than the pair's now.
@@ -112,8 +120,29 @@ impl ContributionReplayUnavailable {
 pub enum ForkTreatment {
     /// The step as captured.
     WithSkill,
-    /// The step with the skill's exposure removed, and nothing else changed.
+    /// The step with the target's exposure removed (the skill's body, or the
+    /// edge's source's), and nothing else changed.
     WithoutSkill,
+}
+
+/// What a fork was scored for, frozen as it was generated: the credited
+/// outcome, the goal revision it was checked under and its axis. Admission
+/// reads it back against the pair's candidate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkScoring {
+    pub outcome_receipt: String,
+    pub goal_revision: Option<String>,
+    pub axis: String,
+}
+
+impl ForkScoring {
+    fn of(candidate: &ContributionCandidate) -> Self {
+        Self {
+            outcome_receipt: candidate.outcome_receipt.clone(),
+            goal_revision: candidate.goal_revision.clone(),
+            axis: candidate.axis.clone(),
+        }
+    }
 }
 
 /// One fork's durable receipt: what it regenerated, how, what it answered
@@ -142,6 +171,8 @@ pub struct ContributionForkReceipt {
     pub response_path: String,
     /// The anchor both forks are scored against, by hash.
     pub anchor: [u8; 32],
+    /// The outcome it was scored for.
+    pub scoring: ForkScoring,
     /// Whether it passed; `None` until scored.
     pub passed: Option<bool>,
     /// Unix seconds it was generated.
@@ -216,8 +247,8 @@ pub trait ContributionForkScorer {
 }
 
 /// Runs `candidate`'s matched pair, or says why it cannot: both forks of
-/// its run's first step, each kept as a receipt as soon as it answers and
-/// scored against one anchor. A fork already generated or scored is reused,
+/// the step its target's check regenerates, each kept as a receipt as soon
+/// as it answers and scored against one anchor. A fork already generated or scored is reused,
 /// never paid for again. A reason that holds for good is recorded, so a
 /// later pass returns it without paying.
 ///
@@ -304,8 +335,14 @@ impl Runner<'_> {
         ) {
             return Ok(Err(Unavailable::AnchorNotReplayable));
         }
-        let Some(capsule) = first_step_capsule(self.vault, &self.candidate.attempt_receipt)? else {
-            return Ok(Err(Unavailable::NoCapsule));
+        let target = self.candidate.target;
+        let capsules = match receipt_attempt(&self.candidate.attempt_receipt) {
+            Some(attempt) => step_replay_capsules(self.vault, attempt)?,
+            None => Vec::new(),
+        };
+        let capsule = match target_step(capsules, target) {
+            Ok(capsule) => capsule,
+            Err(reason) => return Ok(Err(reason)),
         };
         // An erased capsule's content went with its actor (FIX 6144): none of
         // its rung, exposures or request is read, and the pair is unreadable.
@@ -315,23 +352,19 @@ impl Runner<'_> {
         let Some(binding) = capsule.binding.clone() else {
             return Ok(Err(Unavailable::CapsuleNotFinalized));
         };
-        let slots: Vec<&ExposureSlot> = capsule
-            .exposures
-            .iter()
-            .filter(|slot| slot.skill == self.candidate.skill)
-            .collect();
+        let slots: Vec<&ExposureSlot> = target_slots(&capsule, target);
         let Some(first) = slots.first() else {
             return Ok(Err(Unavailable::NoExposure));
         };
         if slots.iter().any(|slot| slot.revision != first.revision) {
             return Ok(Err(Unavailable::AmbiguousExposure));
         }
-        // The pair is admitted against the skill's current record: a skill
-        // that moved on since the step cannot be recorded, and its old body
-        // is never rebuilt from the new one.
+        // The pair is admitted against the target's current record: one that
+        // moved on since the step cannot be recorded, and its old body is
+        // never rebuilt from the new one.
         let current = self
             .vault
-            .get_skill_record(&self.candidate.skill)?
+            .get_skill_record(&target.removed())?
             .map(|record| format!("{}@{}", record.skill_id, record.version));
         if current.as_deref() != Some(first.revision.as_str()) {
             return Ok(Err(Unavailable::SkillRevisionMoved));
@@ -452,6 +485,7 @@ impl Runner<'_> {
             response: response_ref,
             response_path: path,
             anchor: prepared.anchor_hash,
+            scoring: ForkScoring::of(self.candidate),
             passed: None,
             generated_at: crate::unix_seconds_now(),
         };
@@ -491,18 +525,6 @@ impl Runner<'_> {
         put_fork(self.vault, &self.pair, &fork)?;
         Ok(Ok(fork))
     }
-}
-
-/// The first step's capsule of the run `attempt_receipt` names: the one of
-/// its latest lease generation, whose answer the run kept.
-fn first_step_capsule(vault: &Vault, attempt_receipt: &str) -> Result<Option<StepReplayCapsule>> {
-    let Some(attempt) = receipt_attempt(attempt_receipt) else {
-        return Ok(None);
-    };
-    Ok(step_replay_capsules(vault, attempt)?
-        .into_iter()
-        .filter(|capsule| capsule.step == FIRST_STEP)
-        .max_by_key(|capsule| capsule.lease_generation))
 }
 
 /// The attempt a terminal pack receipt names, when it is one.
@@ -553,16 +575,13 @@ fn request_hash(request: &LlmRequest) -> Result<[u8; 32]> {
         .map_err(|error| Error::InvalidConfig(format!("fork request: {error}")))
 }
 
-/// The pair's key: the run, the skill and the axis, as the A side keys its
-/// check.
+/// The pair's key: the experiment the A side keys its check by (the run,
+/// the exact outcome, its goal revision, the axis and the target).
 fn pair_digest(candidate: &ContributionCandidate) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(candidate.attempt_receipt.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(candidate.skill.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(candidate.axis.as_bytes());
-    *hasher.finalize().as_bytes()
+    *Experiment::of_candidate(candidate)
+        .hasher("oneiron contribution fork pair v2")
+        .finalize()
+        .as_bytes()
 }
 
 /// A fork's id: the pair, the capsule and the treatment, hashed.

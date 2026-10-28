@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4230 declarations.
+// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4231 declarations.
 // Replies: 1090 fully typed, 121 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 105; unread shapes: none.
@@ -514,7 +514,7 @@ declare namespace Sdk {
   type QueryAffect = { valence: number; arousal: number; dominance: number };
   type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number };
   type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
   type InputKind = "text" | "image" | "audio";
   type EmbeddingMatchEvidence = { space: string; embedding_kind: InputKind; query_kind: InputKind; score: number; floor: number; strong: number; matched: boolean };
   type VerdictBasis = "calibrated_model" | "deterministic_fallback";
@@ -1444,7 +1444,8 @@ declare namespace Sdk {
   type FilesSourceView = { source: EntityId; folder: string; world: EntityId; machine: EntityId; include?: string[]; exclude: string[]; kind: string; attached_at: number; last_rescan_at?: number | null; files: number; name_only: number; retracted: number; proposed: number };
   type FilesRescanCounts = { landed: number; links: number; unchanged: number; superseded: number; proposed: number; retracted: number; restored: number; removed: number; name_only: number; failed: number; first_error?: string | null };
   type FilesLimitCrossed = { row: string; limit: number; observed: number };
-  type FilesRescanView = { source: EntityId; folder: string; counts?: FilesRescanCounts | null; error?: string | null; limits_crossed?: FilesLimitCrossed[] };
+  type FilesOriginalsUnkept = { files: number; first_error: string };
+  type FilesRescanView = { source: EntityId; folder: string; counts?: FilesRescanCounts | null; error?: string | null; limits_crossed?: FilesLimitCrossed[]; originals_unkept?: FilesOriginalsUnkept | null };
   type FilesSourceAttachAnswer = { world: FilesWorldView; source: FilesSourceView; rescan: FilesRescanView };
   type FilesSourceRescanRequest = { source?: EntityId | null };
   type FilesRescanAnswer = { rescans: FilesRescanView[] };
@@ -1975,7 +1976,7 @@ declare namespace Sdk {
   type GateCheckerReceipt = { binding: VerdictBinding; receipt_ref: string };
   type MeasuredLearningPredicate = "learning.reliability" | "learning.edit_cost" | "learning.retest_noise" | "learning.setting";
   type CellTypeRef = { node_id: string; tree_version: number };
-  type LearningCellKey = { subject: string; predicate: MeasuredLearningPredicate; executor?: string | null; typeRef?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null };
+  type LearningCellKey = { subject: string; predicate: MeasuredLearningPredicate; executor?: string | null; typeRef?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: string | null };
   type LearningReadRequest = { cell: LearningCellKey; project_ref?: string | null };
   type LearningBetaValue = { alpha: number; beta: number };
   type LearningMeanValue = { mean: number; spread: number };
@@ -2068,7 +2069,7 @@ declare namespace Sdk {
   type PolicyActionOutcome = { outcome: unknown };
   type InferenceDefaultsReplaceRequest = { defaults: unknown; idempotency_key: string };
   type LensSlot = { pack_name: string; skill_id: string };
-  type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string };
+  type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string; trigger?: MadeByTrigger | null };
   type LensApproval = "proposed";
   type LensProposalReceipt = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; approval: LensApproval; proposed_by: string; proposed_at: number };
   type LensActivateRequest = { lens_ref: string; compiled_hash: string; expected_active_ref?: string | null };
@@ -2255,7 +2256,7 @@ declare namespace Sdk {
   type CodeConflictHistory = { conflicts: CodeConflictView[]; resolved: CodeConflictResolutionView[] };
   type CodeProposalResolveRequest = { change: CodeProposalSubmitRequest; branch_subject: EntityId; conflict: EntityId; branch: string };
   type LearningPredicate = "reliability" | "edit_cost" | "retest_noise" | "setting";
-  type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null };
+  type LearningCell = { predicate: LearningPredicate; subject: EntityId; executor?: string | null; type_ref?: CellTypeRef | null; axis?: string | null; consent_scope?: string | null; setting_key?: string | null; project?: EntityId | null };
   type CritiqueVerdict = "accept" | "revise" | "discard";
   type CritiqueSeverity = "info" | "low" | "medium" | "high" | "blocking";
   type CodeProposalReviewRequest = { proposal: EntityId; artifact_id: string; run_id: string; attempt: EntityId; lens_id: string; domain: string; model_id: string; model_revision?: string | null; calibration: LearningCell; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence: EntityId[]; suggested_edit?: string | null };
@@ -2631,8 +2632,8 @@ declare namespace Sdk {
   type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: string; effort: ReasoningEffort; why: string; reused: boolean };
   type CriticAssociation = "branch_attempt" | "canonical_run_ref" | "declared_spawn_attempt";
   type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; review_verdict_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
-  type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string };
-  type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null };
+  type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string; project?: EntityId | null };
+  type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null; project?: EntityId | null };
   type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number };
   type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
@@ -2721,7 +2722,7 @@ declare namespace Sdk {
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
   type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
-  type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null };
+  type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null; project_ref?: string | null };
   type CritiqueTriageScores = { accept: number; revise: number; discard: number };
   type MergedFinding = { key: string; verdict: CritiqueVerdict; severity: CritiqueSeverity; confidence: number; artifact_ids: string[]; evidence_refs: string[]; suggested_edit?: string | null; auto_resolved: boolean };
   type CritiqueTriage = { verdict: CritiqueVerdict; scores: CritiqueTriageScores; acted_on_artifact_ids: string[]; hard_veto_artifact_ids: string[]; out_of_scope_artifact_ids: string[]; findings: MergedFinding[]; auto_resolved: boolean };
@@ -6038,7 +6039,7 @@ declare const vault: Sdk.VaultHost & {
     default(input: Sdk.LensDefaultRequest): Promise<Sdk.ScopedReadResult<Sdk.LensFrameCard> | StoredResult>;
     /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
-    /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
+    /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.LensProposalReceipt | StoredResult>;
     /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
     resolve(input: Sdk.LensSelectionResolveRequest): Promise<Sdk.LensSelectionResolved | StoredResult>;
@@ -6431,7 +6432,7 @@ declare const vault: Sdk.VaultHost & {
     /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
     schedule(input: Sdk.QuestionScheduleRequest): Promise<Sdk.QuestionScheduleHead | null | StoredResult>;
   };
-  /** Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata. */
+  /** Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens. */
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
   /** Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest. */
   receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.VaultReceiptsPage | StoredResult>) & {

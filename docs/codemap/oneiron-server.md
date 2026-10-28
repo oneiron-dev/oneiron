@@ -959,7 +959,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/files_intake/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/files_intake/mod.rs` | src | s | 7 crate-vis | — | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
 | `src/files_intake/reader.rs` | src | m | 18 crate-vis | — | The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a… |
-| `src/files_intake/source.rs` | src | s | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
+| `src/files_intake/source.rs` | src | m | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
 | `src/files_intake/worker.rs` | src | s | 1 crate-vis | — | `oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one… |
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
@@ -1245,7 +1245,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/soniox/quota.rs` | src | s | 5 crate-vis | — | A live hearing's rate and quota refusals (FIX 9515) |
 | `src/models/source_admission.rs` | src | s | 4 crate-vis | — | A caller's sources, admitted for each offer a call actually goes to (FIX 8714): an opt-in hook on the… |
 | `src/models/sse.rs` | src | s | 6 crate-vis | — | An incremental server-sent-events decoder (WHATWG event-stream parsing): LF, CRLF or lone CR line ends, a… |
-| `src/models/status.rs` | src | m | 9 struct · 2 enum · 8 crate-vis | DiscoveredStatus, HealthState, LimitHold, ModelsStatus, ProviderStatus, RungHealth, RungStatus, SeatState +3 | What the model runtime built, for the owner-facing status route |
+| `src/models/status.rs` | src | m | 10 struct · 2 enum · 8 crate-vis | DiscoveredStatus, HealthState, LimitHold, ModelsStatus, ProviderStatus, RungHealth, RungStatus, SeatState +4 | What the model runtime built, for the owner-facing status route |
 | `src/models/tests.rs` | test | L | 4 crate-vis | — | Every provider kind against a local fake server, the ladder's fallback and receipt, and one config edit… |
 | `src/models/token_ratio.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | TokenRatios | Each catalog model's tokens per o200k token (OF-577): its tokenizer's count of one fixed passage over… |
 | `src/models/training.rs` | src | s | 1 fn | — | The trainer connectors `[models.training]` names (FIX 7263), as the runtime keeps them for the host's… |
@@ -1259,11 +1259,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/worker_host/launcher.rs` | src | m | 4 crate-vis | — | The managed launcher for the house llama.cpp and EXL3 workers (DESIGN-V2 R2): what [`super::install`]… |
 | `src/models/worker_host/probe.rs` | src | m | 2 crate-vis | — | The probes for the house llama.cpp and EXL3 workers (INFERENCE R1 rules, R2 qualification): one actual chat… |
 | `src/models/worker_host/process.rs` | src | s | 2 crate-vis | — | One running worker process in its supervisor's custody: started in a process group of its own, reaped by one… |
-| `src/models/worker_host/session.rs` | src | s | 7 crate-vis | — | Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the… |
-| `src/models/worker_host/session/commit.rs` | src | s | 1 crate-vis | — | A committed reply's canonical successor (DESIGN-V2 §3.2 steps 4-5): the turn's canonical path with its… |
-| `src/models/worker_host/session/lifecycle.rs` | src | m | 5 crate-vis | — | The host's side of each served vault's snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the port a… |
+| `src/models/worker_host/session.rs` | src | s | 10 crate-vis | — | Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the… |
+| `src/models/worker_host/session/commit.rs` | src | m | 1 crate-vis | — | A committed reply's canonical successor (DESIGN-V2 §3.2 steps 4-5): the turn's canonical path with its… |
+| `src/models/worker_host/session/lifecycle.rs` | src | m | 10 crate-vis | — | The host's side of each served vault's snapshot lifecycle (DESIGN-V2 §7 "On vault lock", V2-R3): the port a… |
+| `src/models/worker_host/session/park.rs` | src | m | 5 crate-vis | — | Parking (DESIGN-V2 §7 residency, V2-R3): an idle session's published checkpoint exported from its worker… |
 | `src/models/worker_host/session/policy.rs` | src | s | 13 crate-vis | — | The coordinator's calls, one fn or constant each: which workers get sessions, which calls may use one, what… |
-| `src/models/worker_host/session/registry.rs` | src | m | 21 crate-vis | — | The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that… |
+| `src/models/worker_host/session/registry.rs` | src | m | 29 crate-vis | — | The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that… |
+| `src/models/worker_host/session/restore.rs` | src | m | 2 crate-vis | — | Restore (DESIGN-V2 §7 residency, V2-R3): a kept snapshot imported into a fresh session for an admitted turn… |
 | `src/models/worker_host/session/turn.rs` | src | m | 1 crate-vis | — | A turn on a session: the session for its key reused or created, a working branch forked at the frontier the… |
 | `src/oauth_relay.rs` | src | L | 7 crate-vis | — | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `src/oneironer/bundle/archive.rs` | src | m | 6 crate-vis | — | The strict reader of a platform row's archive (FIX 6755, contract rev 3 A1), written here with no tar… |
@@ -1336,7 +1338,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/imports.rs` | src | s | 9 crate-vis | — | Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202) |
 | `src/owner/location.rs` | src | s | 5 crate-vis | — | Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything… |
 | `src/owner/mod.rs` | src | s | 32 crate-vis | — | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
-| `src/owner/note_imports.rs` | src | s | 11 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
+| `src/owner/note_imports.rs` | src | s | 12 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
 | `src/owner/note_tombstones.rs` | src | s | 7 crate-vis | — | NOTE tombstone review (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed for archived NOTEs… |
 | `src/owner/off_record.rs` | src | m | 19 crate-vis | — | Off-record sessions (ARCH-0052, OF-326): enter a room whose writes land in an in-memory overlay, witness… |
 | `src/owner/pack_drift.rs` | src | s | 2 crate-vis | — | Pack drift (ARCH-0059 §4): what the repair ladder did to saved queries when a pack moved under them: a… |
