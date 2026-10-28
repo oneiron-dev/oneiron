@@ -15174,7 +15174,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
-    source_turn_ref: NotRequired[EntityId | None]
+    artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
     followed_skill: NotRequired[bool | None]
@@ -15207,9 +15207,9 @@ class AmendmentJudgmentView(TypedDict):
     at: int
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
-    artifact_ref: EntityId
-    proposed_text: NotRequired[str | None]
-    final_text: NotRequired[str | None]
+    artifact_ref: NotRequired[EntityId | None]
+    proposed_text: str
+    final_text: str
     delta: NotRequired[AmendmentDeltaView | None]
     hunks: list[SettledHunkView]
     judgment: NotRequired[AmendmentJudgmentView | None]
