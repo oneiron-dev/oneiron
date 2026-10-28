@@ -106244,7 +106244,7 @@
      "path": "src/managed/restore/input.rs",
      "purpose": "The restore's two pipes and the plan on the input pipe: each descriptor proven the right end of a pipe…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -106801,10 +106801,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/vm_outbox/source_check.rs",
+     "purpose": "A put the other end refused as `digest_mismatch` (FIX 11075): its bytes did not hash, on arrival, to the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/vm_outbox/store.rs",
      "purpose": "One end's durable carrier state: a record per member and its next transfer id, in a directory only that…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -108991,6 +109001,16 @@
      "purpose": "The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`…",
      "surface": {
       "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipe_proof.rs",
+     "purpose": "An inherited descriptor proven the pipe end a flag promises, before the command reads or writes it: a cold…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -111292,7 +111312,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 90,
+     "files": 91,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -111346,6 +111366,13 @@
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
+    },
+    "pipe_proof": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "An inherited descriptor proven the pipe end a flag promises, before the command reads or writes it: a cold…"
     },
     "projection": {
      "files": 2,
@@ -111462,7 +111489,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1333,
+   "source_files": 1335,
    "test_files": 182
   },
   "oneiron-spawn": {
