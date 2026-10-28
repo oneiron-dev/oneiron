@@ -1,4 +1,4 @@
-//! Escalation write doors, N dial, per-scope stats.
+//! Escalation write doors, the N threshold, per-scope stats.
 
 use std::collections::VecDeque;
 
@@ -8,74 +8,33 @@ use super::storage::{
 use super::types::{EscalationReceipt, EscalationRuling, EscalationStats, EscalationTrigger};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
-use crate::side_table::{self, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
-
-/// The N dial: how many agreeing rulings earn a proposed standing policy.
-const STANDING_N: SideTable<(), StandingN, Raw> =
-    SideTable::new(&side_table::EDIT_DISTANCE_ESCALATION_STANDING_N);
-
-/// Little-endian `u32`: the byte layout [`set_escalation_standing_n`] always
-/// wrote, kept exactly rather than moved to the crate's big-endian `u64`
-/// convention.
-struct StandingN(u32);
-
-impl RawValue for StandingN {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        Ok(self.0.to_le_bytes().to_vec())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
-        let bytes: [u8; 4] = bytes
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("escalation standing-N dial"))?;
-        Ok(Self(u32::from_le_bytes(bytes)))
-    }
-}
 
 /// How many of a `(scope, trigger)` pair's newest rulings [`EscalationStats`]
 /// retains. A history is for reading a pattern, not for replaying an audit —
 /// the receipt family is where the whole record lives.
 pub const ESCALATION_LAST_RULINGS_BOUND: usize = 8;
 
-/// Agreeing rulings that earn a proposed standing policy, absent a dial.
-pub const DEFAULT_ESCALATION_STANDING_N: u32 = 3;
-
 // ---------------------------------------------------------------------------
-// The N dial
+// The N threshold
 // ---------------------------------------------------------------------------
 
 /// Agreeing rulings a `(scope, trigger)` pair owes before a standing policy is
-/// proposed: the dial if one is set, else [`DEFAULT_ESCALATION_STANDING_N`].
+/// proposed: the policy manifest's `escalation_standing_rulings` row, seeded
+/// as data and changed through the manifest authoring doors (FIX 9802).
 ///
 /// # Errors
 ///
-/// [`Error::CorruptedIndex`] on an unreadable dial row, plus storage failures.
+/// Storage failures and an unreadable shipped row.
 pub fn escalation_standing_n(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
     escalation_standing_n_in_txn(&vault.store, &rtxn)
 }
 
 pub(super) fn escalation_standing_n_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<u32> {
-    Ok(STANDING_N
-        .get(store, txn, &())?
-        .map_or(DEFAULT_ESCALATION_STANDING_N, |n| n.0))
-}
-
-/// Sets the N dial.
-///
-/// # Errors
-///
-/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when `n` is zero — a standing policy earned
-/// by no rulings at all is not a learned policy — plus storage failures.
-pub fn set_escalation_standing_n(vault: &Vault, n: u32) -> Result<()> {
-    if n == 0 {
-        return Err(Error::Gate(GateError::InvalidConsentBound(
-            "a standing-policy threshold of zero rulings is not a threshold",
-        )));
-    }
-    vault.with_write_txn_grouped(|wtxn| STANDING_N.put(&vault.store, wtxn, &(), &StandingN(n)))
+    let n = crate::gate::resolve_policy_manifest(store, txn)?.escalation_standing_rulings()?;
+    Ok(u32::try_from(n).unwrap_or(u32::MAX))
 }
 
 // ---------------------------------------------------------------------------

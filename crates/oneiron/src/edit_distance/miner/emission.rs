@@ -5,10 +5,10 @@ use rmpv::Value;
 use super::config::{
     GATE_OUTCOME_REJECTED, MARK_KIND_PREFERENCE, MARK_KIND_SKILL_EDIT, MINED_EVIDENCE_RECEIPTS_KEY,
     MINED_EVIDENCE_ROW_LABEL, MINER_CLUSTER_HASH_DOMAIN, MINER_EVIDENCE_RECORD_ID_DOMAIN,
-    MINER_PREFERENCE_CONFIDENCE, MINER_REJECTION_COOLDOWN_SECS, MINT_MARK_ROW_LABEL,
-    PREDICATE_PREFERENCE_PHRASING, PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM,
-    PREFERENCE_VALUE_KEY_RATIONALE, PREFERENCE_VALUE_KEY_TO, PREFERENCE_VALUE_KEY_UNATTRIBUTED,
-    PROVENANCE_KEY_CLUSTER, PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE,
+    MINER_PREFERENCE_CONFIDENCE, MINT_MARK_ROW_LABEL, PREDICATE_PREFERENCE_PHRASING,
+    PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM, PREFERENCE_VALUE_KEY_RATIONALE,
+    PREFERENCE_VALUE_KEY_TO, PREFERENCE_VALUE_KEY_UNATTRIBUTED, PROVENANCE_KEY_CLUSTER,
+    PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE,
     PROVENANCE_KEY_UNATTRIBUTED, ROW_VERSION,
 };
 use super::mining::classify_substitution;
@@ -83,7 +83,8 @@ pub(super) fn emit_cluster(
 }
 
 /// Whether a cluster may propose: no mark, a mark whose proposal no longer
-/// stands, or a rejection past its cooldown.
+/// stands, or a rejection past the manifest's `miner_rejection_wait_seconds`
+/// row (FIX 9809), read in the same transaction.
 ///
 /// Takes the CALLER's transaction, and the caller is the emission's own write
 /// transaction. Reading the marks in a transaction of its own would leave a
@@ -101,9 +102,11 @@ pub(super) fn cluster_is_eligible(
     };
     let reference = EntityId::from_hex(&mark.reference)
         .map_err(|_| Error::CorruptedIndex(MINT_MARK_ROW_LABEL))?;
+    let wait =
+        crate::gate::resolve_policy_manifest(&vault.store, txn)?.miner_rejection_wait_seconds()?;
     match mark.kind.as_str() {
-        MARK_KIND_SKILL_EDIT => skill_edit_is_stale(vault, txn, &reference, now),
-        MARK_KIND_PREFERENCE => preference_is_stale(vault, txn, &reference, now),
+        MARK_KIND_SKILL_EDIT => skill_edit_is_stale(vault, txn, &reference, now, wait),
+        MARK_KIND_PREFERENCE => preference_is_stale(vault, txn, &reference, now, wait),
         _ => Err(Error::CorruptedIndex(MINT_MARK_ROW_LABEL)),
     }
 }
@@ -127,6 +130,7 @@ fn skill_edit_is_stale(
     txn: &heed::RoTxn<'_>,
     proposal_id: &EntityId,
     now: u64,
+    wait: u64,
 ) -> Result<bool> {
     let Some(proposal) = mined_skill_edit_in_txn(vault, txn, proposal_id)? else {
         return Ok(true);
@@ -138,9 +142,7 @@ fn skill_edit_is_stale(
     match decision.verdict {
         // Applied. Re-proposing an edit the skill already carries is nagging.
         MinedSkillEditVerdict::Accepted => Ok(false),
-        MinedSkillEditVerdict::Rejected => {
-            Ok(now >= decision.at.saturating_add(MINER_REJECTION_COOLDOWN_SECS))
-        }
+        MinedSkillEditVerdict::Rejected => Ok(now >= decision.at.saturating_add(wait)),
     }
 }
 
@@ -167,6 +169,7 @@ fn preference_is_stale(
     txn: &heed::RoTxn<'_>,
     claim_id: &EntityId,
     now: u64,
+    wait: u64,
 ) -> Result<bool> {
     let Some(body) = vault.get_claim_in_txn(txn, claim_id)? else {
         return Ok(true);
@@ -201,7 +204,7 @@ fn preference_is_stale(
         .filter(|decision| decision.outcome == GATE_OUTCOME_REJECTED)
         .map(|decision| decision.created_at)
         .max();
-    Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(MINER_REJECTION_COOLDOWN_SECS)))
+    Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(wait)))
 }
 
 /// Lands a mined preference claim through the write gate, with its mint-mark,

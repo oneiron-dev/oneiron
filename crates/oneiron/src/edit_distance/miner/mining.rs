@@ -4,10 +4,7 @@ use std::collections::BTreeMap;
 
 use rmpv::Value;
 
-use super::config::{
-    MAX_SUBSTITUTION_TOKENS, MINER_K_DEFAULT, MINER_K_ROW_LABEL, PAYLOAD_KEY_SESSION, TONE_LEXICON,
-    invalid,
-};
+use super::config::{MAX_SUBSTITUTION_TOKENS, PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid};
 use super::emission::emit_cluster;
 use super::hunks::MinableHunks;
 use super::model::{
@@ -26,62 +23,23 @@ use crate::edit_distance::delta::{DeltaSource, amendment_delta};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-
-/// Dial: distinct-receipt count K needed before the substitution miner acts
-/// on a cluster.
-const MINER_K: SideTable<(), MinerK, Raw> = SideTable::new(&side_table::EDIT_DISTANCE_MINER_K);
-
-/// K, stored as decimal ASCII so the dial is readable in a `vault_meta` dump
-/// — the `InboxReviewDial` token convention, applied to a count.
-struct MinerK(u32);
-
-impl RawValue for MinerK {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.0.to_string().into_bytes())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|text| text.parse::<u32>().ok())
-            .filter(|k| *k > 0)
-            .map(Self)
-            .ok_or_else(|| CodecError::Value(Error::CorruptedIndex(MINER_K_ROW_LABEL)))
-    }
-}
 
 // ---------------------------------------------------------------------------
-// The K dial
+// The K threshold
 // ---------------------------------------------------------------------------
 
-/// Reads K, the distinct-receipt threshold (default [`MINER_K_DEFAULT`]).
+/// Reads K, the distinct-receipt threshold: the policy manifest's
+/// `miner_recurrence_receipts` row, seeded as data and changed through the
+/// manifest authoring doors (FIX 9809).
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] when the stored dial is not a
-/// positive decimal count.
+/// Storage errors and an unreadable shipped row.
 pub fn miner_k(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(MINER_K
-        .get(&vault.store, &rtxn, &())?
-        .map_or(MINER_K_DEFAULT, |dial| dial.0))
-}
-
-/// Persists K.
-///
-/// Stored as decimal ASCII so the dial is readable in a `vault_meta` dump —
-/// the `InboxReviewDial` token convention, applied to a count.
-///
-/// # Errors
-///
-/// [`Error::InvalidClaimBody`] when `k` is zero: a threshold of zero emits on
-/// the FIRST correction, which is the opposite of recurrence. Storage errors.
-pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
-    if k == 0 {
-        return Err(invalid("the substitution miner's K must be at least 1"));
-    }
-    vault.with_write_txn_grouped(|wtxn| MINER_K.put(&vault.store, wtxn, &(), &MinerK(k)))
+    let k =
+        crate::gate::resolve_policy_manifest(&vault.store, &rtxn)?.miner_recurrence_receipts()?;
+    Ok(u32::try_from(k).unwrap_or(u32::MAX))
 }
 
 // ---------------------------------------------------------------------------

@@ -43,8 +43,8 @@
 //!
 //! Rows live in `vault_meta` under this module's own key prefixes (the house
 //! per-feature pattern, as `inbox::INBOX_REVIEW_DIAL_KEY` does; `settings.rs`
-//! is UI customization and is not involved — the N dial's key const lives
-//! here). Receipts are PROJECTIONS of those rows, in the `Gate` family beside
+//! is UI customization and is not involved). The N threshold is the policy
+//! manifest's `escalation_standing_rulings` row (FIX 9802). Receipts are PROJECTIONS of those rows, in the `Gate` family beside
 //! MS-06's demotion rows and ED-05's offer answers: an escalation is a gate
 //! decision a human made, so it mints no new [`ReceiptKind`](crate::receipt::ReceiptKind). The `escalation`
 //! FIELD CLASS (`crate::receipt::FIELD_ESCALATION_SCOPE` and its siblings) is
@@ -70,8 +70,7 @@ pub(crate) use self::explicit::record_explicit_ruling_in_txn;
 #[cfg(test)]
 pub(crate) use self::ledger::record_escalation_at;
 pub use self::ledger::{
-    DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, escalation_standing_n,
-    escalation_stats, record_escalation, set_escalation_standing_n,
+    ESCALATION_LAST_RULINGS_BOUND, escalation_standing_n, escalation_stats, record_escalation,
 };
 pub(crate) use self::policy::standing_policy_for_in;
 pub use self::policy::{
