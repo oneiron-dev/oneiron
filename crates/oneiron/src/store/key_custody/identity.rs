@@ -69,6 +69,7 @@ impl CustodyVaultId {
 /// | `0x0b` | `ConnectorResume` | a connector call's resume state (FIX 9157) |
 /// | `0x0c` | `InferenceSnapshot` | an inference snapshot's wrapped data key |
 /// | `0x0d` | `ErasableKey` | erasable keys: a home handoff's actor content, a grant's scope opening (FIX 8875) |
+/// | `0x0e` | `HostIssuerSeed` | the vault's host issuer seed, escrowed (FIX-LIST 10770) |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
 /// secret width, and its corruption label; custody itself stays the same.
@@ -133,6 +134,11 @@ pub(crate) enum CustodyKind {
     /// directory names, orphans included; generation 0; secret = the
     /// content key (32 bytes).
     ErasableKey,
+    /// The vault's host issuer seed, escrowed (FIX-LIST 10770): one subject
+    /// per vault, so its item is empty; one generation per seed its root
+    /// signs with; secret = the 32-byte seed, the same bytes an install's
+    /// `HostIssuerSeed` keystore slot holds (`store::host_issuer_custody`).
+    HostIssuerSeed,
 }
 
 impl CustodyKind {
@@ -151,6 +157,7 @@ impl CustodyKind {
             Self::ConnectorResume => 0x0b,
             Self::InferenceSnapshot => 0x0c,
             Self::ErasableKey => 0x0d,
+            Self::HostIssuerSeed => 0x0e,
         }
     }
 
@@ -169,6 +176,7 @@ impl CustodyKind {
             0x0b => Some(Self::ConnectorResume),
             0x0c => Some(Self::InferenceSnapshot),
             0x0d => Some(Self::ErasableKey),
+            0x0e => Some(Self::HostIssuerSeed),
             _ => None,
         }
     }
@@ -186,7 +194,7 @@ impl CustodyKind {
             Self::WorldPad => 40,
             Self::CheckpointPayload => 49,
             Self::ErasableKey => 81,
-            Self::KnownValueIndex | Self::TrainingLink => 0,
+            Self::KnownValueIndex | Self::TrainingLink | Self::HostIssuerSeed => 0,
         }
     }
 
@@ -204,7 +212,8 @@ impl CustodyKind {
             | Self::CustodyTransition
             | Self::CustodyRequestInput
             | Self::ConnectorResume
-            | Self::ErasableKey => 32,
+            | Self::ErasableKey
+            | Self::HostIssuerSeed => 32,
             Self::KnownValueEntry => 44,
             Self::InferenceSnapshot => 61,
         }
@@ -227,6 +236,7 @@ impl CustodyKind {
             Self::ConnectorResume => Error::CorruptedIndex("connector resume custody"),
             Self::InferenceSnapshot => Error::CorruptedIndex("inference snapshot custody"),
             Self::ErasableKey => Error::CorruptedIndex("erasable key custody"),
+            Self::HostIssuerSeed => Error::CorruptedIndex("host issuer seed custody"),
         }
     }
 }

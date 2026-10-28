@@ -312,13 +312,17 @@ impl TaggingReconciler {
     }
 
     /// The upkeep a pass starts with, reading `paused` before each of its
-    /// units (FIX 6902): the start scan while it has not run to its end,
+    /// units (FIX 6902): the tag passes a physical tear left owed are marked
+    /// (FIX 6262); then the start scan while it has not run to its end,
     /// else the hand-back of every held marker no preparation, call or
     /// settlement owns; then the trace history's trimming and expiry.
     /// `Ok(true)` when `paused` cut it short: what it did not reach waits for
     /// the next upkeep. A host driving the staged API runs it between its
     /// rounds, under its admission.
     pub fn upkeep_until_paused(&self, paused: &dyn Fn() -> bool) -> Result<bool> {
+        if crate::tagging::owed::pay_owed_tag_passes(&self.vault, paused)? {
+            return Ok(true);
+        }
         let cut_short = if self.stale_scanned.load(Ordering::Acquire) {
             self.return_unsettled(paused)?
         } else {

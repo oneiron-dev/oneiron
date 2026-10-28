@@ -602,6 +602,8 @@ pub(super) fn replace_in_txn(
             store, txn, turn,
         )?;
     }
+    // What a set put back as it was saved (a link settled) keeps: no re-tag.
+    let replaced = old.as_ref().map(|old| (old.saved_at, old.surprise));
     let before = old.map(|old| old.entities()).unwrap_or_default();
     let after = tags.map(TurnTags::entities).unwrap_or_default();
     for gone in before.difference(&after) {
@@ -620,7 +622,22 @@ pub(super) fn replace_in_txn(
         provisional::settle_in_txn(vault, txn, entity)?;
     }
     // The sieve reads a turn's names from its tag set: a new set is a new read.
-    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
+    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)?;
+    // A re-tag whose surprise reaches the wake policy's floor puts its turn
+    // back on the re-dirty carrier, behind the Micro watermark too, so the
+    // next turn wake's window holds it and reads its surprise (OF-138, FIX
+    // 901).
+    if let Some(tags) = tags
+        && let Some(surprise) = tags.surprise
+        && replaced != Some((tags.saved_at, tags.surprise))
+        && crate::dreamer_wake::surprises(
+            surprise,
+            crate::dreamer_wake::surprise_floor_in_txn(vault, txn)?,
+        )
+    {
+        crate::dreamer_consolidation::redirty::requeue_turn_in_txn(&vault.store, txn, turn)?;
+    }
+    Ok(())
 }
 
 /// Removes `entity` from every tag set that names it: a link left naming
@@ -819,7 +836,8 @@ pub(crate) fn erase_in_txn(
 /// `id`, or of a turn `id` is a source of ([`source_turns_in_txn`]), is the
 /// erase doors' to settle (they run [`erase_in_txn`] first); one still here
 /// is dropped without reading any text, so each provisional entity it was
-/// the origin of is retired rather than moved.
+/// the origin of is retired rather than moved, and a source turn whose set
+/// goes is owed its tag pass over the text it keeps (FIX 11314).
 pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     crate::dreamer_runner::maintenance::identity::erase_mention_resolutions_in_txn(store, txn, id)?;
     let mut turns = source_turns_in_txn(store, txn, id)?;
@@ -831,6 +849,9 @@ pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityI
             continue;
         };
         TAG_SET.delete(store, txn, &turn)?;
+        if turn != *id {
+            super::owe_tag_pass_in_txn(store, txn, &turn)?;
+        }
         crate::dreamer_runner::maintenance::identity::clear_mention_resolutions_in_txn(
             store, txn, &turn,
         )?;

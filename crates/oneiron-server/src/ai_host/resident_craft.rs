@@ -12,8 +12,10 @@
 //! manifest names what it was shown. A call with no attempt to stamp reads
 //! one snapshot and keeps the exact pack beside the reply. The message
 //! names each note's claim and revision beside its text, so a captured
-//! request that is sent again shows, and stamps, exactly what it showed.
-//! A craft that does not read leaves the call as it always ran.
+//! request that is sent again shows, and stamps, exactly what it showed; it
+//! is sent again only while each note still reads at that revision, with
+//! live support ([`craft_withdrawn`], FIX 8985). A craft that does not read
+//! leaves the call as it always ran.
 //!
 //! A wave plan speaks with its planner's instructions for its requester: it
 //! is shown both crafts, each attributed (FIX 5777). The requester's travels
@@ -26,9 +28,9 @@ use std::collections::BTreeSet;
 
 use oneiron::actor_claims::{
     CraftNote, craft_message_entries, craft_message_text, resident_craft_pack,
-    resident_craft_pack_scoped,
+    resident_craft_pack_scoped, supported_craft_note,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry};
+use oneiron::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry, ManifestKind};
 use oneiron::memory::Memory;
 use oneiron::prompt::{PromptLayout, place_turn_context};
 use oneiron::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault};
@@ -218,6 +220,35 @@ pub(crate) fn captured_craft(
         }))
         .filter(|entry| seen.insert((entry.reference.clone(), entry.version.clone())))
         .collect()
+}
+
+/// Why the craft rows `entries` name may not be shown again (FIX 8985), as
+/// a captured request sent again from its kept prefix would show them. Each
+/// note must still read, at the revision it shows, with live support
+/// ([`supported_craft_note`]): one erased, or whose every cited TURN is, is
+/// `craft_unsupported`; one revised since is `craft_changed`; one that does
+/// not read now is `craft_unreadable`. `None` while every one may be shown
+/// again. Rows that are no actor claim are not craft.
+pub(crate) fn craft_withdrawn(vault: &Vault, entries: &[ManifestEntry]) -> Option<&'static str> {
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.kind == ManifestKind::ActorClaim)
+    {
+        let Ok(claim) = EntityId::from_hex(&entry.reference) else {
+            return Some("craft_unreadable");
+        };
+        let body = match supported_craft_note(vault, &claim) {
+            Ok(Some(body)) => body,
+            Ok(None) => return Some("craft_unsupported"),
+            Err(_) => return Some("craft_unreadable"),
+        };
+        match CraftNote::new(claim, body) {
+            Ok(note) if note.revision == entry.version => {}
+            Ok(_) => return Some("craft_changed"),
+            Err(_) => return Some("craft_unreadable"),
+        }
+    }
+    None
 }
 
 /// The rows one system message's `text` shows: a craft message's own, or

@@ -42,7 +42,7 @@ const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here
 /// What one conversation landing asks the Dreamer to check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ConversationCheckDeclaration {
+pub(crate) struct ConversationCheckDeclaration {
     summary: EntityId,
     epoch: u64,
     session: EntityId,
@@ -101,7 +101,7 @@ impl ConversationCheckDeclaration {
 
     /// The declaration `input` carries, or `None` when it declares no
     /// conversation.
-    pub(super) fn from_input(input: &Value) -> Result<Option<Self>> {
+    pub(crate) fn from_input(input: &Value) -> Result<Option<Self>> {
         let Some((_, value)) = input.as_map().and_then(|entries| {
             entries
                 .iter()
@@ -125,7 +125,7 @@ impl ConversationCheckDeclaration {
 
     /// The records a finding cites: the writer, its filed step and, while
     /// `words_live`, the summary.
-    fn cited(&self, words_live: bool) -> Vec<EntityId> {
+    pub(crate) fn cited(&self, words_live: bool) -> Vec<EntityId> {
         let mut evidence = vec![self.writer];
         if let Some(step) = &self.step {
             evidence.push(step.claim);

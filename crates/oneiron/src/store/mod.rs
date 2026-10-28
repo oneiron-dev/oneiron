@@ -133,6 +133,7 @@ mod diagnostics;
 mod gate_decision;
 mod group_commit;
 mod handle;
+mod host_issuer_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
 mod inference_snapshot_custody;

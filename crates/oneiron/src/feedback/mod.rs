@@ -186,6 +186,7 @@ pub use self::triage::{
 };
 pub(crate) use self::triage::{
     acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, job_handoff_in_txn,
+    job_target, node_target,
 };
 
 #[cfg(test)]

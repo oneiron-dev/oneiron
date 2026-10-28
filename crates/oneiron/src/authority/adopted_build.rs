@@ -184,11 +184,13 @@ impl Vault {
                 observations: &observations,
                 posture,
                 pin: pin.as_ref(),
+                keep_replay: true,
             },
         )?;
         let (
             ImageFold {
                 per_parent,
+                replay,
                 merged,
                 fold: mut once,
                 safety,
@@ -276,6 +278,7 @@ impl Vault {
             frontier: per_parent.keys().copied().collect(),
             rows,
             per_parent,
+            replay,
             aggregate: CheckpointAggregate {
                 posture,
                 peers,
@@ -291,11 +294,12 @@ impl Vault {
         };
         // One serde round trip normalizes what a decoder would, so the image
         // re-encodes to its own bytes.
-        let normalized: AuthorityCheckpointV2 = rmp_serde::from_slice(
+        let normalized = rmp_serde::from_slice::<AuthorityCheckpointV2>(
             &rmp_serde::to_vec_named(&next)
                 .map_err(|_| refused("checkpoint image does not encode"))?,
         )
-        .map_err(|_| refused("checkpoint image does not decode"))?;
+        .map_err(|_| refused("checkpoint image does not decode"))?
+        .within_cap()?;
         normalized.encode()?;
         Ok(normalized)
     }

@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ConversationEvidence;
+use super::{ConversationEvidence, ConversationTurnSpan};
 use crate::compaction::{CompactionEvidence, CompactionExecution, EpochMint};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -61,6 +61,29 @@ pub(crate) fn conversation_receipt_in(
     summary: &EntityId,
 ) -> Result<Option<ConversationLandingReceipt>> {
     RECEIPTS.get(store, txn, summary)
+}
+
+impl Vault {
+    /// The turns the conversation summary `summary` folded, each with the
+    /// MESSAGEs its reader read, as its landing receipt names them, read on
+    /// one snapshot; `None` when no receipt landed for it or the receipt
+    /// names no conversation evidence.
+    ///
+    /// Read under no reader's scope: for dependency and invalidation sets
+    /// only, never served to a caller. A caller that needs what a summary
+    /// folded reads it through a [`crate::claim::ScopedRead`].
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn summary_folded_spans(
+        &self,
+        summary: &EntityId,
+    ) -> Result<Option<Vec<ConversationTurnSpan>>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(conversation_receipt_in(&self.store, &txn, summary)?
+            .and_then(|receipt| receipt.evidence().map(|evidence| evidence.turns.clone())))
+    }
 }
 
 /// Every landed receipt of `conversation`, in SUMMARY order.

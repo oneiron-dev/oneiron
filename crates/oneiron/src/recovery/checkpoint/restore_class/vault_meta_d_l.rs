@@ -329,6 +329,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LLM_MODEL_TRIAL, LIVE),
     (&t::LLM_PURPOSE_DEFAULTS, LIVE),
     (&t::LLM_REGISTRY_ROW, LIVE),
+    (&t::LLM_REGISTRY_STALE_MARK, LIVE),
     (&t::LLM_RESIDENT_ROUTES, LIVE),
     (&t::LLM_ROUTED_SEAT, LIVE),
     (&t::LLM_RUN_SEAT, CONTENT),

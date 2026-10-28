@@ -36,7 +36,9 @@ use crate::config::EmbedderConfig;
 use crate::models::BrokerContext;
 use crate::runtime::{GpuPool, GpuRegistryError};
 
+mod answer_error;
 mod destination;
+use answer_error::AnswerError;
 use destination::EmbeddingDestination;
 pub(crate) use destination::{PodRelease, VaultRelease};
 
@@ -93,6 +95,10 @@ struct Side<'a> {
     input_type: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     instruction: Option<&'a str>,
+    /// This client reads the `error` member that ends an answer whose later
+    /// batch failed after its rows started (FIX 10702).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    error_member: bool,
 }
 
 /// What the remote reads beyond OpenAI's fields.
@@ -128,6 +134,10 @@ struct EmbeddingsResponse {
     /// answer.
     #[serde(default)]
     provenance: Option<Box<RawValue>>,
+    /// Why `embedder serve` ended this answer before its last row, in place
+    /// of its tail, when this client asked for it (FIX 10702).
+    #[serde(default)]
+    error: Option<AnswerError>,
 }
 
 /// One answer's vectors, in request order, and the device and runtime it
@@ -641,6 +651,9 @@ impl HttpEmbedder {
                     code: format!("embeddings response: {e}"),
                 }
             })?;
+        if let Some(error) = &parsed.error {
+            return Err(error.failure(parsed.data.len(), texts.len()));
+        }
         let agrees = match &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner) {
             Admitted::Unchecked => true,
             Admitted::Listing(listing) => listing.agrees_with(&parsed),
@@ -933,6 +946,7 @@ impl HttpEmbedder {
                 let side = Side {
                     input_type: Some("document"),
                     instruction: None,
+                    error_member: true,
                 };
                 let mut vectors = Vec::with_capacity(refs.len());
                 let mut sent = 0;
@@ -975,6 +989,7 @@ impl QueryEmbedder for HttpEmbedder {
                 Side {
                     input_type: Some("query"),
                     instruction: self.query_instruction.as_deref(),
+                    error_member: true,
                 },
                 &EmbeddingDestination::Primary,
             )?,
