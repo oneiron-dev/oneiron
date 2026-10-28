@@ -161,6 +161,11 @@ pub enum ArtifactError {
     /// An agent dispatch payload input failed pinned structural validation.
     #[error("invalid agent dispatch input: {0}")]
     InvalidAgentDispatchInput(&'static str),
+    /// The owner pinned a spawn's model and no offered seat serves it (FIX
+    /// 10011). The pin stands: no other model is put in its place, and
+    /// nothing was planned or enqueued.
+    #[error("the pinned spawn model {model} has no offered seat")]
+    SpawnModelUnavailable { model: String },
     /// A recovery artifact shell failed magic, version, length, or checksum
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
@@ -298,6 +303,7 @@ impl ArtifactError {
             Self::SeededAgentDefinitionConflict { .. } => ErrorKind::SeededAgentDefinitionConflict,
             Self::AgentNotDispatchable(_) => ErrorKind::AgentNotDispatchable,
             Self::InvalidAgentDispatchInput(_) => ErrorKind::InvalidAgentDispatchInput,
+            Self::SpawnModelUnavailable { .. } => ErrorKind::SpawnModelUnavailable,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::BodyKeyCustodyUnavailable { .. } => ErrorKind::BodyKeyCustodyUnavailable,
             Self::KnownValueHistoryUnavailable { .. } => ErrorKind::KnownValueHistoryUnavailable,

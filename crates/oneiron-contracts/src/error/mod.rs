@@ -155,6 +155,8 @@ pub enum ErrorKind {
     SeededAgentDefinitionConflict,
     AgentNotDispatchable,
     InvalidAgentDispatchInput,
+    /// A spawn's pinned model has no offered seat; the pin stands.
+    SpawnModelUnavailable,
     InvalidRecoveryArtifact,
     BodyKeyCustodyUnavailable,
     KnownValueHistoryUnavailable,
