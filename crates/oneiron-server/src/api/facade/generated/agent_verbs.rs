@@ -348,6 +348,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.policy.propose", post(facade_route))
         .route("/vault.shared.policy.answer", post(facade_route))
         .route("/vault.shared.policy.change", post(facade_route))
+        .route("/vault.shared.policy.changes", post(facade_route))
         .route("/vault.federation.coreference.link", post(facade_route))
         .route("/vault.federation.coreference.confirm", post(facade_route))
         .route(
@@ -512,6 +513,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.roots.requests.cancel", post(facade_route))
+        .route("/vault.roots.requests.create", post(facade_route))
+        .route("/vault.roots.requests.list", post(facade_route))
+        .route("/vault.owner_work.get", post(facade_route))
         .route("/vault.cleanup.run", post(facade_route))
         .route("/vault.cleanup.review", post(facade_route))
         .route("/vault.cleanup.decide", post(facade_route))

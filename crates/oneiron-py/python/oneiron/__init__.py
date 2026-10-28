@@ -642,6 +642,9 @@ class Oneiron:
         def roots(self) -> "Oneiron._VaultRootsVerbs":
             return Oneiron._VaultRootsVerbs(self._client)
         @property
+        def owner_work(self) -> "Oneiron._VaultOwnerWorkVerbs":
+            return Oneiron._VaultOwnerWorkVerbs(self._client)
+        @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
         @property
@@ -2372,6 +2375,9 @@ class Oneiron:
         def change(self, spec):
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
             return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
+        def changes(self, spec):
+            """A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_changes(json.dumps(spec))))
     class _VaultOrgAdminVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2911,6 +2917,18 @@ class Oneiron:
         def cancel(self, spec):
             """The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."""
             return json.loads(_translate(lambda: self._client.vault_roots_requests_cancel(json.dumps(spec))))
+        def create(self, spec):
+            """The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was."""
+            return json.loads(_translate(lambda: self._client.vault_roots_requests_create(json.dumps(spec))))
+        def list(self, spec):
+            """The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only."""
+            return json.loads(_translate(lambda: self._client.vault_roots_requests_list(json.dumps(spec))))
+    class _VaultOwnerWorkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it."""
+            return json.loads(_translate(lambda: self._client.vault_owner_work_get(json.dumps(spec))))
     class _VaultCleanupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -1641,6 +1641,11 @@ export_facade! {
     let output = client.vault_shared_policy_change(&input)?;
     crate::codec::lift_record("vault.shared.policy.change", &output)
 };
+"vault.shared.policy.changes" => fn vault_shared_policy_changes(&self, input: SharedVaultRequest) -> Vec<SharedActPolicyChange> = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.policy.changes", input)?;
+    let output = client.vault_shared_policy_changes(&input)?;
+    crate::codec::lift_record("vault.shared.policy.changes", &output)
+};
 "vault.federation.coreference.link" => fn vault_federation_coreference_link(&self, input: CoreferenceLinkRequest) -> CoreferenceLinkReceipt = |client| {
     let input: oneiron::task_verb::sdk::CoreferenceLinkRequest = crate::codec::lower_record("vault.federation.coreference.link", input)?;
     let output = client.vault_federation_coreference_link(&input)?;
@@ -2265,6 +2270,21 @@ export_facade! {
     let input: oneiron::task_verb::sdk::RootRequestCancelRequest = crate::codec::lower_record("vault.roots.requests.cancel", input)?;
     let output = client.vault_roots_requests_cancel(&input)?;
     crate::codec::lift_record("vault.roots.requests.cancel", &output)
+};
+"vault.roots.requests.create" => fn vault_roots_requests_create(&self, input: RootRequestCreateRequest) -> OwnerWorkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::RootRequestCreateRequest = crate::codec::lower_record("vault.roots.requests.create", input)?;
+    let output = client.vault_roots_requests_create(&input)?;
+    crate::codec::lift_record("vault.roots.requests.create", &output)
+};
+"vault.roots.requests.list" => fn vault_roots_requests_list(&self) -> Vec<PendingRootRequestView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.roots.requests.list")?;
+    let output = client.vault_roots_requests_list(&input)?;
+    crate::codec::lift_record("vault.roots.requests.list", &output)
+};
+"vault.owner_work.get" => fn vault_owner_work_get(&self, input: OwnerWorkGetRequest) -> OwnerWorkReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OwnerWorkGetRequest = crate::codec::lower_record("vault.owner_work.get", input)?;
+    let output = client.vault_owner_work_get(&input)?;
+    crate::codec::lift_record("vault.owner_work.get", &output)
 };
 "vault.cleanup.run" => fn vault_cleanup_run(&self) -> CleanupRunView = |client| {
     let input: oneiron::vault_cleanup::surface::CleanupRunRequest = crate::codec::lower_empty("vault.cleanup.run")?;

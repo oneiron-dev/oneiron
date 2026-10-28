@@ -3105,6 +3105,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_policy_changes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.changes")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.changes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_federation_coreference_link(
         &self,
         py: Python<'_>,
@@ -4358,6 +4365,27 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.roots.requests.cancel")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.roots.requests.cancel", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_roots_requests_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.roots.requests.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.roots.requests.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_roots_requests_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.roots.requests.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.roots.requests.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_owner_work_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.owner_work.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.owner_work.get", input))
             .map_err(raise)?;
         encode(&output)
     }

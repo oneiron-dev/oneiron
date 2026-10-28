@@ -332,6 +332,7 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultSharedPolicyChanges,
     VaultFederationCoreferenceLink,
     VaultFederationCoreferenceConfirm,
     VaultFederationCoreferenceShareConsent,
@@ -457,6 +458,9 @@ pub enum AgentVerb {
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
     VaultRootsRequestsCancel,
+    VaultRootsRequestsCreate,
+    VaultRootsRequestsList,
+    VaultOwnerWorkGet,
     VaultCleanupRun,
     VaultCleanupReview,
     VaultCleanupDecide,
@@ -1518,6 +1522,7 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultSharedPolicyChanges,
         Self::VaultFederationCoreferenceLink,
         Self::VaultFederationCoreferenceConfirm,
         Self::VaultFederationCoreferenceShareConsent,
@@ -1643,6 +1648,9 @@ impl AgentVerb {
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
         Self::VaultRootsRequestsCancel,
+        Self::VaultRootsRequestsCreate,
+        Self::VaultRootsRequestsList,
+        Self::VaultOwnerWorkGet,
         Self::VaultCleanupRun,
         Self::VaultCleanupReview,
         Self::VaultCleanupDecide,
@@ -2707,6 +2715,7 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultSharedPolicyChanges => "vault.shared.policy.changes",
             Self::VaultFederationCoreferenceLink => "vault.federation.coreference.link",
             Self::VaultFederationCoreferenceConfirm => "vault.federation.coreference.confirm",
             Self::VaultFederationCoreferenceShareConsent => {
@@ -2844,6 +2853,9 @@ impl AgentVerb {
                 "vault.authority.handoff_alarms.acknowledge"
             }
             Self::VaultRootsRequestsCancel => "vault.roots.requests.cancel",
+            Self::VaultRootsRequestsCreate => "vault.roots.requests.create",
+            Self::VaultRootsRequestsList => "vault.roots.requests.list",
+            Self::VaultOwnerWorkGet => "vault.owner_work.get",
             Self::VaultCleanupRun => "vault.cleanup.run",
             Self::VaultCleanupReview => "vault.cleanup.review",
             Self::VaultCleanupDecide => "vault.cleanup.decide",
@@ -3923,6 +3935,7 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -4048,6 +4061,9 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
+                | Self::VaultRootsRequestsList
+                | Self::VaultOwnerWorkGet
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupReview
                 | Self::VaultCleanupDecide
@@ -5138,6 +5154,7 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -5263,6 +5280,9 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
+                | Self::VaultRootsRequestsList
+                | Self::VaultOwnerWorkGet
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupReview
                 | Self::VaultCleanupDecide
@@ -6021,6 +6041,7 @@ impl AgentVerb {
                 | Self::VaultSharedStarted
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationBurstReview
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
@@ -6032,6 +6053,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffers
                 | Self::VaultCoachTrainingOffersCandidates
                 | Self::VaultAuthorityHandoffAlarms
+                | Self::VaultRootsRequestsList
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
@@ -6479,6 +6501,7 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultSharedPolicyChanges
                 | Self::VaultFederationCoreferenceLink
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
@@ -6603,6 +6626,9 @@ impl AgentVerb {
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
+                | Self::VaultRootsRequestsList
+                | Self::VaultOwnerWorkGet
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupReview
                 | Self::VaultCleanupDecide
@@ -7551,6 +7577,7 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultRootsRequestsCancel
+                | Self::VaultRootsRequestsCreate
                 | Self::VaultCleanupRun
                 | Self::VaultCleanupDecide
                 | Self::VaultArchiveDeleteConfirm
@@ -8349,6 +8376,7 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultSharedPolicyChanges => &["spec"],
             Self::VaultFederationCoreferenceLink => &["spec"],
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
@@ -8474,6 +8502,9 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
+            Self::VaultRootsRequestsCreate => &["spec"],
+            Self::VaultRootsRequestsList => &["spec"],
+            Self::VaultOwnerWorkGet => &["spec"],
             Self::VaultCleanupRun => &["spec"],
             Self::VaultCleanupReview => &["spec"],
             Self::VaultCleanupDecide => &["spec"],
@@ -9536,6 +9567,7 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultSharedPolicyChanges => &["spec"],
             Self::VaultFederationCoreferenceLink => &["spec"],
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
@@ -9661,6 +9693,9 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
             Self::VaultRootsRequestsCancel => &["spec"],
+            Self::VaultRootsRequestsCreate => &["spec"],
+            Self::VaultRootsRequestsList => &["spec"],
+            Self::VaultOwnerWorkGet => &["spec"],
             Self::VaultCleanupRun => &["spec"],
             Self::VaultCleanupReview => &["spec"],
             Self::VaultCleanupDecide => &["spec"],
@@ -11364,6 +11399,9 @@ impl AgentVerb {
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
             }
+            Self::VaultSharedPolicyChanges => {
+                "A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."
+            }
             Self::VaultFederationCoreferenceLink => {
                 "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."
             }
@@ -11732,6 +11770,15 @@ impl AgentVerb {
             }
             Self::VaultRootsRequestsCancel => {
                 "The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."
+            }
+            Self::VaultRootsRequestsCreate => {
+                "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was."
+            }
+            Self::VaultRootsRequestsList => {
+                "The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only."
+            }
+            Self::VaultOwnerWorkGet => {
+                "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it."
             }
             Self::VaultCleanupRun => {
                 "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."

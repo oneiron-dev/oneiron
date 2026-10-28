@@ -1684,6 +1684,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shared.policy.changes",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
                 "vault.federation.coreference.link",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CoreferenceLinkRequest,
@@ -2419,6 +2425,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.roots.requests.cancel",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RootRequestCancelRequest,
+                >(),
+            ),
+            (
+                "vault.roots.requests.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::RootRequestCreateRequest,
+                >(),
+            ),
+            (
+                "vault.roots.requests.list",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.owner_work.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OwnerWorkGetRequest,
                 >(),
             ),
             (
@@ -6919,6 +6942,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
     "vault.shared.policy.change",
+    "vault.shared.policy.changes",
     "vault.federation.coreference.link",
     "vault.federation.coreference.confirm",
     "vault.federation.coreference.share_consent",
@@ -8181,6 +8205,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.shared.policy.change" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPolicyChange,
+        >(),
+        "vault.shared.policy.changes" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::federation::SharedActPolicyChange>,
         >(),
         "vault.federation.coreference.link" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CoreferenceLinkReceipt,
@@ -12307,6 +12334,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shared.policy.changes" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.federation.coreference.link" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13158,6 +13192,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.roots.requests.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.roots.requests.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.roots.requests.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.owner_work.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19175,6 +19230,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::SharedActPolicyChangeRequest =
                 decode(value.clone())?;
         }
+        "vault.shared.policy.changes" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
         "vault.federation.coreference.link" => {
             let _input: crate::task_verb::sdk::CoreferenceLinkRequest = decode(value.clone())?;
         }
@@ -19584,6 +19642,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.roots.requests.cancel" => {
             let _input: crate::task_verb::sdk::RootRequestCancelRequest = decode(value.clone())?;
+        }
+        "vault.roots.requests.create" => {
+            let _input: crate::task_verb::sdk::RootRequestCreateRequest = decode(value.clone())?;
+        }
+        "vault.roots.requests.list" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.owner_work.get" => {
+            let _input: crate::task_verb::sdk::OwnerWorkGetRequest = decode(value.clone())?;
         }
         "vault.cleanup.run" => {
             let _input: crate::vault_cleanup::surface::CleanupRunRequest = decode(value.clone())?;
@@ -22780,6 +22847,9 @@ pub fn invoke(
         }
         "vault.shared.policy.answer" => encode(vault_shared_policy_answer(memory, decode(value)?)?),
         "vault.shared.policy.change" => encode(vault_shared_policy_change(memory, decode(value)?)?),
+        "vault.shared.policy.changes" => {
+            encode(vault_shared_policy_changes(memory, decode(value)?)?)
+        }
         "vault.federation.coreference.link" => {
             encode(vault_federation_coreference_link(memory, decode(value)?)?)
         }
@@ -23073,6 +23143,11 @@ pub fn invoke(
         "vault.roots.requests.cancel" => {
             encode(vault_roots_requests_cancel(memory, decode(value)?)?)
         }
+        "vault.roots.requests.create" => {
+            encode(vault_roots_requests_create(memory, decode(value)?)?)
+        }
+        "vault.roots.requests.list" => encode(vault_roots_requests_list(memory, decode(value)?)?),
+        "vault.owner_work.get" => encode(vault_owner_work_get(memory, decode(value)?)?),
         "vault.cleanup.run" => encode(vault_cleanup_run(memory, decode(value)?)?),
         "vault.cleanup.review" => encode(vault_cleanup_review(memory, decode(value)?)?),
         "vault.cleanup.decide" => encode(vault_cleanup_decide(memory, decode(value)?)?),
@@ -27391,6 +27466,16 @@ pub fn vault_shared_policy_change(
         input,
     )
 }
+pub fn vault_shared_policy_changes(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<Vec<crate::federation::SharedActPolicyChange>> {
+    crate::task_verb::sdk::read_shared_act_policy_changes(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.changes")?,
+        input,
+    )
+}
 pub fn vault_federation_coreference_link(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::CoreferenceLinkRequest,
@@ -28391,6 +28476,36 @@ pub fn vault_roots_requests_cancel(
         &memory.embedded_owner("vault.roots.requests.cancel")?,
         crate::authority::ActSurface::ThisInstall,
         input,
+    )
+}
+pub fn vault_roots_requests_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RootRequestCreateRequest,
+) -> MemoryResult<crate::world_keys::OwnerWorkReceipt> {
+    crate::task_verb::sdk::create_root_request_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.roots.requests.create")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_roots_requests_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::PendingRootRequestView>> {
+    crate::task_verb::sdk::list_root_requests_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.roots.requests.list")?,
+    )
+}
+pub fn vault_owner_work_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OwnerWorkGetRequest,
+) -> MemoryResult<crate::world_keys::OwnerWorkReceipt> {
+    crate::task_verb::sdk::owner_work_receipt_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.owner_work.get")?,
+        &input,
     )
 }
 pub fn vault_cleanup_run(
