@@ -29,7 +29,7 @@ use oneiron::{
 use serde_json::{Value, json};
 
 use crate::config::models::{BigReply, BigSettings};
-use crate::models::ModelRuntime;
+use crate::models::{CallDeadline, ModelRuntime};
 
 mod route;
 use route::{DecisionSendConstraint, ResolvedDecisionRoute};
@@ -435,6 +435,10 @@ impl DecisionModel for BigModel {
                 crate::decision_verdict::rung_payer(),
             )
             .sourced(Some(call.evidence.to_vec()));
+        // The decision's clock bounds the whole call (FIX 7792): every send,
+        // wait and fallback; past it the call ends incomplete, every rung it
+        // admitted settled.
+        let deadline = CallDeadline::caller_in(left);
         // A seat's answer names the rung model that served it; one model
         // alone answers or nothing does, so its pin names it already.
         let (response, served) = self
@@ -442,11 +446,11 @@ impl DecisionModel for BigModel {
             .block_on(async {
                 match &self.answerer {
                     Answerer::Seat(_) => ladder
-                        .generate_served_within(&run, request, None, &|| true, left)
+                        .generate_served_by(&run, request, None, &|| true, deadline)
                         .await
                         .map(|(response, model)| (response, Some(model))),
                     Answerer::Model(_) => ladder
-                        .generate_exact_within(&run, request, None, &|| true, left)
+                        .generate_exact_by(&run, request, None, &|| true, deadline)
                         .await
                         .map(|response| (response, None)),
                 }
