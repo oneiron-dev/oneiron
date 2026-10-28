@@ -4073,7 +4073,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/policy_model/mod.rs` | src | s | 1 mod · 16 re-export · 3 crate-vis | — | Policy classification over two planes |
 | `src/policy_model/notes.rs` | src | s | 1 crate-vis | — | The audit notes a `rationale_json` pass carries beside its decided verdict |
 | `src/policy_model/notice.rs` | src | m | 23 crate-vis | — | The one notice a policy verdict emits — and the one audit row it files |
-| `src/policy_model/owner_rows/authority.rs` | src | m | 3 fn · 7 crate-vis | — | Live policy-power holders from shared membership and owner-stamped action grants |
+| `src/policy_model/owner_rows/authority.rs` | src | m | 4 fn · 7 crate-vis | — | Live policy-power holders from shared membership and owner-stamped action grants |
 | `src/policy_model/owner_rows/ledger.rs` | src | m | 3 struct · 1 enum · 3 fn · 6 crate-vis | PolicyChangedEvent, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt | Append-only row change history and proposal inbox |
 | `src/policy_model/owner_rows/mod.rs` | src | s | 1 enum · 5 fn · 5 re-export · 3 crate-vis | PolicyRowSubmission | Holder-governed owner-policy row edits, proposals, events and change log |
 | `src/policy_model/owner_rows/notification_receipt.rs` | src | s | 2 crate-vis | — | A queued policy-change notice, delivered as the change it records (FIX 10031) |
