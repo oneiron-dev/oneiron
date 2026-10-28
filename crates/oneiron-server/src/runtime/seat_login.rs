@@ -129,6 +129,46 @@ fn drain_spooled(
     drain
 }
 
+/// One drain, read without waiting while its child runs (FIX 5152): a
+/// drain that stopped early, at the disk floor say, is seen at once, and a
+/// stream that ended is kept for after the child exits.
+struct Drain {
+    receiver: mpsc::Receiver<ByoaResult<ByoaStream>>,
+    ended: Option<ByoaResult<ByoaStream>>,
+}
+
+impl Drain {
+    fn new(receiver: mpsc::Receiver<ByoaResult<ByoaStream>>) -> Self {
+        Self {
+            receiver,
+            ended: None,
+        }
+    }
+
+    /// The drain's failure, once it stopped with one; it is taken, so the
+    /// run reports it once.
+    fn failure(&mut self) -> Option<ByoaError> {
+        if self.ended.is_none() {
+            self.ended = self.receiver.try_recv().ok();
+        }
+        match self.ended.take() {
+            Some(Err(error)) => Some(error),
+            ended => {
+                self.ended = ended;
+                None
+            }
+        }
+    }
+
+    /// The drain's stream, waited for no later than the run's deadline.
+    fn stream(self, deadline: Instant) -> ByoaResult<ByoaStream> {
+        match self.ended {
+            Some(ended) => ended,
+            None => drained(&self.receiver, deadline),
+        }
+    }
+}
+
 /// A drain's stream, waited for no later than the run's deadline.
 fn drained(
     drain: &mpsc::Receiver<ByoaResult<ByoaStream>>,
@@ -192,49 +232,55 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
             .map_err(|_| ByoaError::Backend("official seat spawn failed".to_owned()))?;
         // One deadline bounds the run, its drains and the wait for them.
         let deadline = Instant::now() + Duration::from_secs(budget.wall_clock_secs.max(1));
-        let stdout = child
+        let mut stdout = child
             .stdout
             .take()
-            .map(|pipe| drain_spooled(pipe, self.floor.clone(), deadline))
+            .map(|pipe| Drain::new(drain_spooled(pipe, self.floor.clone(), deadline)))
             .ok_or_else(|| ByoaError::Backend("official seat stdout unavailable".to_owned()))?;
-        let stderr = child
+        let mut stderr = child
             .stderr
             .take()
-            .map(|pipe| drain_spooled(pipe, self.floor.clone(), deadline))
+            .map(|pipe| Drain::new(drain_spooled(pipe, self.floor.clone(), deadline)))
             .ok_or_else(|| ByoaError::Backend("official seat stderr unavailable".to_owned()))?;
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
-                // The host's claim on the run ended under it (FIX 9320): its
-                // process stops, and nothing it would still print is kept.
-                Ok(None)
-                    if self
-                        .stop
-                        .as_ref()
-                        .is_some_and(|stop| stop.load(std::sync::atomic::Ordering::SeqCst)) =>
-                {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ByoaError::Backend(
-                        "official seat stopped: its claim ended".to_owned(),
-                    ));
-                }
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(25));
-                }
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ByoaError::SpoolDeadline);
-                }
+                Ok(None) => {}
                 Err(_) => {
                     return Err(ByoaError::Backend("official seat wait failed".to_owned()));
                 }
             }
+            // A drain that stopped early, at the disk floor say, leaves the
+            // child blocked on its full pipe (FIX 5152): it stops now, and
+            // the run reports the drain's failure, not the later deadline.
+            if let Some(error) = stdout.failure().or_else(|| stderr.failure()) {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+            // The host's claim on the run ended under it (FIX 9320): its
+            // process stops, and nothing it would still print is kept.
+            if self
+                .stop
+                .as_ref()
+                .is_some_and(|stop| stop.load(std::sync::atomic::Ordering::SeqCst))
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ByoaError::Backend(
+                    "official seat stopped: its claim ended".to_owned(),
+                ));
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ByoaError::SpoolDeadline);
+            }
+            std::thread::sleep(Duration::from_millis(25));
         };
         let mut exhaust = ByoaExhaust {
-            stdout: drained(&stdout, deadline)?,
-            stderr: drained(&stderr, deadline)?,
+            stdout: stdout.stream(deadline)?,
+            stderr: stderr.stream(deadline)?,
             ..ByoaExhaust::default()
         };
         if !status.success() && exhaust.stderr.is_empty() {
