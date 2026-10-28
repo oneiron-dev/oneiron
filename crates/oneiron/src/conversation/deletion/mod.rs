@@ -76,6 +76,66 @@ pub(crate) fn record_author(body: &[u8]) -> Result<Option<EntityId>> {
         .map_err(|_| invalid("invalid room author"))
 }
 
+impl Vault {
+    /// Who wrote the live row `id`, read on one snapshot: a CLAIM's locally
+    /// attested writer, else the actor its evidence names; a TURN's stamped
+    /// `actor` ([`record_author`]); a MESSAGE's one `AuthoredBy` edge; and,
+    /// for any row none of those names a writer for, the actor its birth
+    /// stamp names. `None` where no live row stands under `id` (none, or a
+    /// deleted shell), its body does not decode, a MESSAGE has more than one
+    /// author edge, or nothing names a writer.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a CLAIM whose attested authorship does not verify.
+    pub fn record_author(&self, id: &EntityId) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        let crate::vault::LiveEntityRow::Live { entity_type, body } =
+            crate::vault::live_entity_row_in_txn(&self.store, &txn, id)?
+        else {
+            return Ok(None);
+        };
+        let named = match entity_type {
+            crate::registry::ENTITY_TYPE_CLAIM => {
+                let Ok(claim) = crate::claim::decode_claim_body(&body, true) else {
+                    return Ok(None);
+                };
+                crate::batch::authenticated_claim_author_in_txn(&self.store, &txn, id, &claim)?
+                    .map(WriteActor::entity_ref)
+                    .or_else(|| crate::memory::claim_author(&claim))
+            }
+            ENTITY_TYPE_TURN => match record_author(&body) {
+                Ok(author) => author,
+                Err(_) => return Ok(None),
+            },
+            ENTITY_TYPE_MESSAGE => {
+                let mut authors = Vec::new();
+                for edge in self.store.port_edges(
+                    &txn,
+                    id,
+                    EdgeDirection::Out,
+                    Some(EdgeKind::AuthoredBy),
+                    None,
+                )? {
+                    authors.push(edge?.target);
+                    if authors.len() > 1 {
+                        return Ok(None);
+                    }
+                }
+                authors.first().copied()
+            }
+            _ => None,
+        };
+        match named {
+            Some(author) => Ok(Some(author)),
+            None => Ok(
+                crate::provenance::birth::row_birth_in_txn(&self.store, &txn, id)?
+                    .map(|birth| birth.made_by.process.actor),
+            ),
+        }
+    }
+}
+
 /// The TURN's author for a delete: a PERSON, or an id this store does not
 /// know yet. A witnessing agent's stamp names no author here, so no agent
 /// deletes as one (FIX 7129).

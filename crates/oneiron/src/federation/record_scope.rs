@@ -402,6 +402,27 @@ pub(crate) fn record_world_in(
     }
     Ok(stamped)
 }
+impl Vault {
+    /// The world the live row `id` sits in, read on one snapshot as
+    /// [`record_world_in`] reads it: `Some(None)` for base reality. `None`
+    /// where no live row stands under `id` (none, or a deleted shell) or the
+    /// row cannot prove its world.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn record_world(&self, id: &EntityId) -> Result<Option<Option<EntityId>>> {
+        let txn = self.store.env.read_txn()?;
+        match crate::vault::live_entity_row_in_txn(&self.store, &txn, id)? {
+            crate::vault::LiveEntityRow::Live { entity_type, body } => {
+                record_world_in(&self.store, &txn, *id, entity_type, &body)
+            }
+            crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => {
+                Ok(None)
+            }
+        }
+    }
+}
 /// Whether the TASK or authority-fact row `id`, with header and body `raw`,
 /// sits by its birth stamp inside the worlds and facets `credential` grants.
 /// An axis the credential leaves whole holds every position, so a credential
