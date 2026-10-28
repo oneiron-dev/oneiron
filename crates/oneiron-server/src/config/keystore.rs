@@ -89,7 +89,9 @@ impl KeystoreConfig {
 
     /// Installs this platform's keystore on `vault`, opened at `vault_path`, and
     /// loads this install's signing keys from it before any signing work is
-    /// admitted. A platform with none does not stop serve: the signing and
+    /// admitted; once they load, an empty host issuer slot takes back the vault's
+    /// escrowed seed of its live root before any issuer loads (FIX-LIST 10770),
+    /// never a refusal. A platform with none does not stop serve: the signing and
     /// world-key doors answer `KeystoreUnavailable` without it, and reads and sync
     /// go on. True when one was installed.
     pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
@@ -109,9 +111,11 @@ impl KeystoreConfig {
                     "this-device keystore installed"
                 );
                 vault.install_device_keystore(keystore);
-                KeystoreInstall::Installed {
-                    signing: vault.prepare_install_signing_logged(),
+                let signing = vault.prepare_install_signing_logged();
+                if signing {
+                    vault.prepare_host_issuer_custody_logged();
                 }
+                KeystoreInstall::Installed { signing }
             }
             Ok(None) => {
                 tracing::info!(

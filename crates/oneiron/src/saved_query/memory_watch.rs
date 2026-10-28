@@ -19,8 +19,6 @@ use super::filter::{FilterAst, MatcherSpec};
 use super::lifecycle::next_version;
 use super::storage::{load_record_in_txn, saved_query_type_byte, store_record_in_txn};
 
-const MAX_MEMORY_WATCHES: usize = 128;
-
 /// An active durable watch, addressed by its SAVED_QUERY identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryWatch {
@@ -84,6 +82,9 @@ fn is_watch(record: &SavedQueryRecord, owner: EntityId, anchor: EntityId) -> boo
 /// Sets the owner's per-entry watch flag. The SAVED_QUERY row survives restart
 /// and the returned query ref can be used as the durable flag's identity.
 /// A vault must have registered its SAVED_QUERY kind before accepting watches.
+/// Every watch the owner sets or re-enables is kept: no count refuses one
+/// (FIX 8186), and each watch's reactive work stays bounded per wake by its
+/// own eval policy.
 pub fn set_memory_watch(
     vault: &Vault,
     owner: EntityId,
@@ -123,14 +124,6 @@ pub fn set_memory_watch(
                 if record.definition.lifecycle.is_evaluable() == enabled {
                     return Ok(enabled.then_some(MemoryWatch { query_ref, anchor }));
                 }
-                if enabled
-                    && active_watch_count_in_txn(vault, txn, kind, owner)? >= MAX_MEMORY_WATCHES
-                {
-                    return Err(Error::InvalidConfig(
-                        "per-owner memory watch limit exceeded".into(),
-                    )
-                    .into());
-                }
                 record.definition.definition_version =
                     next_version(record.definition.definition_version)?;
                 record.definition.lifecycle = if enabled {
@@ -142,12 +135,6 @@ pub fn set_memory_watch(
                 store_record_in_txn(vault, txn, &record, kind)?;
             }
             None if enabled => {
-                if active_watch_count_in_txn(vault, txn, kind, owner)? >= MAX_MEMORY_WATCHES {
-                    return Err(Error::InvalidConfig(
-                        "per-owner memory watch limit exceeded".into(),
-                    )
-                    .into());
-                }
                 // A foreign entity at the deterministic identity is never overwritten.
                 if vault.port_entity_record(txn, &query_ref)?.is_some() {
                     return Err(
@@ -185,29 +172,6 @@ pub fn set_memory_watch(
         }
         Ok(enabled.then_some(MemoryWatch { query_ref, anchor }))
     })
-}
-
-fn active_watch_count_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    kind: u8,
-    owner: EntityId,
-) -> Result<usize> {
-    let mut count = 0;
-    for item in vault.port_entity_ids_by_type(txn, kind, None)? {
-        let id = item?;
-        if let Some(record) = load_record_in_txn(vault, txn, id, kind)?
-            && let Some(anchor) = anchor_of(&record.definition)
-            && is_watch(&record, owner, anchor)
-            && record.definition.lifecycle.is_evaluable()
-        {
-            count += 1;
-            if count >= MAX_MEMORY_WATCHES {
-                break;
-            }
-        }
-    }
-    Ok(count)
 }
 
 /// Reads one owner's watch, without revealing another owner's query.

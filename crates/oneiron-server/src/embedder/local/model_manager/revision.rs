@@ -11,13 +11,17 @@
 //! load path, and a move is a warning that `reembed` takes the new weights,
 //! never a refusal and never new weights filled into the old space. The
 //! requested ref stays the configuration and the space id. A full commit is
-//! used as it stands, with no request; an operator's `model_dir` is the files
-//! it holds, checked as found, with no hub commit invented for it.
+//! used as it stands, with no request, and binds its transform as a ref that
+//! names it does (FIX 10755): one commit makes one transform however it is
+//! configured, so a server pinned to the commit its ref named keeps the
+//! clients that admitted it serving across a restart, and no other commit
+//! is ever served under the same transform. An operator's `model_dir` is the
+//! files it holds, checked as found, with no hub commit invented for it.
 
 use std::time::Duration;
 
 use super::{CONNECT_TIMEOUT, ModelManager, transport_class};
-use crate::config::LocalEmbedderConfig;
+use crate::config::{EmbedderConfig, LocalEmbedderConfig};
 
 /// How long the one ref lookup may take: a small JSON answer.
 const RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -38,9 +42,30 @@ pub(crate) struct ResolvedLocalRevision {
 }
 
 impl ResolvedLocalRevision {
+    /// `config` as it stands, with no request: a full commit, or an
+    /// operator's `model_dir`. `None` for a ref, which only the hub resolves.
+    pub(crate) fn without_lookup(config: &LocalEmbedderConfig) -> Option<Self> {
+        (config.model_dir.is_some() || is_commit(&config.revision)).then(|| Self {
+            requested: config.revision.clone(),
+            config: config.clone(),
+            from_pin: false,
+        })
+    }
+
     /// The configuration bound to the resolved commit.
     pub(crate) fn config(&self) -> &LocalEmbedderConfig {
         &self.config
+    }
+
+    /// `config` with its local model the resolved one, which a spec read
+    /// takes: whether the prompt file is read and which digests pin the
+    /// files follow the commit the files come from, never the ref that named
+    /// it (FIX 10757).
+    pub(crate) fn effective(&self, config: &EmbedderConfig) -> EmbedderConfig {
+        EmbedderConfig {
+            local: self.config.clone(),
+            ..config.clone()
+        }
     }
 
     /// The commit the files come from; the requested revision for an
@@ -49,12 +74,13 @@ impl ResolvedLocalRevision {
         &self.config.revision
     }
 
-    /// `transform` bound to the resolved commit when the configured revision
-    /// is a ref that names it: the vault's pinned transform then holds the
-    /// weights to that commit. A configured commit, and an operator's
-    /// directory, leave it as it is.
+    /// `transform` bound to the commit the files come from, for every hub
+    /// model, a configured commit as a ref that names it (FIX 10755): the
+    /// transform a vault, or an endpoint's clients, pinned then holds the
+    /// weights to that commit. An operator's directory, which no hub commit
+    /// names, leaves it as it is.
     pub(crate) fn bind_transform(&self, transform: String) -> String {
-        if self.requested == self.config.revision {
+        if self.config.model_dir.is_some() {
             transform
         } else {
             format!("{transform};revision={}", self.config.revision)
@@ -134,14 +160,10 @@ impl ModelManager {
         config: &LocalEmbedderConfig,
         pinned: Option<&str>,
     ) -> oneiron::Result<ResolvedLocalRevision> {
-        let requested = config.revision.clone();
-        if config.model_dir.is_some() || is_commit(&requested) {
-            return Ok(ResolvedLocalRevision {
-                requested,
-                config: config.clone(),
-                from_pin: false,
-            });
+        if let Some(resolved) = ResolvedLocalRevision::without_lookup(config) {
+            return Ok(resolved);
         }
+        let requested = config.revision.clone();
         if let Some(commit) = pinned.and_then(pinned_commit) {
             super::check_cache_identity(config)?;
             let mut resolved = config.clone();

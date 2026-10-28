@@ -54,7 +54,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 mod conversation;
 mod support;
-pub(crate) use conversation::declare_conversation_check_in_txn;
+pub(crate) use conversation::{ConversationCheckDeclaration, declare_conversation_check_in_txn};
 pub use support::CompactionCheckDecisions;
 
 /// The maintenance facet a self-written landing's check rides.
@@ -188,7 +188,7 @@ impl CompactionCheckDeclaration {
 
     /// The records a finding cites: the writer, its filed step and, while
     /// `words_live`, an epoch's summary.
-    fn cited(&self, words_live: bool) -> Vec<EntityId> {
+    pub(crate) fn cited(&self, words_live: bool) -> Vec<EntityId> {
         let mut evidence = vec![self.writer];
         if let Some(step) = &self.step {
             evidence.push(step.claim);
@@ -199,7 +199,7 @@ impl CompactionCheckDeclaration {
         evidence
     }
 
-    fn from_input(input: &Value) -> Result<Self> {
+    pub(crate) fn from_input(input: &Value) -> Result<Self> {
         let invalid = || Error::InvalidConfig("invalid compaction check declaration".into());
         let json = input
             .as_map()

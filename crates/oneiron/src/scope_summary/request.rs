@@ -735,7 +735,7 @@ pub(super) fn decode_request(
 
 /// A declaration's target alone, its requester unread. Each target is named
 /// by its own keys, and a sitting's declaration names no requester.
-pub(super) fn decode_target(input: &Value) -> Result<ScopeSummaryTarget> {
+pub(crate) fn decode_target(input: &Value) -> Result<ScopeSummaryTarget> {
     let entries = declared_fields(input)?;
     let field = |name: &str| declared(entries, name);
     let session = field(super::session::SESSION_KEY);

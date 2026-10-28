@@ -14,7 +14,7 @@ mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
 mod inference_admission;
-pub(crate) use inference_admission::admitted_as;
+pub use inference_admission::admitted_as;
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -186,10 +186,12 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
-    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
+    ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
+    RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
+    VaultResidentLedger,
 };
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};
