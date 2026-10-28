@@ -6391,6 +6391,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_tasks_comm_widen_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.comm_widen.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_runs_branches_get(
         &self,
         input: serde_json::Value,

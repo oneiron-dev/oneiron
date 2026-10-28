@@ -2280,6 +2280,9 @@ impl OneironClient {
                 "vault.tasks.cancel_force" => remote_agent_verb_output::<
                     oneiron::task_verb::run_doors::CancelForceReceipt,
                 >(client, verb, &input),
+                "vault.tasks.comm_widen.revoke" => remote_agent_verb_output::<
+                    oneiron::task_verb::CommWidenRevokeReceipt,
+                >(client, verb, &input),
                 "vault.runs.branches.get" => remote_agent_verb_output::<
                     oneiron::task_verb::run_doors::RunBranchesView,
                 >(client, verb, &input),
@@ -12636,6 +12639,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.tasks.cancel_force", value)
+    }
+    pub fn vault_tasks_comm_widen_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::CommWidenRevokeRequest,
+    ) -> Result<oneiron::task_verb::CommWidenRevokeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.tasks.comm_widen.revoke", value)
     }
     pub fn vault_runs_branches_get(
         &self,

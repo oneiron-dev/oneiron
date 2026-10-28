@@ -767,6 +767,7 @@ vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
 vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
+vaultTasksCommWidenRevoke(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultRunsPause(input: unknown): unknown
 vaultRunsResume(input: unknown): unknown

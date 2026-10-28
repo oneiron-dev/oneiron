@@ -55,6 +55,7 @@ mod code_run_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
+mod comm_widen_doors;
 mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;

@@ -737,6 +737,7 @@ pub enum AgentVerb {
     VaultAgentsSpawnGet,
     VaultAgentsSpawn,
     VaultTasksCancelForce,
+    VaultTasksCommWidenRevoke,
     VaultRunsBranchesGet,
     VaultRunsPause,
     VaultRunsResume,
@@ -1928,6 +1929,7 @@ impl AgentVerb {
         Self::VaultAgentsSpawnGet,
         Self::VaultAgentsSpawn,
         Self::VaultTasksCancelForce,
+        Self::VaultTasksCommWidenRevoke,
         Self::VaultRunsBranchesGet,
         Self::VaultRunsPause,
         Self::VaultRunsResume,
@@ -3140,6 +3142,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
             Self::VaultAgentsSpawn => "vault.agents.spawn",
             Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
+            Self::VaultTasksCommWidenRevoke => "vault.tasks.comm_widen.revoke",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultRunsPause => "vault.runs.pause",
             Self::VaultRunsResume => "vault.runs.resume",
@@ -4343,6 +4346,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsBranchesGet
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
@@ -5563,6 +5567,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsBranchesGet
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
@@ -6879,6 +6884,7 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawnGet
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsBranchesGet
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
@@ -7745,6 +7751,7 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultTasksCommWidenRevoke
                 | Self::VaultRunsPause
                 | Self::VaultRunsResume
                 | Self::VaultWorkspaceEstablish
@@ -8787,6 +8794,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultTasksCommWidenRevoke => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultRunsPause => &["spec"],
             Self::VaultRunsResume => &["spec"],
@@ -9979,6 +9987,7 @@ impl AgentVerb {
             Self::VaultAgentsSpawnGet => &["spec"],
             Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultTasksCommWidenRevoke => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultRunsPause => &["spec"],
             Self::VaultRunsResume => &["spec"],
@@ -12599,6 +12608,9 @@ impl AgentVerb {
             }
             Self::VaultTasksCancelForce => {
                 "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."
+            }
+            Self::VaultTasksCommWidenRevoke => {
+                "The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended."
             }
             Self::VaultRunsBranchesGet => {
                 "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."

@@ -2383,6 +2383,10 @@ export class Oneiron {
     tasks: {
       /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
       cancel_force: (input: Facade.CancelForceRequest): Facade.CancelForceReceipt => this.#call(() => this.#client.vaultTasksCancelForce(input) as Facade.CancelForceReceipt),
+      comm_widen: {
+        /** The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended. */
+        revoke: (input: Facade.CommWidenRevokeRequest): Facade.CommWidenRevokeReceipt => this.#call(() => this.#client.vaultTasksCommWidenRevoke(input) as Facade.CommWidenRevokeReceipt),
+      },
       linear: {
         /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
         mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
