@@ -54,11 +54,11 @@ pub mod reservoir;
 pub mod routing;
 mod text_ref;
 
-pub(crate) use text_ref::StoredProposal;
 pub use text_ref::{
     RetainedProposal, TextRead, TextUnavailable, finalized_proposal_text,
     put_finalized_proposal_text, retained_proposal,
 };
+pub(crate) use text_ref::{StoredProposal, erase_proposal_texts_in_txn, put_imported_endpoints};
 
 use std::io::Cursor;
 

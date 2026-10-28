@@ -17,9 +17,13 @@
 use heed::RoTxn;
 use rmpv::Value;
 
-use super::{FinalizedProposalText, LoroOpRef, OpSpan, PROPOSAL_ARTIFACT, ProposalArtifactRef};
+use super::delta::{EndpointDocument, EndpointRef};
+use super::{
+    FinalizedProposalText, LoroOpRef, OpAttribution, OpSpan, PROPOSAL_ARTIFACT, ProposalArtifactRef,
+};
 use crate::Vault;
 use crate::entity_doc::EntityDoc;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
 /// One stored proposal artifact: the ref-only record, and the retained
@@ -162,12 +166,10 @@ pub(super) fn decode_lifted(value: &Value) -> Result<Option<LiftedTexts>> {
 /// Why a referenced text cannot be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextUnavailable {
-    /// The side-row wall withheld the document at finalize (its history
-    /// held a secret no handle can replace in it), and kept no admitted text
-    /// for this version.
-    Withheld,
-    /// The document, or the version the ref names, no longer reads: erased,
-    /// compacted past, or undecodable.
+    /// No text is retained for this version: the side-row wall withheld the
+    /// document and its texts at finalize, or an erase took them.
+    NotRetained,
+    /// The document, or the version the ref names, does not read in it.
     Unreadable,
 }
 
@@ -206,7 +208,7 @@ impl RetainedProposal {
             Some(bytes) => {
                 EntityDoc::from_snapshot(&bytes).map_err(|_| TextUnavailable::Unreadable)
             }
-            None => Err(TextUnavailable::Withheld),
+            None => Err(TextUnavailable::NotRetained),
         };
         Self {
             record: stored.record,
@@ -246,13 +248,48 @@ impl RetainedProposal {
     /// The text as proposed.
     #[must_use]
     pub fn proposed_text(&self) -> TextRead {
-        self.text_at(&self.record.proposed_ref)
+        self.end_text_at(&self.record.proposed_ref, |kept| &kept.proposed)
     }
 
     /// The text as finalized.
     #[must_use]
     pub fn final_text(&self) -> TextRead {
-        self.text_at(&self.record.final_ref)
+        self.end_text_at(&self.record.final_ref, |kept| &kept.finalized)
+    }
+
+    /// One end of the window: read at `frontier` in the document, else the
+    /// kept text for that end. An endpoint-only import keeps both ends and
+    /// no window, so its ends are told apart by role, not by frontier.
+    fn end_text_at(&self, frontier: &LoroOpRef, kept: fn(&LiftedTexts) -> &String) -> TextRead {
+        match self.document() {
+            Ok(_) => self.text_at(frontier),
+            Err(reason) => self
+                .lifted
+                .as_ref()
+                .map_or(TextRead::Unavailable(reason), |lifted| {
+                    TextRead::Text(kept(lifted).clone())
+                }),
+        }
+    }
+
+    /// The text `end` names, when this row retains it: a window end by its
+    /// frontier, an imported end by its role.
+    #[must_use]
+    pub fn end_text(&self, end: &EndpointRef) -> TextRead {
+        let at_frontier = |frontier: &LoroOpRef| {
+            end.frontier.as_deref() == Some(bytes_to_hex_lower(frontier.as_bytes()).as_str())
+        };
+        match &end.document {
+            EndpointDocument::ImportedProposed(_) => self.proposed_text(),
+            EndpointDocument::ImportedFinal(_) => self.final_text(),
+            EndpointDocument::ProposalArtifact(_) if at_frontier(&self.record.proposed_ref) => {
+                self.proposed_text()
+            }
+            EndpointDocument::ProposalArtifact(_) if at_frontier(&self.record.final_ref) => {
+                self.final_text()
+            }
+            _ => TextRead::Unavailable(TextUnavailable::Unreadable),
+        }
     }
 
     /// The text on either side of one recorded change.
@@ -280,14 +317,15 @@ impl RetainedProposal {
 /// texts through the same wall, a custody handle where it lifted a secret, so
 /// they read as they did before refs. When the wall refuses those texts too
 /// (a secret it cannot place, which refused the whole finalize before), only
-/// the record lands and its texts read as [`TextUnavailable::Withheld`]: a
+/// the record lands and its texts read as [`TextUnavailable::NotRetained`]: a
 /// finalize never fails for it, and no raw secret is kept.
 pub fn put_finalized_proposal_text(
     vault: &Vault,
     record: &FinalizedProposalText,
-    document: &[u8],
+    document: &EntityDoc,
 ) -> Result<()> {
     let key = record.artifact_ref.entity_id();
+    let snapshot = document.export_snapshot();
     vault.with_write_txn_grouped(|wtxn| {
         match PROPOSAL_ARTIFACT.get(&vault.store, &*wtxn, &key)? {
             Some(stored) if stored.record == *record => return Ok(()),
@@ -303,36 +341,147 @@ pub fn put_finalized_proposal_text(
             document: snapshot,
             lifted,
         };
-        if put_admitted(vault, wtxn, &key, &stored(Some(document.to_vec()), None))? {
+        // The document and the texts are optional captures: either one's
+        // failure falls back, and only the record's own put keeps its
+        // contract.
+        if let Ok(snapshot) = &snapshot
+            && put_optional(vault, wtxn, &key, &stored(Some(snapshot.clone()), None))
+        {
             return Ok(());
         }
-        let lifted = EntityDoc::from_snapshot(document)
-            .ok()
-            .and_then(|opened| LiftedTexts::read(&opened, record));
-        if lifted.is_some() && put_admitted(vault, wtxn, &key, &stored(None, lifted))? {
+        if let Some(lifted) = LiftedTexts::read(document, record)
+            && put_optional(vault, wtxn, &key, &stored(None, Some(lifted)))
+        {
             return Ok(());
         }
         PROPOSAL_ARTIFACT.put(vault, wtxn, &key, &stored(None, None))
     })
 }
 
-/// Puts `stored` in a savepoint; `false`, with nothing written, when the
-/// side-row wall refuses it.
-fn put_admitted(
+/// Puts `stored` in a savepoint; `true` once it landed. A wall refusal, or
+/// any other failure, lands nothing and is never raised: the caller falls
+/// back.
+fn put_optional(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &crate::entity_id::EntityId,
     stored: &StoredProposal,
-) -> Result<bool> {
-    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
-    match PROPOSAL_ARTIFACT.put(vault, &mut savepoint, key, stored) {
-        Ok(()) => {
-            savepoint.commit()?;
-            Ok(true)
+) -> bool {
+    let landed = vault
+        .store
+        .env
+        .nested_write_txn(wtxn)
+        .map_err(Error::from)
+        .and_then(|mut savepoint| {
+            PROPOSAL_ARTIFACT.put(vault, &mut savepoint, key, stored)?;
+            Ok(savepoint.commit()?)
+        });
+    match landed {
+        Ok(()) => true,
+        Err(Error::Gate(_)) => false,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a proposal artifact's optional retention did not land; the record falls back"
+            );
+            false
         }
-        Err(Error::Gate(_)) => Ok(false),
-        Err(error) => Err(error),
     }
+}
+
+/// The proposal-artifact table's declared scrub: the erase of `id` (an actor
+/// a recorded change is attributed to, a proposal's source turn, or the
+/// artifact itself) takes each such proposal's retained document and kept
+/// texts, so every read of them is unavailable, and its changes attributed to
+/// `id` read as unknown. A restored image's replay of every erased id runs it
+/// again. A row that does not decode is passed over with a WARN.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_proposal_texts_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let names = |attribution: &OpAttribution| {
+        attribution
+            .actor()
+            .is_some_and(|actor| actor.entity_ref() == *id)
+    };
+    let mut reached = Vec::new();
+    for row in PROPOSAL_ARTIFACT.iter_raw_from(&vault.store, &*txn, &[])? {
+        let (_, bytes) = row?;
+        let Ok(mut stored) = PROPOSAL_ARTIFACT.decode_value(&bytes) else {
+            tracing::warn!("a proposal artifact row does not decode: the erase passes it over");
+            continue;
+        };
+        let record = &mut stored.record;
+        let sourced = record.artifact_ref.entity_id() == *id || record.source_turn_ref == Some(*id);
+        if !sourced
+            && !record
+                .ops_by_actor
+                .iter()
+                .any(|(attribution, _)| names(attribution))
+        {
+            continue;
+        }
+        for (attribution, _) in &mut record.ops_by_actor {
+            if names(attribution) {
+                *attribution = OpAttribution::Unknown;
+            }
+        }
+        stored.document = None;
+        stored.lifted = None;
+        reached.push(stored);
+    }
+    for stored in reached {
+        PROPOSAL_ARTIFACT.put(vault, txn, &stored.record.artifact_ref.entity_id(), &stored)?;
+    }
+    Ok(())
+}
+
+/// Retains an endpoint-only settlement's two imported texts under its own
+/// record (FIX 10176), through the side-row wall: no window, no operations,
+/// nothing recorded is minted for them. If the wall refuses the texts, the
+/// record lands alone and its ends read as not retained.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn put_imported_endpoints(
+    vault: &Vault,
+    record: ProposalArtifactRef,
+    source_turn_ref: Option<EntityId>,
+    proposed: &str,
+    finalized: &str,
+) -> Result<()> {
+    // An import has no window: its refs are empty, and its ends are read by
+    // role.
+    let record = FinalizedProposalText {
+        artifact_ref: record,
+        proposed_ref: LoroOpRef::from_bytes(Vec::new()),
+        final_ref: LoroOpRef::from_bytes(Vec::new()),
+        ops_by_actor: Vec::new(),
+        source_turn_ref,
+    };
+    let key = record.artifact_ref.entity_id();
+    let kept = LiftedTexts {
+        proposed: proposed.to_owned(),
+        finalized: finalized.to_owned(),
+        changes: Vec::new(),
+    };
+    vault.with_write_txn_grouped(|wtxn| {
+        let stored = |lifted: Option<LiftedTexts>| StoredProposal {
+            record: record.clone(),
+            document: None,
+            lifted,
+        };
+        if put_optional(vault, wtxn, &key, &stored(Some(kept))) {
+            return Ok(());
+        }
+        PROPOSAL_ARTIFACT.put(vault, wtxn, &key, &stored(None))
+    })
 }
 
 /// Reads the finalized proposal artifact stored under `artifact_ref`.
