@@ -304,6 +304,9 @@ fn pattern_context(token: &str) -> Result<EntityId> {
 /// The model that executed `record`: the one its pack loaded under, else the
 /// seat its run was born on. A run's id is its attempt's.
 pub(crate) fn run_executor_model(vault: &Vault, record: &AttemptRecord) -> Result<Option<String>> {
+    if let Some(model) = &record.executor_model {
+        return Ok(Some(model.clone()));
+    }
     let txn = vault.store.env.read_txn()?;
     run_executor_model_in_txn(vault, &txn, record)
 }

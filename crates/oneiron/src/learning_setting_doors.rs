@@ -184,7 +184,8 @@ pub struct LearningSettingRowView {
     pub why: String,
     /// What the planner learned under a spawn choice where this row applies
     /// (FIX 3159), beside the owner's value and never it; `None` for a
-    /// catalog knob's row.
+    /// catalog knob's row, and for a choice row whose learning could not be
+    /// read.
     pub learned: Option<LearnedChoiceView>,
 }
 
@@ -341,7 +342,7 @@ fn choice_view(
     scope: SettingScope,
     row: ChoiceRow,
     by: String,
-    learned: LearnedChoiceView,
+    learned: Option<LearnedChoiceView>,
 ) -> LearningSettingRowView {
     let (kind, goal, project, task_type) = scope_view(scope);
     LearningSettingRowView {
@@ -357,7 +358,7 @@ fn choice_view(
         by,
         at: row.at,
         why: row.why,
-        learned: Some(learned),
+        learned,
     }
 }
 
@@ -397,10 +398,21 @@ pub fn learning_settings_as_owner(
         .filter(|(_, row, _)| wanted(row.value.choice().as_str()))
         .collect();
     if !choices.is_empty() {
-        let learning =
-            crate::team::ChoiceLearning::read_in_txn(vault, &rtxn, crate::unix_seconds_now())?;
+        // What was learned is shown beside the rows, never in their place: a
+        // read of it that fails leaves it out with a WARN, and the rows stand.
+        let learning = crate::team::ChoiceLearning::read_in_txn(
+            vault,
+            &rtxn,
+            crate::unix_seconds_now(),
+        )
+        .inspect_err(|error| {
+            tracing::warn!(%error, "the owner's choice rows answer without what was learned");
+        })
+        .ok();
         rows.extend(choices.into_iter().map(|(scope, row, by)| {
-            let learned = learning.learned(row.value.choice(), &scope).into();
+            let learned = learning
+                .as_ref()
+                .map(|learning| learning.learned(row.value.choice(), &scope).into());
             choice_view(scope, row, by, learned)
         }));
     }
