@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::keys::{AGGREGATE, StoredAggregate, aggregate_key, task_class_prefix};
+use super::keys::{AGGREGATE, StoredAggregate, aggregate_key, peer_prefix};
 use super::ladder::{rollout_rung, rung_in_txn};
 use super::scope::{RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint};
 use crate::Vault;
@@ -29,7 +29,7 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
     let Some(own) = AGGREGATE.get(&vault.store, &rtxn, &aggregate_key)? else {
         return Ok(None);
     };
-    let peers = peer_means(vault, &rtxn, &key.task_class)?;
+    let peers = peer_means(vault, &rtxn, key)?;
     Ok(hint_of(own, &peers))
 }
 
@@ -46,13 +46,13 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
 pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
     let rtxn = vault.store.env.read_txn()?;
     let rows = aggregates(vault, &rtxn)?;
-    let mut peers: BTreeMap<String, Vec<f64>> = BTreeMap::new();
+    let mut peers: BTreeMap<(String, String), Vec<f64>> = BTreeMap::new();
     for (key, aggregate) in &rows {
         if aggregate.runs == 0 {
             continue;
         }
         peers
-            .entry(key.task_class.clone())
+            .entry(peer_group(key))
             .or_default()
             .push(aggregate.d_norm_sum / runs_as_f64(aggregate.runs));
     }
@@ -63,7 +63,10 @@ pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
         if rung == RolloutRung::Shadow {
             continue;
         }
-        let means = peers.get(&key.task_class).map(Vec::as_slice).unwrap_or(&[]);
+        let means = peers
+            .get(&peer_group(&key))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
         let Some(hint) = hint_of(aggregate, means) else {
             continue;
         };
@@ -118,8 +121,13 @@ fn runs_as_f64(runs: u64) -> f64 {
     runs as f64
 }
 
-fn peer_means(vault: &Vault, rtxn: &heed::RoTxn<'_>, task_class: &str) -> Result<Vec<f64>> {
-    let prefix = task_class_prefix(task_class)?;
+/// A scope's peers: the same task class, measured under the same version.
+fn peer_group(key: &RoutingScopeKey) -> (String, String) {
+    (key.task_class.clone(), key.measurement_version.clone())
+}
+
+fn peer_means(vault: &Vault, rtxn: &heed::RoTxn<'_>, key: &RoutingScopeKey) -> Result<Vec<f64>> {
+    let prefix = peer_prefix(&key.task_class, &key.measurement_version)?;
     let mut means = Vec::new();
     for (_, aggregate) in AGGREGATE.scan_from(&vault.store, rtxn, &prefix)? {
         if aggregate.runs == 0 {
@@ -139,7 +147,8 @@ fn aggregates(
         .into_iter()
         .map(|(key, aggregate)| {
             (
-                RoutingScopeKey::new(key.model_version, key.task_class),
+                RoutingScopeKey::new(key.model_version, key.task_class)
+                    .measured_under(key.measurement_version),
                 aggregate,
             )
         })

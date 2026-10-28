@@ -38,7 +38,8 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
     let member_key = delta_receipt.to_owned();
     let model_version = serving_model_version(vault)?;
     let fold = fold_of(&judgment)?;
-    let scope = RoutingScopeKey::new(model_version.clone(), judgment.scope);
+    let scope = RoutingScopeKey::new(model_version.clone(), judgment.scope)
+        .measured_under(judgment.engine_ver);
     let scope_row_key = aggregate_key(&scope)?;
     let member = StoredModelVersion {
         v: ROW_VERSION,
