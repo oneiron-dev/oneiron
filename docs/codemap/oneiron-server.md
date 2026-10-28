@@ -1221,11 +1221,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/media/options.rs` | src | s | 7 fn · 3 crate-vis | — | Media seat queries and model option rows |
 | `src/models/media/voice_reference.rs` | src | s | 4 crate-vis | — | Every reference upload re-reads the bank (FIX 9517) |
 | `src/models/mod.rs` | src | m | 2 struct · 1 fn · 14 re-export · 16 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
-| `src/models/native_exl3/buffer.rs` | src | s | 4 crate-vis | — | A native call's input region: the conversation's bytes copied once into an immutable shared region… |
-| `src/models/native_exl3/mod.rs` | src | m | 7 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
-| `src/models/native_exl3/session_ops.rs` | src | s | 3 crate-vis | — | The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection… |
-| `src/models/native_exl3/transport.rs` | src | m | 14 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
-| `src/models/native_exl3/wire.rs` | src | s | 13 crate-vis | — | Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload… |
+| `src/models/native_exl3/buffer.rs` | src | s | 13 crate-vis | — | A native call's regions |
+| `src/models/native_exl3/mod.rs` | src | m | 9 crate-vis | — | The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch… |
+| `src/models/native_exl3/session_ops.rs` | src | s | 5 crate-vis | — | The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection… |
+| `src/models/native_exl3/transport.rs` | src | m | 15 crate-vis | — | One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame… |
+| `src/models/native_exl3/wire.rs` | src | s | 14 crate-vis | — | Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload… |
 | `src/models/offer.rs` | src | s | 1 struct · 1 enum · 2 fn · 4 crate-vis | OfferEndpoint, ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
 | `src/models/openai.rs` | src | m | 4 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |
 | `src/models/outbound_wait.rs` | src | s | 2 crate-vis | — | Server policy for shedding during a long journaled model wait |
