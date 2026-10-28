@@ -308,6 +308,10 @@ side_tables! {
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored
         => crate::browser_library::erase_workflow_actor_in_txn;
+    /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
+    /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
+    BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine
+        => crate::llm::erase_resident_share_actor_in_txn;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().

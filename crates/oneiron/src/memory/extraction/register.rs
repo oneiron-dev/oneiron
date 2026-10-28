@@ -5,7 +5,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::types::{EncoderInput, EncoderMessage, EncoderTurn, SpeakerRole};
+use super::types::{EncoderInput, EncoderMessage, EncoderRegister, EncoderTurn, SpeakerRole};
 
 /// The turn `turn` among those `input` carries beside its own: an earlier
 /// one, or a later one of its conversation register.
@@ -45,5 +45,13 @@ pub(super) fn fold_register(
             Some(SpeakerRole::User) => b"A",
             Some(SpeakerRole::Companion) => b"B",
         });
+    }
+    // Where the register stops short (FIX 10705); one read whole folds
+    // nothing more, so it digests as it did before the record existed.
+    if let EncoderRegister::Conversation(reach) = input.register
+        && !reach.is_whole()
+    {
+        hash.update(b"\0reach");
+        hash.update([u8::from(reach.earlier_cut), u8::from(reach.later_cut)]);
     }
 }

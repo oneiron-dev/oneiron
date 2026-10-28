@@ -248,7 +248,10 @@ impl SyncServer {
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
             usage_ledger: UsageLedger::new(vault.clone()),
-            host_account: oneiron::llm::run_admission::HostAccount::new(),
+            // Each resident's share of the allocation, kept in the vault (FIX 7767).
+            host_account: oneiron::llm::run_admission::HostAccount::with_residents(
+                oneiron::llm::VaultResidentLedger::new(vault.clone()),
+            ),
             transfers: crate::api::Transfers::new(
                 &config.limits,
                 Arc::clone(wire_telemetry.limit_questions()),

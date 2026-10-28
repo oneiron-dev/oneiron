@@ -353,7 +353,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.task_types.get"
         | "vault.agents.spawn.get"
         | "vault.agents.spawn"
-        | "vault.tasks.cancel_force"
+        | "vault.tasks.cancel.force"
         | "vault.runs.branches.get"
         | "vault.consults.get"
         | "vault.consolidation.home.get"
