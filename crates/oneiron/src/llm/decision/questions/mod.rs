@@ -44,10 +44,10 @@ pub use graph_ask::{
     run_graph_ask_by_type, run_graph_ask_receipted, select_graph_units_by_type,
 };
 pub(crate) use graph_ask::{trial_unit_context, trial_unit_context_in_txn};
-pub(crate) use lifetime::erase_question_source_in_txn;
 pub use health_ask::{
     HEALTH_CROSSING_PREDICATE, HEALTH_OUTCOME_PREDICATE, HealthAnswer, HealthBound,
 };
+pub(crate) use lifetime::erase_question_source_in_txn;
 pub(crate) use outcomes::calibration_pairs_in_txn;
 pub use outcomes::{
     calibration_pairs, outcome_labels, person_changed_pairs, project_bound_outcomes,
