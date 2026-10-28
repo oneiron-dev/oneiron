@@ -3666,6 +3666,11 @@ export_facade! {
     let output = client.vault_tasks_cancel_force(&input)?;
     crate::codec::lift_record("vault.tasks.cancel_force", &output)
 };
+"vault.tasks.comm_widen.revoke" => fn vault_tasks_comm_widen_revoke(&self, input: CommWidenRevokeRequest) -> CommWidenRevokeReceipt = |client| {
+    let input: oneiron::task_verb::sdk::CommWidenRevokeRequest = crate::codec::lower_record("vault.tasks.comm_widen.revoke", input)?;
+    let output = client.vault_tasks_comm_widen_revoke(&input)?;
+    crate::codec::lift_record("vault.tasks.comm_widen.revoke", &output)
+};
 "vault.runs.branches.get" => fn vault_runs_branches_get(&self, input: RunBranchesRequest) -> RunBranchesView = |client| {
     let input: oneiron::task_verb::run_doors::RunBranchesRequest = crate::codec::lower_record("vault.runs.branches.get", input)?;
     let output = client.vault_runs_branches_get(&input)?;

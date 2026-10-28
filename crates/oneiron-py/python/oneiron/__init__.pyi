@@ -2696,7 +2696,12 @@ class Oneiron:
         def cancel_force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
             """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
         @property
+        def comm_widen(self) -> "Oneiron._VaultTasksCommWidenVerbs": ...
+        @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
+    class _VaultTasksCommWidenVerbs:
+        def revoke(self, spec: Facade.CommWidenRevokeRequest) -> Facade.CommWidenRevokeReceipt:
+            """The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended."""
     class _VaultTasksLinearVerbs:
         @property
         def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...

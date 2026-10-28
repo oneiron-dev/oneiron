@@ -6825,6 +6825,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_tasks_comm_widen_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.tasks.comm_widen.revoke")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.tasks.comm_widen.revoke", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_runs_branches_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.runs.branches.get")?;
         let output = py

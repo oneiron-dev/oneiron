@@ -23729,6 +23729,46 @@ async fn vault_tasks_cancel_force(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_tasks_comm_widen_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.tasks.comm_widen.revoke")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.tasks.comm_widen.revoke", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.comm_widen.revoke", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_tasks_comm_widen_revoke(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_runs_branches_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38091,6 +38131,7 @@ pub(crate) async fn call_verb(
         "vault.agents.spawn.get" => vault_agents_spawn_get(server, call, input).await,
         "vault.agents.spawn" => vault_agents_spawn(server, call, input).await,
         "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
+        "vault.tasks.comm_widen.revoke" => vault_tasks_comm_widen_revoke(server, call, input).await,
         "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
         "vault.runs.pause" => vault_runs_pause(server, call, input).await,
         "vault.runs.resume" => vault_runs_resume(server, call, input).await,

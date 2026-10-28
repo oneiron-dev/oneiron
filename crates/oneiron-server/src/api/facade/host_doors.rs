@@ -176,6 +176,8 @@ pub(crate) use super::codebase_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
 // likewise.
 pub(crate) use super::coordination_doors::*;
+// The owner's revoke of a stop-asking choice (FIX 11104), likewise.
+pub(crate) use super::comm_widen_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
