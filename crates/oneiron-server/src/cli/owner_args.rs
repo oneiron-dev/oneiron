@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 
-use super::{RestoreWrapArgs, VaultUnlockArgs};
+use super::{RestoreWrapArgs, SecretBindArgs, SecretPendingArgs, SecretUnbindArgs, VaultUnlockArgs};
 use crate::config::ServeArgs;
 
 #[derive(Args, Clone, Debug)]
@@ -467,6 +467,13 @@ pub enum SecretsCommand {
     /// recovery kit from stdin, one recovery code per line; the kit never
     /// leaves this process, so the vault must be stopped.
     AnchorSign(Box<SecretAnchorSignArgs>),
+    /// Bind a secret to an effector, so its door uses it unread.
+    Bind(Box<SecretBindArgs>),
+    /// Withdraw a secret's binding to one effector; every other stays.
+    Unbind(Box<SecretUnbindArgs>),
+    /// A restore's credentials pending on their source's evidence, and the
+    /// typed confirm that keeps a batch without it.
+    Pending(Box<SecretPendingArgs>),
 }
 
 /// A secret's custody class (ARCH-0069 S1).

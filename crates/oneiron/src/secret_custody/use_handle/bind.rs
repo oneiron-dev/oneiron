@@ -257,3 +257,126 @@ fn target_in_txn(
         }
     }
 }
+
+/// The Gate reason code of an owner's unbinding (FIX 2620).
+const SECRET_UNBIND_REASON: &str = "gate.secret.owner_unbind";
+
+/// The Gate content kind of an owner's unbinding.
+const SECRET_UNBIND_CONTENT_KIND: &str = "secret_unbind";
+
+impl Vault {
+    /// Removes the owner's binding of a secret to one effector (FIX 2620):
+    /// his own withdrawal of a use he granted, rechecked in the committing
+    /// transaction. Every other binding, the value and its generation stay.
+    /// A portable record's remaining bindings travel as a bind's do, in a
+    /// custody rewrap whose protected input carries them (CALLS
+    /// CUSTODY_BIND_TRAVEL); a record that stays on its device, or an install
+    /// that carries no owner act, unbinds here alone, and the custody receipt
+    /// says which. The Gate record keeps the handle and the effector.
+    ///
+    /// # Errors
+    /// As [`Self::bind_secret_as_owner`], and
+    /// [`SecretError::InvalidSecretCustodyBody`] when the secret holds no
+    /// binding for `effector`.
+    pub fn unbind_secret_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        target: &RevealTarget,
+        effector: &str,
+        at: u64,
+    ) -> Result<SecretBound> {
+        let effector = effector.trim();
+        if effector.is_empty() || effector.len() > EFFECTOR_MAX_BYTES {
+            return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
+                "a binding names its effector, at most 256 bytes",
+            )));
+        }
+        self.load_install_signing_if_minted()?;
+        let mut wtxn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(self, &wtxn)?;
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "only the vault owner unbinds a secret",
+            )));
+        }
+        let (handle, id) = target_in_txn(&self.store, &wtxn, target)?;
+        let mut held =
+            read_stored_custody_in_txn(&self.store, &wtxn, &id)?.ok_or_else(|| unknown(&handle))?;
+        let rec = &mut held.record;
+        refuse_revoked_use_in_txn(self, &wtxn, &id, rec.class, &handle)?;
+        if rec.status != SecretCustodyStatus::Active {
+            return Err(not_active(&handle));
+        }
+        let before = rec.bindings.len();
+        rec.bindings.retain(|binding| binding.effector != effector);
+        if rec.bindings.len() == before {
+            return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
+                "the secret holds no binding for that effector",
+            )));
+        }
+        let custody = if custody_portable(rec) {
+            let material = match CUSTODY_BIND_TRAVEL {
+                CustodyBindTravel::InputBearingRewrap => Material::Bindings(&rec.bindings),
+            };
+            let recorded = self.record_custody_change_in_txn(
+                &mut wtxn,
+                actor,
+                surface,
+                ActiveChange {
+                    change: CustodyChange::Rewrap,
+                    id,
+                    generation: rec.rotation_generation,
+                    plan: &CustodyPlan::default(),
+                    material,
+                    sealed: None,
+                    seen: None,
+                    permits: None,
+                },
+                at,
+            )?;
+            if recorded.custody.kept_here.is_some() {
+                put_stored_custody_in_txn(self, &mut wtxn, &id, &held, at)?;
+            }
+            recorded.custody
+        } else {
+            put_stored_custody_in_txn(self, &mut wtxn, &id, &held, at)?;
+            SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal)
+        };
+        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id,
+            created_at: crate::ports::recorded_at_in_txn(&self.store, &mut wtxn)?,
+            outcome: "approved".into(),
+            reason_codes: vec![SECRET_UNBIND_REASON.into()],
+            receipt_reasons: Vec::new(),
+            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
+                SECRET_UNBIND_CONTENT_KIND,
+                vec![format!("handle:{handle}"), format!("effector:{effector}")],
+            ),
+            actor_class: "human".into(),
+            actor_ref: Some(actor.to_hex()),
+            content_kind: SECRET_UNBIND_CONTENT_KIND.into(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: id.as_bytes().to_vec(),
+            read_frontier_hash: [0; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(&mut wtxn, &record)?;
+        let unbound = SecretBound {
+            secret_id: id,
+            handle,
+            name: held.record.name.clone(),
+            bindings: held.record.bindings.clone(),
+            receipt: decision_id,
+            custody,
+        };
+        wtxn.commit()?;
+        self.mirror_custody_change(&unbound.custody);
+        Ok(unbound)
+    }
+}
