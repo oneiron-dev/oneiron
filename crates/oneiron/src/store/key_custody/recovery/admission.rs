@@ -13,7 +13,7 @@ use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because
 use super::super::anchor::verified_position;
 use super::super::body_history::HistoryRows;
 use super::super::erase_evidence::{FenceFact, fold_fact};
-use super::super::head::{CompartmentScope, CustodyOpener, OpenedHead, open_head};
+use super::super::head::{CarriedWorldPad, CompartmentScope, CustodyOpener, OpenedHead, open_head};
 use super::super::identity::{CustodyId, CustodySecret, CustodySubject};
 use super::super::log::{Control, CustodyPosition, FrameHeader, LogEntry, frame_hash, open_frame};
 use super::super::protocol::{AnchorStore, CustodySource, Lineage};
@@ -47,6 +47,10 @@ pub(crate) struct AdmittedCustody {
     pub(super) evidence: BTreeMap<EntityId, FenceFact>,
     /// The head holds an owner-only compartment its opener did not open.
     pub(super) owner_unopened: bool,
+    /// The head's world pad compartments its opener did not open, its own
+    /// and those it carried, at their origin coordinates (PAD-3, FIX
+    /// 11133): none of a pad admitted live or retired.
+    pub(super) carried: Vec<CarriedWorldPad>,
 }
 
 impl AdmittedCustody {
@@ -190,6 +194,7 @@ pub(crate) fn admit_recovery(
         history: opened.history,
         evidence: opened.evidence,
         owner_unopened: opened.unopened.contains(&CompartmentScope::OwnerOnly),
+        carried: opened.carried,
     };
     if let Some(record) = record {
         let anchored =
@@ -241,6 +246,12 @@ pub(crate) fn admit_recovery(
         admitted.position.epoch = epoch;
         admitted.anchor = Some(record);
     }
+    // A pad the log after the head retired is carried no further.
+    let carried = std::mem::take(&mut admitted.carried);
+    admitted.carried = carried
+        .into_iter()
+        .filter(|pad| !admitted.live.contains_key(pad.id()) && !admitted.retires(pad.id()))
+        .collect();
     // The image's position is the admitted one, or its ancestor.
     let current = admitted.position;
     if wanted.seq > current.seq || wanted.epoch > current.epoch {

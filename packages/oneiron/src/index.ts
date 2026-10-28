@@ -674,8 +674,10 @@ export class Oneiron {
    * Explicit `scope.worldRef` recalls of retained foreign worlds carry
    * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and
    * `pactEpoch`. This selection grants no read authority.
+   * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the
+   * window budget of `readerAgentRef`'s memory profile, else 4,000.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef)),
     retrieval: {
       aging: {
         /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
@@ -806,6 +808,8 @@ export class Oneiron {
       get: (input: Facade.CallReceiptRequest): Facade.CallReceipt | null => this.#call(() => this.#client.vaultReceiptsGet(input) as Facade.CallReceipt | null),
       /** Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly. */
       context: (input: Facade.CallReceiptRequest): Facade.ContextEmitReceipt | null => this.#call(() => this.#client.vaultReceiptsContext(input) as Facade.ContextEmitReceipt | null),
+      /** Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack. */
+      craft_reply_manifest: (input: Facade.CallReceiptRequest): Facade.ManifestEntry[] | null => this.#call(() => this.#client.vaultReceiptsCraftReplyManifest(input) as Facade.ManifestEntry[] | null),
     }),
     assets: {
       /** Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate. */
@@ -1847,7 +1851,7 @@ export class Oneiron {
       answer: (input: Facade.CraftCandidateAnswer): Facade.CraftVerdictView => this.#call(() => this.#client.vaultCraftCandidatesAnswer(input) as Facade.CraftVerdictView),
     }),
     lenses: {
-      /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
+      /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),
       /** The owner selects a proposed lens revision for its pack slot. */
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
@@ -2367,8 +2371,10 @@ export class Oneiron {
       get: (input: Facade.TaskTypeTreeRead): Facade.TaskTypeTreeReadReply => this.#call(() => this.#client.vaultTaskTypesGet(input) as Facade.TaskTypeTreeReadReply),
     },
     tasks: {
-      /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
-      cancel_force: (input: Facade.CancelForceRequest): Facade.CancelForceReceipt => this.#call(() => this.#client.vaultTasksCancelForce(input) as Facade.CancelForceReceipt),
+      cancel: {
+        /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+        force: (input: Facade.CancelForceRequest): Facade.CancelForceReceipt => this.#call(() => this.#client.vaultTasksCancelForce(input) as Facade.CancelForceReceipt),
+      },
       linear: {
         /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
         mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
@@ -3070,7 +3076,7 @@ export class Oneiron {
     /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
     message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),
     grants: {
-      /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
+      /** Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it. */
       ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
       /** The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner. */
       answer: (input: Facade.GrantAnswerRequest): Facade.GrantAnswered => this.#call(() => this.#client.selfGrantsAnswer(input) as Facade.GrantAnswered),

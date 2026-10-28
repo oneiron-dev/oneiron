@@ -9,11 +9,21 @@
 //! A turn whose log was not read from the retained ledger, or whose rows
 //! are not all known, names no conversation: its manifest keys no session.
 //! Nothing here changes what the call sends.
+//!
+//! A snapshot of a self-chat turn's successor is kept, and restored for a
+//! later call, only under the read's scope and a dependency set known
+//! whole: the rows the path was read from, each craft note and fold summary
+//! with the turns a summary folds, and the world and author of each, read
+//! once the reply commits. A set any of them does not read for is not
+//! precise, and the turn's state stays cold (V2-R3). The turn's own
+//! authority is recorded for its call before the call goes out, so a
+//! restore rechecks under it.
 use std::sync::Arc;
 
 use oneiron::attempt_queue::ManifestEntry;
-use oneiron::claim::{CallerLocality, ScopedReadActorKey};
+use oneiron::claim::{CallerLocality, ScopedReadActorKey, base_world_id};
 use oneiron::compaction::ChatLogLine;
+use oneiron::inference_snapshot::SnapshotDependencies;
 use oneiron::llm::{
     ConversationAnchor, ScopeDigest, Segment, SegmentClass, SegmentClock, SegmentKind,
     SegmentLocator, SegmentManifest, SessionInvalidation, TrustFence, VaultRef,
@@ -27,7 +37,10 @@ use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
 use crate::auth::CoreAuth;
-use crate::models::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+use crate::models::{
+    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
+    reply_committed, turn_admitted,
+};
 
 /// Where the turn's messages lay as it assembled them, before its craft and
 /// its board went in.
@@ -79,6 +92,15 @@ pub(super) struct Assembled<'a> {
 pub(super) struct TurnSegments {
     pub(super) manifest: Arc<SegmentManifest>,
     authority: Option<(ScopedReadActorKey, Vec<EntityId>)>,
+    /// What the canonical path was read and derived from, for a self-chat.
+    path: Option<PathDependencies>,
+    /// The vault's authority generation the turn was admitted at; `None`
+    /// when it did not read.
+    revocation: Option<u64>,
+    /// The authority a snapshot restored for the turn's call is rechecked
+    /// under, held for the turn's life: the record [`turn_admitted`] keeps
+    /// lapses once it goes.
+    _turn: Option<Arc<dyn CheckpointAuthority>>,
 }
 
 /// The manifest of `assembled` once admitted as `admitted`; `None` when the
@@ -158,7 +180,12 @@ pub(super) fn admitted(
         SegmentClock::Live,
         newest,
     ));
-    let read_key = crate::server::blocking(|| reader.read_key());
+    // The authority generation first: a revoke between the two reads
+    // leaves the key read after it.
+    let (revocation, read_key) = crate::server::blocking(|| {
+        let revocation = reader.vault.authority_generation().ok();
+        (revocation, reader.read_key())
+    });
     let sources = canonical_sources(&assembled);
     let anchor = match (log, &read_key, &sources) {
         (Some(log), Some(key), Some(_)) => Some(ConversationAnchor {
@@ -182,10 +209,129 @@ pub(super) fn admitted(
     if !manifest.describes(admitted) {
         return None;
     }
+    let manifest = Arc::new(manifest);
+    let path = PathDependencies::of(reader, &assembled);
+    let turn = match (manifest.anchor(), &read_key, &sources) {
+        (Some(anchor), Some(key), Some(rows)) => {
+            let turn: Arc<dyn CheckpointAuthority> = Arc::new(ChatAuthority {
+                reader: reader.clone(),
+                credential: TurnCredential::Request {
+                    auth: reader.auth.clone(),
+                    vault: Arc::clone(&reader.vault),
+                },
+                read_key: key.clone(),
+                sources: rows.clone(),
+                at: Some((anchor.head, anchor.fold_epoch)),
+                path: path.clone(),
+                revocation,
+            });
+            turn_admitted(&manifest, &turn);
+            Some(turn)
+        }
+        _ => None,
+    };
     Some(TurnSegments {
-        manifest: Arc::new(manifest),
+        manifest,
         authority: read_key.zip(sources),
+        path,
+        revocation,
+        _turn: turn,
     })
+}
+
+/// What a self-chat turn's canonical path was read and derived from, as its
+/// admission names it: who wrote its retained rows (the reader and the
+/// answering agent), the craft notes it showed, the fold summaries standing
+/// in its log, and the rows its board recalled. The worlds, authors and
+/// folded turns of the notes and summaries are read once the reply commits
+/// ([`Self::read`]).
+#[derive(Clone)]
+struct PathDependencies {
+    authors: Vec<EntityId>,
+    notes: Vec<EntityId>,
+    summaries: Vec<EntityId>,
+    /// The memory rows and skills the board showed: the reply derives from
+    /// them, and their bytes ride only in the ephemeral tail.
+    recalled: Vec<EntityId>,
+}
+
+impl PathDependencies {
+    /// What `assembled`'s path was read from as `reader` read it; `None` for
+    /// a turn that read no self-chat, or a craft note named by no id.
+    fn of(reader: &Reader, assembled: &Assembled<'_>) -> Option<Self> {
+        let log = assembled.self_chat?.log();
+        let notes = assembled
+            .craft
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| EntityId::from_hex(&entry.reference).ok())
+            .collect::<Option<Vec<_>>>()?;
+        let recalled = assembled
+            .board
+            .into_iter()
+            .flat_map(|(_, sections)| sections)
+            .flat_map(|section| &section.dependencies)
+            .filter_map(|locator| match locator {
+                SegmentLocator::Memory { id, .. } | SegmentLocator::Skill { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        Some(Self {
+            authors: vec![reader.actor, assembled.agent],
+            notes,
+            summaries: log.summaries.clone(),
+            recalled,
+        })
+    }
+
+    /// The dependency set of a snapshot whose path holds `sources`, read in
+    /// `vault` now: base reality and the reader and agent, then the world
+    /// and author of each note, each summary and each turn and MESSAGE a
+    /// summary folds; the summaries, what they fold and every recalled row
+    /// as derived. Not precise when any of those does not read: an unread
+    /// world or author is never guessed. Every list sorted, once each.
+    fn read(&self, vault: &Vault, sources: Vec<EntityId>) -> SnapshotDependencies {
+        let mut set = SnapshotDependencies {
+            sources,
+            worlds: vec![base_world_id()],
+            authors: self.authors.clone(),
+            erase_subjects: Vec::new(),
+            derived: self.recalled.clone(),
+            precise: false,
+        };
+        set.precise = self.read_quoted(vault, &mut set).is_some();
+        for list in [
+            &mut set.sources,
+            &mut set.worlds,
+            &mut set.authors,
+            &mut set.derived,
+        ] {
+            list.sort_unstable();
+            list.dedup();
+        }
+        set
+    }
+
+    /// Adds to `set` the worlds and authors of the notes and summaries and
+    /// of what each summary folds, and the summaries and what they fold as
+    /// derived; `None` at the first of them that does not read.
+    fn read_quoted(&self, vault: &Vault, set: &mut SnapshotDependencies) -> Option<()> {
+        let mut folded = Vec::new();
+        for summary in &self.summaries {
+            folded.push(*summary);
+            for span in vault.summary_folded_spans(summary).ok()?? {
+                folded.push(span.turn);
+                folded.extend(span.messages);
+            }
+        }
+        for id in self.notes.iter().chain(&folded) {
+            let world = vault.record_world(id).ok()??;
+            set.worlds.push(world.unwrap_or_else(base_world_id));
+            set.authors.push(vault.record_author(id).ok()??);
+        }
+        set.derived.extend(folded);
+        Some(())
+    }
 }
 
 /// The rows the canonical path was read from: the agent, its craft notes
@@ -271,20 +417,24 @@ struct ChatAuthority {
     credential: TurnCredential,
     read_key: ScopedReadActorKey,
     sources: Vec<EntityId>,
+    /// The HEAD and fold epoch the turn read its path at; `None` on the
+    /// authority a commit holds, which restores nothing.
+    at: Option<(Option<EntityId>, u64)>,
+    /// What the path was read and derived from, for a self-chat.
+    path: Option<PathDependencies>,
+    /// The vault's authority generation the turn was admitted at.
+    revocation: Option<u64>,
 }
 
-impl CheckpointAuthority for ChatAuthority {
-    fn recheck(&self, commit: &ReplyCommit) -> AuthorityVerdict {
-        if !self.credential.live() {
-            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
-        }
+impl ChatAuthority {
+    /// Whether the read key the reader resolves now is the one the path was
+    /// read under, and every row of `rows` still reads under it.
+    fn reads(&self, rows: &[EntityId]) -> AuthorityVerdict {
         match self.reader.read_key() {
             Some(key) if key == self.read_key => {
                 let read = self.reader.vault.scoped_read(key);
-                let withdrawn = self
-                    .sources
+                let withdrawn = rows
                     .iter()
-                    .chain(std::iter::once(&commit.message))
                     .any(|row| !matches!(read.is_entity_readable(row), Ok(true)));
                 if withdrawn {
                     AuthorityVerdict::Rejects(SessionInvalidation::SourceWithdrawn)
@@ -294,6 +444,64 @@ impl CheckpointAuthority for ChatAuthority {
             }
             _ => AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope),
         }
+    }
+}
+
+impl CheckpointAuthority for ChatAuthority {
+    fn recheck(&self, commit: &ReplyCommit) -> AuthorityVerdict {
+        if !self.credential.live() {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        let mut rows = self.sources.clone();
+        rows.push(commit.message);
+        self.reads(&rows)
+    }
+
+    /// The read's scope as the session is keyed by it, the authority
+    /// generation the turn was admitted at, and what the path was read and
+    /// derived from, the reply among its sources ([`PathDependencies::read`]).
+    fn snapshot_scope(&self, commit: &ReplyCommit) -> Option<SnapshotScope> {
+        let path = self.path.as_ref()?;
+        let mut sources = self.sources.clone();
+        sources.push(commit.message);
+        Some(SnapshotScope {
+            read_scope: scope_digest(&self.reader, &self.read_key),
+            revocation: self.revocation,
+            dependencies: path.read(&self.reader.vault, sources),
+        })
+    }
+
+    /// In order: the credential, the vault's authority generation now
+    /// against the one the snapshot was admitted at, the HEAD and fold epoch
+    /// the turn read at, the read key and its scope, then every source the
+    /// snapshot depends on, in every case: the generation does not move on
+    /// a scope or world setting held outside the authority log. A snapshot
+    /// admitted with no generation read rests on that last check alone. A
+    /// rejection only sends the turn cold.
+    fn recheck_restore(&self, claim: &RestoreClaim<'_>) -> AuthorityVerdict {
+        let Some((head, fold_epoch)) = self.at else {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        };
+        if !self.credential.live() {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        if let Some(kept) = claim.revocation
+            && self.reader.vault.authority_generation().ok() != Some(kept)
+        {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        if claim.head != head {
+            return AuthorityVerdict::Rejects(SessionInvalidation::PathChanged);
+        }
+        if claim.fold_epoch != fold_epoch {
+            return AuthorityVerdict::Rejects(SessionInvalidation::FoldBeforeFrontier);
+        }
+        let scoped = claim.dependencies.precise
+            && scope_digest(&self.reader, &self.read_key) == claim.read_scope;
+        if !scoped {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        self.reads(&claim.dependencies.sources)
     }
 }
 
@@ -322,6 +530,9 @@ pub(super) fn commit_on_answer(
         credential: credential.clone(),
         read_key,
         sources,
+        at: None,
+        path: segments.path.clone(),
+        revocation: segments.revocation,
     };
     let Answering {
         handle,

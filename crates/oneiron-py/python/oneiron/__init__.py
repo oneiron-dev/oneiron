@@ -498,7 +498,7 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs":
             return Oneiron._VaultClaimsVerbs(self._client)
-        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None, query_affect: dict[str, Any] | None = None) -> dict[str, Any]:
+        def recall(self, query: str, *, effort: str = 'medium', scope: dict[str, Any] | None = None, limit: int = 10, format: str | None = None, as_of: int | None = None, deadline_ms: int | None = None, media: dict[str, Any] | None = None, query_affect: dict[str, Any] | None = None, token_budget: int | None = None, reader_agent_ref: str | None = None) -> dict[str, Any]:
             """Recalls a memory pack.
 
             ``effort="high"`` needs a lease this package never mints: an embedded
@@ -519,8 +519,10 @@ class Oneiron:
             Explicit ``scope.world_ref`` recalls of retained foreign worlds carry
             ``item["stale"]``: ``stale_since`` and ``age_secs`` (when known),
             ``reason`` and ``pact_epoch``. This selection grants no read authority.
+            ``token_budget`` (0: uncut) sizes the rendered ``format``; omitted,
+            the window budget of ``reader_agent_ref``'s memory profile, else 4,000.
             """
-            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
+            return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None, token_budget, reader_agent_ref)))
         @property
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs":
             return Oneiron._VaultRetrievalVerbs(self._client)
@@ -1442,6 +1444,9 @@ class Oneiron:
         def context(self, spec):
             """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
             return json.loads(_translate(lambda: self._client.vault_receipts_context(json.dumps(spec))))
+        def craft_reply_manifest(self, spec):
+            """Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack."""
+            return json.loads(_translate(lambda: self._client.vault_receipts_craft_reply_manifest(json.dumps(spec))))
     class _VaultAssetsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3287,7 +3292,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def propose(self, spec):
-            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""
+            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."""
             return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
         def activate(self, spec):
             """The owner selects a proposed lens revision for its pack slot."""
@@ -4196,12 +4201,18 @@ class Oneiron:
     class _VaultTasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def cancel_force(self, spec):
-            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
+        @property
+        def cancel(self) -> "Oneiron._VaultTasksCancelVerbs":
+            return Oneiron._VaultTasksCancelVerbs(self._client)
         @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
             return Oneiron._VaultTasksLinearVerbs(self._client)
+    class _VaultTasksCancelVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def force(self, spec):
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
     class _VaultTasksLinearVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5485,7 +5496,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def ask(self, spec):
-            """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
+            """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
         def answer(self, spec):
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""

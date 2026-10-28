@@ -98,7 +98,8 @@ side_tables! {
     ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
-    ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
+    ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
+        => crate::learning::erase_receipt_scope_in_txn;
     /// One-shot consumption marker and promotion receipt for a specific authoring strategy's sealed
     /// BEAM measurement. Two shapes share this key over its lifetime (a non-JSON consumption
     /// sentinel, then a JSON receipt) and no reader ever decodes it — every access is a raw
@@ -137,6 +138,11 @@ side_tables! {
     /// One checkpoint v2 image's canonical bytes (domain, then named MessagePack), keyed by its
     /// unsigned id (OF-469). Key: hash32.
     AUTHORITY_CHECKPOINT_V2_IMAGE: VaultMeta b"authority.checkpoint.v2." Raw;
+    /// One signed authority row a local append kept as evidence instead of storing it, because
+    /// the fold with it past the adopted checkpoint image needs history this vault does not hold
+    /// (FIX 2989): no held history, admitting nothing; it leaves when a put of it lands. Key:
+    /// hash32. Value: the row's canonical signed bytes.
+    AUTHORITY_HISTORY_PENDING: VaultMeta b"authority.history.pending.v1:" Raw;
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
@@ -302,6 +308,10 @@ side_tables! {
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored
         => crate::browser_library::erase_workflow_actor_in_txn;
+    /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
+    /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
+    BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine
+        => crate::llm::erase_resident_share_actor_in_txn;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().

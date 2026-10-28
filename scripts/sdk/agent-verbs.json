@@ -702,7 +702,7 @@
     },
     {
       "name": "self.grants.ask",
-      "description": "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it.",
+      "description": "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it.",
       "input": "crate::memory::GrantAskRequest",
       "output": "crate::memory::GrantAskReceipt",
       "call": "memory.grants_ask(&input)?",
@@ -1520,7 +1520,7 @@
     },
     {
       "name": "vault.recall",
-      "description": "Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata.",
+      "description": "Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens.",
       "input": "RecallRequest",
       "output": "crate::memory::MemoryPack",
       "call": "crate::task_verb::sdk::recall_unembedded(memory, input)?",
@@ -1572,12 +1572,20 @@
           {
             "name": "query_affect",
             "kind": "query_affect"
+          },
+          {
+            "name": "token_budget",
+            "kind": "token_budget"
+          },
+          {
+            "name": "reader_agent_ref",
+            "kind": "ref"
           }
         ],
         "docs": {
-          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n    /// Explicit `scope.world_ref` recalls of retained foreign worlds carry\n    /// `MemoryItem::stale`: stale-since and age in seconds (when known), the\n    /// terminal reason and pact epoch. This selection grants no read authority.\n",
-          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   * Explicit `scope.worldRef` recalls of retained foreign worlds carry\n   * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and\n   * `pactEpoch`. This selection grants no read authority.\n   */",
-          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        \n        Explicit ``scope.world_ref`` recalls of retained foreign worlds carry\n        ``item[\"stale\"]``: ``stale_since`` and ``age_secs`` (when known),\n        ``reason`` and ``pact_epoch``. This selection grants no read authority.\n        "
+          "remote": "    /// Recalls a memory pack.\n    ///\n    /// The lease the engine takes is not a client input, and a bearer slip\n    /// is not one. Embedded, `Effort::High`, `XHigh` and `Max` return the\n    /// engine's `LEASE_REQUIRED`: this client mints no lease. Remote, the\n    /// server admits them on a line of its own and reranks on its `[models]`\n    /// reranker, or runs them unreranked and says so when it has none.\n    /// `media` is embedded by the server into its declared space; embedded,\n    /// it returns `MODEL_UNAVAILABLE`. `query_affect` (valence in -1..=1,\n    /// arousal and dominance in 0..=1) ranks by emotion congruence, embedded\n    /// and remote alike; out of range it returns `BAD_REQUEST`.\n    /// Explicit `scope.world_ref` recalls of retained foreign worlds carry\n    /// `MemoryItem::stale`: stale-since and age in seconds (when known), the\n    /// terminal reason and pact epoch. This selection grants no read authority.\n    /// `token_budget` (0: uncut) sizes the rendered `format`; omitted, the\n    /// window budget of `reader_agent_ref`'s memory profile, else 4,000.\n",
+          "ts": "/**\n   * Recalls a memory pack.\n   *\n   * `effort: \"high\"`, `\"xhigh\"`, or `\"max\"` needs a lease this package never\n   * mints: an embedded client returns `LEASE_REQUIRED`; a remote one gets what\n   * the server serves (reranked on its `[models]` reranker, or unreranked and\n   * saying so). `effort: \"call\"` is call mode for live calls: light\n   * effort under a hard deadline (`deadlineMs`, or the vault's call-mode\n   * deadline), answering with the best results ready, marked `partial`.\n   * `media` (`{ space, mime, bytesB64, kinds? }`) is embedded by the server\n   * into its declared space; an embedded client returns `MODEL_UNAVAILABLE`.\n   * `queryAffect` (`{ valence, arousal, dominance }`: valence in -1..1,\n   * arousal and dominance in 0..1) ranks by emotion congruence, embedded and\n   * remote alike; out of range it returns `BAD_REQUEST`.\n   * Explicit `scope.worldRef` recalls of retained foreign worlds carry\n   * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and\n   * `pactEpoch`. This selection grants no read authority.\n   * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the\n   * window budget of `readerAgentRef`'s memory profile, else 4,000.\n   */",
+          "py": "Recalls a memory pack.\n\n        ``effort=\"high\"`` needs a lease this package never mints: an embedded\n        client raises ``LEASE_REQUIRED``; a remote one gets what the server\n        serves (reranked on its ``[models]`` reranker, or unreranked and\n        saying so). ``effort=\"call\"`` is call mode for live calls:\n        light effort under a hard deadline (``deadline_ms``, or the vault's\n        call-mode deadline), answering with the best results ready, marked\n        ``partial``. ``format`` takes the engine's exact tokens:\n        ``\"json\"``, ``\"yaml\"``, ``\"toon\"``, ``\"md\"``, ``\"txt\"``.\n        ``media`` (``{\"space\", \"mime\", \"bytes_b64\", \"kinds\"}``) is embedded\n        by the server into its declared space; an embedded client raises\n        ``MODEL_UNAVAILABLE``. ``query_affect`` (``{\"valence\", \"arousal\",\n        \"dominance\"}``: valence in -1..1, arousal and dominance in 0..1)\n        ranks by emotion congruence, embedded and remote alike; out of range\n        it raises ``BAD_REQUEST``.\n        \n        Explicit ``scope.world_ref`` recalls of retained foreign worlds carry\n        ``item[\"stale\"]``: ``stale_since`` and ``age_secs`` (when known),\n        ``reason`` and ``pact_epoch``. This selection grants no read authority.\n        ``token_budget`` (0: uncut) sizes the rendered ``format``; omitted,\n        the window budget of ``reader_agent_ref``'s memory profile, else 4,000.\n        "
         },
         "defaults": true
       },
@@ -1591,7 +1599,9 @@
           "as_of": "Option<u64>",
           "deadline_ms": "Option<u64>",
           "media": "Option<RecallMedia>",
-          "query_affect": "Option<QueryAffect>"
+          "query_affect": "Option<QueryAffect>",
+          "token_budget": "Option<u64>",
+          "reader_agent_ref": "Option<String>"
         },
         "output": "MemoryPack"
       },
@@ -8258,7 +8268,7 @@
     },
     {
       "name": "vault.lenses.propose",
-      "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it.",
+      "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it.",
       "input": "crate::lens::LensProposeRequest",
       "output": "crate::receipt::LensProposalReceipt",
       "call": "memory.lenses_propose(input)?",
@@ -11249,11 +11259,11 @@
       "openapi": true
     },
     {
-      "name": "vault.tasks.cancel_force",
+      "name": "vault.tasks.cancel.force",
       "description": "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts.",
       "input": "crate::task_verb::run_doors::CancelForceRequest",
       "output": "crate::task_verb::run_doors::CancelForceReceipt",
-      "call": "crate::task_verb::run_doors::cancel_force_as(memory.vault(), &memory.embedded_owner(\"vault.tasks.cancel_force\")?, input)?",
+      "call": "crate::task_verb::run_doors::cancel_force_as(memory.vault(), &memory.embedded_owner(\"vault.tasks.cancel.force\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -13229,6 +13239,19 @@
       "input": "crate::receipt::CallReceiptRequest",
       "output": "Option<crate::receipt::ContextEmitReceipt>",
       "call": "memory.context_emit_receipt(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.receipts.craft_reply_manifest",
+      "description": "Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack.",
+      "input": "crate::receipt::CallReceiptRequest",
+      "output": "Option<Vec<crate::attempt_queue::ManifestEntry>>",
+      "call": "memory.craft_reply_manifest(&input.receipt_ref)?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -16423,10 +16446,9 @@
     },
     {
       "name": "vault.artifacts.body.fork.open",
-      "description": "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own.",
+      "description": "Opens a fork of the live body at its head for machine work; a DOCX or XLSX fork joins the named proposal or opens its own.",
       "refs": [
         "/artifact_ref",
-        "/run_root_ref",
         "/proposal_ref"
       ],
       "input": "crate::office_body::OfficeBodyForkOpenRequest",

@@ -244,7 +244,7 @@ pub(crate) struct ContextPackReaderControls {
 #[schema(example = json!({"node_id": "root", "tree_version": 1}))]
 pub(crate) struct ContextPackTypeRef {
     node_id: String,
-    tree_version: u32,
+    tree_version: u64,
     /// The project whose tree it is placed in, as an entity id; omitted, the
     /// vault's tree.
     #[serde(default)]
@@ -431,6 +431,7 @@ impl CoreContextPackRequest {
         };
         match oneiron::skill_reliability::SkillReliabilityQuery::on_tree(
             &tree,
+            project,
             type_ref,
             self.axis.clone(),
         ) {

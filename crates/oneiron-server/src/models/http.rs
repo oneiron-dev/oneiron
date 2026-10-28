@@ -93,6 +93,27 @@ pub(super) struct BytesReply {
     pub(super) held: ReplyBytes,
 }
 
+/// A media exchange whose answer is taken as it arrives
+/// ([`ProviderHttp::send_media_streamed`]).
+pub(super) enum StreamedReply {
+    /// A 2xx answer, its body still to read.
+    Body(MediaStream),
+    /// Any other status, its body read whole on the media-reply line, for
+    /// the caller to classify.
+    Refused(BytesReply),
+}
+
+/// A 2xx media reply's body, taken a chunk at a time as it arrives and never
+/// held whole here (FIX 6122).
+pub(super) struct MediaStream(reqwest::Response);
+
+impl MediaStream {
+    /// The body's next bytes as they arrive; `None` at its end.
+    pub(super) async fn chunk(&mut self) -> Result<Option<Vec<u8>>, HttpFailure> {
+        Ok(self.0.chunk().await?.map(Vec::from))
+    }
+}
+
 /// What one media exchange sends.
 pub(super) enum MediaSend {
     Get,
@@ -383,6 +404,48 @@ impl ProviderHttp {
         path: &str,
         send: MediaSend,
     ) -> Result<BytesReply, HttpFailure> {
+        let response = self.media_response(path, send).await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (body, held) = read_booked(response).await?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+            held,
+        })
+    }
+
+    /// [`Self::send_media`], its 2xx reply's body left for the caller to
+    /// take as it arrives ([`MediaStream::chunk`]), never held whole here
+    /// (FIX 6122). Any other status's body is read whole, as `send_media`
+    /// reads it.
+    pub(super) async fn send_media_streamed(
+        &self,
+        path: &str,
+        send: MediaSend,
+    ) -> Result<StreamedReply, HttpFailure> {
+        let response = self.media_response(path, send).await?;
+        if response.status().is_success() {
+            return Ok(StreamedReply::Body(MediaStream(response)));
+        }
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (body, held) = read_booked(response).await?;
+        Ok(StreamedReply::Refused(BytesReply {
+            status,
+            headers,
+            body,
+            held,
+        }))
+    }
+
+    /// Sends one media exchange at `path`: its answer, its body unread.
+    async fn media_response(
+        &self,
+        path: &str,
+        send: MediaSend,
+    ) -> Result<reqwest::Response, HttpFailure> {
         let url = self.url(path);
         let body = |content_type: &'static str| {
             let url = url.as_str();
@@ -392,7 +455,7 @@ impl ProviderHttp {
                     .header(reqwest::header::CONTENT_TYPE, content_type)
             }
         };
-        let response = match send {
+        Ok(match send {
             MediaSend::Get => self.client.get(url.as_str()).send().await?,
             MediaSend::Delete => self.client.delete(url.as_str()).send().await?,
             MediaSend::Json(json) => {
@@ -411,15 +474,6 @@ impl ProviderHttp {
                 let send = body("application/octet-stream");
                 self.send_body(path, send, octets, Some(admission)).await?
             }
-        };
-        let status = response.status().as_u16();
-        let headers = reply_headers(&response);
-        let (body, held) = read_booked(response).await?;
-        Ok(BytesReply {
-            status,
-            headers,
-            body,
-            held,
         })
     }
 

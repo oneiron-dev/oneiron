@@ -11,15 +11,20 @@
 //! rung through the live route. The flight's own copy stays in its flight.
 //!
 //! Its words are the conversation's, so erasing any record of the
-//! conversation drops the conversation's breakpoints.
+//! conversation drops the conversation's breakpoints. The craft notes its
+//! request shows are pinned by revision too (FIX 8135): a reuse finds each
+//! still standing as it was shown, and erasing one drops the breakpoints
+//! that show it, and only those.
 
 use serde::{Deserialize, Serialize};
 
+use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::compaction::ConversationTurnSpan;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::registry::{
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -72,7 +77,7 @@ pub struct ChatBreakpoint {
     /// request's user text. Empty for a request that shows none, and on a
     /// breakpoint kept before them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub craft_entries: Vec<crate::attempt_queue::ManifestEntry>,
+    pub craft_entries: Vec<ManifestEntry>,
 }
 
 /// Why a kept breakpoint no longer stands: the fork it captured is not the
@@ -86,6 +91,9 @@ pub enum ChatBreakpointStale {
     SourceMoved,
     /// A summary it holds was withdrawn.
     SummaryWithdrawn,
+    /// A craft note its request shows was erased, lost its live support, or
+    /// reads another revision now (FIX 8135).
+    CraftWithdrawn,
 }
 
 impl ChatBreakpointStale {
@@ -96,6 +104,7 @@ impl ChatBreakpointStale {
             Self::RequestChanged => "request_changed",
             Self::SourceMoved => "source_moved",
             Self::SummaryWithdrawn => "summary_withdrawn",
+            Self::CraftWithdrawn => "craft_withdrawn",
         }
     }
 }
@@ -160,7 +169,9 @@ pub fn chat_breakpoint(
 
 /// Whether `seed` still stands, read again as its reader in one snapshot:
 /// its request is its digest's, every turn it was read from projects the
-/// same fingerprint, and every summary it holds still stands.
+/// same fingerprint, every summary it holds still stands, and every craft
+/// note it shows still reads, with live support, at the revision it showed
+/// (FIX 8135).
 ///
 /// # Errors
 ///
@@ -202,13 +213,43 @@ pub fn chat_breakpoint_stands(
             return Ok(Err(ChatBreakpointStale::SummaryWithdrawn));
         }
     }
+    for entry in &seed.craft_entries {
+        if !craft_entry_stands_in(vault, &txn, entry)? {
+            return Ok(Err(ChatBreakpointStale::CraftWithdrawn));
+        }
+    }
     Ok(Ok(()))
+}
+
+/// Whether the craft note `entry` names still reads on `txn`, with live
+/// support, at the revision the request showed. A row that is no actor
+/// claim pins nothing.
+fn craft_entry_stands_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entry: &ManifestEntry,
+) -> Result<bool> {
+    if entry.kind != ManifestKind::ActorClaim {
+        return Ok(true);
+    }
+    let Ok(claim) = EntityId::from_hex(&entry.reference) else {
+        return Ok(false);
+    };
+    let Some(body) = vault.get_claim_in_txn(txn, &claim)? else {
+        return Ok(false);
+    };
+    if !crate::claim::has_live_support_in_txn(&vault.store, txn, &body)? {
+        return Ok(false);
+    }
+    Ok(crate::actor_claims::CraftNote::new(claim, body)?.revision == entry.version)
 }
 
 /// Drops the breakpoints an erase of `id` covers: every one of the
 /// conversation `id` is, or that its TURN, MESSAGE or landed summary belongs
-/// to. A source whose conversation does not resolve drops every breakpoint,
-/// since one may hold its words. Registered in `deletion/derived_rows.rs`.
+/// to, and, for a CLAIM, each one whose request shows it as craft (FIX
+/// 8135), every other prefix kept as it was. A source whose conversation
+/// does not resolve drops every breakpoint, since one may hold its words.
+/// Registered in `deletion/derived_rows.rs`.
 pub(crate) fn erase_chat_breakpoints_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -227,6 +268,7 @@ pub(crate) fn erase_chat_breakpoints_in_txn(
         }
         ENTITY_TYPE_SUMMARY => Ok(crate::compaction::conversation_receipt_in(store, txn, id)?
             .and_then(|receipt| receipt.evidence().map(|evidence| evidence.conversation))),
+        ENTITY_TYPE_CLAIM => return erase_craft_breakpoints_in_txn(store, txn, id),
         _ => return Ok(()),
     };
     match conversation {
@@ -237,6 +279,29 @@ pub(crate) fn erase_chat_breakpoints_in_txn(
         Err(_) => {
             BREAKPOINTS.delete_from(store, txn, &[])?;
         }
+    }
+    Ok(())
+}
+
+/// Drops each breakpoint whose request shows claim `claim` as craft.
+fn erase_craft_breakpoints_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    claim: &EntityId,
+) -> Result<()> {
+    let reference = claim.to_hex();
+    let shown: Vec<_> = BREAKPOINTS
+        .scan(store, &*txn)?
+        .into_iter()
+        .filter(|(_, seed)| {
+            seed.craft_entries
+                .iter()
+                .any(|entry| entry.kind == ManifestKind::ActorClaim && entry.reference == reference)
+        })
+        .map(|(key, _)| key)
+        .collect();
+    for key in &shown {
+        BREAKPOINTS.delete(store, txn, key)?;
     }
     Ok(())
 }

@@ -30,10 +30,10 @@ use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::authority::{CustodyChange, CustodyRecipientPermit};
 use oneiron::secret_custody::{SealedCustodyChange, SecretCustodyStatus, SecretCustodyView};
-use oneiron::world_keys::OwnerWorkReceipt;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::owner_work_routes::OwnerWorkReceiptView;
 use super::{OwnerReply, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::{has_json_content_type, query_params};
@@ -183,7 +183,7 @@ struct ViewReply {
     status: Option<&'static str>,
     generation: u32,
     seen: String,
-    live: Vec<OwnerWorkReceipt>,
+    live: Vec<OwnerWorkReceiptView>,
     candidates: Vec<CandidateReply>,
     delivery: &'static str,
 }
@@ -200,7 +200,11 @@ impl From<SecretCustodyView> for ViewReply {
             status: view.status.map(SecretCustodyStatus::as_str),
             generation: view.generation,
             seen: revision_hex(&view.seen),
-            live: view.live,
+            live: view
+                .live
+                .into_iter()
+                .map(OwnerWorkReceiptView::from)
+                .collect(),
             candidates: view
                 .candidates
                 .into_iter()

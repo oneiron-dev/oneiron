@@ -152,10 +152,11 @@ side_tables! {
     /// be64 of the lease generation, be32 of the call.
     COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored
         => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
-    /// Where the Coach's contribution checks resume: the credit key and skill of the last
-    /// candidate a pass put to its replay host, cleared once a pass reaches the end of the credit
-    /// table. Key: ().
-    COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named;
+    /// Where the Coach's contribution checks resume: the credit key and target (a loaded skill or
+    /// a used edge's two ends) of the last candidate a pass put to its replay host, cleared once a
+    /// pass reaches the end of the credit table, or by an erase of an entity it names. Key: ().
+    COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named
+        => crate::dreamer_runner::maintenance::erase_contribution_cursor_in_txn;
     /// The Coach's issue for one positive model finding (OF-418 L3): its DIAGNOSTIC, tier,
     /// family, class and recipe revision, its exact ordered runs with their replay hashes, the
     /// decision receipts that raised it, the gate decisions its results link, the producer its
@@ -248,9 +249,10 @@ side_tables! {
     /// prompt and its digest, the start body's digest and its capsule's lease generation. Key:
     /// id16(successor attempt).
     CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored;
-    /// One contribution check's matched-fork rows (FIX 3028): each fork's receipt (the capsule it
-    /// regenerated, its request hash, model, seed, response body ref, anchor hash and score), or
-    /// why the pair is unavailable for good. Key: hash32(attempt receipt, skill, axis) +
+    /// One contribution check's matched-fork rows (FIX 3028, FIX 2870): each fork's receipt (the
+    /// capsule it regenerated, its request hash, model, seed, response body ref, anchor hash, the
+    /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
+    /// unavailable for good. Key: hash32(attempt receipt, outcome, goal revision, axis, target) +
     /// string(row: `with_skill`, `without_skill` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches

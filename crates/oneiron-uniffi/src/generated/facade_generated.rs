@@ -458,13 +458,13 @@ export_facade! {
     let output = client.vault_claims_upsert(&input)?;
     Lift::lift(output)
 };
-"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>) -> MemoryPack = |client| {
+"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>, token_budget: Option<u64>, reader_agent_ref: Option<String>) -> MemoryPack = |client| {
     let effort: oneiron::memory::RecallEffort = effort.lower()?;
     let scope: oneiron::memory::RecallScope = scope.lower()?;
     let limit: usize = limit.lower()?;
     let media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media.lower()?;
     let query_affect: Option<oneiron::task_verb::sdk::QueryAffect> = query_affect.lower()?;
-    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
+    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect, token_budget, reader_agent_ref.as_deref())?;
     Lift::lift(output)
 };
 "vault.retrieval.aging.get" => fn vault_retrieval_aging_get(&self) -> ClaimAgingProfilesView = |client| {
@@ -3636,10 +3636,10 @@ export_facade! {
     let output = client.vault_agents_spawn(&input)?;
     crate::codec::lift_record("vault.agents.spawn", &output)
 };
-"vault.tasks.cancel_force" => fn vault_tasks_cancel_force(&self, input: CancelForceRequest) -> CancelForceReceipt = |client| {
-    let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel_force", input)?;
+"vault.tasks.cancel.force" => fn vault_tasks_cancel_force(&self, input: CancelForceRequest) -> CancelForceReceipt = |client| {
+    let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel.force", input)?;
     let output = client.vault_tasks_cancel_force(&input)?;
-    crate::codec::lift_record("vault.tasks.cancel_force", &output)
+    crate::codec::lift_record("vault.tasks.cancel.force", &output)
 };
 "vault.runs.branches.get" => fn vault_runs_branches_get(&self, input: RunBranchesRequest) -> RunBranchesView = |client| {
     let input: oneiron::task_verb::run_doors::RunBranchesRequest = crate::codec::lower_record("vault.runs.branches.get", input)?;
@@ -4205,6 +4205,11 @@ export_facade! {
     let input: oneiron::receipt::CallReceiptRequest = crate::codec::lower_record("vault.receipts.context", input)?;
     let output = client.vault_receipts_context(&input)?;
     crate::codec::lift_record("vault.receipts.context", &output)
+};
+"vault.receipts.craft_reply_manifest" => fn vault_receipts_craft_reply_manifest(&self, input: CallReceiptRequest) -> Option<Vec<ManifestEntry>> = |client| {
+    let input: oneiron::receipt::CallReceiptRequest = crate::codec::lower_record("vault.receipts.craft_reply_manifest", input)?;
+    let output = client.vault_receipts_craft_reply_manifest(&input)?;
+    crate::codec::lift_record("vault.receipts.craft_reply_manifest", &output)
 };
 "ai.voice.asr.open" => fn ai_voice_asr_open(&self, input: AsrOpenRequest) -> AsrSession = |client| {
     let input: oneiron::task_verb::sdk::AsrOpenRequest = crate::codec::lower_record("ai.voice.asr.open", input)?;

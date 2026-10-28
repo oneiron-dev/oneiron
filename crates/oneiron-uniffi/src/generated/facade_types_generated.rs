@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1161 facade rows, 4155 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1113.
+// UniFFI census: 1162 facade rows, 4158 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1114.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -9399,6 +9399,18 @@ pub struct RecallRequest {
     pub limit: Option<u64>,
     #[serde(rename = "format", default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    #[serde(
+        rename = "token_budget",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_budget: Option<u64>,
+    #[serde(
+        rename = "reader_agent_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reader_agent_ref: Option<String>,
     #[serde(rename = "as_of", default, skip_serializing_if = "Option::is_none")]
     pub as_of: Option<u64>,
     #[serde(
@@ -21878,6 +21890,16 @@ pub struct FilesLimitCrossed {
     pub observed: u64,
 }
 
+/// `oneiron::verbs::files::FilesOriginalsUnkept`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesOriginalsUnkept {
+    #[serde(rename = "files")]
+    pub files: u64,
+    #[serde(rename = "first_error")]
+    pub first_error: String,
+}
+
 /// `oneiron::verbs::files::FilesRescanView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -21896,6 +21918,12 @@ pub struct FilesRescanView {
         skip_serializing_if = "Option::is_none"
     )]
     pub limits_crossed: Option<Vec<FilesLimitCrossed>>,
+    #[serde(
+        rename = "originals_unkept",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub originals_unkept: Option<FilesOriginalsUnkept>,
 }
 
 /// `oneiron::verbs::files::FilesSourceAttachAnswer`.
@@ -30039,7 +30067,7 @@ pub struct CellTypeRef {
     #[serde(rename = "node_id")]
     pub node_id: String,
     #[serde(rename = "tree_version")]
-    pub tree_version: u32,
+    pub tree_version: u64,
 }
 
 /// `oneiron::learning::doors::LearningCellKey`.
@@ -30068,6 +30096,8 @@ pub struct LearningCellKey {
         skip_serializing_if = "Option::is_none"
     )]
     pub setting_key: Option<String>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::learning::doors::LearningReadRequest`.
@@ -31384,6 +31414,8 @@ pub struct LensProposeRequest {
     pub compiled: crate::WireJson,
     #[serde(rename = "intent_prompt")]
     pub intent_prompt: String,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<MadeByTrigger>,
 }
 
 /// `oneiron::receipt::lens::LensApproval`.
@@ -32124,6 +32156,18 @@ pub struct SecretUseRecord {
     pub handle: String,
     #[serde(rename = "generation")]
     pub generation: u32,
+    #[serde(
+        rename = "presented_custody",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub presented_custody: Option<String>,
+    #[serde(
+        rename = "presented_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub presented_generation: Option<u32>,
     #[serde(rename = "effector")]
     pub effector: String,
     #[serde(rename = "operation")]
@@ -34179,6 +34223,8 @@ pub struct LearningCell {
         skip_serializing_if = "Option::is_none"
     )]
     pub setting_key: Option<String>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::critic::CritiqueVerdict`.
@@ -35227,6 +35273,8 @@ pub struct ResultCard {
     pub taint: ResultTaint,
     #[serde(rename = "more")]
     pub more: Vec<ResultFacet>,
+    #[serde(rename = "shape", default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<crate::WireJson>,
 }
 
 /// `oneiron::memory::result_doors::types::ResultReadRefusal`.
@@ -39911,6 +39959,12 @@ pub struct WorkflowRunView {
     pub results: Vec<WorkflowStepRun>,
     #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
     pub task_ref: Option<String>,
+    #[serde(
+        rename = "release_refusal",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub release_refusal: Option<String>,
 }
 
 /// `oneiron::verbs::workflows::WorkflowPersonDispatchRequest`.
@@ -40367,6 +40421,8 @@ pub struct DoorsLearningCellView {
     pub type_ref: TypeStamp,
     #[serde(rename = "axis")]
     pub axis: String,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::team::doors::BorrowedCellView`.
@@ -40382,6 +40438,8 @@ pub struct BorrowedCellView {
     pub type_ref: Option<TypeStamp>,
     #[serde(rename = "axis", default, skip_serializing_if = "Option::is_none")]
     pub axis: Option<String>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::team::doors::LearningEvidenceView`.
@@ -42027,7 +42085,7 @@ pub struct CriticReviewSubmit {
     #[serde(rename = "type_node")]
     pub type_node: String,
     #[serde(rename = "type_tree_version")]
-    pub type_tree_version: u32,
+    pub type_tree_version: u64,
     #[serde(rename = "axis")]
     pub axis: String,
     #[serde(rename = "auto_resolve_threshold")]
@@ -42042,6 +42100,12 @@ pub struct CriticReviewSubmit {
         skip_serializing_if = "Option::is_none"
     )]
     pub spawn_attempt_ref: Option<String>,
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
 }
 
 /// `oneiron::critic::CritiqueTriageScores`.
@@ -48544,6 +48608,32 @@ pub struct ContextEmitReceipt {
     pub context: ContextReceiptFields,
 }
 
+/// `oneiron::attempt_queue::types::ManifestKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ManifestKind {
+    #[serde(rename = "skill_index")]
+    SkillIndex,
+    #[serde(rename = "skill")]
+    Skill,
+    #[serde(rename = "actor_claim")]
+    ActorClaim,
+}
+
+/// `oneiron::attempt_queue::types::ManifestEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ManifestEntry {
+    #[serde(rename = "kind")]
+    pub kind: ManifestKind,
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "revision", default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<crate::WireJson>,
+}
+
 /// `oneiron::verbs::asr::AsrOpenRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -50301,6 +50391,8 @@ pub struct VoicePackSummary {
     pub origin: VoiceRefOrigin,
     #[serde(rename = "clips")]
     pub clips: Vec<VoiceClipSummary>,
+    #[serde(rename = "crossed")]
+    pub crossed: Vec<String>,
 }
 
 /// `oneiron::voice_identity::ref_bank::owner_acts::VoiceRenderConsentView`.
@@ -56848,12 +56940,6 @@ pub struct OfficeBodyEdit {
 pub struct OfficeBodyForkOpenRequest {
     #[serde(rename = "artifact_ref")]
     pub artifact_ref: String,
-    #[serde(
-        rename = "run_root_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub run_root_ref: Option<String>,
     #[serde(
         rename = "proposal_ref",
         default,

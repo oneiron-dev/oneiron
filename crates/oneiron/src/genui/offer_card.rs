@@ -515,16 +515,22 @@ impl OfferCardPayload {
             |cap| format!(" Cost: up to {} {}.", cap.units, cap.unit.as_str()),
         );
         let what = self.what.trim_end_matches('.');
-        match (self.phase, self.ends_at) {
-            (OfferCardPhase::AgedOut, _) => format!(
+        // A fixed `until` is a deadline engagement does not move; only the
+        // idle age-out is extended by engagement (FIX 9860).
+        match (self.phase, self.until, self.ends_at) {
+            (OfferCardPhase::AgedOut, _, _) => format!(
                 "{} asked to join: {what}.{artifact}{cost} It aged out; the room's host may reopen it.",
                 self.agent_ref,
             ),
-            (OfferCardPhase::Open, Some(ends_at)) => format!(
+            (OfferCardPhase::Open, Some(until), _) => format!(
+                "{} asks to join: {what}.{artifact}{cost} Join or not now; the room may vote. Open until {until}.",
+                self.agent_ref,
+            ),
+            (OfferCardPhase::Open, None, Some(ends_at)) => format!(
                 "{} asks to join: {what}.{artifact}{cost} Join or not now; the room may vote. Open until {ends_at} unless engaged.",
                 self.agent_ref,
             ),
-            (OfferCardPhase::Open, None) => format!(
+            (OfferCardPhase::Open, None, None) => format!(
                 "{} asks to join: {what}.{artifact}{cost} Join or not now.",
                 self.agent_ref,
             ),
