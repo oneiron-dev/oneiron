@@ -4,7 +4,8 @@
 //! so on a managed (hosted) node an injected ladder's client checks every
 //! redirect hop too. [`build_single_hop_client`] is that client for one
 //! request at a time, for a host that performs each request a browser makes
-//! (FIX 7122).
+//! (FIX 7122). [`hosted_dns_resolver`] is that client's resolver alone, for
+//! a host that drives those requests on its own async runtime (FIX 7557).
 //!
 //! On a managed node every name either client connects to resolves through
 //! the node's [`HostedEgressGuard`]: a name with any address that is hosted
@@ -55,6 +56,14 @@ pub fn build_single_hop_client(
     guard: Arc<HostedEgressGuard>,
 ) -> reqwest::Result<reqwest::blocking::Client> {
     no_proxy_client(Some((guard, reqwest::redirect::Policy::none())))
+}
+
+/// The guarded resolver as an async client takes it: every name the client
+/// connects to resolves through `guard`, exactly as with
+/// [`build_single_hop_client`], while the host drives its requests on its
+/// own runtime, where each stays cancellable (FIX 7557).
+pub fn hosted_dns_resolver(guard: Arc<HostedEgressGuard>) -> Arc<dyn reqwest::dns::Resolve> {
+    Arc::new(HostedResolver(guard))
 }
 
 /// The body both builders share: a client with no proxy; with `guarded`, its
