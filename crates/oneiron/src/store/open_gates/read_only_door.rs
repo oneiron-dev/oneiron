@@ -86,13 +86,7 @@ fn read_existing_rows(
     database: (&str, &'static str),
     prefixes: &[&[u8]],
 ) -> Result<VaultMetaRows> {
-    let root = match path.canonicalize() {
-        Ok(root) => root,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(not_an_existing_root(path, false));
-        }
-        Err(error) => return Err(error.into()),
-    };
+    let root = canonical_existing_root(path)?;
     let (env, registered) = open_read_only(&root)?;
     let rows = (|| -> Result<_> {
         let txn = env.read_txn()?;
@@ -114,6 +108,17 @@ fn read_existing_rows(
     Ok(VaultMetaRows { root, rows: rows? })
 }
 
+/// The canonical root at `path`; a missing one refuses with nothing created.
+pub(super) fn canonical_existing_root(path: &Path) -> Result<PathBuf> {
+    match path.canonicalize() {
+        Ok(root) => Ok(root),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(not_an_existing_root(path, false))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(in crate::store) fn not_an_existing_root(root: &Path, after_environment_open: bool) -> Error {
     vault_root_preflight_error(
         root,
@@ -123,10 +128,19 @@ pub(in crate::store) fn not_an_existing_root(root: &Path, after_environment_open
     )
 }
 
-/// Opens the already-canonical `root` read-only through the bound directory
-/// descriptor, as the existing-only door opens it read-write.
-#[cfg(target_os = "linux")]
+/// [`open_read_only_with`] for a door that reads one named database.
 fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
+    open_read_only_with(root, 1)
+}
+
+/// Opens the already-canonical `root` read-only through the bound directory
+/// descriptor, as the existing-only door opens it read-write, with room for
+/// `databases` named databases (the paired custody read opens two).
+#[cfg(target_os = "linux")]
+pub(super) fn open_read_only_with(
+    root: &Path,
+    databases: u32,
+) -> Result<(OwnedEnv, RegisteredPath)> {
     use super::super::root_directory::open_root_directory;
     use super::vault_root_bind::BoundVaultRoot;
 
@@ -146,7 +160,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
     let mut options = EnvOpenOptions::new();
     // The full reader table: a door that opens a vault first builds the
     // table a server opened beside it gets.
-    options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
+    options
+        .max_dbs(databases)
+        .max_readers(crate::config::READER_SLOTS);
     // A sealed vault (maximum tier) opens here only with the page key of a
     // vault this process opened.
     let keyed = crate::world_keys::seal_read_only(&mut options, root)?;
@@ -181,7 +197,10 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
 /// No descriptor-bound open here: the root is checked by path before and
 /// after the open, as the create-capable door checks it on this platform.
 #[cfg(not(target_os = "linux"))]
-fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
+pub(super) fn open_read_only_with(
+    root: &Path,
+    databases: u32,
+) -> Result<(OwnedEnv, RegisteredPath)> {
     use super::vault_root_bind::preflight_vault_root;
 
     let _vault_root_open_guard = vault_root_open_guard()?;
@@ -192,7 +211,9 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
     let mut options = EnvOpenOptions::new();
     // The full reader table: a door that opens a vault first builds the
     // table a server opened beside it gets.
-    options.max_dbs(1).max_readers(crate::config::READER_SLOTS);
+    options
+        .max_dbs(databases)
+        .max_readers(crate::config::READER_SLOTS);
     // A sealed vault (maximum tier) opens here only with the page key of a
     // vault this process opened.
     let keyed = crate::world_keys::seal_read_only(&mut options, root)?;

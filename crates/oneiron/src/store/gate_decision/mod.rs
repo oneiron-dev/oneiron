@@ -25,9 +25,11 @@ pub(crate) use self::actor_erase::erase_gate_decision_actor_in_txn;
 pub use self::actor_erase::{ACTOR_ERASE_GATE_ATTRIBUTION, GateAttributionErase};
 pub(in crate::store) use self::checkpoint_custody::archived_by;
 pub(crate) use self::checkpoint_custody::{
-    LiveCustody, MadeDestination, admit_existing_vault_root, host_hold_rows_in_txn,
-    preflight_absent_custody_rows, preflight_checkpoint_rows_rejected, read_live_custody,
-    refuse_custody_beside, replace_host_holds_in_txn,
+    ExpectedPadObjects, LiveCustody, MadeDestination, PAD_SOURCE_IDENTITY, PadObjectsCapture,
+    PadObjectsLanding, PadSourceIdentity, UncapturedPadObjects, admit_existing_vault_root,
+    host_hold_rows_in_txn, install_source_pad_objects_in_txn, preflight_absent_custody_rows,
+    preflight_checkpoint_rows_rejected, read_live_custody, refuse_custody_beside,
+    replace_host_holds_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::checkpoint_custody::{

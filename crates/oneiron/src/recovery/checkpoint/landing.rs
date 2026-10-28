@@ -283,6 +283,7 @@ impl Vault {
             checkpoint_sequence,
             opaque_responses: opaque.landed,
             credential_notes,
+            pad_object_notes: Vec::new(),
         };
         Ok((made, forked, vault, report))
     }

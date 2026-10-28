@@ -57,6 +57,7 @@ use crate::world_keys::{
 };
 
 mod checkpoint;
+mod restore_pads;
 pub use checkpoint::RecoveryCheckpointTrust;
 
 /// The base section's encoding version.
@@ -276,7 +277,8 @@ impl WindowManager {
     /// for, or the install he asked to publish), each base window installs as a replacement, of any
     /// length the section carried; one that does not install fails the
     /// restore, and the windows installed before it stay. The pad object's
-    /// pads are stored, the world keys restore from the kit as
+    /// pads are stored before them, but those current retirement names here
+    /// (PAD-1), the world keys restore from the kit as
     /// [`Vault::restore_world_keys`] restores them (`owner`, `confirm`), and
     /// each section the kit opens merges into its windows' mirrors and
     /// materializes, for the worlds this machine may read now. The keys report
@@ -312,7 +314,7 @@ impl WindowManager {
         let vault = self.vault();
         refuse_machine_of_the_vault(vault, vault_id)?;
         let opened = bundle.open_with_kit(vault_id, seed)?;
-        let pads = pads.open_with_kit(vault_id, seed)?;
+        let mut pads = pads.open_with_kit(vault_id, seed)?;
         if pads.generation() != opened.generation() {
             return Err(refused("the pad object is another generation's"));
         }
@@ -334,6 +336,10 @@ impl WindowManager {
             }
             opened.require_publisher(&fold, None)?;
         }
+        // The pads land before the windows that depend on them (PAD-1).
+        restore_pads::admit_kit_pads(vault, &mut pads);
+        restore.pads = vault.restore_key_pads(&pads)?;
+        restore_pads::reconcile_owed_epochs(vault);
         // Base windows first: a window of a world read everywhere may name a
         // base row.
         let mut windows = base.windows;
@@ -351,8 +357,9 @@ impl WindowManager {
             self.unload_window(key)?;
             restore.windows += 1;
         }
-        restore.pads = vault.restore_key_pads(&pads)?;
         restore.keys = vault.restore_world_keys(owner, EditOrigin::ThisMachine, seed, confirm)?;
+        // A key the windows' erases retired opens no section either.
+        restore_pads::admit_kit_pads(vault, &mut pads);
         for section in vault.open_vault_bundle_sections_with_kit(&opened, &pads, seed)? {
             self.take_section(&section, true, &mut restore.take);
         }
