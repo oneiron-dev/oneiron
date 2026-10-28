@@ -17,7 +17,9 @@ use crate::claim::ClaimLifecycleStatus;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{AgentGrantStanding, FederationGrant, FederationGrantScope, ScopeAxis};
+use crate::federation::{
+    AgentGrantStanding, FederationGrant, FederationGrantKind, FederationGrantScope, ScopeAxis,
+};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
@@ -270,18 +272,23 @@ fn agent_grant_listing_in(
     }))
 }
 
-/// [`PACT_STANDING_CHECK_ERROR`] for a check of `grant` that failed with
-/// `error`: never a lapse. The warning carries the Grant id and the error's
-/// kind only.
-fn lapse_on_check_error(grant: EntityId, error: &Error) -> bool {
+/// [`PACT_STANDING_CHECK_ERROR`] for a check of `grant`, of `kind`, that
+/// failed with `error`: never a lapse. The warning names the Grant
+/// truthfully, an agent Grant or the person's GitPush Grant, and carries the
+/// Grant id and the error's kind only.
+fn lapse_on_check_error(grant: EntityId, kind: FederationGrantKind, error: &Error) -> bool {
     match PACT_STANDING_CHECK_ERROR {
         PactStandingCheckError::PreserveCurrentPath => {
+            let whose = match kind {
+                FederationGrantKind::GitPush => "the person's GitPush Grant's",
+                FederationGrantKind::Access => "an agent Grant's",
+            };
             tracing::warn!(
                 grant = %grant.to_hex(),
                 error_kind = ?error.kind(),
                 policy = ?PACT_STANDING_CHECK_ERROR,
-                "an agent Grant's pact standing could not be read; the Grant stands as it did \
-                 (FIX 7511)"
+                "{} pact standing could not be read; the Grant stands as it did (FIX 7511)",
+                whose
             );
             false
         }
@@ -397,14 +404,14 @@ fn grant_pact_standing_lapsed_for_store_in_txn(
     match crate::federation::shared_vault_creation_for_store_in_txn(store, txn) {
         Ok(Some(_)) => {}
         Ok(None) => return false,
-        Err(error) => return lapse_on_check_error(id, &error),
+        Err(error) => return lapse_on_check_error(id, FederationGrantKind::Access, &error),
     }
     match crate::federation::authenticated_grant_membership_for_store_in_txn(
         store, posture, txn, scope, member, id,
     ) {
         Ok(Some(_)) => false,
         Ok(None) | Err(Error::Claim(_)) => true,
-        Err(error) => lapse_on_check_error(id, &error),
+        Err(error) => lapse_on_check_error(id, FederationGrantKind::Access, &error),
     }
 }
 
@@ -426,7 +433,7 @@ pub(crate) fn grant_row_pact_standing_lapsed_in_txn(
             grant_pact_standing_lapsed_in_txn(vault, txn, id, grant.scope, grant.member_ref)
         }),
         Ok(_) => false,
-        Err(error) => lapse_on_check_error(id, &error),
+        Err(error) => lapse_on_check_error(id, FederationGrantKind::Access, &error),
     }
 }
 
@@ -465,11 +472,11 @@ pub(crate) fn git_push_pact_standing_lapsed_in_txn(
             match vault.shared_vault_creation_in_txn(txn) {
                 Ok(Some(_)) => {}
                 Ok(None) => return false,
-                Err(error) => return lapse_on_check_error(id, &error),
+                Err(error) => return lapse_on_check_error(id, grant.kind, &error),
             }
             match vault.authority_fold_readonly_in_txn(txn) {
                 Ok(fold) => !crate::federation::pact_admits_grant(&fold, &id, grant),
-                Err(error) => lapse_on_check_error(id, &error),
+                Err(error) => lapse_on_check_error(id, grant.kind, &error),
             }
         }
     }
