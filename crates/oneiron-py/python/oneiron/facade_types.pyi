@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1160 facade rows, 4167 declarations.
-Inputs: 1095 of 1160 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1043 of 1160 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1161 facade rows, 4169 declarations.
+Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1044 of 1161 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -5781,6 +5781,7 @@ class ChatCompletionRequest(TypedDict):
     frequency_penalty: NotRequired[float | None]
     seed: NotRequired[int | None]
     user: NotRequired[str | None]
+    deadline_ms: NotRequired[int | None]
 ChatCompletionObject = Literal["chat.completion"]
 ChatCompletionRole = Literal["assistant"]
 class ChatCompletionMessage(TypedDict):
@@ -6165,6 +6166,7 @@ class ColdAuthorityAuditRow(TypedDict):
     seq: int
     parents: list[str]
     fold_valid: bool
+    issue_codes: NotRequired[list[str]]
 class AuthorityAuditPage(TypedDict):
     rows: list[AuthorityAuditRow]
     next_after: NotRequired[EntityId | None]
@@ -6175,6 +6177,12 @@ class SignedAuthorityHistory(TypedDict):
     entries: list[str]
 class AuthorityHistoryImported(TypedDict):
     entry_refs: list[str]
+AuthorityClockRepairOutcome = Literal["sound", "repaired", "unproven"]
+class AuthorityClockRepair(TypedDict):
+    outcome: AuthorityClockRepairOutcome
+    floor: NotRequired[int | None]
+    observations: int
+    anchored: NotRequired[int | None]
 class WireThresholds(TypedDict):
     window_secs: int
     per_verb: int
@@ -6861,7 +6869,7 @@ class FederationBurstDispositionDefer(TypedDict):
     outcome: Literal["defer"]
     replay_ref: str
 FederationBurstDisposition = FederationBurstDispositionAllow | FederationBurstDispositionIsolateAndPropose | FederationBurstDispositionDefer
-FederationBurstWorkState = Literal["pending", "imported", "rejected"]
+FederationBurstWorkState = Literal["pending", "imported", "rejected", "expired", "stale_authority", "erased"]
 class FederationBurstReceipt(TypedDict):
     batch_ref: str
     principal: EntityId
@@ -15314,7 +15322,7 @@ class RetryableLlmErrorKeptOnDeviceBody(TypedDict):
 class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
-BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied"]
+BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError
 class LlmErrorFatal(TypedDict):
@@ -17438,6 +17446,7 @@ class FacadeMemoryError(TypedDict):
     policy_denial: NotRequired[MemoryPolicyDenial | None]
     hook: NotRequired[VerbHookStop | None]
     retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus

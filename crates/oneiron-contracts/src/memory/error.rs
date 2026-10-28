@@ -74,6 +74,10 @@ pub const MEMORY_CODE_ROOM_MANAGEMENT: &str = "OFF_RECORD_ROOM_MANAGEMENT_CONSEN
 /// it hit.
 pub const MEMORY_CODE_OWNER_BINDING_REQUIRED: &str = "OWNER_BINDING_REQUIRED";
 
+/// The vault's persisted authority clock floor is damaged (FIX 10106): no
+/// authority reading stands on it until the owner repairs it.
+pub const MEMORY_CODE_AUTHORITY_CLOCK_CORRUPT: &str = "AUTHORITY_CLOCK_CORRUPT";
+
 /// An embedded vault directory is already owned by another process holding the
 /// single-writer lease (ONE-1441 WIRE-P1).
 ///
@@ -203,6 +207,10 @@ pub struct MemoryError {
     /// Absent on every other refusal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    /// Each time the refused call's limit resets, as Unix seconds in the
+    /// order its source said them (FIX 8190); empty where it said none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resets_at: Vec<u64>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -269,6 +277,7 @@ impl MemoryError {
             wrong_root: None,
             hook: None,
             retry_after: None,
+            resets_at: Vec::new(),
         }
     }
 
@@ -685,6 +694,11 @@ impl From<Error> for MemoryError {
                 &[
                     "Fetch the authority history this vault names (its history request), import it, then retry.",
                 ],
+            ),
+            ErrorKind::AuthorityClockCorrupt => Self::new(
+                MEMORY_CODE_AUTHORITY_CLOCK_CORRUPT,
+                message,
+                &["The owner runs vault.authority.clock.repair, then retries."],
             ),
             // The vault cannot prove how its decision seals stand (FIX 5248):
             // the message names the seal or image that failed.

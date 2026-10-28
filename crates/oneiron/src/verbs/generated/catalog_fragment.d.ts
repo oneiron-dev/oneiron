@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1211 code-mode rows (1171 host rows, 40 run rows), 4227 declarations.
-// Replies: 1091 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4229 declarations.
+// Replies: 1092 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: none.
 declare namespace Sdk {
@@ -1158,7 +1158,7 @@ declare namespace Sdk {
   type ChatContent = string | ChatPart[];
   type ChatMessage = { role: ChatRole; content: ChatContent; name?: string | null };
   type ChatStop = string | string[];
-  type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null };
+  type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null; deadline_ms?: number | null };
   type ChatCompletionObject = "chat.completion";
   type ChatCompletionRole = "assistant";
   type ChatCompletionMessage = { role: ChatCompletionRole; content: string };
@@ -1226,10 +1226,12 @@ declare namespace Sdk {
   type AuthorityAuditQuery = { after?: EntityId | null; limit?: number | null; kinds?: AuthorityAuditEventKind[] };
   type AuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; event_kind: AuthorityAuditEventKind; source_op: string; detail?: string | null; occurred_start: number; occurred_end: number; learned_at: number; advisory_ts: number; signer_key: string; cosigner_keys?: string[]; seq: number; vault_ref?: string | null; subject_ref?: string | null; grant_ref?: string | null; claim_ref?: string | null; holder_ref?: string | null; parent_ref?: string | null; peer_vault_ref?: string | null; epoch?: number | null; expires_at?: number | null; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditOrder = "entry_ref_ascending";
-  type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean };
+  type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean; issue_codes?: string[] };
   type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
   type SignedAuthorityHistory = { entries: string[] };
   type AuthorityHistoryImported = { entry_refs: string[] };
+  type AuthorityClockRepairOutcome = "sound" | "repaired" | "unproven";
+  type AuthorityClockRepair = { outcome: AuthorityClockRepairOutcome; floor?: number | null; observations: number; anchored?: number | null };
   type WireThresholds = { window_secs: number; per_verb: number; per_actor: number };
   type WireThresholdsReceipt = { previous: WireThresholds; thresholds: WireThresholds };
   type SlimIdlePolicy = { long_outbound_wait_secs: number; exits_on_idle: boolean; lazy_rebuild: boolean };
@@ -1355,7 +1357,7 @@ declare namespace Sdk {
   type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
   type ConnectDelivery = { body: ConnectWindow; signature: string };
   type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string };
-  type FederationBurstWorkState = "pending" | "imported" | "rejected";
+  type FederationBurstWorkState = "pending" | "imported" | "rejected" | "expired" | "stale_authority" | "erased";
   type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState };
   type FederationBurstReplayRequest = { peer: FederationBurstPeerRequest; batch_ref: string };
   type FederationIsolatedUpdate = { request_ref: string; window: string; admitted_update: number[]; rate_ratio: number; streak_ratio: number };
@@ -3060,7 +3062,7 @@ declare namespace Sdk {
   type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut";
-  type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
+  type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck";
   type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null };
   type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string } | { status: "erased" };
@@ -3546,7 +3548,7 @@ declare namespace Sdk {
   type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
   type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };
   type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null };
-  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null };
+  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[] };
   type EsignDocumentTrail = { trail: "readable"; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] } | { trail: "unreadable"; error: MemoryError };
   type EsignDocumentView = EsignDocumentTrail & { document_ref: string; delivery_receipts: EsignDeliveryReceipt[] };
   type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
@@ -4977,6 +4979,10 @@ declare const vault: Sdk.VaultHost & {
   authority: {
     /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
     audit(input: Sdk.AuthorityAuditQuery): Promise<Sdk.AuthorityAuditPage | StoredResult>;
+    clock: {
+      /** Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so. */
+      repair(input: Sdk.EmptyRequest): Promise<Sdk.AuthorityClockRepair | StoredResult>;
+    };
     /** Every saved authority handoff fork alarm, for the owner. */
     handoff_alarms: ((input: Sdk.EmptyRequest) => Promise<Sdk.AuthorityHandoffAlarm[] | StoredResult>) & {
       /** The owner acknowledges one saved handoff fork alarm. */
