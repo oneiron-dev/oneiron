@@ -3352,7 +3352,7 @@ declare namespace Sdk {
   type DesktopWindow = { window: string; app: string; title: string; current: boolean; front: boolean };
   type WindowsOutput = { windows: DesktopWindow[] };
   type WindowInput = { window: string };
-  type HandoverInput = { reason: string };
+  type HandoverInput = { reason: string; demonstrate?: boolean };
   type HandoverOutput = { reason: string; asked_at_ms: number };
   type ThingExtractInput = { input: string };
   type ThingProposalRef = { child_run: string; output_path: string; candidate_id: string };
@@ -4105,7 +4105,7 @@ declare namespace Sdk {
   type DemonstrationSource = "agent" | "takeover";
   type RecordedStep = { seq: number; verb: string; tab?: string | null; result_tab?: string | null; source_url?: string | null; result_url?: string | null; target_name?: string | null; effect_class?: string | null; receipt?: number | null; action?: ReplayAction | null; failed?: BatchStopCause | null; no_effect?: boolean };
   type LocatorGap = "no_target" | "document_gone" | "not_in_front" | "no_match" | "ambiguous" | "no_outline";
-  type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" };
+  type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" } | { why: "not_started"; refusal: string };
   type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind };
   type DemonstrationStopCause = "stopped" | "handed_over" | "handed_back" | "abandoned" | "guest_lost" | "engine_switched" | "session_closed";
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
@@ -4464,7 +4464,7 @@ declare namespace self {
     expect(input: Sdk.ExpectInput): Promise<Sdk.BrowserExpectOutput | StoredResult>;
     /** Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page. */
     find(input: Sdk.FindInput): Promise<Sdk.BrowserFindOutput | StoredResult>;
-    /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
+    /** Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.BrowserHandoverOutput | StoredResult>;
     library: {
       /** Drafts a proposal from this session's receipts and stops on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */

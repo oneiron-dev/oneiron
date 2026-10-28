@@ -8031,7 +8031,7 @@ export type RecordedStep = { seq: number; verb: string; tab?: string | null; res
 /** `oneiron_browser::demonstration::LocatorGap` */
 export type LocatorGap = "no_target" | "document_gone" | "not_in_front" | "no_match" | "ambiguous" | "no_outline"
 /** `oneiron_browser::demonstration::RecordingGapKind` */
-export type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" }
+export type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" } | { why: "not_started"; refusal: string }
 /** `oneiron_browser::demonstration::RecordingGap` */
 export type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind }
 /** `oneiron_browser::demonstration::DemonstrationStopCause` */
@@ -8247,7 +8247,7 @@ export type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: 
 /** `oneiron::verbs::browser::BrowserLibraryRunOutput` */
 export type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>
 /** `oneiron_browser::programs::HandoverInput` */
-export type HandoverInput = { reason: string }
+export type HandoverInput = { reason: string; demonstrate?: boolean }
 /** `oneiron_browser::programs::HandoverOutput` */
 export type HandoverOutput = { reason: string; asked_at_ms: number }
 /** `oneiron::verbs::browser::BrowserHandoverOutput` */

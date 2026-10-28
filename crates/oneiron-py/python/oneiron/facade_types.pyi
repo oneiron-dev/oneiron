@@ -20825,7 +20825,10 @@ class RecordingGapKindCaptureLost(TypedDict):
     why: Literal["capture_lost"]
 class RecordingGapKindUnrecordedNavigation(TypedDict):
     why: Literal["unrecorded_navigation"]
-RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost | RecordingGapKindUnrecordedNavigation
+class RecordingGapKindNotStarted(TypedDict):
+    why: Literal["not_started"]
+    refusal: str
+RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost | RecordingGapKindUnrecordedNavigation | RecordingGapKindNotStarted
 class RecordingGap(TypedDict):
     seq: NotRequired[int | None]
     tab: NotRequired[str | None]
@@ -21427,6 +21430,7 @@ class LibraryRunOutput(TypedDict):
 BrowserLibraryRunOutput = BrowserAnswer
 class HandoverInput(TypedDict):
     reason: str
+    demonstrate: NotRequired[bool]
 class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
