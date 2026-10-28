@@ -81,10 +81,26 @@ impl LensArtifacts<'_> {
         let weight = |kind: EdgeKind| kind.default_weight().unwrap_or(1.0);
         Ok(vault
             .batch_in()
-            .put(&self.lens_ref, ENTITY_TYPE_CODE_ARTIFACT, occurred, self.at, &code)
+            .put(
+                &self.lens_ref,
+                ENTITY_TYPE_CODE_ARTIFACT,
+                occurred,
+                self.at,
+                &code,
+            )
             .put_authored_note(&self.prompt_ref, &author, occurred, self.at, &note)
-            .edge(&self.prompt_ref, EdgeKind::AuthoredBy, &author, weight(EdgeKind::AuthoredBy))
-            .edge(&self.prompt_ref, EdgeKind::About, &self.lens_ref, weight(EdgeKind::About))
+            .edge(
+                &self.prompt_ref,
+                EdgeKind::AuthoredBy,
+                &author,
+                weight(EdgeKind::AuthoredBy),
+            )
+            .edge(
+                &self.prompt_ref,
+                EdgeKind::About,
+                &self.lens_ref,
+                weight(EdgeKind::About),
+            )
             .made_by(&self.lens_ref, birth))
     }
 }

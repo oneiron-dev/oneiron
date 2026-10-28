@@ -93,7 +93,9 @@ impl Vault {
         let Some(prompt) = super::artifact::lens_prompt_in(self, txn, &prompt_ref)? else {
             return Ok(None);
         };
-        LensIntentRecord::new(prompt).map(Some).map_err(|_| corrupt())
+        LensIntentRecord::new(prompt)
+            .map(Some)
+            .map_err(|_| corrupt())
     }
 
     /// On a shell/contract version mismatch, re-run the vault's intent through
