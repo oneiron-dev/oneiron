@@ -109,6 +109,9 @@ pub(crate) struct McpGatewayError {
     /// Never among the words its release reads. Boxed for size, as
     /// `effective_scope` is.
     pub(super) program_steps: Option<Box<super::type_feedback_release::ErrorProgramSteps>>,
+    /// The refusal's stable reason codes, in its producer's order (FIX
+    /// 7398), surfaced as `error.data.reason_codes` when it named any.
+    pub(super) reason_codes: Vec<String>,
 }
 
 impl McpGatewayError {
@@ -128,6 +131,7 @@ impl McpGatewayError {
             hook: None,
             retry_after: None,
             program_steps: None,
+            reason_codes: Vec::new(),
         }
     }
 

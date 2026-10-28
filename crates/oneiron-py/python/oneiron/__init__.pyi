@@ -371,6 +371,8 @@ class OneironError(RuntimeError):
     # When to call again, as the refusal's source said: seconds, and Unix-second resets.
     retry_after: int | None
     resets_at: tuple[int, ...] | None
+    # The refusal's stable reason codes, in its producer's order (FIX 7398).
+    reason_codes: tuple[str, ...] | None
     def __init__(
         self,
         code: str,
@@ -380,6 +382,7 @@ class OneironError(RuntimeError):
         hook: dict[str, Any] | None = None,
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
+        reason_codes: list[str] | None = None,
     ) -> None: ...
 
 class Oneiron:

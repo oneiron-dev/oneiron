@@ -39,6 +39,9 @@ pub struct AgentVerbRefusalWords {
     pub code: String,
     pub message: String,
     pub suggestions: Vec<String>,
+    /// The refusal's stable reason codes, as its route typed them (FIX
+    /// 7398); empty when it named none.
+    pub reason_codes: Vec<String>,
 }
 
 /// The refusal a verb call gets from a run whose host binds no verb door.

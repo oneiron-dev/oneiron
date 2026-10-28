@@ -42,7 +42,8 @@ class OneironError(RuntimeError):
     "invocation", "ask"}``, and :meth:`Oneiron.retry` resends the call under
     that invocation. ``retry_after`` (seconds) and ``resets_at`` (Unix
     seconds, in the source's order) say when to call again, when the
-    refusal's source said (FIX 8190).
+    refusal's source said (FIX 8190). ``reason_codes`` are the refusal's
+    stable reason codes, in its producer's order, when it named any (FIX 7398).
     """
 
     def __init__(
@@ -54,6 +55,7 @@ class OneironError(RuntimeError):
         hook: dict[str, Any] | None = None,
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
+        reason_codes: list[str] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -66,6 +68,8 @@ class OneironError(RuntimeError):
         # When to call again, as the refusal's source said (FIX 8190).
         self.retry_after = retry_after
         self.resets_at = tuple(resets_at) if resets_at is not None else None
+        # The refusal's stable reason codes, as its producer named them (FIX 7398).
+        self.reason_codes = tuple(reason_codes) if reason_codes is not None else None
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -99,8 +103,21 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             if isinstance(resets_at, list) and all(isinstance(entry, int) for entry in resets_at)
             else None
         )
+        reason_codes = payload.get("reason_codes")
+        reason_codes = (
+            reason_codes
+            if isinstance(reason_codes, list) and all(isinstance(entry, str) for entry in reason_codes)
+            else None
+        )
         return OneironError(
-            payload["code"], payload["message"], suggestions, wrong_root, hook, retry_after, resets_at
+            payload["code"],
+            payload["message"],
+            suggestions,
+            wrong_root,
+            hook,
+            retry_after,
+            resets_at,
+            reason_codes,
         )
     return OneironError(
         "INTERNAL_SERVER_ERROR",
