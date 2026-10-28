@@ -22,12 +22,13 @@ use super::{
     scoped_read_for_core_auth,
 };
 use crate::auth::{CoreAuth, CoreScope};
-use crate::error::{ApiError, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::linear_host::LinearPushError;
 use crate::server::SyncServer;
+use utoipa::ToSchema;
 
 /// A caller's push of one TASK.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LinearPushRequest {
     /// The TASK, in hex.
@@ -39,12 +40,13 @@ pub(crate) struct LinearPushRequest {
 }
 
 /// What a caller's push did.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct LinearPushReply {
     task_ref: String,
     /// `linked`, `applied`, `noop` or `conflict` for a push that ran;
     /// `nothing_owed` when the TASK owes the mirror nothing or its push is
     /// held; `waiting` when it waits its turn.
+    #[schema(value_type = String, example = "applied")]
     status: &'static str,
     /// The mirrored issue's identifier, for a push that ran.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,6 +57,20 @@ pub(crate) struct LinearPushReply {
 }
 
 /// Pushes the caller's TASK now, on a blocking thread.
+#[utoipa::path(
+    post,
+    path = "/v1/core/linear/push",
+    request_body(content = LinearPushRequest, content_type = "application/json"),
+    responses(
+        (status = 200, description = "What the push did: linked, applied, noop, conflict, nothing owed or waiting.", body = LinearPushReply, content_type = "application/json"),
+        (status = 400, description = "Malformed push request.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "TASK was not found or is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The mirror refused the push in its current state.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Linear push failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(crate) async fn core_linear_push(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

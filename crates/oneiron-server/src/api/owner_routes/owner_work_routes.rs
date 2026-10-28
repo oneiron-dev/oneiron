@@ -25,6 +25,7 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::Json;
 use axum::routing::get;
+use oneiron::secret_custody::CustodyManifestCheck;
 use oneiron::world_keys::{
     BundleHomeWarning, OwnerWorkDiagnostics, OwnerWorkReceipt, OwnerWorkUnassigned,
 };
@@ -42,13 +43,41 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/owner-work/{request}/diagnostics", get(diagnostics))
 }
 
+/// One owner work receipt with the holder's manifest judgment as a surface
+/// shows it (FIX 5446): the receipt (ids only) and, for a custody register
+/// whose result carries one, the words for what its holder checked.
+/// Reporting only: an unchecked registration stays accepted.
+#[derive(Debug, Serialize)]
+pub(super) struct OwnerWorkReceiptView {
+    #[serde(flatten)]
+    receipt: OwnerWorkReceipt,
+    /// `CustodyManifestCheck::Judged(check).text()`, when the receipt's
+    /// `manifest_check` names one; `None` before the result, and for any
+    /// other work.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    manifest_text: Option<String>,
+}
+
+impl From<OwnerWorkReceipt> for OwnerWorkReceiptView {
+    fn from(receipt: OwnerWorkReceipt) -> Self {
+        let manifest_text = receipt
+            .manifest_check
+            .clone()
+            .map(|check| CustodyManifestCheck::Judged(check).text());
+        Self {
+            receipt,
+            manifest_text,
+        }
+    }
+}
+
 /// One owner work receipt as a surface shows it: the receipt (ids only),
 /// the engine's words for where it stands, and, when no install could be
 /// named, the engine's words for why.
 #[derive(Debug, Serialize)]
 pub(super) struct OwnerWorkView {
     #[serde(flatten)]
-    receipt: OwnerWorkReceipt,
+    receipt: OwnerWorkReceiptView,
     /// `OwnerWorkStatus::text`: "recorded, awaiting a holder", "enacted by
     /// its holder", "refused by its holder", "cancelled by the owner" or
     /// "superseded by a newer request on its target".
@@ -73,13 +102,18 @@ pub(super) struct OwnerWorkView {
 
 impl From<OwnerWorkReceipt> for OwnerWorkView {
     fn from(receipt: OwnerWorkReceipt) -> Self {
+        let status_text = receipt.status.text();
+        let unassigned_text = receipt.unassigned.map(OwnerWorkUnassigned::text);
+        let advice_text = receipt.status.advice();
+        let home_warning_text = receipt.home_warning.map(BundleHomeWarning::text);
+        let cancel_text = receipt.cancel.as_ref().map(|cancel| cancel.state.text());
         Self {
-            status_text: receipt.status.text(),
-            unassigned_text: receipt.unassigned.map(OwnerWorkUnassigned::text),
-            advice_text: receipt.status.advice(),
-            home_warning_text: receipt.home_warning.map(BundleHomeWarning::text),
-            cancel_text: receipt.cancel.as_ref().map(|cancel| cancel.state.text()),
-            receipt,
+            status_text,
+            unassigned_text,
+            advice_text,
+            home_warning_text,
+            cancel_text,
+            receipt: OwnerWorkReceiptView::from(receipt),
         }
     }
 }
