@@ -12946,7 +12946,11 @@ class ObservationIssueUnavailable(TypedDict):
     kind: Literal["unavailable"]
     consumer: str
     reason: str
-ObservationIssue = ObservationIssueStampMismatch | ObservationIssueMissingBinding | ObservationIssueSeveralTeams | ObservationIssueTeamMismatch | ObservationIssueUnavailable
+class ObservationIssueNoExecutor(TypedDict):
+    kind: Literal["no_executor"]
+    attempt_ref: EntityId
+    state: str
+ObservationIssue = ObservationIssueStampMismatch | ObservationIssueMissingBinding | ObservationIssueSeveralTeams | ObservationIssueTeamMismatch | ObservationIssueUnavailable | ObservationIssueNoExecutor
 class PlannedSpawnObservation(TypedDict):
     spawn_ref: EntityId
     phase: SpawnPhase

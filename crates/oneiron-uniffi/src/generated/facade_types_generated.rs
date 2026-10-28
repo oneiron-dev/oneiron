@@ -40509,6 +40509,13 @@ pub enum ObservationIssue {
         #[serde(rename = "reason")]
         reason: String,
     },
+    #[serde(rename = "no_executor")]
+    NoExecutor {
+        #[serde(rename = "attempt_ref")]
+        attempt_ref: String,
+        #[serde(rename = "state")]
+        state: String,
+    },
 }
 
 /// `oneiron::team::doors::PlannedSpawnObservation`.
