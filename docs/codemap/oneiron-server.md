@@ -959,7 +959,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/files_intake/markdown.rs` | src | m | 5 crate-vis | — | What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code |
 | `src/files_intake/mod.rs` | src | s | 7 crate-vis | — | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
 | `src/files_intake/reader.rs` | src | m | 18 crate-vis | — | The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a… |
-| `src/files_intake/source.rs` | src | s | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
+| `src/files_intake/source.rs` | src | m | 7 crate-vis | — | One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's… |
 | `src/files_intake/worker.rs` | src | s | 1 crate-vis | — | `oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one… |
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
@@ -1338,7 +1338,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/imports.rs` | src | s | 9 crate-vis | — | Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202) |
 | `src/owner/location.rs` | src | s | 5 crate-vis | — | Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything… |
 | `src/owner/mod.rs` | src | s | 32 crate-vis | — | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
-| `src/owner/note_imports.rs` | src | s | 11 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
+| `src/owner/note_imports.rs` | src | s | 12 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
 | `src/owner/note_tombstones.rs` | src | s | 7 crate-vis | — | NOTE tombstone review (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed for archived NOTEs… |
 | `src/owner/off_record.rs` | src | m | 19 crate-vis | — | Off-record sessions (ARCH-0052, OF-326): enter a room whose writes land in an in-memory overlay, witness… |
 | `src/owner/pack_drift.rs` | src | s | 2 crate-vis | — | Pack drift (ARCH-0059 §4): what the repair ladder did to saved queries when a pack moved under them: a… |
