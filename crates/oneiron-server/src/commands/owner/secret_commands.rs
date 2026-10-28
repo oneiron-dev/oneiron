@@ -316,7 +316,8 @@ fn sign_with_anchor(
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_stopped_vault(
         &config,
-        "then run this again: the recovery kit is read on this machine and never sent to a server",
+        "then run this again to read the kit on this machine alone, or send it in that server's \
+         own call: `POST /v1/owner/secrets/anchor-sign`",
     )?;
     let owner = local_owner(&vault)?;
     let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
