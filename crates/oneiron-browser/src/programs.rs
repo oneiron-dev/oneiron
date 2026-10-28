@@ -43,6 +43,10 @@ pub struct WindowInput {
 #[serde(deny_unknown_fields)]
 pub struct HandoverInput {
     pub reason: String,
+    /// The person's span records as a demonstration (CUA E9b; a browser's
+    /// only): from their take to their handback, which gives its draft.
+    #[serde(default)]
+    pub demonstrate: bool,
 }
 
 /// The "Needs you" ask as the run's desktop or browser holds it.

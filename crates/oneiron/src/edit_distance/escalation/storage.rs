@@ -122,6 +122,9 @@ pub(super) struct StoredStandingPolicy {
     /// [`StandingPolicyStatus`] is derived from — two spellings of one fact are
     /// two things that can disagree.
     pub(super) accepted_at: Option<u64>,
+    /// Earlier current rows, oldest first, retained so replacing this row does
+    /// not erase their proposal and acceptance receipts.
+    pub(super) superseded: Vec<StoredStandingPolicy>,
 }
 
 pub(super) fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {

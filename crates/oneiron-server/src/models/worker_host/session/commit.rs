@@ -7,8 +7,10 @@
 //! session; the next turn then starts cold, never from unverified state.
 //! A commit runs under the snapshot admission its claim read: a lock since
 //! then publishes nothing, and a successor the worker published anyway is
-//! released.
+//! released. A successor published under a whole dependency set makes its
+//! session a parking candidate, and wakes the park sweep (`park.rs`).
 use std::sync::Arc;
+use std::time::Instant;
 
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, SegmentManifest, SessionAppend, SessionAppended,
@@ -18,8 +20,9 @@ use oneiron::llm::{
 use serde_json::{Value as JsonValue, json};
 
 use super::lifecycle::{self, Admitted};
+use super::park;
 use super::policy::{self, SuffixPlan};
-use super::registry::{self, PendingTurn, Place, send};
+use super::registry::{self, Basis, PendingTurn, Phase, Place, send};
 use super::{AuthorityVerdict, CheckpointAuthority, ReplyCommit};
 
 /// [`super::reply_committed`] on this platform: claims the turn's pending
@@ -144,14 +147,35 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
             return;
         }
     };
-    let verdict = tokio::task::spawn_blocking(move || authority.recheck(&commit)).await;
-    let verdict = verdict.unwrap_or(AuthorityVerdict::Rejects(
-        SessionInvalidation::DisclosureOrScope,
+    let (head, message) = (commit.head, commit.message);
+    let kept = Arc::clone(&authority);
+    let rechecked = tokio::task::spawn_blocking(move || {
+        (
+            authority.recheck(&commit),
+            authority.snapshot_scope(&commit),
+        )
+    })
+    .await;
+    let (verdict, scope) = rechecked.unwrap_or((
+        AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope),
+        None,
     ));
     if let AuthorityVerdict::Rejects(reason) = verdict {
         registry::drop_session(&worker_id, &place.epoch, &binding, reason);
         return;
     }
+    // What a park keeps a snapshot of the successor under; only a vault
+    // that attached the port parks.
+    let basis = scope
+        .filter(|_| matches!(admitted, Admitted::Granted(_)))
+        .map(|scope| {
+            Arc::new(Basis {
+                authority: kept,
+                scope,
+                head,
+                message,
+            })
+        });
     let swappable = {
         let mut workers = registry::lock();
         let admits = lifecycle::admission(&vault) == Some(admitted);
@@ -208,6 +232,7 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
     };
     // The successor is kept only where its session is still registered
     // under the admission the claim read; otherwise its handle is released.
+    let candidate = basis.is_some();
     let unkept = {
         let mut workers = registry::lock();
         let admits = lifecycle::admission(&vault) == Some(admitted);
@@ -224,14 +249,24 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
                 session.generation = published.generation;
                 session.residency = published.residency;
                 session.path = path;
+                session.phase = if candidate {
+                    Phase::Candidate {
+                        since: Instant::now(),
+                    }
+                } else {
+                    Phase::Ready
+                };
+                session.basis = basis;
                 None
             }
             Some(_) => worker.retire(&binding),
             None => Some(worker.owe(vault, target, published.residency)),
         }
     };
-    if let Some((target, at)) = unkept {
-        registry::release_later(target, at, SessionInvalidation::Evicted);
+    match unkept {
+        Some((target, at)) => registry::release_later(target, at, SessionInvalidation::Evicted),
+        None if candidate => park::wake(),
+        None => {}
     }
 }
 

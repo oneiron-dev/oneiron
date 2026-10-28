@@ -84,9 +84,9 @@ impl RolloutRung {
 /// is a type and not a comment.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WeightHint {
-    /// This generation's mean edit mass over the mean of every generation's
-    /// runs in the same task class. `1.0` is par; below par is cheaper to
-    /// land than peers, above par is dearer.
+    /// This generation's mean edit mass against the observed floor and
+    /// ceiling of the same task class: `0.0` at the floor (cheapest to
+    /// land), `1.0` at the ceiling (dearest). A COST INPUT, never a ban.
     pub relative_edit_cost: f32,
     /// The share of this scope's amendments whose proposal was SOUND —
     /// amended for an external change or the decider's taste rather than
