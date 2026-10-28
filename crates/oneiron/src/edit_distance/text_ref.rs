@@ -8,8 +8,14 @@
 //! document plane's retained-history reads. A version the document no longer
 //! holds reads as [`TextRead::Unavailable`]: never a guessed or stale string,
 //! and never an error that fails the listing around it.
+//!
+//! One fallback keeps today's read: when the side-row wall refuses the
+//! document, the record keeps the endpoint and change texts as the wall
+//! admitted them ([`LiftedTexts`], a custody handle where it lifted a
+//! secret), and those texts read in its place.
 
 use heed::RoTxn;
+use rmpv::Value;
 
 use super::{FinalizedProposalText, LoroOpRef, OpSpan, PROPOSAL_ARTIFACT, ProposalArtifactRef};
 use crate::Vault;
@@ -24,13 +30,141 @@ pub(crate) struct StoredProposal {
     /// The proposal document as a Loro snapshot with its whole op log;
     /// `None` when the side-row wall withheld it at finalize.
     pub(crate) document: Option<Vec<u8>>,
+    /// The wall-admitted texts, kept only when the wall withheld the
+    /// document.
+    pub(crate) lifted: Option<LiftedTexts>,
+}
+
+/// A proposal's endpoint and change texts as the side-row wall admitted
+/// them, a custody handle where it lifted a secret.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiftedTexts {
+    proposed: String,
+    finalized: String,
+    /// Each recorded change's (before, after) texts, in replay order.
+    changes: Vec<(String, String)>,
+}
+
+/// Pinned MessagePack keys of a record's lifted texts.
+const LIFTED_KEY_PROPOSED: &str = "proposed";
+const LIFTED_KEY_FINAL: &str = "final";
+const LIFTED_KEY_CHANGES: &str = "changes";
+
+impl LiftedTexts {
+    /// Every text `record` names, read out of its document.
+    fn read(document: &EntityDoc, record: &FinalizedProposalText) -> Option<Self> {
+        let at = |frontier: &LoroOpRef| document.text_at(frontier.as_bytes()).ok();
+        let changes = record
+            .ops_by_actor
+            .iter()
+            .map(|(_, span)| Some((at(&span.before_ref)?, at(&span.after_ref)?)))
+            .collect::<Option<_>>()?;
+        Some(Self {
+            proposed: at(&record.proposed_ref)?,
+            finalized: at(&record.final_ref)?,
+            changes,
+        })
+    }
+
+    /// The text `record` names at `frontier`.
+    fn at(&self, record: &FinalizedProposalText, frontier: &LoroOpRef) -> Option<&str> {
+        if *frontier == record.proposed_ref {
+            return Some(&self.proposed);
+        }
+        if *frontier == record.final_ref {
+            return Some(&self.finalized);
+        }
+        record
+            .ops_by_actor
+            .iter()
+            .zip(&self.changes)
+            .find_map(|((_, span), (before, after))| {
+                if span.before_ref == *frontier {
+                    Some(before.as_str())
+                } else if span.after_ref == *frontier {
+                    Some(after.as_str())
+                } else {
+                    None
+                }
+            })
+    }
+}
+
+/// The record codec's member for `lifted`: `Nil` when absent.
+pub(super) fn encode_lifted(lifted: Option<&LiftedTexts>) -> Value {
+    let Some(lifted) = lifted else {
+        return Value::Nil;
+    };
+    let changes = lifted
+        .changes
+        .iter()
+        .map(|(before, after)| {
+            Value::Array(vec![
+                Value::from(before.as_str()),
+                Value::from(after.as_str()),
+            ])
+        })
+        .collect();
+    Value::Map(vec![
+        (
+            Value::from(LIFTED_KEY_PROPOSED),
+            Value::from(lifted.proposed.as_str()),
+        ),
+        (
+            Value::from(LIFTED_KEY_FINAL),
+            Value::from(lifted.finalized.as_str()),
+        ),
+        (Value::from(LIFTED_KEY_CHANGES), Value::Array(changes)),
+    ])
+}
+
+/// Inverse of [`encode_lifted`].
+///
+/// # Errors
+///
+/// [`Error::CorruptedIndex`] on a malformed member.
+pub(super) fn decode_lifted(value: &Value) -> Result<Option<LiftedTexts>> {
+    let corrupt = || Error::CorruptedIndex("proposal artifact lifted texts");
+    let text = |value: Option<&Value>| -> Result<String> {
+        value
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(corrupt)
+    };
+    let entries = match value {
+        Value::Nil => return Ok(None),
+        Value::Map(entries) => entries,
+        _ => return Err(corrupt()),
+    };
+    let member = |key: &str| {
+        entries
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(key))
+            .map(|(_, value)| value)
+    };
+    let Some(Value::Array(changes)) = member(LIFTED_KEY_CHANGES) else {
+        return Err(corrupt());
+    };
+    let changes = changes
+        .iter()
+        .map(|change| match change {
+            Value::Array(pair) if pair.len() == 2 => Ok((text(pair.first())?, text(pair.get(1))?)),
+            _ => Err(corrupt()),
+        })
+        .collect::<Result<_>>()?;
+    Ok(Some(LiftedTexts {
+        proposed: text(member(LIFTED_KEY_PROPOSED))?,
+        finalized: text(member(LIFTED_KEY_FINAL))?,
+        changes,
+    }))
 }
 
 /// Why a referenced text cannot be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextUnavailable {
-    /// The side-row wall withheld the document at finalize: its history held
-    /// a secret no handle can replace.
+    /// The side-row wall withheld the document at finalize (its history
+    /// held a secret no handle can replace in it), and kept no admitted text
+    /// for this version.
     Withheld,
     /// The document, or the version the ref names, no longer reads: erased,
     /// compacted past, or undecodable.
@@ -63,6 +197,7 @@ pub struct RetainedProposal {
     /// The ref-only record.
     pub record: FinalizedProposalText,
     document: std::result::Result<EntityDoc, TextUnavailable>,
+    lifted: Option<LiftedTexts>,
 }
 
 impl RetainedProposal {
@@ -76,6 +211,7 @@ impl RetainedProposal {
         Self {
             record: stored.record,
             document,
+            lifted: stored.lifted,
         }
     }
 
@@ -88,7 +224,8 @@ impl RetainedProposal {
         self.document.as_ref().map_err(|reason| *reason)
     }
 
-    /// The text at `frontier` of this proposal's document.
+    /// The text at `frontier` of this proposal's document; with the
+    /// document withheld, the wall-admitted text the record kept for it.
     #[must_use]
     pub fn text_at(&self, frontier: &LoroOpRef) -> TextRead {
         match self.document() {
@@ -96,7 +233,13 @@ impl RetainedProposal {
                 TextRead::Unavailable(TextUnavailable::Unreadable),
                 TextRead::Text,
             ),
-            Err(reason) => TextRead::Unavailable(reason),
+            Err(reason) => self
+                .lifted
+                .as_ref()
+                .and_then(|lifted| lifted.at(&self.record, frontier))
+                .map_or(TextRead::Unavailable(reason), |text| {
+                    TextRead::Text(text.to_owned())
+                }),
         }
     }
 
@@ -133,9 +276,12 @@ impl RetainedProposal {
 ///
 /// The side-row wall reads the document as opaque bytes, so a secret in its
 /// history can take no handle there and the wall refuses it (OF-067). The
-/// record then lands without the document and its texts read as
-/// [`TextUnavailable::Withheld`]: a finalize never fails for it, and no raw
-/// secret is kept.
+/// record then lands without the document, keeping its endpoint and change
+/// texts through the same wall, a custody handle where it lifted a secret, so
+/// they read as they did before refs. When the wall refuses those texts too
+/// (a secret it cannot place, which refused the whole finalize before), only
+/// the record lands and its texts read as [`TextUnavailable::Withheld`]: a
+/// finalize never fails for it, and no raw secret is kept.
 pub fn put_finalized_proposal_text(
     vault: &Vault,
     record: &FinalizedProposalText,
@@ -152,25 +298,41 @@ pub fn put_finalized_proposal_text(
             }
             None => {}
         }
-        let stored = |document: Option<Vec<u8>>| StoredProposal {
+        let stored = |snapshot: Option<Vec<u8>>, lifted: Option<LiftedTexts>| StoredProposal {
             record: record.clone(),
-            document,
+            document: snapshot,
+            lifted,
         };
-        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
-        match PROPOSAL_ARTIFACT.put(
-            vault,
-            &mut savepoint,
-            &key,
-            &stored(Some(document.to_vec())),
-        ) {
-            Ok(()) => Ok(savepoint.commit()?),
-            Err(Error::Gate(_)) => {
-                drop(savepoint);
-                PROPOSAL_ARTIFACT.put(vault, wtxn, &key, &stored(None))
-            }
-            Err(error) => Err(error),
+        if put_admitted(vault, wtxn, &key, &stored(Some(document.to_vec()), None))? {
+            return Ok(());
         }
+        let lifted = EntityDoc::from_snapshot(document)
+            .ok()
+            .and_then(|opened| LiftedTexts::read(&opened, record));
+        if lifted.is_some() && put_admitted(vault, wtxn, &key, &stored(None, lifted))? {
+            return Ok(());
+        }
+        PROPOSAL_ARTIFACT.put(vault, wtxn, &key, &stored(None, None))
     })
+}
+
+/// Puts `stored` in a savepoint; `false`, with nothing written, when the
+/// side-row wall refuses it.
+fn put_admitted(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &crate::entity_id::EntityId,
+    stored: &StoredProposal,
+) -> Result<bool> {
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    match PROPOSAL_ARTIFACT.put(vault, &mut savepoint, key, stored) {
+        Ok(()) => {
+            savepoint.commit()?;
+            Ok(true)
+        }
+        Err(Error::Gate(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Reads the finalized proposal artifact stored under `artifact_ref`.

@@ -84,7 +84,7 @@ const PROPOSAL_ARTIFACT: SideTable<EntityId, StoredProposal, Raw> =
 pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned MessagePack key set for a persisted proposal-artifact record.
-pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 7] = [
+pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 8] = [
     "v",
     "artifact",
     "proposed_ref",
@@ -92,6 +92,7 @@ pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 7] = [
     "document",
     "source_turn",
     "spans",
+    "lifted",
 ];
 
 /// Pinned MessagePack key set for one attributed op span inside a record.
@@ -106,6 +107,7 @@ const KEY_FINAL_REF: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[3];
 const KEY_DOCUMENT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[4];
 const KEY_SOURCE_TURN: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[5];
 const KEY_SPANS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[6];
+const KEY_LIFTED: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[7];
 
 const SPAN_KEY_PEER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[0];
 const SPAN_KEY_COUNTER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[1];
@@ -605,6 +607,10 @@ fn encode_stored_proposal(stored: &StoredProposal) -> Result<Vec<u8>> {
                 .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
         ),
         (Value::from(KEY_SPANS), Value::Array(spans)),
+        (
+            Value::from(KEY_LIFTED),
+            text_ref::encode_lifted(stored.lifted.as_ref()),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value).map_err(|_| {
@@ -672,7 +678,12 @@ fn decode_stored_proposal(bytes: &[u8]) -> Result<StoredProposal> {
         ops_by_actor: spans,
         source_turn_ref: field_opt_entity_id(&entries, KEY_SOURCE_TURN)?,
     };
-    Ok(StoredProposal { record, document })
+    let lifted = text_ref::decode_lifted(field(&entries, KEY_LIFTED).ok_or_else(corrupt)?)?;
+    Ok(StoredProposal {
+        record,
+        document,
+        lifted,
+    })
 }
 
 fn decode_span(value: &Value) -> Result<(OpAttribution, OpSpan)> {
