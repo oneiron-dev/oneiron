@@ -305,6 +305,34 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
     Ok(*call != before)
 }
 
+/// FIX 9180 (coord-b slice d): the ask of a spawn call a checkpoint
+/// carries apart from its row, owed to the targets its host resolved: a
+/// spawn with seats and a live ask. A spawn with no target proof keeps its
+/// ask where its row does, as does an erased or a nil one. `None` for any
+/// other call.
+pub(crate) fn spawn_ask_part(call: &CodeRunBridgeCall) -> Option<&Value> {
+    if call.effect != SelfEffect::AgentsSpawn || call.spawn_targets.seats.is_empty() {
+        return None;
+    }
+    let Value::Map(fields) = &call.request else {
+        return None;
+    };
+    ask_of(fields).filter(|ask| ask.is_str())
+}
+
+/// Puts `ask` in the place of `call`'s ask, and returns the ask it held: a
+/// checkpoint takes a carried ask out of its call, nil in its place, and
+/// puts it back. `None` for a request with no ask.
+pub(crate) fn swap_spawn_ask(call: &mut CodeRunBridgeCall, ask: Value) -> Option<Value> {
+    let Value::Map(fields) = &mut call.request else {
+        return None;
+    };
+    fields
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some(ASK_KEY))
+        .map(|(_, value)| std::mem::replace(value, ask))
+}
+
 /// How a spawn row's outcome stands for its coherence.
 #[derive(PartialEq, Eq)]
 enum SpawnAnswer {
