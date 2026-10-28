@@ -16,9 +16,9 @@ use crate::edit_distance::delta::amendment_delta;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
-    AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, UnclearAttribution,
-    delete_unclear_in_txn, draw_proposal_sequence_in_txn, ground_attempt_receipt,
-    mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
+    AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, JudgeTrace,
+    UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
+    ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
     withdraw_edit_proposal_in_txn,
 };
 
@@ -42,8 +42,10 @@ use crate::skill_attribution::{
 /// is what lets a `skill_defect` share replace the attempt's own outcome in
 /// `skill.reliability`, so an attempt it cannot vouch for is refused here.
 /// The attempt also names who drafted the proposal: its executor stamp and
-/// task type are recorded over any the host gave (FIX 9812). A stamp that does
-/// not read as one is recorded as unknown, never refused.
+/// task type are recorded over any the host gave (FIX 9812). With no attempt
+/// stamp, the amended proposal's birth receipt names the model that concluded
+/// it. A stamp that does not read as one is recorded as unknown, never
+/// refused.
 ///
 /// The actor check is the DOWNSTREAM door's own (`require_actor_entity`, the
 /// D13 matrix), asked here rather than three passes later: an
@@ -57,9 +59,9 @@ use crate::skill_attribution::{
 /// entity that cannot act, or the scope is unusable; storage errors.
 pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) -> Result<()> {
     let scope = normalized_scope(&evidence.scope)?.to_owned();
-    if amendment_delta(vault, &evidence.receipt_id)?.is_none() {
+    let Some(delta) = amendment_delta(vault, &evidence.receipt_id)? else {
         return Err(invalid("amendment evidence cites an unmeasured receipt"));
-    }
+    };
     require_actor_entity(vault, &evidence.actor)?;
     if let Some(skill) = evidence.skill
         && vault.get_skill_record(&skill)?.is_none()
@@ -72,6 +74,7 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
     let (executor, type_ref) = evidence_origin(
         vault,
         evidence.attempt_receipt.as_deref(),
+        delta.proposed_ref.proposal_artifact(),
         evidence.executor.as_deref(),
         evidence.type_ref.as_ref(),
     )?;
@@ -228,7 +231,7 @@ pub fn judge_amendment_hunks(
         &delta,
         split,
         hunks,
-        trace.revision,
+        Some(&trace),
     )
 }
 
@@ -302,8 +305,9 @@ pub fn judge_amendment_verdicts(
 ///
 /// Each of `hunks` keeps its own label beside its substitution's identity, so
 /// the miner can take a clear hunk and leave an unclear one held (FIX 9808).
-/// The evidence's executor stamp and task type, and `judge`, the revision
-/// that answered, freeze on the judgment (FIX 9812).
+/// The evidence's executor stamp and task type, and the revision and
+/// answering model of `judge`, the trace that answered, freeze on the
+/// judgment (FIX 9812).
 fn persist_amendment_split(
     vault: &Vault,
     receipt_id: &str,
@@ -311,7 +315,7 @@ fn persist_amendment_split(
     delta: &crate::edit_distance::delta::AmendmentDelta,
     split: crate::skill_attribution::AttributionSplit,
     hunks: &[EditHunk<'_>],
-    judge: Option<String>,
+    judge: Option<&JudgeTrace>,
 ) -> Result<Option<AmendmentJudgment>> {
     let shares: Vec<AmendmentShare> = split
         .shares
@@ -352,11 +356,14 @@ fn persist_amendment_split(
         executor: evidence.executor.clone(),
         type_ref: evidence.type_ref.clone(),
         attempt_receipt: evidence.attempt_receipt.clone(),
-        judge,
+        judge: judge.and_then(|trace| trace.revision.clone()),
+        judge_model: judge.and_then(|trace| trace.model.clone()),
+        actor: Some(evidence.actor),
+        skill: evidence.skill,
         rejected: false,
     };
 
-    let row = judgment_row(&judgment, evidence.skill);
+    let row = judgment_row(&judgment);
     let preference_share = judgment.share_of(AmendmentClass::PreferenceShift);
     let preference_row = (preference_share > 0.0).then(|| StoredPreference {
         v: ROW_VERSION,
@@ -404,12 +411,9 @@ fn persist_amendment_split(
 /// in the writer.
 ///
 /// The attempt join rides the row, so a later correction of the evidence moves
-/// nothing until the amendment is judged again. `skill` is the skill the
-/// evidence named, kept beside the attempt it came from.
-pub(super) fn judgment_row(
-    judgment: &AmendmentJudgment,
-    skill: Option<EntityId>,
-) -> StoredJudgment {
+/// nothing until the amendment is judged again. The judgment's skill is kept
+/// beside the attempt it came from.
+pub(super) fn judgment_row(judgment: &AmendmentJudgment) -> StoredJudgment {
     StoredJudgment {
         v: ROW_VERSION,
         class: None,
@@ -434,7 +438,7 @@ pub(super) fn judgment_row(
             .clone()
             .map(|receipt| StoredAttempt {
                 receipt,
-                skill: skill.map(|id| id.to_hex()),
+                skill: judgment.skill.map(|id| id.to_hex()),
             }),
         hunks: judgment
             .hunks
@@ -447,6 +451,9 @@ pub(super) fn judgment_row(
         executor: judgment.executor.clone(),
         type_ref: judgment.type_ref.clone(),
         judge: judgment.judge.clone(),
+        judge_model: judgment.judge_model.clone(),
+        actor: judgment.actor.map(|id| id.to_hex()),
+        skill: judgment.skill.map(|id| id.to_hex()),
         rejected: judgment.rejected,
     }
 }
@@ -610,9 +617,18 @@ fn judgment_from_row(
         type_ref: row.type_ref,
         attempt_receipt: row.attempt.map(|join| join.receipt),
         judge: row.judge,
+        judge_model: row.judge_model,
+        actor: optional_entity(row.actor.as_deref())?,
+        skill: optional_entity(row.skill.as_deref())?,
         rejected: row.rejected,
     };
     Ok((judgment, attempt))
+}
+
+/// A stored hex id, when the row keeps one.
+fn optional_entity(hex: Option<&str>) -> Result<Option<EntityId>> {
+    hex.map(|hex| hex_entity(hex, JUDGMENT_ROW_LABEL))
+        .transpose()
 }
 
 /// A stored row's split; a row written before split verdicts reads back as

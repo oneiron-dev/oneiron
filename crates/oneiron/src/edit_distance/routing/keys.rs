@@ -146,6 +146,23 @@ impl StoredAggregate {
     pub(super) fn judged_weight(&self) -> f64 {
         self.judged.unwrap_or(self.runs as f64)
     }
+
+    /// Folds `other`, another head of the same executor, into this one: the
+    /// one head an untyped read sees across task types.
+    pub(super) fn absorb(&mut self, other: &Self) {
+        let judged = self.judged_weight() + other.judged_weight();
+        self.v = ROW_VERSION;
+        self.runs = self.runs.saturating_add(other.runs);
+        self.d_norm_sum += other.d_norm_sum;
+        self.sound += other.sound;
+        self.judged = Some(judged);
+        self.on_judge_model = self.on_judge_model.saturating_add(other.on_judge_model);
+        self.last_at = self.last_at.max(other.last_at);
+        for (outcome, count) in &other.outcomes {
+            let total = self.outcomes.entry(outcome.clone()).or_insert(0);
+            *total = total.saturating_add(*count);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,13 +255,20 @@ row_codec!(StoredRung, RUNG_ROW_LABEL);
 /// one task class, measurement version and task type — the peer scan's
 /// `key_prefix`.
 pub(super) fn peer_prefix(scope: &RoutingScopeKey) -> Result<Vec<u8>> {
+    let mut prefix = version_prefix(scope)?;
+    prefix.extend_from_slice(type_ref_part(scope.type_ref.as_ref())?.as_bytes());
+    prefix.push(KEY_SEPARATOR);
+    Ok(prefix)
+}
+
+/// The bytes after [`AGGREGATE`]'s prefix that scope every head under one
+/// task class and measurement version, in every task type.
+pub(super) fn version_prefix(scope: &RoutingScopeKey) -> Result<Vec<u8>> {
     let mut prefix = normalized_task_class(&scope.task_class)?
         .as_bytes()
         .to_vec();
     prefix.push(KEY_SEPARATOR);
     prefix.extend_from_slice(usable_key_part(&scope.measurement_version)?.as_bytes());
-    prefix.push(KEY_SEPARATOR);
-    prefix.extend_from_slice(type_ref_part(scope.type_ref.as_ref())?.as_bytes());
     prefix.push(KEY_SEPARATOR);
     Ok(prefix)
 }

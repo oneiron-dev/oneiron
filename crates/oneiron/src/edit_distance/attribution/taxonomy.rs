@@ -243,6 +243,14 @@ pub struct AmendmentJudgment {
     /// The judge revision whose answers this judgment stands on; `None` for
     /// the rule tier and for settled or owner-scripted labels.
     pub judge: Option<String>,
+    /// The answering model's identity (`provider/name@revision`) behind
+    /// `judge`, when one model gave every answer: the identity an executor
+    /// stamp is compared with. `None` wherever `judge` is.
+    pub judge_model: Option<String>,
+    /// The actor whose proposal was judged.
+    pub actor: Option<EntityId>,
+    /// The SKILL the proposal rode, when it rode one.
+    pub skill: Option<EntityId>,
     /// A rejection's judgment: the decider discarded the proposal, so there
     /// is no Δ and no hunks, and `d_norm` is the whole proposal's edit mass
     /// (FIX 7823).
@@ -289,10 +297,11 @@ impl AmendmentJudgment {
 
     /// Whether the proposal was drafted on the judge's own model (ARCH-0056
     /// §8): such runs are flagged, because judges favour their own model's
-    /// work.
+    /// work. The executor stamp is compared with the judge's answering model,
+    /// never with its revision, which also names the provider's version.
     #[must_use]
     pub fn on_judge_model(&self) -> bool {
-        self.executor.is_some() && self.executor == self.judge
+        self.executor.is_some() && self.executor == self.judge_model
     }
 
     /// Whether every share is `unclear`: nothing in this amendment may be
@@ -390,6 +399,7 @@ pub(super) fn classify_amendment_traced(
                 source: AuditAnswerSource::NotJudged,
                 answers: Vec::new(),
                 revision: None,
+                model: None,
             };
             let answers = vec![
                 HunkVerdict {
@@ -426,6 +436,7 @@ pub(super) fn classify_amendment_traced(
                     request.regions()
                 ],
                 revision: None,
+                model: None,
             };
             Ok((Some(settled_split(class, &request, &masses)?), trace))
         }

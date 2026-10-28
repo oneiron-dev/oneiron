@@ -8,6 +8,12 @@
 //! ride beside the cost, never blended into it, and the attribution labels
 //! never stand in for them. A run with no anchor along that chain adds no
 //! count: absent, never invented.
+//!
+//! Only an owner or the world anchors a settlement (ARCH-0056 §5). The
+//! settled receipt names one anchor today: the reporter that settled it, an
+//! anchor when that reporter is a live owner of the vault. A worker's own
+//! Done, a default `Proceed` and a bare `criteria_verdict = met` name none,
+//! so their outcome stays absent.
 
 use crate::Vault;
 use crate::edit_distance::attribution::AmendmentJudgment;
@@ -16,7 +22,7 @@ use crate::error::Result;
 
 /// The settled disposition of the TASK the run behind `judgment` worked, read
 /// in `txn`; `None` when the judgment names no attempt, the attempt's receipt
-/// names no TASK, or no write has settled it yet.
+/// names no TASK, no write has settled it yet, or no owner settled it.
 ///
 /// # Errors
 ///
@@ -40,5 +46,16 @@ pub(super) fn run_outcome_in_txn(
     else {
         return Ok(None);
     };
-    crate::task_verb::settled_outcome_in(vault, txn, task)
+    let Some(settled) = crate::task_verb::settled_receipt_in(vault, txn, task)? else {
+        return Ok(None);
+    };
+    let Some(settler) = settled
+        .actor
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(None);
+    };
+    let anchored = crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &settler)?;
+    Ok(anchored.then_some(settled.outcome))
 }
