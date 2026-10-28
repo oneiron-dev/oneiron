@@ -296,6 +296,7 @@ use utoipa::OpenApi;
         CoreRunTreeEventKind,
         CoreRunTreeRepair,
         SurfaceEventSubmitRequest,
+        super::SurfaceEmailThreadPayload,
         SurfaceEventSourcePayload,
         SurfaceSourceAppPayload,
         SurfaceEventActionPayload,
