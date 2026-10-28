@@ -17,8 +17,23 @@ use crate::world_keys::{
     OpenedKeyPads, WorldKeyId, pad_row_erased_in_txn, world_keys_destroyed_in_txn,
 };
 
-/// Drops from `pads` each key current retirement names in `vault` now.
+/// When a kit restore lands its pads, and which (CALLS: PAD-1 kit pad
+/// order).
+enum KitPadOrder {
+    /// Before the base windows, less the keys current retirement names; the
+    /// section opening reads the same view, checked again after the
+    /// windows. A fault reading retirement keeps the view as it was.
+    BeforeWindowsLessCurrentRetirement,
+}
+
+const KIT_PAD_ORDER: KitPadOrder = KitPadOrder::BeforeWindowsLessCurrentRetirement;
+
+/// Drops from `pads` each key current retirement names in `vault` now
+/// ([`KIT_PAD_ORDER`]).
 pub(super) fn admit_kit_pads(vault: &Vault, pads: &mut OpenedKeyPads) {
+    match KIT_PAD_ORDER {
+        KitPadOrder::BeforeWindowsLessCurrentRetirement => {}
+    }
     match retired_keys(vault, pads) {
         Ok(retired) if !retired.is_empty() => pads.retain_keys(|key| !retired.contains(key)),
         Ok(_) => {}

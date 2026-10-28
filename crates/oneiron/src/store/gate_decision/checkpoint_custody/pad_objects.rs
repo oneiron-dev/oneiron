@@ -192,6 +192,20 @@ pub(crate) fn install_source_pad_objects_in_txn(
     PadObjectsLanding::NotAttempted
 }
 
+/// How an install over a store's own pad objects is staged (CALLS: PAD-1
+/// install staging).
+#[cfg(feature = "sync")]
+enum PadObjectInstallStaging {
+    /// In a savepoint of the caller's writer, committed only once what it
+    /// wrote reads back in it, so the store's own objects stay until then;
+    /// an activation's runs before its archive lifts, in the same writer.
+    SavepointCommittedOnReadBack,
+}
+
+#[cfg(feature = "sync")]
+const PAD_OBJECT_INSTALL_STAGING: PadObjectInstallStaging =
+    PadObjectInstallStaging::SavepointCommittedOnReadBack;
+
 #[cfg(feature = "sync")]
 fn install_in_savepoint(
     store: &Store,
@@ -199,6 +213,9 @@ fn install_in_savepoint(
     expected: &CurrentPadObjects,
     captured: &CapturedPadObjects,
 ) -> crate::error::Result<PadObjectsLanding> {
+    match PAD_OBJECT_INSTALL_STAGING {
+        PadObjectInstallStaging::SavepointCommittedOnReadBack => {}
+    }
     let mut savepoint = store.env.nested_write_txn(wtxn)?;
     let landing =
         match install_captured_pad_objects_in_txn(store, &mut savepoint, expected, captured)? {
