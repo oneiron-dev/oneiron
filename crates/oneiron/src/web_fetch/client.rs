@@ -62,7 +62,7 @@ pub fn build_single_hop_client(
 /// connects to resolves through `guard`, exactly as with
 /// [`build_single_hop_client`], while the host drives its requests on its
 /// own runtime, where each stays cancellable (FIX 7557).
-pub fn hosted_dns_resolver(guard: Arc<HostedEgressGuard>) -> Arc<dyn reqwest::dns::Resolve> {
+pub fn hosted_dns_resolver(guard: Arc<HostedEgressGuard>) -> Arc<impl reqwest::dns::Resolve> {
     Arc::new(HostedResolver(guard))
 }
 
