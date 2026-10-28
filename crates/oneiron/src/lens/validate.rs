@@ -12,46 +12,31 @@ use super::atom::{
 };
 use super::generated_ui::{GENERATED_UI_WIRE_VERSION, GeneratedUiSurfaceCapabilities};
 use super::self_ui::SelfUiOption;
-use super::wire_ids::{MAX_LENS_COLLECTION_ITEMS, MAX_LENS_TREE_DEPTH, SelfUiOptionValue};
+use super::wire_ids::SelfUiOptionValue;
 
 pub(super) const MAX_LENS_TOKEN_BYTES: usize = 128;
-pub(super) const MAX_LENS_NODE_COUNT: usize = 4096;
 
+/// Validates the whole tree, at any width or depth (FIX 9900): every node id
+/// is unique, every node's text and atom are valid, and every result set's
+/// handles and action ids hold. The walk keeps its own stack, so depth costs
+/// no call stack.
 pub(super) fn validate_lens_tree(root: &LensNode) -> Result<()> {
-    let mut stack = vec![(root, 1usize)];
-    let mut node_count = 0usize;
-    let mut budget = LensBudget::default();
-    let mut seen_node_ids = HashSet::with_capacity(MAX_LENS_NODE_COUNT);
+    let mut stack = vec![root];
+    let mut seen_node_ids = HashSet::new();
     let mut seen_result_set_action_ids = HashSet::new();
 
-    while let Some((node, depth)) = stack.pop() {
-        node_count += 1;
-        if node_count > MAX_LENS_NODE_COUNT {
-            return Err(Error::InvalidConfig(format!(
-                "generated lens tree must contain at most {MAX_LENS_NODE_COUNT} nodes"
-            )));
-        }
+    while let Some(node) = stack.pop() {
         if !seen_node_ids.insert(node.id.as_str()) {
             return Err(Error::InvalidConfig(
                 "generated lens nodes must not contain duplicate ids".to_string(),
             ));
         }
-        if depth > MAX_LENS_TREE_DEPTH {
-            return Err(Error::InvalidConfig(format!(
-                "generated lens tree depth must be at most {MAX_LENS_TREE_DEPTH}"
-            )));
-        }
-
-        budget.add_collection("lens node bindings", node.bindings.len())?;
-        budget.add_collection("lens node $bind", node.state_bindings.len())?;
-        budget.add_collection("lens node children", node.children.len())?;
         validate_required_lens_text("lens node fallbackText", &node.fallback_text)?;
         node.atom.validate()?;
-        node.atom.count_collection_items(&mut budget)?;
         validate_result_set_node(node, &mut seen_result_set_action_ids)?;
 
         for child in node.children.iter().rev() {
-            stack.push((child, depth + 1));
+            stack.push(child);
         }
     }
 
@@ -111,37 +96,7 @@ fn validate_declared_backing_handle(node: &LensNode, handle: &str) -> Result<()>
     Ok(())
 }
 
-#[derive(Default)]
-pub(super) struct LensBudget {
-    collection_items: usize,
-}
-
-impl LensBudget {
-    pub(super) fn add_collection(&mut self, context: &str, len: usize) -> Result<()> {
-        validate_lens_collection_len(context, len)?;
-        self.collection_items = self.collection_items.checked_add(len).ok_or_else(|| {
-            Error::InvalidConfig("generated lens collection budget overflowed".to_string())
-        })?;
-        if self.collection_items > MAX_LENS_COLLECTION_ITEMS {
-            return Err(Error::InvalidConfig(format!(
-                "generated lens collections must contain at most {MAX_LENS_COLLECTION_ITEMS} total items"
-            )));
-        }
-        Ok(())
-    }
-}
-
-pub(super) fn validate_lens_collection_len(context: &str, len: usize) -> Result<()> {
-    if len > MAX_LENS_COLLECTION_ITEMS {
-        return Err(Error::InvalidConfig(format!(
-            "{context} must contain at most {MAX_LENS_COLLECTION_ITEMS} items"
-        )));
-    }
-    Ok(())
-}
-
 pub(super) fn validate_generated_ui_node_count(context: &str, len: usize) -> Result<()> {
-    validate_lens_collection_len(context, len)?;
     if len == 0 {
         return Err(Error::InvalidConfig(format!("{context} must be non-zero")));
     }
@@ -192,8 +147,6 @@ pub(super) fn compile_atom_for_surface(
 }
 
 pub(super) fn validate_self_ui_options(context: &str, options: &[SelfUiOption]) -> Result<()> {
-    validate_lens_collection_len(context, options.len())?;
-
     let mut seen = HashSet::with_capacity(options.len());
     for option in options {
         if !seen.insert(option.value.as_str()) {

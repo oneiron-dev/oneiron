@@ -20,6 +20,7 @@ pub mod office;
 mod pins;
 mod promotion_evidence;
 mod prose_admission;
+mod quote_citation;
 pub(crate) use promotion_evidence::{
     promotion_evidence_source_in_txn, retain_fresh_claim_citations_in_txn,
     verify_promotion_evidence_in_txn,

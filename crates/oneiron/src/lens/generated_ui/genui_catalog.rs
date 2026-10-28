@@ -5,11 +5,8 @@ use crate::lens::atom::{
     CollectionAtom, LENS_ATOM_KIT_VERSION, LensAtom, LensNode, LensText, LensTextSpan,
     MetaLineAtom, RESULT_SET_ATOM_KIND, TextBlockAtom,
 };
-use crate::lens::validate::{
-    validate_lens_collection_len, validate_lens_tree, validate_required_lens_text,
-};
+use crate::lens::validate::{validate_lens_tree, validate_required_lens_text};
 use crate::lens::wire_ids::LensAtomId;
-use crate::lens::wire_limits::deserialize_limited_vec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -156,7 +153,7 @@ impl GeneratedUiPrimitive {
 pub struct GeneratedUiSurfaceCapabilities {
     pub catalog: GeneratedUiCatalog,
     pub max_catalog_version: u16,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub primitives: Vec<GeneratedUiPrimitive>,
 }
 
@@ -231,7 +228,7 @@ impl GeneratedUiPrebuilt {
 pub struct GeneratedUiSummaryCardPrebuilt {
     pub title: LensText,
     pub body: LensText,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub details: Vec<MetaLineAtom>,
 }
 
@@ -239,7 +236,6 @@ impl GeneratedUiSummaryCardPrebuilt {
     fn expand(&self) -> Result<LensNode> {
         validate_required_lens_text("generated-ui summary_card title", &self.title)?;
         validate_required_lens_text("generated-ui summary_card body", &self.body)?;
-        validate_lens_collection_len("generated-ui summary_card details", self.details.len())?;
 
         let mut root = LensNode::with_fallback_text(
             LensAtomId::new("summary-card-root")?,

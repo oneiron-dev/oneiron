@@ -18,12 +18,13 @@
 //! serves no run, and charges the guest's network work to the floor the
 //! vault's host lent.
 
-use std::io::{self, Read as _, Write as _};
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
+use oneiron::code_sandbox::egress::{UnusableResolver, exchange_dns_query};
 use oneiron::web_fetch::HostedEgressRefusal;
 use oneiron_container::{
     EgressRelay, HostNetFloor, HostNetPermit, HttpRequest, HttpResponse, SessionManifest,
@@ -176,60 +177,13 @@ fn unspecified(target: SocketAddr) -> SocketAddr {
 }
 
 /// Answers the guest's DNS `query` from the host's resolvers, the first
-/// that answers: over UDP, and again over TCP where its answer came back
-/// truncated, each read bounded by `wait`.
+/// that answers, each read bounded by `wait`: the engine's shared DNS
+/// transport under its next-resolver rule. The transport checks no
+/// allowlist, refuses no address and keeps no receipt; each address a page
+/// then connects to is checked at its connect.
 fn resolve(query: &[u8], wait: Duration) -> io::Result<Vec<u8>> {
     if query.len() < 12 || query[2] & 0x80 != 0 {
         return Err(io::Error::other("DNS query expected"));
     }
-    let config = std::fs::read_to_string("/etc/resolv.conf")?;
-    let resolvers = config.lines().filter_map(|line| {
-        let mut fields = line.split_whitespace();
-        (fields.next() == Some("nameserver"))
-            .then(|| fields.next()?.parse::<IpAddr>().ok())
-            .flatten()
-    });
-    let mut error = io::Error::other("host has no DNS resolver");
-    for resolver in resolvers {
-        let resolver = SocketAddr::new(resolver, DNS_PORT);
-        match ask_udp(resolver, query, wait) {
-            Ok(answer) if answer[2] & 0x02 != 0 => return ask_tcp(resolver, query, wait),
-            Ok(answer) => return Ok(answer),
-            Err(failed) => error = failed,
-        }
-    }
-    Err(error)
-}
-
-fn ask_udp(resolver: SocketAddr, query: &[u8], wait: Duration) -> io::Result<Vec<u8>> {
-    let socket = UdpSocket::bind(unspecified(resolver))?;
-    socket.set_read_timeout(Some(wait))?;
-    socket.connect(resolver)?;
-    socket.send(query)?;
-    let mut answer = vec![0; DATAGRAM_BYTES];
-    let read = socket.recv(&mut answer)?;
-    answer.truncate(read);
-    answer_to(query, answer)
-}
-
-fn ask_tcp(resolver: SocketAddr, query: &[u8], wait: Duration) -> io::Result<Vec<u8>> {
-    let mut stream = TcpStream::connect_timeout(&resolver, wait)?;
-    stream.set_read_timeout(Some(wait))?;
-    stream.set_write_timeout(Some(wait))?;
-    let length = u16::try_from(query.len()).map_err(io::Error::other)?;
-    stream.write_all(&length.to_be_bytes())?;
-    stream.write_all(query)?;
-    let mut length = [0; 2];
-    stream.read_exact(&mut length)?;
-    let mut answer = vec![0; usize::from(u16::from_be_bytes(length))];
-    stream.read_exact(&mut answer)?;
-    answer_to(query, answer)
-}
-
-/// `answer`, where it answers `query`: its id, with the answer bit set.
-fn answer_to(query: &[u8], answer: Vec<u8>) -> io::Result<Vec<u8>> {
-    if answer.len() < 12 || answer[..2] != query[..2] || answer[2] & 0x80 == 0 {
-        return Err(io::Error::other("invalid host DNS reply"));
-    }
-    Ok(answer)
+    exchange_dns_query(query, wait, UnusableResolver::Skip)
 }

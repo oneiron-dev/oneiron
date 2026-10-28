@@ -9756,6 +9756,7 @@ class LearningCellKey(TypedDict):
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
+    project: NotRequired[str | None]
 class LearningReadRequest(TypedDict):
     cell: LearningCellKey
     project_ref: NotRequired[str | None]
@@ -10171,6 +10172,7 @@ class LensProposeRequest(TypedDict):
     pack_content_hash: str
     compiled: Any
     intent_prompt: str
+    trigger: NotRequired[MadeByTrigger | None]
 LensApproval = Literal["proposed"]
 class LensProposalReceipt(TypedDict):
     lens_ref: str
@@ -11015,6 +11017,7 @@ class LearningCell(TypedDict):
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
+    project: NotRequired[EntityId | None]
 CritiqueVerdict = Literal["accept", "revise", "discard"]
 CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
 class CodeProposalReviewRequest(TypedDict):
@@ -12893,12 +12896,14 @@ class DoorsLearningCellView(TypedDict):
     executor: str
     type_ref: TypeStamp
     axis: str
+    project: NotRequired[EntityId | None]
 class BorrowedCellView(TypedDict):
     predicate: str
     subject: EntityId
     executor: NotRequired[str | None]
     type_ref: NotRequired[TypeStamp | None]
     axis: NotRequired[str | None]
+    project: NotRequired[EntityId | None]
 class DoorsLearningEvidenceView(TypedDict):
     receipt_ref: str
     at: int
@@ -13440,6 +13445,7 @@ class CriticReviewSubmit(TypedDict):
     catalog: Any
     critics: list[CriticBinding]
     spawn_attempt_ref: NotRequired[str | None]
+    project_ref: NotRequired[str | None]
 class CritiqueTriageScores(TypedDict):
     accept: float
     revise: float

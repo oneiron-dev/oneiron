@@ -9,11 +9,9 @@ use crate::{Error, Result};
 
 use super::atom::{FiniteF64, LensText};
 use super::generated_ui::{SelfUiBindableProperty, SelfUiStateValue};
-use super::validate::{
-    LensBudget, validate_lens_collection_len, validate_selected_option, validate_self_ui_options,
-};
+use super::validate::{validate_selected_option, validate_self_ui_options};
 use super::wire_ids::{LensHandleName, SelfUiActionId, SelfUiControlId, SelfUiOptionValue};
-use super::wire_limits::{deserialize_limited_vec, serialize_tagged};
+use super::wire_limits::serialize_tagged;
 
 /// Fraction of one slider step a value may sit off the grid before it is rejected.
 const SLIDER_STEP_TOLERANCE: f64 = 1e-6;
@@ -65,12 +63,6 @@ impl<'de> Deserialize<'de> for SelfUiControl {
     {
         let control = Self::from(SelfUiControlWire::deserialize(deserializer)?);
         control.validate().map_err(de::Error::custom)?;
-
-        let mut budget = LensBudget::default();
-        control
-            .count_collection_items(&mut budget)
-            .map_err(de::Error::custom)?;
-
         Ok(control)
     }
 }
@@ -140,7 +132,6 @@ impl<'de> Deserialize<'de> for SegmentedControl {
         struct SegmentedControlWire {
             id: SelfUiControlId,
             label: LensText,
-            #[serde(deserialize_with = "deserialize_limited_vec")]
             options: Vec<SelfUiOption>,
             #[serde(default)]
             selected: Option<SelfUiOptionValue>,
@@ -192,7 +183,6 @@ impl<'de> Deserialize<'de> for SelectControl {
         struct SelectControlWire {
             id: SelfUiControlId,
             label: LensText,
-            #[serde(deserialize_with = "deserialize_limited_vec")]
             options: Vec<SelfUiOption>,
             #[serde(default)]
             selected: Option<SelfUiOptionValue>,
@@ -327,7 +317,7 @@ pub struct SelfUiOption {
 #[serde(deny_unknown_fields)]
 pub struct SelfUiAction {
     pub command: SelfUiActionId,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub args: Vec<SelfUiValue>,
 }
 
@@ -340,7 +330,7 @@ impl<'de> Deserialize<'de> for SelfUiAction {
         #[serde(deny_unknown_fields)]
         struct SelfUiActionWire {
             command: SelfUiActionId,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             args: Vec<SelfUiValue>,
         }
 
@@ -458,35 +448,10 @@ impl SelfUiControl {
             Self::TextInput(control) => control.action.validate(),
         }
     }
-
-    pub(super) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
-        match self {
-            Self::Button(control) => {
-                budget.add_collection("self.ui action args", control.action.args.len())
-            }
-            Self::Toggle(control) => {
-                budget.add_collection("self.ui action args", control.action.args.len())
-            }
-            Self::Segmented(control) => {
-                budget.add_collection("segmented control options", control.options.len())?;
-                budget.add_collection("self.ui action args", control.action.args.len())
-            }
-            Self::Select(control) => {
-                budget.add_collection("select control options", control.options.len())?;
-                budget.add_collection("self.ui action args", control.action.args.len())
-            }
-            Self::Slider(control) => {
-                budget.add_collection("self.ui action args", control.action.args.len())
-            }
-            Self::TextInput(control) => {
-                budget.add_collection("self.ui action args", control.action.args.len())
-            }
-        }
-    }
 }
 
 impl SelfUiAction {
     pub(super) fn validate(&self) -> Result<()> {
-        validate_lens_collection_len("self.ui action args", self.args.len())
+        Ok(())
     }
 }

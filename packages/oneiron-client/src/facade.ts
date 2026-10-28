@@ -2888,7 +2888,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.settings.wake_policy.set": { description: "The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.settings.inference_defaults": { description: "Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.settings.inference_defaults.replace": { description: "Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.lenses.propose": { description: "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it.", scope: "Write", proposes: true, hostDoor: false, section: false },
+  "vault.lenses.propose": { description: "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.lenses.activate": { description: "The owner selects a proposed lens revision for its pack slot.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.deactivate": { description: "The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.lenses.list": { description: "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -4990,7 +4990,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         answer: (input: Facade.CraftCandidateAnswer, options?: O): FacadeReturns<"vault.craft_candidates.answer">[K] => invoke("vault.craft_candidates.answer", input, options, newInvocation()),
       }),
       lenses: {
-        /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
+        /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
         propose: (input: Facade.LensProposeRequest, options?: O): FacadeReturns<"vault.lenses.propose">[K] => invoke("vault.lenses.propose", input, options, newInvocation()),
         /** The owner selects a proposed lens revision for its pack slot. */
         activate: (input: Facade.LensActivateRequest, options?: O): FacadeReturns<"vault.lenses.activate">[K] => invoke("vault.lenses.activate", input, options, newInvocation()),

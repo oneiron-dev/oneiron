@@ -1,10 +1,11 @@
 //! Consent-ask and bundle-approve cards with scope vocabularies.
 
 use super::consent_eval::{
-    ConsentActionDecision, ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest,
-    GrantMintIntent, GrantMintIntentScope, consent_evaluation, ensure_authenticated_actor,
-    ensure_component_request, ensure_declared_action, ensure_principal_ref, non_empty,
-    noop_policy_rejection, required_scope_ref, widening_grant_surface_is_eligible,
+    CONSENT_NOOP_NON_PRINCIPAL_REASON, ConsentActionDecision, ConsentActionEvaluation,
+    ConsentActionKind, ConsentActionRequest, GrantMintIntent, GrantMintIntentScope,
+    actor_is_card_principal, consent_evaluation, ensure_component_request, ensure_declared_action,
+    ensure_principal_ref, non_empty, noop_policy_rejection, required_scope_ref,
+    widening_grant_surface_is_eligible,
 };
 use super::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 use crate::consent::AuthenticatedOwner;
@@ -108,7 +109,16 @@ impl ConsentAskCard {
         ensure_component_request(&self.card_id, request)?;
         ensure_principal_ref(&self.principal_ref)?;
         ensure_declared_action(&self.actions(), request)?;
-        ensure_authenticated_actor(vault, &self.principal_ref, request, authenticated_owner)?;
+        if !actor_is_card_principal(vault, &self.principal_ref, request, authenticated_owner)? {
+            return Ok(noop_policy_rejection(
+                Of336ComponentKind::ConsentAsk,
+                &self.card_id,
+                &self.principal_ref,
+                request,
+                ConsentActionDecision::NoopNonPrincipal,
+                CONSENT_NOOP_NON_PRINCIPAL_REASON,
+            ));
+        }
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Approve => (ConsentActionDecision::ApprovedOnce, None),
@@ -278,7 +288,16 @@ impl BundleApproveCard {
                 "bundle approve card must include at least one send item".to_string(),
             ));
         }
-        ensure_authenticated_actor(vault, &self.principal_ref, request, authenticated_owner)?;
+        if !actor_is_card_principal(vault, &self.principal_ref, request, authenticated_owner)? {
+            return Ok(noop_policy_rejection(
+                Of336ComponentKind::BundleApprove,
+                &self.card_id,
+                &self.principal_ref,
+                request,
+                ConsentActionDecision::NoopNonPrincipal,
+                CONSENT_NOOP_NON_PRINCIPAL_REASON,
+            ));
+        }
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Decline => (ConsentActionDecision::Declined, None),

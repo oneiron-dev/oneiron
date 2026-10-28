@@ -30067,7 +30067,7 @@ pub struct CellTypeRef {
     #[serde(rename = "node_id")]
     pub node_id: String,
     #[serde(rename = "tree_version")]
-    pub tree_version: u32,
+    pub tree_version: u64,
 }
 
 /// `oneiron::learning::doors::LearningCellKey`.
@@ -30096,6 +30096,8 @@ pub struct LearningCellKey {
         skip_serializing_if = "Option::is_none"
     )]
     pub setting_key: Option<String>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::learning::doors::LearningReadRequest`.
@@ -31412,6 +31414,8 @@ pub struct LensProposeRequest {
     pub compiled: crate::WireJson,
     #[serde(rename = "intent_prompt")]
     pub intent_prompt: String,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<MadeByTrigger>,
 }
 
 /// `oneiron::receipt::lens::LensApproval`.
@@ -34207,6 +34211,8 @@ pub struct LearningCell {
         skip_serializing_if = "Option::is_none"
     )]
     pub setting_key: Option<String>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::critic::CritiqueVerdict`.
@@ -40395,6 +40401,8 @@ pub struct DoorsLearningCellView {
     pub type_ref: TypeStamp,
     #[serde(rename = "axis")]
     pub axis: String,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::team::doors::BorrowedCellView`.
@@ -40410,6 +40418,8 @@ pub struct BorrowedCellView {
     pub type_ref: Option<TypeStamp>,
     #[serde(rename = "axis", default, skip_serializing_if = "Option::is_none")]
     pub axis: Option<String>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 /// `oneiron::team::doors::LearningEvidenceView`.
@@ -42055,7 +42065,7 @@ pub struct CriticReviewSubmit {
     #[serde(rename = "type_node")]
     pub type_node: String,
     #[serde(rename = "type_tree_version")]
-    pub type_tree_version: u32,
+    pub type_tree_version: u64,
     #[serde(rename = "axis")]
     pub axis: String,
     #[serde(rename = "auto_resolve_threshold")]
@@ -42070,6 +42080,12 @@ pub struct CriticReviewSubmit {
         skip_serializing_if = "Option::is_none"
     )]
     pub spawn_attempt_ref: Option<String>,
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
 }
 
 /// `oneiron::critic::CritiqueTriageScores`.
