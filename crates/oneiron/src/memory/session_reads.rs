@@ -310,7 +310,11 @@ impl<'s> SessionReadContext<'s> {
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;
         let hits = lane.filter_scored_entities(hits)?;
-        memory.lexical_hits(&lane, hits, |id| self.short_ref(id))
+        // The room's own search names no indexed revision: its hits read
+        // through the room's view, live.
+        memory.lexical_hits(&lane, hits, &Default::default(), |id| {
+            self.short_ref(id)
+        })
     }
 
     /// The short ref this call's view names `id` by: the room's alias for a
