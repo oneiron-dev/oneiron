@@ -889,6 +889,11 @@ pub struct GuestRevokeArgs {
     /// The guest's grant, 32 hex.
     pub grant_ref: String,
 
+    /// The former peer host's origin (`https://...`): once the revoke
+    /// commits, ask it to drop what each ended pact delivered.
+    #[arg(long, value_name = "ORIGIN")]
+    pub peer: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

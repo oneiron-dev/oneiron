@@ -4,9 +4,10 @@
 //! signed ask `vault.courtesy_delete.send` queues, signed by this host, over
 //! every world the pact delivered, up to the epoch the pact ended at.
 //!
-//! The owner route and the host door both call it after the revoke's
-//! grouped writer returned, so the withdrawal is durable before any ask is
-//! staged, and inside each one's own hook boundary. Queuing writes the
+//! The owner route, the host door and the stopped-vault CLI (`oneiron
+//! guests revoke --peer`, FIX 4185) all call it after the revoke's grouped
+//! writer returned, so the withdrawal is durable before any ask is staged,
+//! and inside each one's own hook boundary. Queuing writes the
 //! outbox and waits on no network: the courier delivers. A target whose ask
 //! does not queue keeps `not_requested` with its error, and the committed
 //! revoke still answers.
@@ -22,7 +23,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::receipt::{GuestDeletionRequestStatus, GuestRevokeResponse};
 use oneiron::task_verb::sdk::CourtesyDeleteSendRequest;
 
-use super::{OwnerResult, courtesy_delete};
+use super::courtesy_delete::{self, CourtesySender};
+use super::OwnerResult;
 use crate::server::SyncServer;
 
 /// Why a committed revoke sent no courtesy-delete ask: its hook-rewritten
@@ -42,7 +44,7 @@ pub(crate) fn check_peer(peer: Option<&str>) -> OwnerResult<()> {
 /// keeps `not_requested` with the reason, the answer says it, and the
 /// owner's inbox is told.
 fn skip_courtesy_deletes(
-    server: &SyncServer,
+    vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
     revoked: &mut GuestRevokeResponse,
 ) {
@@ -51,7 +53,7 @@ fn skip_courtesy_deletes(
     }
     revoked.courtesy_skipped = Some(COURTESY_PEER_INVALID.to_owned());
     if let Err(error) = oneiron::task_verb::sdk::notify_guest_revoke_courtesy_skipped(
-        server.vault(),
+        vault,
         owner,
         revoked,
         COURTESY_PEER_INVALID,
@@ -72,11 +74,22 @@ pub(crate) fn queue_courtesy_deletes(
     peer: Option<&str>,
     revoked: &mut GuestRevokeResponse,
 ) {
+    queue_courtesy_deletes_with(&CourtesySender::of(server), owner, peer, revoked);
+}
+
+/// [`queue_courtesy_deletes`] with the vault and key `sender` lends: the
+/// stopped-vault CLI's, which holds no server (FIX 4185).
+pub(crate) fn queue_courtesy_deletes_with(
+    sender: &CourtesySender<'_>,
+    owner: &AuthenticatedOwner,
+    peer: Option<&str>,
+    revoked: &mut GuestRevokeResponse,
+) {
     let Some(peer) = peer else {
         return;
     };
     if courtesy_delete::check_peer(peer).is_err() {
-        skip_courtesy_deletes(server, owner, revoked);
+        skip_courtesy_deletes(sender.vault, owner, revoked);
         return;
     }
     for target in &mut revoked.courtesy_targets {
@@ -87,7 +100,7 @@ pub(crate) fn queue_courtesy_deletes(
             peer: peer.to_owned(),
             signed: None,
         };
-        match courtesy_delete::send(server, owner, &ask) {
+        match courtesy_delete::send_with(sender, owner, &ask) {
             Ok(sent) => {
                 target.deletion_request_status = GuestDeletionRequestStatus::Queued;
                 target.request = Some(sent.request);
