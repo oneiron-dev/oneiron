@@ -9,10 +9,9 @@
 //! holds nothing.
 
 use std::collections::BTreeMap;
-use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::checkout::{CheckoutId, CheckoutLeaseAct};
@@ -21,7 +20,7 @@ use oneiron::code_sandbox::SandboxCredentialHandle;
 use oneiron::code_sandbox::microvm::ExecutionBudget;
 use oneiron::dispatch_byoa::{
     ByoEndpointBackendFactory, ByoaCliExecutor, ByoaConnectorSpec, ByoaDispatcher, ByoaEgressLease,
-    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult, ByoaStream, CaptureByoaExhaust,
+    ByoaEgressPort, ByoaError, ByoaExhaust, ByoaResult, CaptureByoaExhaust,
     ClaudeCodeRunner, CliSandboxSpec, CodexRunner, DispatchOfficialSeat, DreamerProviderAdapter,
     OfficialDreamerSeat, OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatRegistry,
     OfficialSeatRoute, OfficialSeatSpec, OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry,
@@ -39,8 +38,11 @@ use utoipa::ToSchema;
 
 use super::secret_destinations::RunSecretDestinations;
 
+mod drain;
 mod runner_work;
 mod surface;
+
+use drain::{Drain, drain_spooled};
 pub use surface::{
     SeatLoginSurface, SeatRouteRow, SeatSettings, seat_login_surface, seat_route_catalog,
     siwc_authorize_request,
@@ -94,96 +96,6 @@ impl std::fmt::Debug for OfficialCliSeatExecutor {
             .field("floor", &self.floor.is_some())
             .finish()
     }
-}
-
-/// Drains every byte `reader` yields into a spooled stream on its own thread.
-/// The disk floor and the run's deadline are its only stops; a read failure
-/// is an error, never an early end of the stream.
-fn drain_spooled(
-    mut reader: impl Read + Send + 'static,
-    floor: Option<Arc<dyn SpillFloor>>,
-    deadline: Instant,
-) -> mpsc::Receiver<ByoaResult<ByoaStream>> {
-    let (done, drain) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let mut stream = ByoaStream::writer(floor, Some(deadline));
-        let mut chunk = [0_u8; 8192];
-        let spooled = loop {
-            match reader.read(&mut chunk) {
-                Ok(0) => break stream.finish(),
-                Ok(read) => {
-                    if let Err(error) = stream.append(&chunk[..read]) {
-                        break Err(error);
-                    }
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => {
-                    break Err(ByoaError::Backend(
-                        "official seat output read failed".to_owned(),
-                    ));
-                }
-            }
-        };
-        let _ = done.send(spooled);
-    });
-    drain
-}
-
-/// One drain, read without waiting while its child runs (FIX 5152): a
-/// drain that stopped early, at the disk floor say, is seen at once, and a
-/// stream that ended is kept for after the child exits.
-struct Drain {
-    receiver: mpsc::Receiver<ByoaResult<ByoaStream>>,
-    ended: Option<ByoaResult<ByoaStream>>,
-}
-
-impl Drain {
-    fn new(receiver: mpsc::Receiver<ByoaResult<ByoaStream>>) -> Self {
-        Self {
-            receiver,
-            ended: None,
-        }
-    }
-
-    /// The drain's failure, once it stopped with one; it is taken, so the
-    /// run reports it once.
-    fn failure(&mut self) -> Option<ByoaError> {
-        if self.ended.is_none() {
-            self.ended = self.receiver.try_recv().ok();
-        }
-        match self.ended.take() {
-            Some(Err(error)) => Some(error),
-            ended => {
-                self.ended = ended;
-                None
-            }
-        }
-    }
-
-    /// The drain's stream, waited for no later than the run's deadline.
-    fn stream(self, deadline: Instant) -> ByoaResult<ByoaStream> {
-        match self.ended {
-            Some(ended) => ended,
-            None => drained(&self.receiver, deadline),
-        }
-    }
-}
-
-/// A drain's stream, waited for no later than the run's deadline.
-fn drained(
-    drain: &mpsc::Receiver<ByoaResult<ByoaStream>>,
-    deadline: Instant,
-) -> ByoaResult<ByoaStream> {
-    drain
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .unwrap_or_else(|error| {
-            Err(match error {
-                mpsc::RecvTimeoutError::Timeout => ByoaError::SpoolDeadline,
-                mpsc::RecvTimeoutError::Disconnected => {
-                    ByoaError::Backend("official seat output drain stopped".to_owned())
-                }
-            })
-        })
 }
 
 impl ByoaCliExecutor for OfficialCliSeatExecutor {
