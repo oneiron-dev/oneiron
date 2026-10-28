@@ -122,6 +122,11 @@ impl DecisionProvider for DecisionReadProvider<'_> {
         }
     }
 
+    /// The reader's own price, as its host knows it (FIX 11305).
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.reader.cost_per_thousand()
+    }
+
     /// A pack of one.
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         let mut answers = self.decide_pack(&DecisionPack {
