@@ -88,7 +88,6 @@ impl OfferLadder {
                 prompt: None,
                 ..served.clone()
             }],
-            receipt: true,
             picked: true,
             rests: Arc::clone(&self.rests),
             scope: self.scope,
