@@ -14,13 +14,12 @@ use super::model::{
 use super::store::{advance_watermark_in_txn, miner_watermark};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
-use crate::edit_distance::FinalizedProposalText;
-use crate::edit_distance::PROPOSAL_ARTIFACT;
 use crate::edit_distance::attribution::{
     AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::{DeltaSource, amendment_delta};
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::edit_distance::{PROPOSAL_ARTIFACT, RetainedProposal, TextRead};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
 
@@ -358,11 +357,10 @@ fn clusters_from(
 /// * no recorded routing facts — the amendment has no scope axis and no actor,
 ///   and inventing either is the failure ED-03 is instrumented against;
 /// * no Δ — nothing measured this window, so there is nothing to read;
-/// * a Δ whose refs name no persisted artifact — the field-diff lane hashes
-///   two MessagePack BODIES, which are not retained, so it resolves to no text
-///   pair at all. The recorded-ops and reconstructed lanes both do resolve,
-///   which is exactly what their refs are for (ED-01 pins them as "directly
-///   replayable" and "directly verifiable").
+/// * a Δ whose refs name no proposal artifact — the field-diff lane's ends are
+///   structured bodies in an entity and a receipt, so it resolves to no text
+///   pair at all. A recorded-ops or reconstructed Δ over an artifact names its
+///   document at both ends, which is exactly what the refs are for.
 fn amendment_source<'a>(
     vault: &Vault,
     judgment: &AmendmentJudgment,
@@ -382,50 +380,25 @@ fn amendment_source<'a>(
     }))
 }
 
-/// Reads the artifact rows once per pass and indexes them under BOTH ref
-/// families ED-01 can hand back.
-///
-/// The op-window pair addresses a [`DeltaSource::RecordedOps`] Δ (hex of the
-/// encoded Loro frontiers, which is what that lane writes); the text-hash pair
-/// addresses a [`DeltaSource::Reconstructed`] one (blake3 of each endpoint
-/// text). One map holds both: the tokens are opaque hex, so the two families
-/// cannot collide in any way a reader would have to reason about.
+/// Reads the artifact rows once per pass, each with its retained document
+/// opened, keyed by the artifact id a Δ's refs name.
 fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
     let rtxn = vault.store.env.read_txn()?;
     let mut index = ArtifactIndex {
-        records: Vec::new(),
-        by_refs: BTreeMap::new(),
+        records: BTreeMap::new(),
     };
     // Every artifact is indexed: past the threshold row the scan raises one
     // check and reads on, so no judged artifact drops out of mining.
     let mut rows = ScanCount::start(&vault.store, &rtxn, EngineScan::MinerArtifactRows, &[])?;
     for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, &rtxn, &[])? {
-        let (_, record) = entry?;
+        let (artifact, stored) = entry?;
         rows.row();
-        let position = index.records.len();
-        index.by_refs.insert(
-            (
-                bytes_to_hex_lower(record.proposed_ref.as_bytes()),
-                bytes_to_hex_lower(record.final_ref.as_bytes()),
-            ),
-            position,
-        );
-        index.by_refs.insert(
-            (
-                text_ref(&record.proposed_text),
-                text_ref(&record.final_text),
-            ),
-            position,
-        );
-        index.records.push(record);
+        index
+            .records
+            .insert(artifact, RetainedProposal::open(stored));
     }
     rows.finish(vault);
     Ok(index)
-}
-
-/// The ref ED-01's reconstructed lane writes for one endpoint text.
-fn text_ref(text: &str) -> String {
-    bytes_to_hex_lower(blake3::hash(text.as_bytes()).as_bytes())
 }
 
 // ---------------------------------------------------------------------------
@@ -436,26 +409,35 @@ fn text_ref(text: &str) -> String {
 /// measured on.
 ///
 /// * [`DeltaSource::RecordedOps`] — one pair per recorded CHANGE, from the
-///   change's own before/after text. Op runs are what this lane retains and
-///   they see churn: a word typed, replaced, and typed again yields the
-///   substitution the decider actually performed.
-/// * [`DeltaSource::Reconstructed`] — the stored text pair is re-diffed here
-///   for line pairs. ED-02's `myers_line_diff` counts lines rather than naming
-///   them, so the pairing is done locally instead of widening that lane's API
-///   for one consumer.
+///   change's own before/after text read at its refs. Op runs see churn: a
+///   word typed, replaced, and typed again yields the substitution the
+///   decider actually performed.
+/// * [`DeltaSource::Reconstructed`] — the endpoint texts read at the record's
+///   refs are re-diffed here for line pairs. ED-02's `myers_line_diff` counts
+///   lines rather than naming them, so the pairing is done locally instead of
+///   widening that lane's API for one consumer.
+///
+/// A text the retained document no longer holds yields no pair from it.
 /// * [`DeltaSource::FieldDiff`] — unreachable: that lane resolves to no
 ///   artifact (see [`amendment_source`]). Answered rather than asserted, so a
 ///   future body-retaining producer degrades to silence instead of a panic.
-fn substitutions(source: DeltaSource, artifact: &FinalizedProposalText) -> Vec<Substitution> {
+fn substitutions(source: DeltaSource, artifact: &RetainedProposal) -> Vec<Substitution> {
     match source {
         DeltaSource::RecordedOps => artifact
+            .record
             .ops_by_actor
             .iter()
-            .filter_map(|(_, span)| substitution_pair(&span.before_text, &span.after_text))
+            .filter_map(|(_, span)| match artifact.change_texts(span) {
+                (TextRead::Text(before), TextRead::Text(after)) => {
+                    substitution_pair(&before, &after)
+                }
+                _ => None,
+            })
             .collect(),
-        DeltaSource::Reconstructed => {
-            line_substitutions(&artifact.proposed_text, &artifact.final_text)
-        }
+        DeltaSource::Reconstructed => match (artifact.proposed_text(), artifact.final_text()) {
+            (TextRead::Text(before), TextRead::Text(after)) => line_substitutions(&before, &after),
+            _ => Vec::new(),
+        },
         DeltaSource::FieldDiff => Vec::new(),
     }
 }
