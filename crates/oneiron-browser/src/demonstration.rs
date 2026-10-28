@@ -38,7 +38,8 @@ pub type DemonstrationId = String;
 pub enum DemonstrationSource {
     /// The run's own agent, or a scripted input sequence on its session.
     Agent,
-    /// A person holding the browser (CUA E9b; not started by this verb).
+    /// A person holding the browser (CUA E9b): an opted-in handover's take
+    /// starts it, never this verb.
     Takeover,
 }
 
@@ -193,6 +194,9 @@ pub enum RecordingGapKind {
     /// typed URL, a script's history move, a navigation outside the run's
     /// verbs): a step may be missing (FIX 9413).
     UnrecordedNavigation,
+    /// The capture never started, for `refusal` (a takeover's span on a
+    /// Lightpanda guest, CUA E9b): no act of the span is recorded.
+    NotStarted { refusal: String },
 }
 
 /// Why an act's target has no replay locator.
@@ -339,13 +343,14 @@ pub(crate) struct Recording {
 impl Recording {
     pub(crate) fn new(
         id: DemonstrationId,
+        source: DemonstrationSource,
         label: Option<String>,
         started_at_ms: u64,
         (origin, url): (Option<String>, String),
     ) -> Self {
         Self {
             id,
-            source: DemonstrationSource::Agent,
+            source,
             label,
             started_at_ms,
             origin,

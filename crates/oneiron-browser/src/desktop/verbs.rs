@@ -650,6 +650,12 @@ impl BrowserDriver for DesktopSession {
 
     fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
         self.live()?;
+        // Only a browser records a person's span (CUA E9b).
+        if input.demonstrate {
+            return Err(BrowserError::Unsupported(
+                "a desktop demonstration".to_owned(),
+            ));
+        }
         // The reason stands whole, as given (FIX 8012): blankness alone
         // refuses it, never its length.
         let reason = input.reason;

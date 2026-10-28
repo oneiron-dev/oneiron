@@ -180,6 +180,7 @@ impl BrowserSession {
     /// Person `by` takes the browser, asked or not. The caller holds the
     /// session, so the agent's call in flight has ended; its next one
     /// refuses until `by` hands the browser back. Taking it again is a no-op.
+    /// The take of an ask that opted in starts the person's span (CUA E9b).
     pub fn take_over(&mut self, by: &str) -> Result<&Takeover, BrowserError> {
         self.guest_up()?;
         let asked = match &self.takeover {
@@ -198,6 +199,7 @@ impl BrowserSession {
             taken_at_ms: now_ms(),
             inputs: 0,
         };
+        self.takeover_start_policy();
         Ok(&self.takeover)
     }
 
@@ -207,6 +209,11 @@ impl BrowserSession {
     pub fn tabs(&mut self) -> Result<Vec<BrowserTab>, BrowserError> {
         self.guest_up()?;
         let held = matches!(self.takeover, Takeover::Held { .. });
+        if held {
+            // The person's acts are matched before a popup comes to the
+            // front (CUA E9b).
+            self.recording_drain();
+        }
         self.driver.tabs(held)
     }
 
@@ -262,6 +269,9 @@ impl BrowserSession {
         // A destination refusal of the person's own navigation answers
         // their input, never the agent's next act (FIX 7409).
         let sent = self.driver.person_input(input);
+        // What the input made the page send is matched now, sent or
+        // refused (CUA E9b).
+        self.recording_drain();
         self.crossed(sent)?;
         let Takeover::Held { inputs, .. } = &mut self.takeover else {
             return Err(BrowserError::GuestLost);
@@ -275,7 +285,14 @@ impl BrowserSession {
     /// `by` hands the browser back, from holding it or from the agent's ask
     /// it never took: the agent's next read is a whole observation of the
     /// page the person left, and its next answer carries this record once.
-    pub fn hand_back(&mut self, by: &str) -> Result<TakeoverRecord, BrowserError> {
+    /// A span the ask opted in ends here, drafted with its reason and
+    /// `postcondition` (CUA E9b): `by` gets it, and the agent's next answer
+    /// the same, once.
+    pub fn hand_back(
+        &mut self,
+        by: &str,
+        postcondition: Vec<ExpectInput>,
+    ) -> Result<(TakeoverRecord, Option<DemonstrationOutput>), BrowserError> {
         let returned_at_ms = now_ms();
         let mut record = match &self.takeover {
             Takeover::Held {
@@ -311,6 +328,10 @@ impl BrowserSession {
         if matches!(self.takeover, Takeover::Held { .. }) {
             record.refusal = self.custody.take();
         }
+        // The person's span is drafted while what the session read of their
+        // pages stands (CUA E9b).
+        let demonstration =
+            self.takeover_end_policy(DemonstrationStopCause::HandedBack, postcondition);
         self.takeover = Takeover::Agent;
         self.driver.forget_observations();
         // The agent reads the tab the person left in front; a front tab that
@@ -322,7 +343,7 @@ impl BrowserSession {
         self.driver.checkpoint(StoragePhase::HandBack);
         self.driver.know_tabs();
         self.returned = Some(record.clone());
-        Ok(record)
+        Ok((record, demonstration))
     }
 
     /// Brings `tab` to the front for the person who holds the browser; the
@@ -340,6 +361,9 @@ impl BrowserSession {
                 "take the browser over to bring another tab to the front".to_owned(),
             ));
         }
+        // The person's acts are matched while their tab is in front (CUA
+        // E9b).
+        self.recording_drain();
         self.driver.bring_to_front(tab)
     }
 
@@ -356,8 +380,10 @@ impl BrowserSession {
     }
 
     /// Ends a takeover still asked or held as the browser goes away, with
-    /// what it held so far; `None` while the agent has the browser.
+    /// what it held so far; `None` while the agent has the browser. A
+    /// person's span ends first, drafted with what it kept (CUA E9b).
     pub fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
+        self.takeover_abandoned();
         match std::mem::replace(&mut self.takeover, Takeover::Agent) {
             Takeover::Agent => None,
             state => Some(AbandonedTakeover {

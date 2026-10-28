@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 
 use oneiron::secret_custody::RunSecretSeat;
 use oneiron::{EntityId, Vault};
-use oneiron_browser::{AbandonedTakeover, BrowserError, DesktopSession, Takeover};
+use oneiron_browser::{
+    AbandonedTakeover, BrowserError, DemonstrationOutput, DesktopSession, Takeover,
+};
 
 use super::SyncServer;
 
@@ -59,6 +61,13 @@ pub(crate) trait SeatGuest: Send + Sized + 'static {
 
     /// Ends a takeover still asked or held as the guest goes away.
     fn abandon_takeover(&mut self) -> Option<AbandonedTakeover>;
+
+    /// The person's span that takeover's end cut short, recorded where the
+    /// agent's ask opted in (CUA E9b), once; none for a guest that records
+    /// none.
+    fn abandoned_demonstration(&mut self) -> Option<DemonstrationOutput> {
+        None
+    }
 
     /// Lands `record`, a takeover the seat's end cut short, as the run's
     /// `abandoned` takeover receipt.
@@ -367,9 +376,10 @@ fn idle_past<S: SeatGuest>(entry: &RunSeat<S>, now: Instant) -> bool {
 }
 
 /// Ends a seat taken out of the registry: a takeover still asked or held
-/// lands its `abandoned` receipt with what it held so far, the agent's inbox
-/// Ask clears, and the guest goes with its session, the run-bound secrets it
-/// found hard-erased after it (FIX 8028).
+/// lands its `abandoned` receipt with what it held so far (a person's span
+/// it recorded as `demonstration`, CUA E9b), the agent's inbox Ask clears,
+/// and the guest goes with its session, the run-bound secrets it found
+/// hard-erased after it (FIX 8028).
 fn end<S: SeatGuest>(run: EntityId, entry: RunSeat<S>) {
     let session = entry
         .seat
@@ -380,6 +390,14 @@ fn end<S: SeatGuest>(run: EntityId, entry: RunSeat<S>) {
         && let Some(cut) = session.abandon_takeover()
     {
         let landed = serde_json::to_value(&cut)
+            .and_then(|mut record| {
+                if let (Some(fields), Some(demonstration)) =
+                    (record.as_object_mut(), session.abandoned_demonstration())
+                {
+                    fields.insert("demonstration".into(), serde_json::to_value(demonstration)?);
+                }
+                Ok(record)
+            })
             .map_err(|error| error.to_string())
             .and_then(|record| {
                 S::land_abandoned(&entry.vault, run, &record).map_err(|error| error.to_string())

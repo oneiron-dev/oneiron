@@ -75,7 +75,8 @@ pub struct BrowserAnswer<T> {
     pub engine: Option<BrowserEngine>,
     /// A demonstration that ended since the agent's last answer without
     /// its stop (a handover, an engine switch, a lost guest), once, its
-    /// draft naming no subgoal and no checks (CUA E9a).
+    /// draft naming no subgoal and no checks (CUA E9a); a person's span an
+    /// opted-in handover recorded, as their handback drafted it (CUA E9b).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demonstration: Option<DemonstrationOutput>,
     /// The guest session's manifest, as the run's door adds it to every

@@ -648,7 +648,10 @@ impl BrowserDriver for BrowserSession {
         self.live()?;
         // The reason stands whole, as given (FIX 8012): blankness alone
         // refuses it, never its length.
-        let reason = input.reason;
+        let HandoverInput {
+            reason,
+            demonstrate,
+        } = input;
         if reason.trim().is_empty() {
             return Err(BrowserError::Input(
                 "a handover gives its reason".to_owned(),
@@ -656,6 +659,9 @@ impl BrowserDriver for BrowserSession {
         }
         let asked_at_ms = now_ms();
         self.recording_close(DemonstrationStopCause::HandedOver);
+        // An ask that opts in records the span of the person who takes it
+        // (CUA E9b).
+        self.takeover_asked(demonstrate.then(|| reason.clone()));
         self.takeover = Takeover::Waiting {
             reason: reason.clone(),
             asked_at_ms,

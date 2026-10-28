@@ -29,7 +29,8 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use futures_util::Stream;
 use oneiron_browser::{
-    BrowserError, BrowserPersonInput, BrowserSession, BrowserTab, Takeover, TakeoverRecord,
+    BrowserError, BrowserPersonInput, BrowserSession, BrowserTab, DemonstrationOutput, ExpectInput,
+    Takeover, TakeoverRecord,
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,6 +57,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 #[serde(deny_unknown_fields)]
 struct RunRequest {
     run: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReturnRequest {
+    run: String,
+    #[serde(default)]
+    postcondition: Vec<ExpectInput>,
 }
 
 #[derive(Deserialize)]
@@ -110,6 +119,8 @@ struct InputReply {
 struct ReturnReply {
     record: TakeoverRecord,
     receipt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    demonstration: Option<DemonstrationOutput>,
 }
 
 /// `GET /v1/owner/browsers`: each run browser whose guest started, its
@@ -225,24 +236,33 @@ async fn input(
     Ok(Json(reply))
 }
 
-/// `POST /v1/owner/browsers/return` with `{"run"}`: the owner hands the
-/// browser back, from holding it or from the agent's ask unanswered. Its
-/// record lands as the run's `browser_takeover` receipt.
+/// `POST /v1/owner/browsers/return` with `{"run", "postcondition"?}`: the
+/// owner hands the browser back, from holding it or from the agent's ask
+/// unanswered. Its record lands as the run's `browser_takeover` receipt.
+/// A span the agent's ask opted in comes back as `demonstration`, drafted
+/// with the ask's reason and these checks (CUA E9b).
 async fn hand_back(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<RunRequest>,
+    payload: OwnerJsonBody<ReturnRequest>,
 ) -> OwnerReply<ReturnReply> {
     let owner = owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ReturnReply> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let run = run_of(&request.run)?;
-        let record = on_browser(&server, &request.run, |session| session.hand_back(by))?;
+        let postcondition = request.postcondition;
+        let (record, demonstration) = on_browser(&server, &request.run, |session| {
+            session.hand_back(by, postcondition)
+        })?;
         server.browser_seats.answered(run);
         let body = serde_json::to_value(&record).map_err(|e| OwnerError::Host(e.into()))?;
         let receipt = server.vault().append_browser_takeover_receipt(run, &body)?;
-        Ok(ReturnReply { record, receipt })
+        Ok(ReturnReply {
+            record,
+            receipt,
+            demonstration,
+        })
     })
     .await?;
     Ok(Json(reply))
