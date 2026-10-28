@@ -181,6 +181,20 @@ impl FenceConfig {
                     "ONEIRON_FENCE_LAUNCHER must name an absolute executable",
                 ))
             })?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&launcher) {
+                let mode = metadata.permissions().mode() & 0o777;
+                if mode & 0o111 == 0 {
+                    return Err(Error::Fence(std::io::Error::other(format!(
+                        "ONEIRON_FENCE_LAUNCHER {} is not executable (mode {:o}); provision it 0555",
+                        launcher.display(),
+                        mode,
+                    ))));
+                }
+            }
+        }
         Ok(Self {
             launcher,
             startup_timeout: std::time::Duration::from_secs(30),
@@ -279,6 +293,25 @@ impl ContainerRuntime {
         #[cfg(target_os = "linux")]
         {
             let config = FenceConfig::from_env()?;
+            {
+                use std::os::unix::fs::{MetadataExt, PermissionsExt};
+                if let Ok(metadata) = std::fs::metadata(&config.launcher) {
+                    let mode = metadata.permissions().mode() & 0o777;
+                    let (uid, gid) = spec.user;
+                    let executable = (metadata.uid() == uid && mode & 0o100 != 0)
+                        || (metadata.gid() == gid && mode & 0o010 != 0)
+                        || mode & 0o001 != 0;
+                    if !executable {
+                        return Err(Error::Fence(std::io::Error::other(format!(
+                            "fence launcher {} with mode {:o} is not executable by guest {}:{}; provision it 0555 (the guest user must be able to execute it)",
+                            config.launcher.display(),
+                            mode,
+                            uid,
+                            gid,
+                        ))));
+                    }
+                }
+            }
             let generation = uuid::Uuid::now_v7().simple().to_string();
             let name = format!("oneiron-guest-{generation}");
             let supervisor = supervisor::Supervisor::bind(&config, generation.clone())?;
