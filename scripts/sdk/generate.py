@@ -142,10 +142,13 @@ for row in ROWS:
     # unowned, as every HTTP call and direct tool call does.
     if row.get('host_door_lens_owner') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a lens owner')
-    # `host_door_client_surface` marks a lens door whose input names its own
-    # generated-UI `surface` (FIX 7969): an MCP call whose arguments name none
-    # takes the profile its `_meta.clientCapabilities` declares
-    # (`McpCallContext::client_surface`), as the MCP leg reads it per call.
+    # `host_door_client_surface` hands a lens door the generated-UI surface
+    # profile the caller's transport declared (FIX 7969): an MCP call's
+    # `_meta.clientCapabilities` (`McpCallContext::client_surface`), read per
+    # call as the MCP leg keeps no session. The facade keeps no transport
+    # session and hands `None`; a per-call profile there rides the door's
+    # own input. A door handed `None` lowers as its input says, else for the
+    # whole atom kit.
     if row.get('host_door_client_surface') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a client surface')
     # `host_door_surface` hands an owner-setting door where the owner's say-so
@@ -837,18 +840,16 @@ def mcp_input_dispatch(row):
         # credential the REST facade passes it.
         session_arg = 'actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, ' if row.get('host_door_session') else ''
         lens_arg = 'owner, ' if row.get('host_door_lens_owner') else ''
+        client_surface_arg = 'actor.client_surface.clone(), ' if row.get('host_door_client_surface') else ''
         surface_arg = 'crate::api::facade::owner_binding::act_surface(auth), ' if row.get('host_door_surface') else ''
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{surface_arg}input).await'
+        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
-        client_surface = ('let mut input = input;\n'
-                          '// The arguments\' own surface wins; else the profile the call\'s `_meta.clientCapabilities` declares (FIX 7969).\n'
-                          'if input.surface.is_none() { input.surface = actor.client_surface.clone(); }\n') if row.get('host_door_client_surface') else ''
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode + client_surface +
+                 f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode +
                  (f'let (output, listed) = {door};\n'
                   '// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\n'
                   'served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));\n'
@@ -1447,11 +1448,12 @@ def facade_dispatch(facade_rows):
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
             lens_arg = 'call.lens_owner(), ' if r.get('host_door_lens_owner') else ''
+            client_surface_arg = 'None, ' if r.get('host_door_client_surface') else ''
             surface_arg = 'call.surface(), ' if r.get('host_door_surface') else ''
             # A caller door keeps the invocation its call hands it in its own
             # rows: a call that keeps no record hands its hidden id (FIX 5381).
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).

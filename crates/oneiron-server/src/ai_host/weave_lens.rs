@@ -202,20 +202,23 @@ pub(crate) async fn render_live_weave_lens(
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
 ) -> MemoryResult<LensFrameCard> {
-    render_live_weave_lens_listing(server, caller, request)
+    render_live_weave_lens_listing(server, caller, request, None)
         .await
         .0
 }
 
 /// [`render_live_weave_lens`], beside the rows its report reads listed:
-/// every read the lens rendered from, a reread's with them.
+/// every read the lens rendered from, a reread's with them. The card is
+/// lowered for `surface` when the caller names one (FIX 7969), else for the
+/// whole atom kit.
 pub(crate) async fn render_live_weave_lens_listing(
     server: &Arc<SyncServer>,
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
+    surface: Option<GeneratedUiSurfaceCapabilities>,
 ) -> (MemoryResult<LensFrameCard>, Vec<EntityId>) {
     let producers = Arc::new(ProducerRows::default());
-    let answer = render_listing(server, caller, request, &producers, None).await;
+    let answer = render_listing(server, caller, request, &producers, None, surface).await;
     (answer, producers.take())
 }
 
@@ -229,9 +232,10 @@ pub(crate) async fn render_live_weave_lens_for_run(
     caller: WeaveLensCaller,
     request: WeaveReportRequest,
     owner: crate::lens_frames::CardOwner,
+    surface: Option<GeneratedUiSurfaceCapabilities>,
 ) -> (MemoryResult<LensFrameCard>, Vec<EntityId>) {
     let producers = Arc::new(ProducerRows::default());
-    let answer = render_listing(server, caller, request, &producers, Some(owner)).await;
+    let answer = render_listing(server, caller, request, &producers, Some(owner), surface).await;
     (answer, producers.take())
 }
 
@@ -241,7 +245,9 @@ async fn render_listing(
     request: WeaveReportRequest,
     producers: &Arc<ProducerRows>,
     owner: Option<crate::lens_frames::CardOwner>,
+    surface: Option<GeneratedUiSurfaceCapabilities>,
 ) -> MemoryResult<LensFrameCard> {
+    let surface = surface.unwrap_or_default();
     let vault = Arc::clone(server.vault());
     let runtime = server.ai.model_runtime();
     // An agent that dreams on its own model reads its own lens on that
@@ -387,7 +393,7 @@ async fn render_listing(
         let Some(hosted) = hosted else {
             continue;
         };
-        let (frame, card) = hosted.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+        let (frame, card) = hosted.lower(&surface)?;
         match owner {
             Some(owner) => {
                 server.lens_frames.replace_for_subscription(
