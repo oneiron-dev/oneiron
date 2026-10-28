@@ -42,9 +42,14 @@ pub(crate) async fn vault_free_time_policy_get(
     .await
 }
 
+/// A set records `surface`, where the owner's say-so reached this install,
+/// the host's own reading of the request (the facade call's verified
+/// headers, or the MCP connection's proven peer), never its input: audit
+/// only, never an admission condition (FIX 5721).
 pub(crate) async fn vault_free_time_policy_set(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: oneiron::authority::ActSurface,
     input: FreeTimePolicySetRequest,
 ) -> Listed<FreeTimePolicyView> {
     as_owner_naming(
@@ -52,7 +57,7 @@ pub(crate) async fn vault_free_time_policy_set(
         auth,
         "vault.free_time.policy.set",
         move |server, owner| {
-            dreamer_runner::free_time_policy_set_as_owner(server.vault(), owner, &input)
+            dreamer_runner::free_time_policy_set_as_owner(server.vault(), owner, surface, &input)
                 .map_err(MemoryError::from)
         },
         |_| Vec::new(),

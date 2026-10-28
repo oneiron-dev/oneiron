@@ -32747,6 +32747,7 @@ async fn vault_free_time_policy_set(
         let (output, listed) = super::host_doors::vault_free_time_policy_set(
             server,
             auth,
+            call.surface(),
             facade_door_input(&mut hooks)?,
         )
         .await;

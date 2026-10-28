@@ -17546,9 +17546,10 @@
       "description": "The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming.",
       "input": "crate::dreamer_runner::FreeTimePolicySetRequest",
       "output": "crate::dreamer_runner::FreeTimePolicyView",
-      "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, crate::authority::ActSurface::ThisInstall, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
