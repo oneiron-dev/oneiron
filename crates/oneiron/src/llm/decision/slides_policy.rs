@@ -1,7 +1,8 @@
 //! Manifest-backed operating limits for the artifact judgment adapter.
 //!
-//! A vault policy row and optional holder rows may only narrow the shipped
-//! budget. The precedence is itself a row; neither a host nor a model may
+//! The shipped limits are defaults: the vault's own policy row may set them
+//! wider or narrower (FIX 9911), and optional holder rows may only narrow the
+//! vault's. The precedence is itself a row; neither a host nor a model may
 //! widen a vault limit through a per-run request.
 
 use super::DecisionRung;
@@ -9,6 +10,8 @@ use crate::EntityId;
 use rmpv::Value;
 use std::collections::BTreeMap;
 
+/// Operating limits: how a review paces its units and evidence, never a
+/// ceiling on what a valid row may set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlideReviewLimits {
     pub batch_size: usize,
@@ -31,15 +34,13 @@ impl Default for SlideReviewLimits {
 }
 
 impl SlideReviewLimits {
+    /// Every limit is set: a row's values are the vault's own to choose, the
+    /// shipped ones only its defaults.
     pub fn valid(self) -> bool {
-        let hard = Self::default();
         self.batch_size > 0
-            && self.batch_size <= hard.batch_size
             && self.max_units > 0
             && self.max_text_bytes > 0
-            && self.max_text_bytes <= hard.max_text_bytes
             && self.max_image_bytes > 0
-            && self.max_image_bytes <= hard.max_image_bytes
     }
     #[must_use]
     pub fn restrict(self, other: Self) -> Self {
@@ -183,11 +184,12 @@ impl SlideReviewPolicy {
     }
 
     /// Strictly decode behavior rows; an unknown value refuses the manifest.
+    /// Their count is no refusal (FIX 9910): every well-formed row is read.
     pub fn decode(value: &Value) -> Option<Self> {
         let Value::Array(rows) = value else {
             return None;
         };
-        if rows.is_empty() || rows.len() > 1024 {
+        if rows.is_empty() {
             return None;
         }
         let mut policy = Self::default();

@@ -10,6 +10,7 @@ use super::super::ask_history::{
     ask_history_through_in_txn,
 };
 use super::super::store::owned_head;
+use super::unit_receipts::artifact_unit_receipts;
 use super::{ASKED, ArtifactAskRecord, ArtifactAskStanding, ArtifactAsked, Asking, baseline};
 use crate::edit_roundtrip::ArtifactAskRun;
 use crate::edit_settle::PendingProposalView;
@@ -20,7 +21,8 @@ impl Asking<'_> {
     /// named in its run ref after `kind`, so two asks in one second hold two refs. A
     /// completed ask holds its answers as a proposal, restamps the artifact and logs the
     /// ask, all in one transaction; a failed one, before or at that commit, is logged as
-    /// failed and leaves the stamp, and its error stands.
+    /// failed and leaves the stamp, and its error stands. The log entry keeps the receipt
+    /// of every unit the ask left without an answer (FIX 9913).
     pub(super) fn ask_recorded(
         &self,
         artifact: EntityId,
@@ -37,16 +39,21 @@ impl Asking<'_> {
             self.now,
             ask_id.to_hex()
         );
-        let event = |proposal_ref: Option<String>, failed: Option<ErrorKind>| ArtifactAskEvent {
-            ask_id,
-            artifact,
-            question_version: self.version,
-            versions: observed.clone(),
-            asked_at: self.now,
-            proposal_ref,
-            failed,
-            parent_proposal_ref: None,
-            details_omitted: false,
+        let event = |proposal_ref: Option<String>,
+                     failed: Option<ErrorKind>,
+                     units: Vec<super::ArtifactUnitReceipt>| {
+            ArtifactAskEvent {
+                ask_id,
+                artifact,
+                question_version: self.version,
+                versions: observed.clone(),
+                asked_at: self.now,
+                proposal_ref,
+                failed,
+                parent_proposal_ref: None,
+                details_omitted: false,
+                units,
+            }
         };
         let committed = ask(&reference).and_then(|run| {
             vault.with_write_txn_grouped(|wtxn| {
@@ -66,13 +73,13 @@ impl Asking<'_> {
                 };
                 ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
                 let principal = self.record.principal;
-                let asked = event(proposal_ref, None);
+                let asked = event(proposal_ref, None, artifact_unit_receipts(&run));
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, asked)?;
                 Ok(proposed)
             })
         });
         if let Err(error) = &committed {
-            let failed = event(None, Some(error.kind()));
+            let failed = event(None, Some(error.kind()), Vec::new());
             let logged = vault.with_write_txn_grouped(|wtxn| {
                 let principal = self.record.principal;
                 append_artifact_ask_in_txn(vault, wtxn, self.question, principal, failed)
@@ -107,6 +114,7 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
     record
         .parent_proposal_ref
         .clone_from(&event.parent_proposal_ref);
+    record.units.clone_from(&event.units);
     if event.details_omitted {
         record.details_omitted = true;
         if event.failed.is_none() {
@@ -146,6 +154,7 @@ fn ask_record(
         failed: failed.map(error_kind_wire_name),
         parent_proposal_ref: None,
         details_omitted: false,
+        units: Vec::new(),
     })
 }
 

@@ -59,6 +59,8 @@ pub fn run_graph_question(
 }
 
 /// Prior proposals come only from the workflow runner's completed stages.
+/// Every input and evidence source the recipe names is required work: their
+/// count is no refusal (FIX 9914).
 pub(crate) fn run_graph_question_with_proposals(
     vault: &Vault,
     principal: EntityId,
@@ -72,12 +74,11 @@ pub(crate) fn run_graph_question_with_proposals(
     let validate = || -> crate::Result<()> {
         let record = read_question(vault, principal, reference.id, Some(reference.version))?
             .ok_or(Error::EntityNotFound)?;
-        if record.definition.adapter != "graph" || inputs.len() > 4096 {
+        if record.definition.adapter != "graph" {
             return Err(Error::InvalidConfig("invalid graph question recipe".into()));
         }
         for input in inputs {
             if !record.definition.units.contains(&input.unit)
-                || input.evidence.len() > 4096
                 || input.evidence.contains(&input.unit)
                 || input.evidence.iter().collect::<HashSet<_>>().len() != input.evidence.len()
             {

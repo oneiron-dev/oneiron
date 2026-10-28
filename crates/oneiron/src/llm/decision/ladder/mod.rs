@@ -42,6 +42,7 @@ fn takes(
 /// Slots are fixed. A step up skips a rung with no provider, up to the dial's
 /// ceiling, and the receipt's pins name every rung that ran. The last rung is a
 /// queue, not a model-produced human answer.
+#[derive(Clone)]
 pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
@@ -73,7 +74,8 @@ pub struct DecisionLadder<'a> {
 
 /// What one provider request, `answered`, gave each pack question on the call's clock. A
 /// failure once the work time is spent, or a reply after the answer's time, is the cut; a
-/// failure with time left fails the call.
+/// failure with time left fails the call. A cut read still went out, so its rung stays on
+/// the receipt (FIX 9907).
 pub(super) fn take(
     pin: &ProviderPin,
     pack: &DecisionPack<'_>,
@@ -84,11 +86,13 @@ pub(super) fn take(
     let answers = match answered {
         Ok(answers) => answers,
         Err(_) if !pack.deadline.decision_may_start() => {
+            record_attempted_provider(pin, &[], readings);
             return Ok((0..count).map(|_| Read::Cut).collect());
         }
         Err(error) => return Err(error),
     };
     if pack.deadline.answer_due() {
+        record_attempted_provider(pin, &answers, readings);
         return Ok((0..count).map(|_| Read::Cut).collect());
     }
     let mut reads = Vec::with_capacity(answers.len());
@@ -106,6 +110,22 @@ pub(super) fn take(
         reads.push(Read::Answer(answer));
     }
     Ok(reads)
+}
+
+/// A cut read's rung on each question's receipt: the model a late reply names as served,
+/// when that name is valid, else the pin the read went out to. The late reply's answer and
+/// readings stay off the receipt; an unfinished reply is not an answer.
+fn record_attempted_provider(
+    pin: &ProviderPin,
+    late: &[ProviderDecision],
+    readings: &mut [Readings],
+) {
+    for (index, readings) in readings.iter_mut().enumerate() {
+        let served = late
+            .get(index)
+            .and_then(|answer| answer.answered_pin(pin).ok());
+        readings.pins.push(served.unwrap_or_else(|| pin.clone()));
+    }
 }
 
 /// The person question's read shape, the one seam for it (test 6b: a separate read, not
