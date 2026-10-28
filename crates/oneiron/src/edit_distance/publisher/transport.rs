@@ -2,7 +2,7 @@
 //! counterparty is each signature artifact's publisher ACTOR, which the
 //! delivery path resolves (`delivery_outcome.rs`, FIX 7829).
 
-use super::dial::publisher_enabled;
+use super::dial::publisher_enabled_in_txn;
 use super::signature_store::SIGNATURE;
 use super::{PublisherError, PublisherResult};
 use crate::Vault;
@@ -143,14 +143,43 @@ fn send_state_row(vault: &Vault, id: EntityId) -> PublisherResult<Option<SendSta
     Ok(SEND_STATE.get(&vault.store, &rtxn, &id)?)
 }
 
-fn put_send_state(vault: &Vault, id: EntityId, row: &SendStateRow) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| SEND_STATE.put(&vault.store, wtxn, &id, row))
+/// The state a hold moves a row to, or `None` when the row stands. Only a
+/// lane signature's unanswered states move: `Pending` is `Withheld` while the
+/// switches hold it, and returns to `Pending` once released. `Local` and
+/// every state the outbound path wrote (`Uncertain`, `NotDelivered`, `Sent`)
+/// stand.
+const fn held_state(state: SignatureSendState, withheld: bool) -> Option<SignatureSendState> {
+    match (state, withheld) {
+        (SignatureSendState::Pending, true) => Some(SignatureSendState::Withheld),
+        (SignatureSendState::Withheld, false) => Some(SignatureSendState::Pending),
+        _ => None,
+    }
 }
 
-fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {
-    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-    if !SIGNATURE.contains(&vault.store, &rtxn, &id)? {
-        return Err(PublisherError::SignatureNotFound);
+/// Writes a delivery lane's hold onto its signature, in the lane's write: a
+/// lane the switches hold (`withheld`) leaves its pending signature
+/// [`SignatureSendState::Withheld`], and a lane they release returns it to
+/// [`SignatureSendState::Pending`]. A state the outbound path wrote stands.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn record_signature_hold_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    signature: EntityId,
+    withheld: bool,
+) -> Result<()> {
+    let row = SEND_STATE
+        .get(&vault.store, &*wtxn, &signature)?
+        .unwrap_or_default();
+    if let Some(state) = held_state(row.state, withheld) {
+        SEND_STATE.put(
+            &vault.store,
+            wtxn,
+            &signature,
+            &SendStateRow { state, ..row },
+        )?;
     }
     Ok(())
 }
@@ -167,7 +196,9 @@ fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {
 /// each pending signature is durably marked [`SignatureSendState::Withheld`],
 /// which is what makes a skip auditable afterwards. Either way a signature no
 /// lane carries stays [`SignatureSendState::Local`], a state the outbound path
-/// wrote stands, and a confirmed signature counts as sent.
+/// wrote stands, and a confirmed signature counts as sent. Each row is read,
+/// decided, counted and written under one writer, so a state the outbound
+/// path commits meanwhile is never overwritten.
 ///
 /// The projector is NOT run here — `comm.rs` owns when its pass runs, and
 /// coupling a send door to a projector pass is exactly the kind of internal
@@ -181,34 +212,28 @@ pub fn send_signatures_if_enabled(
     vault: &Vault,
     sigs: &[EntityId],
 ) -> PublisherResult<SendOutcome> {
-    for id in sigs {
-        require_signature(vault, *id)?;
-    }
-    let enabled = publisher_enabled(vault)?;
-    let mut outcome = SendOutcome::default();
-    for id in sigs {
-        let row = send_state_row(vault, *id)?.unwrap_or_default();
-        let next = match (row.state, enabled) {
-            (SignatureSendState::Sent, _) => {
-                outcome.sent += 1;
-                continue;
+    vault.try_with_write_txn_grouped(|wtxn| {
+        for id in sigs {
+            if !SIGNATURE.contains(&vault.store, &*wtxn, id)? {
+                return Err(PublisherError::SignatureNotFound);
             }
-            (SignatureSendState::Local, _) => {
-                outcome.local += 1;
-                continue;
+        }
+        let enabled = publisher_enabled_in_txn(vault, &*wtxn)?;
+        let mut outcome = SendOutcome::default();
+        for id in sigs {
+            let row = SEND_STATE
+                .get(&vault.store, &*wtxn, id)?
+                .unwrap_or_default();
+            match row.state {
+                SignatureSendState::Sent => outcome.sent += 1,
+                SignatureSendState::Local => outcome.local += 1,
+                _ if enabled => outcome.handed_off += 1,
+                _ => outcome.withheld += 1,
             }
-            (SignatureSendState::Withheld, true) => SignatureSendState::Pending,
-            (SignatureSendState::Pending, false) => SignatureSendState::Withheld,
-            (state, _) => state,
-        };
-        if enabled {
-            outcome.handed_off += 1;
-        } else {
-            outcome.withheld += 1;
+            if let Some(state) = held_state(row.state, !enabled) {
+                SEND_STATE.put(&vault.store, wtxn, id, &SendStateRow { state, ..row })?;
+            }
         }
-        if next != row.state {
-            put_send_state(vault, *id, &SendStateRow { state: next, ..row })?;
-        }
-    }
-    Ok(outcome)
+        Ok(outcome)
+    })
 }

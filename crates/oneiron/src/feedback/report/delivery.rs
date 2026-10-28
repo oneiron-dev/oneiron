@@ -31,7 +31,7 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edit_distance::publisher::{
     IssueSignature, PublisherActor, PublisherError, SignatureDeliveryOutcome,
     emit_issue_signature_in_txn, issue_signature, record_signature_delivery,
-    record_signature_delivery_in_txn,
+    record_signature_delivery_in_txn, record_signature_hold_in_txn,
 };
 use crate::outbound::{
     OutboundDispatchOutcome, OutboundExecutionOutcome, OutboundExecutionRequest, connector_actor_id,
@@ -387,7 +387,10 @@ impl Vault {
         // The frozen bytes and send are written before they can leave:
         // admission reads them under the outbound writer. A signature built
         // now is stored in that same write, so a crash leaves both or
-        // neither, and the next run never stores a second (FIX 7689).
+        // neither, and the next run never stores a second (FIX 7689). The
+        // lane's hold lands on that signature in the same write: Withheld
+        // while the switches hold it, Pending once released (FIX 7690).
+        let withheld = matches!(record.hold, Some(ReportDeliveryHold::Withheld { .. }));
         self.with_write_txn_grouped(|txn| {
             if let Some(built) = built {
                 let signature = emit_issue_signature_in_txn(
@@ -402,6 +405,9 @@ impl Vault {
                     body: built.body,
                     digest: built.digest,
                 });
+            }
+            if let Some(frozen) = &record.signature {
+                record_signature_hold_in_txn(self, txn, frozen.signature, withheld)?;
             }
             DELIVERIES.put(&self.store, txn, &row, &record)
         })?;
@@ -602,6 +608,13 @@ fn signature_delivery(
     let outcome = match outcome {
         ReportDeliveryOutcome::Delivered => SignatureDeliveryOutcome::Delivered,
         ReportDeliveryOutcome::Uncertain => SignatureDeliveryOutcome::Uncertain,
+        // A deferred send was accepted as a remote task: its delivery is not
+        // known yet (FIX 7960), which is not a send that did not leave.
+        ReportDeliveryOutcome::NotDelivered { dispatch }
+            if dispatch == OutboundDispatchOutcome::Deferred.as_str() =>
+        {
+            SignatureDeliveryOutcome::Uncertain
+        }
         ReportDeliveryOutcome::NotDelivered { .. } => SignatureDeliveryOutcome::NotDelivered,
     };
     Some((signature.signature, send.send_ref.as_str(), outcome))
