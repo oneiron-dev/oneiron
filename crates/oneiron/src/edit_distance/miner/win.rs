@@ -45,7 +45,7 @@ pub(super) fn mine_untouched_approvals(
         buckets
             .entry(key)
             .or_default()
-            .observe(&row.receipt, None, row.at);
+            .observe(&row.receipt, None, row.at, false);
     }
     let mut outcomes = Vec::new();
     for (key, bucket) in buckets {

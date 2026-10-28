@@ -1,5 +1,7 @@
 //! Delta side-ledger writes, receipt attachment, and the identity-topology projection pass.
 
+use std::collections::BTreeSet;
+
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
@@ -7,6 +9,7 @@ use crate::receipt::{
     FIELD_AMENDMENT_DELTA, FIELD_AMENDMENT_DELTA_UNCAPTURED, MAX_RECEIPT_QUERY_SCAN, ReceiptKind,
     ReceiptQuery, ReceiptRecord, proposal_outcome_amended_body,
 };
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 use super::lanes::{DeltaCaptureContext, capture_delta_best};
@@ -207,26 +210,63 @@ pub(crate) fn attach_amendment_deltas(
 ///
 /// Storage errors.
 pub fn project_identity_amendment_deltas(vault: &Vault) -> Result<usize> {
-    let mut query = ReceiptQuery::new(MAX_RECEIPT_QUERY_SCAN);
-    query.kinds.insert(ReceiptKind::ProposalOutcome);
-    query.outcome = Some(OUTCOME_APPROVED_AMENDED.to_owned());
-
+    // The receipt query has no cursor (FIX 9800): page by `end_at`, newest
+    // first, until a short page proves the ledger's end. The seen set skips
+    // the inclusive bound's overlap; a page with no new id ends the walk
+    // rather than looping.
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut pending: Vec<(String, ProjectedDelta)> = Vec::new();
-    for receipt in vault.receipts(query)? {
-        // Either marker means this receipt has already been measured. The
-        // uncaptured one is what stops a failed capture from being retried by
-        // every later pass: its cause is the stored bytes, which do not heal.
-        if receipt.fields.contains_key(FIELD_AMENDMENT_DELTA)
-            || receipt
-                .fields
-                .contains_key(FIELD_AMENDMENT_DELTA_UNCAPTURED)
-        {
-            continue;
+    let mut end_at: Option<u64> = None;
+    let mut count = {
+        let rtxn = vault.store.env.read_txn()?;
+        ScanCount::start(
+            &vault.store,
+            &rtxn,
+            EngineScan::ReceiptSourceRows,
+            b"proposal_outcome",
+        )?
+    };
+    loop {
+        let mut query = ReceiptQuery::new(MAX_RECEIPT_QUERY_SCAN);
+        query.kinds.insert(ReceiptKind::ProposalOutcome);
+        query.outcome = Some(OUTCOME_APPROVED_AMENDED.to_owned());
+        query.end_at = end_at;
+        let records = vault.receipts(query)?;
+        let page_len = records.len();
+        count.rows(page_len);
+        if records.is_empty() {
+            break;
         }
-        if let Some(projected) = identity_amendment_delta(vault, &receipt)? {
-            pending.push((receipt.receipt_id, projected));
+        let mut fresh = 0;
+        let mut floor = u64::MAX;
+        for receipt in records {
+            floor = floor.min(receipt.occurred_at);
+            if !seen.insert(receipt.receipt_id.clone()) {
+                continue;
+            }
+            fresh += 1;
+            // Either marker means this receipt has already been measured. The
+            // uncaptured one is what stops a failed capture from being retried by
+            // every later pass: its cause is the stored bytes, which do not heal.
+            if receipt.fields.contains_key(FIELD_AMENDMENT_DELTA)
+                || receipt
+                    .fields
+                    .contains_key(FIELD_AMENDMENT_DELTA_UNCAPTURED)
+            {
+                continue;
+            }
+            if let Some(projected) = identity_amendment_delta(vault, &receipt)? {
+                pending.push((receipt.receipt_id, projected));
+            }
         }
+        // A short page read to the ledger's end; a full page of only seen
+        // ids makes no progress (one second holding more than the cap).
+        if fresh == 0 || page_len < MAX_RECEIPT_QUERY_SCAN {
+            break;
+        }
+        end_at = Some(floor);
     }
+    count.finish(vault);
     if pending.is_empty() {
         return Ok(0);
     }

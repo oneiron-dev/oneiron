@@ -409,14 +409,23 @@ impl ProposalTextArtifact {
         Ok(changes)
     }
 
-    /// Resolves who wrote a change: an honored stamp, else the peer's
-    /// registration at commit time, else the device peer.
+    /// Resolves who wrote a change: an honored stamp, else an erased stamp
+    /// reads as unknown, else the peer's registration at commit time, else
+    /// the device peer.
     fn attribute(&self, vault: &Vault, change: &WindowChange) -> Result<OpAttribution> {
         let at = u64::try_from(change.timestamp).unwrap_or(0);
         if let Some((_, actor)) = parse_stamp(change.message.as_deref())
             && peer_actor_stamp_is_honored(vault, change.peer_id, at, &actor)?
         {
             return Ok(OpAttribution::Stamped(actor));
+        }
+        // A stamp spelling an erased actor names no one (FIX 10933): it never
+        // falls back to the peer's binding.
+        if let Some(message) = change.message.as_deref()
+            && let Some((_, id, _, _)) = cut_receipted_message(message)
+            && id == crate::receipt::ERASED_CALL_IDENTITY
+        {
+            return Ok(OpAttribution::Unknown);
         }
         Ok(peer_actor_at(vault, change.peer_id, at)?
             .map_or(OpAttribution::DevicePeer, OpAttribution::Registered))

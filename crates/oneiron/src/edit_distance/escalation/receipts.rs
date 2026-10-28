@@ -68,8 +68,10 @@ pub(crate) fn escalation_receipts(
     }
     for entry in STANDING_POLICY.iter_from(&vault.store, &rtxn, &[])? {
         let (_, row) = entry?;
-        for record in standing_policy_receipt_records(&row) {
-            retain_projected(query, &mut out, record);
+        for policy in row.superseded.iter().chain(std::iter::once(&row)) {
+            for record in standing_policy_receipt_records(policy) {
+                retain_projected(query, &mut out, record);
+            }
         }
     }
     Ok(out)

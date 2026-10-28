@@ -29307,7 +29307,7 @@
      "purpose": "ED-04 miner dials, pinned keys, labels and the tone lexicon",
      "surface": {
       "const": 3,
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
