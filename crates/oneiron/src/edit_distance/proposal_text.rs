@@ -273,7 +273,7 @@ impl ProposalTextArtifact {
             ops_by_actor,
             source_turn_ref: self.source_turn_ref,
         };
-        put_finalized_proposal_text(vault, &record, &self.export_snapshot()?)?;
+        put_finalized_proposal_text(vault, &record, &self.doc)?;
         Ok(record)
     }
 
