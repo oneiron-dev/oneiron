@@ -367,20 +367,15 @@ fn feed_pattern_payoff_in_txn(
     if !teaches_pattern(receipt) {
         return Ok(());
     }
-    let cell = pattern_cell(skill, &receipt.executor_mix(), &receipt.type_ref);
+    let cell = pattern_cell(
+        skill,
+        &receipt.executor_mix(),
+        receipt.project,
+        &receipt.type_ref,
+    );
     // The planner card read this cell with parent/carried backoff; its first
-    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`). The
-    // parents are the stamp's in the tree it was placed in, the chain the
-    // owner's spawn read backs off through. A placed tree no longer kept, or
-    // one that does not read, borrows through the tree in force instead, so
-    // settlement never fails on it.
-    let parents = match placed_ancestry_in_txn(vault, wtxn, receipt) {
-        (parents, None) => parents,
-        (_, Some(_)) => {
-            let tree = load_team_type_tree_in_txn(vault, wtxn, receipt.project)?;
-            TypeTree::from(tree).ancestors(&receipt.type_ref)
-        }
-    };
+    // own result keeps that borrowed prior (ARCH-0053 `#executor-swaps`).
+    let parents = capture_parents_in_txn(vault, wtxn, receipt.project, &receipt.type_ref)?;
     let evidence = LearningEvidence {
         receipt: outcome.receipt.clone(),
         at: outcome.at,
@@ -404,6 +399,30 @@ fn feed_pattern_payoff_in_txn(
     Ok(())
 }
 
+/// The parents a cell's first own result keeps its borrowed prior through
+/// (FIX 9889): the stamp's chain in the tree it was placed in, the chain the
+/// owner's spawn read backs off through. A placed tree no longer kept, or
+/// one that does not read, borrows through `project`'s tree in force
+/// instead, so an outcome's write never fails on it.
+///
+/// # Errors
+///
+/// Storage errors reading the tree in force.
+pub(crate) fn capture_parents_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_ref: &TypeRef,
+) -> Result<Vec<TypeRef>> {
+    Ok(match stamp_ancestry_in_txn(vault, txn, project, type_ref) {
+        (parents, None) => parents,
+        (_, Some(_)) => {
+            let tree = load_team_type_tree_in_txn(vault, txn, project)?;
+            TypeTree::from(tree).ancestors(type_ref)
+        }
+    })
+}
+
 /// The parent chain of `receipt`'s stamp in the tree it was placed in: its
 /// project's kept tree at the stamp's version, read in `txn`. Settlement and
 /// the owner's spawn read take learning parents from this one chain. The
@@ -414,9 +433,19 @@ pub(super) fn placed_ancestry_in_txn(
     txn: &heed::RoTxn<'_>,
     receipt: &TeamReceipt,
 ) -> (Vec<TypeRef>, Option<String>) {
-    let version = u64::from(receipt.type_ref.tree_version);
-    match load_team_type_tree_at_in_txn(vault, txn, receipt.project, version) {
-        Ok(Some(tree)) => (TypeTree::from(tree).ancestors(&receipt.type_ref), None),
+    stamp_ancestry_in_txn(vault, txn, receipt.project, &receipt.type_ref)
+}
+
+/// [`placed_ancestry_in_txn`] for a stamp placed in `project`'s tree.
+fn stamp_ancestry_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    type_ref: &TypeRef,
+) -> (Vec<TypeRef>, Option<String>) {
+    let version = type_ref.tree_version;
+    match load_team_type_tree_at_in_txn(vault, txn, project, version) {
+        Ok(Some(tree)) => (TypeTree::from(tree).ancestors(type_ref), None),
         Ok(None) => (
             Vec::new(),
             Some(format!("no kept task-type tree is at version {version}")),
@@ -451,23 +480,46 @@ pub(super) fn team_receipt_in_txn(
         .map(|stored| stored.receipt))
 }
 
-/// Every team receipt, optionally only those of one task type.
+/// Which team receipts a scan keeps (FIX 6038).
+#[derive(Debug, Clone, Copy)]
+pub(super) enum ReceiptScan<'a> {
+    /// Every scope's receipts, only those of one task type when one is
+    /// named: an inventory.
+    AllScopes(Option<&'a TypeRef>),
+    /// One scope's receipts of one task type: a project's (`None`, the
+    /// vault's) own runs, as its learning cells key them.
+    Scoped(Option<EntityId>, &'a TypeRef),
+}
+
+impl ReceiptScan<'_> {
+    fn keeps(self, receipt: &TeamReceipt) -> bool {
+        match self {
+            Self::AllScopes(type_ref) => type_ref.is_none_or(|t| receipt.type_ref == *t),
+            Self::Scoped(project, type_ref) => {
+                receipt.project == project && receipt.type_ref == *type_ref
+            }
+        }
+    }
+}
+
+/// Every team receipt of every scope, optionally only those of one task
+/// type: an inventory.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn team_receipts(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<TeamReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
-    team_receipts_in_txn(vault, &rtxn, type_ref)
+    team_receipts_in_txn(vault, &rtxn, ReceiptScan::AllScopes(type_ref))
 }
 
-/// [`team_receipts`] in the caller's snapshot.
+/// The receipts `scan` keeps, in the caller's snapshot.
 pub(super) fn team_receipts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    type_ref: Option<&TypeRef>,
+    scan: ReceiptScan<'_>,
 ) -> Result<Vec<TeamReceipt>> {
-    Ok(stored_receipts_in_txn(vault, txn, type_ref)?
+    Ok(stored_receipts_in_txn(vault, txn, scan)?
         .into_iter()
         .map(|stored| stored.receipt)
         .collect())
@@ -485,7 +537,8 @@ pub fn team_receipts_sourced(
     type_ref: Option<&TypeRef>,
 ) -> Result<Vec<SourcedTeamReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(stored_receipts_in_txn(vault, &rtxn, type_ref)?
+    let scan = ReceiptScan::AllScopes(type_ref);
+    Ok(stored_receipts_in_txn(vault, &rtxn, scan)?
         .into_iter()
         .map(StoredTeamReceipt::sourced)
         .collect())
@@ -495,13 +548,13 @@ pub fn team_receipts_sourced(
 fn stored_receipts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    type_ref: Option<&TypeRef>,
+    scan: ReceiptScan<'_>,
 ) -> Result<Vec<StoredTeamReceipt>> {
     let mut rows: Vec<StoredTeamReceipt> = TEAM_RECEIPT
         .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, row)| row)
-        .filter(|row| type_ref.is_none_or(|t| row.receipt.type_ref == *t))
+        .filter(|row| scan.keeps(&row.receipt))
         .collect();
     rows.sort_by(|a, b| {
         let (a, b) = (&a.receipt, &b.receipt);

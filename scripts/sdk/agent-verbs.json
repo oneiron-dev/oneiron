@@ -8268,7 +8268,7 @@
     },
     {
       "name": "vault.lenses.propose",
-      "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it.",
+      "description": "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it.",
       "input": "crate::lens::LensProposeRequest",
       "output": "crate::receipt::LensProposalReceipt",
       "call": "memory.lenses_propose(input)?",

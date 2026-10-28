@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::learning::{Anchor, LearningCell, LearningPredicate};
-use crate::learning_setting::{self, CREDIT_DECAY, SettingMode};
+use crate::learning::Anchor;
+use crate::learning_setting::CREDIT_DECAY;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{PackAttributionFields, UsedProvenanceEdge};
 use crate::side_table::{self, Named, SideTable};
@@ -34,6 +34,9 @@ pub struct LateCreditShare {
 
 /// An anchored projection's receipt. Empty shares explicitly record no late
 /// credit, including disabled credit, an environment verdict or an unclear one.
+/// It is sealed: what later checks and late landings make of it is appended
+/// beside it, with the `credit_decay` it was projected under
+/// ([`super::CreditAdjustmentReceipt`]).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LateCreditReceipt {
     pub receipt_id: String,
@@ -105,41 +108,43 @@ fn ancestors_in_txn(
     Ok(seen)
 }
 
-fn decay_in_txn(
+/// The `credit_decay` an outcome of the run `fields` attributes is credited
+/// under (FIX 10107): the shared scoped read over the run's project, its
+/// goal and its task type, read only through `txn`, so the owner's pin or
+/// seed at any of those scopes governs it, then a fit the Coach recorded
+/// there ([`super::decay_fit`]), then the vault's.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn credit_decay_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     fields: &PackAttributionFields,
-    skill: EntityId,
 ) -> Result<f64> {
-    // A pin always wins, including over a task-local learned fit.
-    if let Some(pin) =
-        learning_setting::owner_row_value(&vault.store, txn, &CREDIT_DECAY, SettingMode::Pin)?
-    {
-        return Ok(pin);
-    }
-    let cell = LearningCell::new(LearningPredicate::Setting, fields.project.unwrap_or(skill))
-        .setting_key(CREDIT_DECAY.key)
-        .type_ref(fields.type_ref.clone());
-    if let Some(fit) = crate::learning::read::own_estimate_in_txn(vault, txn, &cell)?
-        && fit.runs > 0.0
-    {
-        return Ok(fit.mean().clamp(CREDIT_DECAY.min, CREDIT_DECAY.max));
-    }
-    learning_setting::setting_value_in_txn(&vault.store, txn, &CREDIT_DECAY)
+    crate::learning_setting::setting_value_in_scope_in_txn(
+        vault,
+        txn,
+        &CREDIT_DECAY,
+        fields.project,
+        Some(&fields.type_ref),
+    )
 }
 
 /// A beneficiary gets at most its strongest path from one anchored outcome.
 /// Two paths to the same ancestor are not two independent runs. A used edge
 /// lineage no longer holds (an erase between the run's close and its outcome)
 /// is a hop skipped, with the credit only it reached (FIX 3105, OF-397): the
-/// outcome's other credit stands.
+/// outcome's other credit stands. Every origin's chain decays by the
+/// outcome's frozen `decay`.
 pub(super) fn shares_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     fields: &PackAttributionFields,
     contributing_skills: &[EntityId],
+    decay: f64,
 ) -> Result<Vec<LateCreditShare>> {
-    if !fields.credit.enabled || fields.credit.depth_cap == Some(0) {
+    if !fields.credit.enabled || fields.credit.depth_cap == Some(0) || decay <= 0.0 {
         return Ok(Vec::new());
     }
     let mut used = BTreeMap::<EntityId, Vec<&UsedProvenanceEdge>>::new();
@@ -168,10 +173,6 @@ pub(super) fn shares_in_txn(
         origins.push(None);
     }
     for skill in origins {
-        let decay = decay_in_txn(vault, txn, fields, skill.unwrap_or(fields.pattern))?;
-        if decay <= 0.0 {
-            continue;
-        }
         // No skill earns evidence from a success by its own descendant.
         // This check uses full lineage, not only the run's eligible subgraph.
         let own_ancestors = match skill {
@@ -276,7 +277,15 @@ fn redact_credit(credit: &mut LateCreditReceipt, entity: EntityId) -> bool {
             named = true;
         }
     }
-    for share in &mut credit.shares {
+    redact_shares(&mut credit.shares, entity) || named
+}
+
+/// `shares` with `entity` redacted wherever one names it: its subject or
+/// origin reads `None`, and a chain it ends or starts reads as erased.
+/// Whether any did.
+pub(super) fn redact_shares(shares: &mut [LateCreditShare], entity: EntityId) -> bool {
+    let mut named = false;
+    for share in shares {
         if share.subject == Some(entity) {
             share.subject = None;
             named = true;

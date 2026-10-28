@@ -1,24 +1,19 @@
 //! The single escaped Instrument renderer for a validated atom stream.
 
-use super::validate::{LensBudget, validate_lens_collection_len};
 use super::{LensAtom, LensRenderFrame, LensTextSpan};
 use crate::claim::{ScopedRead, ScopedReadReceipt};
 
 use crate::{Error, Result};
-
-const MAX_INSTRUMENT_HTML_BYTES: usize = 1024 * 1024;
 
 /// A validated atom stream. There is no raw HTML, JS, URL, eval or write leaf.
 #[derive(Debug, Clone)]
 pub struct InstrumentAtoms(Vec<LensAtom>);
 
 impl InstrumentAtoms {
+    /// Every atom validated, however many (FIX 9900).
     pub fn new(atoms: Vec<LensAtom>) -> Result<Self> {
-        validate_lens_collection_len("instrument atoms", atoms.len())?;
-        let mut budget = LensBudget::default();
         for atom in &atoms {
             atom.validate()?;
-            atom.count_collection_items(&mut budget)?;
         }
         Ok(Self(atoms))
     }
@@ -46,6 +41,8 @@ pub struct InstrumentView {
 /// Render vault values only now, through the frame's principal and scope. The
 /// same function renders a brief and a generated lens. All interpolated values
 /// cross exactly one escaped text leaf; no input can change the structure.
+/// The view is as long as its atoms make it: no total ends a render (FIX
+/// 9898).
 pub fn render_instrument(
     atoms: &InstrumentAtoms,
     frame: &LensRenderFrame,
@@ -83,26 +80,14 @@ pub fn render_instrument(
                             }
                         }
                     }
-                    check_render_size(&html)?;
                 }
             }
             _ => escape(&mut html, atom.default_fallback_text().as_str()),
         }
         html.push_str("</section>");
-        check_render_size(&html)?;
     }
     html.push_str("</article>");
-    check_render_size(&html)?;
     Ok(InstrumentView { html, receipt })
-}
-
-fn check_render_size(html: &str) -> Result<()> {
-    if html.len() > MAX_INSTRUMENT_HTML_BYTES {
-        return Err(Error::InvalidConfig(
-            "instrument render exceeds byte bound".into(),
-        ));
-    }
-    Ok(())
 }
 
 pub(super) fn display_body(bytes: &[u8]) -> String {

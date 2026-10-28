@@ -219,10 +219,11 @@ pub(crate) fn note_direct_derivation_in_txn(
 /// Records, in an authorized promotion's `wtxn`, the DerivedFrom edges among
 /// `landed`, the ops it replayed, each under the run its journal entry
 /// captured: never the promoter's, and nothing for an op no run journaled.
-/// Capture-only, in one savepoint: a witness that fails is dropped whole and
-/// the promotion stands.
+/// A run whose lease has ended has its credited outcomes reconciled (FIX
+/// 3241). Capture-only, in one savepoint: a witness that fails is dropped
+/// whole and the promotion stands.
 pub(crate) fn note_promoted_ops_in_txn<'a>(
-    store: &Store,
+    vault: &crate::Vault,
     wtxn: &mut heed::RwTxn<'_>,
     landed: impl IntoIterator<Item = (&'a BatchOp, Option<&'a RunWriteToken>)>,
 ) {
@@ -239,15 +240,17 @@ pub(crate) fn note_promoted_ops_in_txn<'a>(
     if runs.is_empty() {
         return;
     }
-    derivation_witness::capture_in_txn(store, wtxn, "promotion", |txn| {
+    derivation_witness::capture_in_txn(&vault.store, wtxn, "promotion", |txn| {
         for (token, pairs) in &runs {
-            derivation_witness::record_pairs_in_txn(
-                store,
+            if derivation_witness::record_pairs_in_txn(
+                &vault.store,
                 txn,
                 token,
                 pairs,
                 WitnessProducer::Promotion,
-            )?;
+            )? {
+                derivation_witness::reconcile_landed_in_txn(vault, txn, token);
+            }
         }
         Ok(())
     });
