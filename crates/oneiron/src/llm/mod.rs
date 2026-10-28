@@ -130,6 +130,12 @@ pub use oneiron_model::llm::{
     SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
     SnapshotDigest, SnapshotMiss,
 };
+// DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
+pub use oneiron_model::llm::{
+    AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
+    SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
+    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
+};
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 
