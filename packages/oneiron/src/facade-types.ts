@@ -3953,7 +3953,7 @@ export type LearningHeadView = { claim_ref: string; at: number; evidence_receipt
 /** `oneiron::learning::evidence::Anchor` */
 export type Anchor = { kind: "held_out" } | { kind: "owner_verdict" } | { kind: "world_outcome" } | { kind: "audit"; rate: number } | { kind: "retest" } | { kind: "fitting_check" }
 /** `oneiron::learning::evidence::Observation` */
-export type Observation = { kind: "success"; v: boolean } | { kind: "magnitude"; v: number } | { kind: "category"; v: string }
+export type Observation = { kind: "success"; v: boolean } | { kind: "magnitude"; v: number } | { kind: "category"; v: string } | { kind: "count_only"; v: string }
 /** `oneiron::receipt::pack_attribution::ContributionCheck` */
 export type ContributionCheck = { receipt: string; contributed: boolean }
 /** `oneiron::receipt::pack_attribution::SkillContribution` */
@@ -3967,7 +3967,7 @@ export type PackAttributionFields = { typeRef: CellTypeRef; executor: string; ju
 /** `oneiron::receipt::pack_attribution::PackLearningContext` */
 export type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields }
 /** `oneiron::learning::evidence::EvidenceRow` */
-export type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null }
+export type EvidenceRow = { at: number; anchor: Anchor; observation: Observation; weight: number; judge?: string | null; on_judge_model?: boolean; outcome_label?: string | null; pack_attribution?: PackLearningContext | null; goal_revision?: string | null; measurement_version?: string | null }
 /** `oneiron::learning::doors::LearningEvidenceView` */
 export type LearningEvidenceView = { receipt: string; evidence: EvidenceRow }
 /** `oneiron::learning::doors::LearningProvenanceView` */
