@@ -5,7 +5,10 @@
 //! keeps exactly one secret here: the seed of this machine's hybrid encryption key,
 //! which opens the world keys wrapped to this machine. Losing a slot loses nothing
 //! else. Another of the owner's machines, or the recovery kit, wraps the keys
-//! again for a new seed.
+//! again for a new seed. One slot's secret has a second home the engine owns: a
+//! vault's host issuer seed ([`SlotKind::HostIssuerSeed`]) is also escrowed in
+//! that vault's protected key custody, never through this crate, so a new install
+//! takes the same seed back into its own slot (FIX-LIST 10770).
 //!
 //! Adapters, each with the assurance it reports ([`KeystoreAssurance`]):
 //! - Apple: `AppleKeychain`, the data-protection keychain, with the attributes
@@ -67,7 +70,11 @@ pub enum SlotKind {
     /// The independent seed this install's host issuer signs with for one
     /// vault (FIX-LIST 3018): drawn once from the OS CSPRNG when the install
     /// roots a new vault, never derived from a shared secret, a data key or
-    /// the vault id, and never minted again for a vault already rooted.
+    /// the vault id, and never minted again for a vault already rooted. The
+    /// engine escrows the same seed in the vault's protected key custody; a
+    /// new install's empty slot takes it back from there only when its issuer
+    /// is the vault's live root, and a filled slot is never replaced by it
+    /// (FIX-LIST 10770). The slot itself stays this device's.
     HostIssuerSeed,
 }
 
