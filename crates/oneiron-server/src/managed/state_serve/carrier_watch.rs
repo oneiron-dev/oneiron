@@ -58,6 +58,9 @@ struct Recipients {
     sealed: HashMap<&'static str, blake3::Hash>,
     /// Each role's recipient that last did not seal, said once.
     said: HashMap<&'static str, blake3::Hash>,
+    /// Each role's recipient whose key wraps a look could not read, said
+    /// once per version of it.
+    key_wraps_said: HashMap<&'static str, blake3::Hash>,
     /// Whether a spool that did not go through was said, until one does.
     unspooled_said: bool,
 }
@@ -182,7 +185,9 @@ fn seal_carrier_recipients(
 }
 
 /// Seals the vault's data key to each `fresh` recipient, by role, with its
-/// fingerprint and bytes, and notes which sealed.
+/// fingerprint and bytes, and notes which sealed. A recipient a look cannot
+/// seal, because the seal failed or the key wraps did not read, is said once
+/// per version of it; the vault serves on either way.
 fn seal_fresh(
     vault: &oneiron::Vault,
     fresh: Vec<(&'static str, blake3::Hash, Vec<u8>)>,
@@ -191,11 +196,16 @@ fn seal_fresh(
     let present = match vault.vault_key_wraps() {
         Ok(present) => present,
         Err(error) => {
-            tracing::warn!(
-                reason = "vm_escrow_recipient_unsealed",
-                %error,
-                "the vault's key wraps do not read; a carrier's escrow recipient waits"
-            );
+            for &(role, fingerprint, _) in &fresh {
+                if recipients.key_wraps_said.insert(role, fingerprint) != Some(fingerprint) {
+                    tracing::warn!(
+                        reason = "vm_escrow_recipient_unsealed",
+                        role,
+                        %error,
+                        "the vault's key wraps do not read; a carrier's escrow recipient waits"
+                    );
+                }
+            }
             return;
         }
     };
@@ -204,6 +214,7 @@ fn seal_fresh(
             Ok(_) => {
                 recipients.sealed.insert(role, fingerprint);
                 recipients.said.remove(role);
+                recipients.key_wraps_said.remove(role);
             }
             Err(error) => {
                 if recipients.said.insert(role, fingerprint) != Some(fingerprint) {
