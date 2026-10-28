@@ -28,6 +28,8 @@ impl OfferLadder {
                 request: &request,
                 stream: false,
             },
+            // The executor's own retry policy bounds the attempt.
+            deadline: CallDeadline::Open,
         };
         let mut walk = Walk::default();
         if let StepOfferAvailability::Parked(refusal) =

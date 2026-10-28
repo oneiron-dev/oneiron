@@ -590,6 +590,16 @@ impl ScopedRead<'_> {
                 .map(|allowed| allowed.then_some(()))
         })
     }
+
+    /// What `id`, a row this lane does not read, adds to a receipt's
+    /// suppressed count: exactly [`ReadAdmission::suppression`] for it, one
+    /// for an ordinary policy denial and none for a row any other rule keeps
+    /// absent (world, credential, room turn, secret custody), so a caller's
+    /// sum of it discloses nothing the lane's own reads would not.
+    pub(crate) fn suppression_of(&self, id: &EntityId) -> Result<usize> {
+        let txn = self.grant_read_txn()?;
+        Ok(self.admit_in(&txn, id, || Ok(None::<()>))?.suppression())
+    }
 }
 
 /// A request's owner proof, revalidated in `txn` the way an owner act

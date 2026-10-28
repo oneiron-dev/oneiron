@@ -112,6 +112,7 @@ pub(crate) async fn ai_voice_asr_open(
                 fire_limit,
                 final_limit,
                 deadline: Some(deadline),
+                threads: None,
             },
             &input.scope,
         )?;

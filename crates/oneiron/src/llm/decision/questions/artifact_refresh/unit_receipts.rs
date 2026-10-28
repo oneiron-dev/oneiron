@@ -53,7 +53,7 @@ impl ArtifactUnitReceipt {
 
 /// The receipts of every unit `run` left without an answer, abstained then
 /// refused, in the order the ask met them.
-pub(in crate::llm::decision::questions) fn artifact_unit_receipts(
+pub(crate) fn artifact_unit_receipts(
     run: &ArtifactAskRun,
 ) -> Vec<ArtifactUnitReceipt> {
     let abstained = run

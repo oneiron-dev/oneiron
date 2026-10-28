@@ -119,6 +119,7 @@ impl Memory<'_> {
 
     /// Confirms that a provisional entity is the existing entity `into`:
     /// every tag set that named it names `into` instead, and it is retired.
+    /// An archived `into` is restored in the same write, keeping its id.
     pub fn resolve_provisional_entity(&self, id: &EntityId, into: &EntityId) -> MemoryResult<()> {
         self.with_verified_actor_write_txn(|txn| {
             let Some(entity) = PROVISIONAL.get(&self.vault().store, txn, id)? else {
@@ -128,6 +129,9 @@ impl Memory<'_> {
                 return Err(MemoryError::bad_request(
                     "a provisional entity resolves into a live or archived entity of its kind",
                 ));
+            }
+            if self.vault().archive_tombstone_in_txn(txn, into)?.is_some() {
+                self.vault().restore_archived_in_txn(txn, into)?;
             }
             tags::redirect_in_txn(&self.vault().store, txn, id, *into)?;
             retire_in_txn(&self.vault().store, txn, id)?;
@@ -308,7 +312,8 @@ fn hint_key(entity: &ProvisionalEntity, id: &EntityId) -> ([u8; 1], [u8; 32], En
 
 /// Resolves the provisional entity `id` into the live or archived entity
 /// `into` of its kind, in the caller's transaction: every tag set that named
-/// it names `into`, and it is retired. The identity re-check's settle
+/// it names `into`, and it is retired. An archived `into` is restored in the
+/// same transaction, keeping its id. The identity re-check's settle
 /// (OF-123); `false` when `id` is no provisional entity or `into` is none it
 /// may resolve into.
 pub(crate) fn resolve_in_txn(
@@ -322,6 +327,9 @@ pub(crate) fn resolve_in_txn(
     };
     if !super::save::linkable_in_txn(&vault.store, txn, into, entity.kind)? {
         return Ok(false);
+    }
+    if vault.archive_tombstone_in_txn(txn, into)?.is_some() {
+        vault.restore_archived_in_txn(txn, into)?;
     }
     tags::redirect_in_txn(&vault.store, txn, id, *into)?;
     retire_in_txn(&vault.store, txn, id)?;
