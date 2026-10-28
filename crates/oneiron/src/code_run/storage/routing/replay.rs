@@ -31,25 +31,27 @@ impl SessionBinding<'_> {
         also: impl FnOnce(&mut heed::RwTxn<'_>, RoutedDbs<'_>) -> Result<()>,
     ) -> Result<()> {
         if self.route.target() == RouteTarget::Base {
-            return self.session.routed_side_txn(&self.route, |txn, read, write| {
-                let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-                replay_generation_matches(current.as_ref(), expected)?;
-                let RoutedDbs::Base(vault) = write else {
-                    return Err(crate::Error::InvariantViolation(
-                        "a base route wrote outside base",
-                    ));
-                };
-                let record =
-                    fence_spawn_targets_in_txn(&vault.store, txn, Cow::Borrowed(record))?;
-                REPLAY_RECORDS.put(vault, txn, &record.run_id, &record)?;
-                if let Some(model) = healed_model {
-                    let key = model.as_str().to_owned();
-                    let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
-                    let (next, _) = next_additive_heal_count(base, None, RouteTarget::Base)?;
-                    MODEL_HEAL_COUNTS.put(&vault.store, txn, &key, &next)?;
-                }
-                also(txn, write)
-            });
+            return self
+                .session
+                .routed_side_txn(&self.route, |txn, read, write| {
+                    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
+                    replay_generation_matches(current.as_ref(), expected)?;
+                    let RoutedDbs::Base(vault) = write else {
+                        return Err(crate::Error::InvariantViolation(
+                            "a base route wrote outside base",
+                        ));
+                    };
+                    let record =
+                        fence_spawn_targets_in_txn(&vault.store, txn, Cow::Borrowed(record))?;
+                    REPLAY_RECORDS.put(vault, txn, &record.run_id, &record)?;
+                    if let Some(model) = healed_model {
+                        let key = model.as_str().to_owned();
+                        let base = MODEL_HEAL_COUNTS.get(&vault.store, txn, &key)?;
+                        let (next, _) = next_additive_heal_count(base, None, RouteTarget::Base)?;
+                        MODEL_HEAL_COUNTS.put(&vault.store, txn, &key, &next)?;
+                    }
+                    also(txn, write)
+                });
         }
         match healed_model {
             Some(model) => self
@@ -66,12 +68,14 @@ impl SessionBinding<'_> {
                     also,
                 )
                 .map(drop),
-            None => self.session.routed_side_txn(&self.route, |txn, read, write| {
-                let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-                replay_generation_matches(current.as_ref(), expected)?;
-                REPLAY_RECORDS.put(&write, txn, &record.run_id, record)?;
-                also(txn, write)
-            }),
+            None => self
+                .session
+                .routed_side_txn(&self.route, |txn, read, write| {
+                    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
+                    replay_generation_matches(current.as_ref(), expected)?;
+                    REPLAY_RECORDS.put(&write, txn, &record.run_id, record)?;
+                    also(txn, write)
+                }),
         }
     }
 }

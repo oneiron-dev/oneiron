@@ -13,6 +13,7 @@
 //! reported; nothing is refused for a target no row proves.
 
 use std::borrow::Cow;
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::replay::CodeRunReplayRecord;
@@ -69,9 +70,6 @@ pub(crate) fn erase_spawn_targets_in_txn(
         return Ok(());
     }
     let mut reached = Vec::new();
-    // The runs whose live row decodes and holds no reached call: a step
-    // start is a prefix of its run's row, so theirs hold none either.
-    let mut untouched = BTreeSet::new();
     let mut undecodable = 0_usize;
     for row in REPLAY_RECORDS.iter_raw_from(store, wtxn, &[])? {
         let (key, bytes) = row?;
@@ -82,10 +80,8 @@ pub(crate) fn erase_spawn_targets_in_txn(
             undecodable += 1;
             continue;
         };
-        if erase_reached_calls(&mut record, erased)? {
+        if !erase_reached_calls(&mut record, erased)?.is_empty() {
             reached.push((run, record));
-        } else {
-            untouched.insert(run);
         }
     }
     if undecodable > 0 {
@@ -94,8 +90,9 @@ pub(crate) fn erase_spawn_targets_in_txn(
             "replay rows that do not decode keep their bytes; a spawn target erase cannot read their seats"
         );
     }
-    // The prefixes go while the live rows still hold their seats.
-    erase_spawn_prefixes_in_txn(store, wtxn, erased, &untouched)?;
+    // Every kept prefix is read on its own: a live row already in its
+    // erased form proves nothing of an older or restored start.
+    erase_spawn_prefixes_in_txn(store, wtxn, erased)?;
     for (run, record) in reached {
         SPAWN_ERASED.put_erased(store, wtxn, &run, Erased::of(SpawnErased(record))?)?;
     }
@@ -103,7 +100,8 @@ pub(crate) fn erase_spawn_targets_in_txn(
 }
 
 /// Each call of `record` whose seats name one of `erased`, in its selective
-/// erased form; `true` when one changed.
+/// erased form; the ids of `erased` that seat a call that changed, each one
+/// a cause of the change. Empty when no call changed.
 ///
 /// # Errors
 ///
@@ -111,14 +109,15 @@ pub(crate) fn erase_spawn_targets_in_txn(
 pub(super) fn erase_reached_calls(
     record: &mut CodeRunReplayRecord,
     erased: &BTreeSet<EntityId>,
-) -> Result<bool> {
-    let mut changed = false;
+) -> Result<BTreeSet<EntityId>> {
+    let mut causes = BTreeSet::new();
     for call in &mut record.bridge_calls {
-        if call.spawn_targets.reached_by(erased) {
-            changed |= erase_spawn_call(call)?;
+        if call.spawn_targets.reached_by(erased) && erase_spawn_call(call)? {
+            let seats = call.spawn_targets.seats().iter();
+            causes.extend(seats.filter(|seat| erased.contains(*seat)).copied());
         }
     }
-    Ok(changed)
+    Ok(causes)
 }
 
 /// `record` as its writer may put it, read in that writer (FIX 9180): each
@@ -136,9 +135,8 @@ pub(super) fn fence_spawn_targets_in_txn<'r>(
     let mut marked = BTreeMap::new();
     for call in &record.bridge_calls {
         for seat in call.spawn_targets.seats() {
-            if !marked.contains_key(seat) {
-                let hard = store.port_deletion_marked(txn, DeletionMarker::HardDelete, seat)?;
-                marked.insert(*seat, hard);
+            if let Entry::Vacant(entry) = marked.entry(*seat) {
+                entry.insert(store.port_deletion_marked(txn, DeletionMarker::HardDelete, seat)?);
             }
         }
     }

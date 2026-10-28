@@ -275,8 +275,8 @@ impl ActionRegistry {
                 .filter(|words| words.code == denied.outcome),
             _ => None,
         };
-        let mut row = CodeRunBridgeCall::record(0, &call, &recorded, frozen, frozen)?
-            .with_spawn_seats(seats);
+        let mut row =
+            CodeRunBridgeCall::record(0, &call, &recorded, frozen, frozen)?.with_spawn_seats(seats);
         if let Some(words) = &refusal {
             super::payload::word_refusal(&mut row.outcome, words);
         }

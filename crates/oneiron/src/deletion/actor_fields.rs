@@ -34,7 +34,8 @@ pub(super) fn erase_actor_fields_in_txn(
 ) -> Result<()> {
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
-    let hard = HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))?;
+    let hard =
+        HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))?;
     // The asks of the spawns it seated leave the code-run replay rows and
     // their step starts before its other fields go (FIX 9180).
     if hard {

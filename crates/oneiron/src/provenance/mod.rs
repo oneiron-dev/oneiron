@@ -234,9 +234,7 @@ pub(crate) fn erase_row_provenance_in_txn(
         let erased = std::collections::BTreeSet::from([*row]);
         crate::code_run::erase_spawn_targets_in_txn(store, txn, &erased)?;
         crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
-            store,
-            txn,
-            &erased,
+            store, txn, &erased,
         )?;
         crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
     }

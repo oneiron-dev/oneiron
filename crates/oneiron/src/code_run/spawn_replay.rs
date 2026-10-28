@@ -281,9 +281,9 @@ pub(crate) fn erase_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
     }
     let prior = match decode_self_dispatch_outcome(&call.outcome) {
         Ok(SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased)) => None,
-        Ok(SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, .. })) => {
-            Some(Some(SpawnPrior::Attempt(attempt_ref)))
-        }
+        Ok(SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued {
+            attempt_ref, ..
+        })) => Some(Some(SpawnPrior::Attempt(attempt_ref))),
         Ok(SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::ProposedWiden {
             proposal_ref,
             ..

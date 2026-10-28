@@ -345,6 +345,11 @@ impl<'a> HostSelfDispatcher<'a> {
                 self.spawn_capture.observe_target(&status.input.target);
             }
             AgentDispatchOutcome::WorkflowExisting(status) => {
+                // The retained definition's source leaves and each step's
+                // dispatched seat, an attenuated fork among them.
+                for step in &status.definition.steps {
+                    self.spawn_capture.observe(*step);
+                }
                 for step in &status.captured_steps {
                     self.spawn_capture.observe_target(&step.target);
                 }

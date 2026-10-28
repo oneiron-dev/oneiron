@@ -12,12 +12,12 @@ use crate::{EdgeActorClass, Error, Result};
 
 use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
-use super::spawn_replay::{decode_spawn_targets, spawn_targets_value};
 use super::replay::{
     CODE_RUN_REPLAY_SCHEMA_VERSION, CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism,
     CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayRecord,
     CodeRunResultBinding, CodeRunStepCheckpoint,
 };
+use super::spawn_replay::{decode_spawn_targets, spawn_targets_value};
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, bool_value,
     code_run_layout_hash, decode_array, decode_string_array, entity_value, fixed_binary,
@@ -290,10 +290,7 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
             Value::Nil => None,
             digest => Some(str_value(digest)?.to_owned()),
         },
-        spawn_targets: decode_spawn_targets(required(
-            fields[7],
-            "missing bridge spawn_targets",
-        )?)?,
+        spawn_targets: decode_spawn_targets(required(fields[7], "missing bridge spawn_targets")?)?,
     })
 }
 
