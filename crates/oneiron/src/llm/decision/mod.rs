@@ -41,8 +41,8 @@ mod types;
 pub use ladder::*;
 pub use policy::*;
 pub use seat::{
-    DecisionSeat as RemoteDecisionSeat, SeatAnswer, SeatFuture, SeatPhase, SeatRequest,
-    decide_at_remote_seat,
+    DecisionSeat as RemoteDecisionSeat, RemoteDecisionCapability, SeatAnswer, SeatFuture,
+    SeatPhase, SeatRequest, decide_at_remote_seat,
 };
 pub use slides_policy::*;
 pub use types::*;

@@ -34,7 +34,9 @@ pub struct SeatRequest {
     /// Audio clips the question reads, each filling the state field of its name. The
     /// receipt keeps their evidence refs, never the samples.
     pub audio: Vec<DecisionAudio>,
-    /// Caller-authored labels for score levels in ascending order (2 to 10).
+    /// Caller-authored labels for score levels in ascending order, at least two. How many
+    /// one seat reads is its capability ([`RemoteDecisionCapability`]), never the request's
+    /// validity.
     pub score_levels: Vec<String>,
     pub posture: HostingPrivacyPosture,
     pub remote_opt_in: bool,
@@ -59,7 +61,7 @@ impl SeatRequest {
         DecisionImage::check_call(&self.images, &self.state, self.question.contract.locates())?;
         DecisionAudio::check_call(&self.audio, &self.images, &self.state)?;
         match &self.question.contract {
-            AnswerContract::Score { .. } if !(2..=10).contains(&self.score_levels.len()) => {
+            AnswerContract::Score { .. } if self.score_levels.len() < 2 => {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
             AnswerContract::Score { .. } => {
@@ -75,6 +77,30 @@ impl SeatRequest {
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// What one remote seat can take (FIX 9909). A request past it is not malformed: the seat
+/// is passed over for it, as the ladder passes over a provider that cannot take a question,
+/// and the caller's escalation takes the request whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteDecisionCapability {
+    /// The most score levels one request to the seat may carry.
+    pub max_score_levels: usize,
+}
+
+impl Default for RemoteDecisionCapability {
+    fn default() -> Self {
+        Self {
+            max_score_levels: 10,
+        }
+    }
+}
+
+impl RemoteDecisionCapability {
+    pub fn takes(&self, request: &SeatRequest) -> bool {
+        !matches!(request.question.contract, AnswerContract::Score { .. })
+            || request.score_levels.len() <= self.max_score_levels
     }
 }
 
@@ -95,6 +121,10 @@ pub type SeatFuture<'a> = Pin<Box<dyn Future<Output = LlmResult<SeatAnswer>> + S
 /// and its client waits no longer.
 pub trait DecisionSeat: Send + Sync {
     fn pin(&self) -> ProviderPin;
+    /// What it can take; a request past it never goes to it.
+    fn capability(&self) -> RemoteDecisionCapability {
+        RemoteDecisionCapability::default()
+    }
     /// See [`super::DecisionProvider::image_edge`].
     fn image_edge(&self) -> Option<u32> {
         None
@@ -114,7 +144,8 @@ pub trait DecisionSeat: Send + Sync {
 /// cut. A late reply is charged the usage it reports; a failed one is charged its
 /// lease's reservation, since the provider may still bill. At the cut a reversible
 /// step takes the answer it holds and an irreversible one abstains; with no answer
-/// the call abstains.
+/// the call abstains. A request past the seat's capability is not sent: the call
+/// abstains as the provider unavailable, for the caller's next rung.
 #[expect(
     clippy::too_many_arguments,
     reason = "the call's clock and its step's reversibility join the seat's request"
@@ -151,7 +182,8 @@ pub async fn decide_at_remote_seat(
     let mut human_ask = Some(HumanAskReason::Deadline);
     // Each measurement is admitted and settled as its own call. A retry cannot
     // silently reuse the first terminal lease or exceed the caller's budget.
-    let first = if deadline.decision_may_start() {
+    let fits = seat.capability().takes(&request);
+    let first = if fits && deadline.decision_may_start() {
         let first_lease = guard.admit()?.lease;
         providers.push(pin.clone());
         let first = seat
@@ -174,6 +206,10 @@ pub async fn decide_at_remote_seat(
         None
     };
     match first {
+        None if !fits => {
+            human_ask = Some(HumanAskReason::ProviderUnavailable);
+            stop = StopCause::ProviderFailure;
+        }
         None => stop = StopCause::Deadline,
         Some(first) => {
             check_answer(&request, &first)?;

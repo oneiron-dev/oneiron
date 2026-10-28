@@ -7,8 +7,9 @@
 
 use crate::EntityId;
 use crate::edit_roundtrip::CellValue;
+use crate::llm::decision::questions::{question_unit_correlation, standing_ask_route};
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionLadder,
+    AskTo, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionLadder,
     DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion, LocatedDecision,
     MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
 };
@@ -30,6 +31,12 @@ pub struct UnitCall<'a> {
     pub policy: &'a DecisionBandPolicy,
     pub reversibility: Reversibility,
     pub deadline: &'a RetrievalDeadline,
+    /// Where the unit's person ask goes, bound by the engine from the
+    /// question's principal, never by the model (OF-506).
+    pub ask_to: Option<&'a AskTo>,
+    /// The unit's own work, so each unit keeps its own ask
+    /// ([`question_unit_correlation`]).
+    pub correlation: Option<EntityId>,
 }
 
 /// The host's decide() for an artifact unit. A server binds its Local-vision
@@ -90,7 +97,7 @@ impl UnitDecider for DecisionLadder<'_> {
     }
 
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
-        self.run_images(
+        self.for_unit(call).run_images(
             call.question,
             call.principal,
             call.evidence,
@@ -104,7 +111,7 @@ impl UnitDecider for DecisionLadder<'_> {
     }
 
     fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
-        self.run_located(
+        self.for_unit(call).run_located(
             call.question,
             call.principal,
             call.evidence,
@@ -115,6 +122,17 @@ impl UnitDecider for DecisionLadder<'_> {
             call.reversibility,
             call.deadline,
         )
+    }
+}
+
+impl<'a> DecisionLadder<'a> {
+    /// The ladder with `call`'s person route and unit work, where it binds
+    /// them.
+    fn for_unit(&self, call: &UnitCall<'a>) -> Self {
+        let mut ladder = self.clone();
+        ladder.ask_to = call.ask_to.or(self.ask_to);
+        ladder.correlation = call.correlation.or(self.correlation);
+        ladder
     }
 }
 
@@ -139,14 +157,14 @@ pub struct ArtifactAsk<'a> {
 
 impl ArtifactAsk<'_> {
     /// A question an artifact can land: valid, not a Box or Point (no cell,
-    /// comment or column holds a region or a spot), on a dial that stops
-    /// below the person.
+    /// comment or column holds a region or a spot), on an ordered dial. A
+    /// dial up to the person asks the next authorised role for each unit it
+    /// reaches (FIX 9912); the unit stays unanswered while its ask is open.
     pub(crate) fn validate(&self) -> Result<()> {
         self.question.validate()?;
         self.dial.band.validate()?;
         if self.question.contract.locates()
             || self.dial.first > self.dial.ceiling
-            || self.dial.ceiling == crate::llm::decision::DecisionRung::Human
             || self.budget.is_zero()
             || self.run_ref.trim().is_empty()
         {
@@ -186,6 +204,18 @@ impl ArtifactAsk<'_> {
             self.budget
                 .min(self.deadline.saturating_duration_since(now)),
         );
+        let to = standing_ask_route(self.principal);
+        let mut read = blake3::Hasher::new();
+        for source in sources {
+            read.update(source.id.as_bytes());
+            read.update(&source.body_hash);
+        }
+        let correlation = question_unit_correlation(
+            self.question,
+            self.principal,
+            &bytes,
+            read.finalize().as_bytes(),
+        )?;
         let mut decision = self.decider.decide_unit(&UnitCall {
             question: self.question,
             principal: self.principal,
@@ -196,17 +226,28 @@ impl ArtifactAsk<'_> {
             policy: self.policy,
             reversibility: self.reversibility,
             deadline: &clock,
+            ask_to: Some(&to),
+            correlation: Some(correlation),
         })?;
         crate::llm::decision::questions::validate_unit_decision(
             self.question,
             self.principal,
             &decision,
         )?;
-        decision.receipt.evidence_versions = sources
+        // Only an image a rung was sent is evidence the decision read; one no
+        // rung could take stays out of its receipt (FIX 9903).
+        let shown: Vec<EvidenceVersion> = images
             .iter()
-            .cloned()
-            .chain(images.iter().map(|image| image.evidence.clone()))
+            .filter(|image| {
+                decision
+                    .receipt
+                    .images
+                    .iter()
+                    .any(|pin| pin.name == image.name)
+            })
+            .map(|image| image.evidence.clone())
             .collect();
+        decision.receipt.evidence_versions = sources.iter().cloned().chain(shown).collect();
         Ok(Some(decision))
     }
 }

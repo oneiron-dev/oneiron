@@ -110,6 +110,7 @@ pub(crate) fn done_task_evidence_in(
         stored
             .brief
             .success
+            .criteria
             .yes_if_all
             .iter()
             .filter_map(|criterion| criterion.evidence_ref)

@@ -147,7 +147,8 @@ impl<'a> DecisionPack<'a> {
 /// as it skips an empty slot; it never trims a question to fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderCapability {
-    /// The most options one choice question may offer (the engine's contract allows 64).
+    /// The most options one choice question may offer it. A choice's contract sets no
+    /// count: a wider one goes to a provider that takes it, never cut to fit (FIX 9908).
     pub max_options: usize,
     /// Whether it answers score questions.
     pub score: bool,

@@ -365,11 +365,27 @@ impl CoreAuth {
             .scoped_read(key.for_destination(&self.destination()))
             .is_entity_readable(id)
     }
+    /// Whether this credential is still live, read inside the write
+    /// transaction `txn` instead of its own snapshot. A managed vault's
+    /// attested owner has no verified slip and no token id; the write
+    /// transaction re-checks him inside it, so a removed owner's open
+    /// session stops writing. A booking holder stands for his one call, as
+    /// in [`Self::credential_is_live`]. A storage or decode fault in the
+    /// owner re-check keeps the pre-check answer (live), never false
+    /// because of the fault.
     pub(crate) fn credential_is_live_in_write_txn(
         &self,
         vault: &oneiron::Vault,
         txn: &heed::RwTxn<'_>,
     ) -> bool {
+        if let Some(holder) = self.managed_owner {
+            // No verified slip and no token id, so without the re-check this
+            // credential always read live below. A fault keeps that answer.
+            return self.is_attested_booking_holder()
+                || vault
+                    .recorded_owner_is_live_in_txn(txn, holder)
+                    .unwrap_or(true);
+        }
         if let Some(verified) = &self.verified_slip {
             return vault
                 .capability_slip_is_live_in_txn(txn, verified)

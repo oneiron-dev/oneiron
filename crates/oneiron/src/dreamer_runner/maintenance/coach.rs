@@ -366,17 +366,28 @@ impl Vault {
         record: &PersonChangedAnswer,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            if PERSON_CHANGED_READ.contains(&self.store, &*txn, &source)? {
-                return Ok(());
-            }
-            match PERSON_CHANGED.get(&self.store, &*txn, &source)? {
-                Some(held) if held == *record => Ok(()),
-                Some(_) => Err(Error::InvalidConfig(
-                    "another person-changed record already names this source".into(),
-                )),
-                None => PERSON_CHANGED.put(&self.store, txn, &source, record),
-            }
+            self.record_person_changed_answer_in_txn(txn, source, record)
         })
+    }
+
+    /// [`Self::record_person_changed_answer`] in the caller's write, beside
+    /// the answer it records (FIX 9905).
+    pub(crate) fn record_person_changed_answer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source: EntityId,
+        record: &PersonChangedAnswer,
+    ) -> Result<()> {
+        if PERSON_CHANGED_READ.contains(&self.store, &*txn, &source)? {
+            return Ok(());
+        }
+        match PERSON_CHANGED.get(&self.store, &*txn, &source)? {
+            Some(held) if held == *record => Ok(()),
+            Some(_) => Err(Error::InvalidConfig(
+                "another person-changed record already names this source".into(),
+            )),
+            None => PERSON_CHANGED.put(&self.store, txn, &source, record),
+        }
     }
 
     /// Records the offer skill's draft as the Coach, under a leased
