@@ -40,10 +40,24 @@ pub(crate) fn imported_skill_cost_body(body: &ClaimBody) -> Result<ClaimBody> {
     {
         return Err(invalid("skill cost scope is not canonical"));
     }
-    let Some(Value::Array(refs)) = body.evidence.as_ref() else {
+    let Some(Value::Map(evidence)) = body.evidence.as_ref() else {
         return Err(invalid("skill cost citations missing"));
     };
-    if refs.is_empty() || refs.iter().any(|r| r.as_str().is_none_or(str::is_empty)) {
+    let member = |key: &str| {
+        evidence
+            .iter()
+            .find(|(name, _)| name.as_str() == Some(key))
+            .map(|(_, value)| value)
+    };
+    let Some(Value::Array(refs)) = member("receipts") else {
+        return Err(invalid("skill cost citations missing"));
+    };
+    if refs.is_empty()
+        || refs.iter().any(|r| r.as_str().is_none_or(str::is_empty))
+        || member(crate::actor_claims::KEY_ENGINE_VER)
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
         return Err(invalid("invalid archived skill cost citations"));
     }
     let mut out = body.clone();

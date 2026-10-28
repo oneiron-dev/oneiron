@@ -124,7 +124,11 @@ fn write_cost_head(
     scope: &str,
     aggregate: &CostAggregate,
 ) -> Result<EntityId> {
-    let evidence = ActorClaimEvidence::amendment(aggregate.receipts.clone(), aggregate.at)?;
+    let evidence = ActorClaimEvidence::amendment(
+        aggregate.receipts.clone(),
+        aggregate.engine_ver.clone(),
+        aggregate.at,
+    )?;
     let value = rmpv::Value::F32(aggregate.cost);
     let cited = if predicate == PREDICATE_ACTOR_EDIT_COST {
         evidence.to_value()
@@ -257,9 +261,11 @@ pub fn project_amendment_lessons(
             actor,
             text: lapse_lesson(&judgment.receipt_id),
         };
-        let Ok(evidence) =
-            ActorClaimEvidence::amendment(judgment.evidence_receipts.clone(), judgment.at)
-        else {
+        let Ok(evidence) = ActorClaimEvidence::amendment(
+            judgment.evidence_receipts.clone(),
+            judgment.engine_ver.clone(),
+            judgment.at,
+        ) else {
             continue;
         };
         // The door's own reads, before the writer opens.
@@ -482,6 +488,8 @@ fn known_target_predicate(token: &str) -> Option<&'static str> {
 /// One `(subject, scope)` pair's folded cost.
 struct CostAggregate {
     cost: f32,
+    /// The one measurement version the folded judgments share.
+    engine_ver: String,
     /// Every cited receipt, oldest-first.
     receipts: Vec<String>,
     /// The newest judged amendment's stamp — the row's event time.
@@ -546,6 +554,7 @@ fn aggregate_for(
         .collect();
     Some(CostAggregate {
         cost: mean,
+        engine_ver: version,
         receipts,
         at,
     })
@@ -606,16 +615,22 @@ fn write_skill_edit_cost(
     })
 }
 
-/// The citation array a `skill.edit_cost` row carries — the `skill.*` shape,
-/// beside the lane envelope its `actor.*` sibling's own ledger builds.
+/// The citations a `skill.edit_cost` row carries, and the measurement version
+/// they share — the `skill.*` shape, beside the lane envelope its `actor.*`
+/// sibling's own ledger builds.
 fn skill_cost_evidence(aggregate: &CostAggregate) -> rmpv::Value {
-    rmpv::Value::Array(
-        aggregate
-            .receipts
-            .iter()
-            .map(|receipt| rmpv::Value::from(receipt.as_str()))
-            .collect(),
-    )
+    let receipts = aggregate
+        .receipts
+        .iter()
+        .map(|receipt| rmpv::Value::from(receipt.as_str()))
+        .collect();
+    rmpv::Value::Map(vec![
+        (rmpv::Value::from("receipts"), rmpv::Value::Array(receipts)),
+        (
+            rmpv::Value::from(crate::actor_claims::KEY_ENGINE_VER),
+            rmpv::Value::from(aggregate.engine_ver.as_str()),
+        ),
+    ])
 }
 
 /// The active heads of one `(predicate, subject, scope)` tuple.
@@ -672,6 +687,15 @@ fn active_lesson_heads_in_txn(
     Ok(heads)
 }
 
+/// A live `*.edit_cost` estimate and the measurement version it folded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditCost {
+    pub cost: f32,
+    /// The measurement engine version every folded judgment shares; `None`
+    /// for a head whose evidence names none.
+    pub engine_ver: Option<String>,
+}
+
 /// The live `*.edit_cost` estimate for `(subject, scope)`, or `None`.
 ///
 /// One read for both predicates: an entity is an ACTOR or a SKILL, never both,
@@ -683,9 +707,9 @@ fn active_lesson_heads_in_txn(
 /// # Errors
 ///
 /// Storage errors.
-pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<Option<f32>> {
+pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<Option<EditCost>> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut best: Option<(u64, EntityId, f32)> = None;
+    let mut best: Option<(u64, EntityId, EditCost)> = None;
     for id in vault.claims_for_subject_in_txn(&rtxn, subject)? {
         let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
             continue;
@@ -717,8 +741,21 @@ pub fn edit_cost_for(vault: &Vault, subject: &EntityId, scope: &str) -> Result<O
             }
         };
         if newer {
-            best = Some((valid_from, id, cost));
+            let engine_ver = evidence_engine_ver(body.evidence.as_ref());
+            best = Some((valid_from, id, EditCost { cost, engine_ver }));
         }
     }
     Ok(best.map(|(_, _, cost)| cost))
+}
+
+/// The measurement version a cost head's evidence names.
+fn evidence_engine_ver(evidence: Option<&rmpv::Value>) -> Option<String> {
+    let rmpv::Value::Map(entries) = evidence? else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some(crate::actor_claims::KEY_ENGINE_VER))
+        .and_then(|(_, value)| value.as_str())
+        .map(str::to_owned)
 }
