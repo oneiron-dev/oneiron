@@ -251,9 +251,6 @@ side_tables! {
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
     DREAMER_WAKE_POLICY: VaultMeta b"settings:dreamer:wake-policy:v1" LegacyJson;
-    /// Dial: distinct-receipt count K needed before the substitution miner acts on a cluster. Key:
-    /// ().
-    EDIT_DISTANCE_MINER_K: VaultMeta b"settings:edit_distance:v1:miner_k" Raw;
     /// Owner-set inbox review dial (exceptions-only vs review-all), house per-feature dial pattern.
     /// Key: ().
     INBOX_REVIEW_DIAL: VaultMeta b"settings:inbox:v1:review_dial" Raw;
@@ -375,12 +372,23 @@ side_tables! {
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
         => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
-    /// One run's matched-fork contribution checks for a skill and axis: the measured verdict and
-    /// the pair it was read from (both fork receipts and results, the anchor, the axis), and each
-    /// pair recorded unmatched, with why. Key: string (attempt receipt "\0" skill hex "\0" axis);
-    /// an erased skill's rows name no skill and move to an "erased:" digest in its place.
+    /// One run's matched-fork contribution checks for one experiment (its outcome, goal revision,
+    /// axis and target: a loaded skill or a used edge): the measured verdict and the pair it was
+    /// read from (both fork receipts and results, the anchor, the axis, the edge), and each pair
+    /// recorded unmatched, with why. Key: string (attempt receipt "\0" target hex "\0" identity
+    /// digest); a row naming an erased entity names it nil and moves to its attempt receipt
+    /// "\0" "erased:" a fresh ULID.
     SKILL_ATTRIBUTION_CONTRIBUTION_CHECK: VaultMeta b"skill_attribution:contribution_check:v1:" Named
         => crate::skill_attribution::erase_contribution_checks_in_txn;
+    /// Each sealed late-credit receipt's frozen credit_decay (FIX 10107) and its immutable
+    /// adjustments (FIX 3241, FIX 10108): the base receipt, the adjustment before it, the checks
+    /// and late landed uses the effective credit joins (each end nil once erased), its direct
+    /// subjects and shares with their used chains, and when. Key: string (the credit receipt id
+    /// "\0" "decay", or "\0" a zero-padded index); an erase moves an adjustment naming the erased
+    /// entity to "erased" "\0" a fresh ULID, and where the base receipt's run or outcome reference
+    /// spells it, also drops the adjustment's base links and the frozen decay.
+    SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT: VaultMeta b"skill_attribution:credit_adjustment:v1:" Named Engine
+        => crate::skill_attribution::erase_credit_adjustments_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
     /// A leased run's derivation witnesses (FIX 3103): each exact DerivedFrom edge a write of the

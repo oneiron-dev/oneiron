@@ -7,11 +7,10 @@ use super::{
 };
 use crate::lens::atom::{LensAtom, LensText};
 use crate::lens::validate::{
-    LensBudget, validate_generated_ui_node_count, validate_generated_ui_protocol_version,
-    validate_lens_collection_len, validate_required_lens_text,
+    validate_generated_ui_node_count, validate_generated_ui_protocol_version,
+    validate_required_lens_text,
 };
-use crate::lens::wire_ids::{LensAtomId, LensHandleRef, LensRenderId, MAX_LENS_TREE_DEPTH};
-use crate::lens::wire_limits::deserialize_limited_vec;
+use crate::lens::wire_ids::{LensAtomId, LensHandleRef, LensRenderId};
 use crate::llm::ContentPart;
 use crate::{Error, Result};
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -135,8 +134,9 @@ impl GeneratedUiRender {
         };
         start.validate()?;
 
-        let mut nodes = Vec::with_capacity(start.node_count);
-        let mut budget = LensBudget::default();
+        // The declared count is the caller's; capacity grows with the
+        // elements that actually arrive.
+        let mut nodes = Vec::new();
         let mut interactivity = None;
 
         for segment in rest {
@@ -168,7 +168,7 @@ impl GeneratedUiRender {
                             "generated-ui card_element card_id must match card_start".to_string(),
                         ));
                     }
-                    element.node.validate_with_budget(&mut budget)?;
+                    element.node.validate()?;
                     nodes.push(element.node.clone());
                 }
                 GeneratedUiSegment::CardStateUpdate(state) => {
@@ -240,7 +240,6 @@ impl GeneratedUiRender {
             )));
         }
         self.lifecycle.validate()?;
-        validate_lens_collection_len("generated-ui flat nodes", self.nodes.len())?;
         if self.nodes.is_empty() {
             return Err(Error::InvalidConfig(
                 "generated-ui flat tree must contain at least one node".to_string(),
@@ -249,9 +248,8 @@ impl GeneratedUiRender {
 
         let mut ids = HashSet::with_capacity(self.nodes.len());
         let mut id_to_index = HashMap::with_capacity(self.nodes.len());
-        let mut budget = LensBudget::default();
         for node in &self.nodes {
-            node.validate_with_budget(&mut budget)?;
+            node.validate()?;
             if !ids.insert(node.id.as_str()) {
                 return Err(Error::InvalidConfig(
                     "generated-ui flat nodes must not contain duplicate ids".to_string(),
@@ -339,21 +337,16 @@ impl GeneratedUiRender {
         }
 
         let mut visited = HashSet::with_capacity(self.nodes.len());
-        let mut stack = vec![(root_index, 1usize)];
-        while let Some((node_index, depth)) = stack.pop() {
+        let mut stack = vec![root_index];
+        while let Some(node_index) = stack.pop() {
             let node = &self.nodes[node_index];
             if !visited.insert(node.id.as_str()) {
                 return Err(Error::InvalidConfig(
                     "generated-ui flat tree must not contain cycles".to_string(),
                 ));
             }
-            if depth > MAX_LENS_TREE_DEPTH {
-                return Err(Error::InvalidConfig(format!(
-                    "generated-ui flat tree depth must be at most {MAX_LENS_TREE_DEPTH}"
-                )));
-            }
             for child_ref in node.child_refs.iter().rev() {
-                stack.push((id_to_index[child_ref.as_str()], depth + 1));
+                stack.push(id_to_index[child_ref.as_str()]);
             }
         }
         if visited.len() != self.nodes.len() {
@@ -381,9 +374,8 @@ impl<'de> Deserialize<'de> for GeneratedUiRender {
             catalog: GeneratedUiCatalog,
             card_id: LensRenderId,
             root: LensAtomId,
-            #[serde(deserialize_with = "deserialize_limited_vec")]
             nodes: Vec<GeneratedUiNode>,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             actions: Vec<GeneratedUiActionDeclaration>,
             #[serde(rename = "$state", default)]
             state: GeneratedUiStateSnapshot,
@@ -414,26 +406,18 @@ pub struct GeneratedUiNode {
     pub parent: Option<LensAtomId>,
     pub atom: LensAtom,
     pub fallback_text: LensText,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub bindings: Vec<LensHandleRef>,
-    #[serde(
-        rename = "$bind",
-        default,
-        deserialize_with = "deserialize_limited_vec"
-    )]
+    #[serde(rename = "$bind", default)]
     pub state_bindings: Vec<SelfUiBinding>,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub child_refs: Vec<LensAtomId>,
 }
 
 impl GeneratedUiNode {
-    fn validate_with_budget(&self, budget: &mut LensBudget) -> Result<()> {
+    fn validate(&self) -> Result<()> {
         validate_required_lens_text("generated-ui node fallbackText", &self.fallback_text)?;
-        self.atom.validate()?;
-        self.atom.count_collection_items(budget)?;
-        budget.add_collection("generated-ui node bindings", self.bindings.len())?;
-        budget.add_collection("generated-ui node $bind", self.state_bindings.len())?;
-        budget.add_collection("generated-ui child refs", self.child_refs.len())
+        self.atom.validate()
     }
 }
 
@@ -551,8 +535,7 @@ pub struct GeneratedUiCardElement {
 impl GeneratedUiCardElement {
     fn validate(&self) -> Result<()> {
         validate_generated_ui_protocol_version(self.protocol_version)?;
-        let mut budget = LensBudget::default();
-        self.node.validate_with_budget(&mut budget)
+        self.node.validate()
     }
 }
 
@@ -635,7 +618,6 @@ impl GeneratedUiDataModel {
     pub(in crate::lens) fn validate(&self) -> Result<()> {
         self.lifecycle.validate()?;
         validate_generated_ui_node_count("generated-ui data model node count", self.node_count)?;
-        validate_lens_collection_len("generated-ui action declarations", self.actions.len())?;
         for declaration in &self.actions {
             declaration.validate()?;
         }
@@ -654,7 +636,7 @@ impl<'de> Deserialize<'de> for GeneratedUiDataModel {
             root: LensAtomId,
             node_count: usize,
             catalog: GeneratedUiCatalog,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             actions: Vec<GeneratedUiActionDeclaration>,
             #[serde(rename = "$state", default)]
             state: GeneratedUiStateSnapshot,

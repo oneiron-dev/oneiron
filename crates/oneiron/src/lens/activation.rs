@@ -182,7 +182,7 @@ impl Vault {
         if proposal.compiled_hash != slot.compiled_hash {
             return Err(Error::CorruptedIndex("lens slot record"));
         }
-        Ok(Some((lens_ref, proposal.compiled()?)))
+        Ok(Some((lens_ref, proposal.compiled_in(self, &txn, &lens_ref)?)))
     }
 }
 

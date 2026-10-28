@@ -210,8 +210,17 @@ fn split_from_answers(
 
     let mut by_label = [0.0_f64; AttributionVerdict::ALL.len()];
     let mut unclear = Vec::new();
+    let mut hunks = Vec::with_capacity(regions);
     for (weight, answer) in weights.into_iter().zip(answers) {
         if weight <= 0.0 {
+            // A region that weighs nothing holds no share; its label stands
+            // as answered, held by the same rule.
+            hunks.push(
+                match held_reason(lane, answer.verdict, answer.confidence, floor) {
+                    Some(_) => AttributionVerdict::Unclear,
+                    None => answer.verdict,
+                },
+            );
             continue;
         }
         let confidence = if answer.confidence.is_finite() {
@@ -240,6 +249,7 @@ fn split_from_answers(
             .position(|known| *known == label)
             .ok_or(Error::InvariantViolation("every label has a share slot"))?;
         by_label[slot] += weight;
+        hunks.push(label);
         if let Some(reason) = reason {
             unclear.push(UnclearNote {
                 reason,
@@ -259,7 +269,11 @@ fn split_from_answers(
             share: narrow(share),
         })
         .collect();
-    Ok(AttributionSplit { shares, unclear })
+    Ok(AttributionSplit {
+        shares,
+        unclear,
+        hunks,
+    })
 }
 
 /// Why one answer lands `unclear`, or `None` when its label stands: the judge

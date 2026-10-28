@@ -4,11 +4,17 @@
 //! returns displayed text, `resolve-backing-ref(handle)` returns the opaque
 //! host-issued reference name, and `emit-atom(json)` accepts a closed LensAtom.
 //! Handles must already be bound in the render frame. No WASI is linked.
+//!
+//! A run is paced, not rationed (FIX 9898): every host call is a yield that
+//! refills one step of fuel, so a lens that keeps reading and emitting runs
+//! to its end, and only a loop that never calls the host runs dry. No call
+//! count, output total or read total ends a run. The guest's memory stays
+//! bounded: it isolates untrusted code ([`LensGuestPolicy`]).
 
 use std::collections::BTreeMap;
 
 use wasmtime::component::{Component, InstancePre, Linker};
-use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
+use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsBuilder};
 
 use super::instrument::display_body;
 use super::{
@@ -19,16 +25,44 @@ use crate::claim::{ScopedRead, ScopedReadReceipt};
 use crate::{Error, Result};
 
 const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
+/// The largest single atom message one `emit-atom` call carries: a frame
+/// bound of the codec, not a total.
 const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
-const MAX_ATOMS: usize = 4096;
+
+/// The linear memory one guest instance may grow to. It isolates untrusted
+/// lens code from the host; the owner raises it through [`LensGuestPolicy`].
+pub const LENS_GUEST_MEMORY_BYTES: usize = 32 * 1024 * 1024;
+/// The fuel one step of guest work gets: what a run may spend between two
+/// host calls, refilled at each (FIX 9898). It paces a run; it never ends one
+/// that keeps yielding to the host.
+pub const LENS_GUEST_STEP_FUEL: u64 = 2_000_000;
+
+/// How a lens guest runs: the one hook a ruling on its memory or its step
+/// changes. The defaults are [`LENS_GUEST_MEMORY_BYTES`] and
+/// [`LENS_GUEST_STEP_FUEL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LensGuestPolicy {
+    /// The linear memory one guest instance may grow to, in bytes.
+    pub memory_bytes: usize,
+    /// The fuel each step between two host calls gets.
+    pub step_fuel: u64,
+}
+
+impl Default for LensGuestPolicy {
+    fn default() -> Self {
+        Self {
+            memory_bytes: LENS_GUEST_MEMORY_BYTES,
+            step_fuel: LENS_GUEST_STEP_FUEL,
+        }
+    }
+}
 
 struct GuestState {
     // Resolved through the acting principal's ScopedRead just before each run.
     // The guest sees only the host-bound handle, never a caller-supplied ID.
     bindings: BTreeMap<String, (String, String)>,
     atoms: Vec<LensAtom>,
-    emitted_bytes: usize,
-    remaining_calls: usize,
+    step_fuel: u64,
     limits: StoreLimits,
 }
 
@@ -39,6 +73,7 @@ pub struct LensExecutionRuntime {
     engine: Engine,
     instance: InstancePre<GuestState>,
     boundary: LensExecutionBoundary,
+    policy: LensGuestPolicy,
 }
 
 impl LensExecutionRuntime {
@@ -63,8 +98,8 @@ impl LensExecutionRuntime {
         {
             let mut root = linker.root();
             root.func_wrap("scoped-read", |mut cx, (handle,): (String,)| {
+                next_step(&mut cx)?;
                 let state = cx.data_mut();
-                state.charge()?;
                 let (text, _) = state.bindings.get(&handle).ok_or_else(|| {
                     wasmtime::Error::msg("lens handle is not scoped and host-bound")
                 })?;
@@ -72,8 +107,8 @@ impl LensExecutionRuntime {
             })
             .map_err(|_| failure("lens scoped-read link failed"))?;
             root.func_wrap("resolve-backing-ref", |mut cx, (handle,): (String,)| {
+                next_step(&mut cx)?;
                 let state = cx.data_mut();
-                state.charge()?;
                 let (_, token) = state
                     .bindings
                     .get(&handle)
@@ -82,19 +117,14 @@ impl LensExecutionRuntime {
             })
             .map_err(|_| failure("lens backing-ref link failed"))?;
             root.func_wrap("emit-atom", |mut cx, (json,): (String,)| {
-                let state = cx.data_mut();
-                state.charge()?;
-                if json.len() > MAX_MESSAGE_BYTES
-                    || state.emitted_bytes.saturating_add(json.len()) > MAX_MESSAGE_BYTES
-                    || state.atoms.len() >= MAX_ATOMS
-                {
-                    return Err(wasmtime::Error::msg("lens atom output limit"));
+                next_step(&mut cx)?;
+                if json.len() > MAX_MESSAGE_BYTES {
+                    return Err(wasmtime::Error::msg("lens atom message exceeds its frame"));
                 }
                 let atom: LensAtom = serde_json::from_str(&json)
                     .map_err(|_| wasmtime::Error::msg("invalid lens atom"))?;
                 atom.validate().map_err(wasmtime::Error::msg)?;
-                state.emitted_bytes += json.len();
-                state.atoms.push(atom);
+                cx.data_mut().atoms.push(atom);
                 Ok(())
             })
             .map_err(|_| failure("lens emit-atom link failed"))?;
@@ -108,7 +138,15 @@ impl LensExecutionRuntime {
             engine,
             instance,
             boundary,
+            policy: LensGuestPolicy::default(),
         })
+    }
+
+    /// This runtime under `policy` instead of [`LensGuestPolicy::default`].
+    #[must_use]
+    pub fn with_policy(mut self, policy: LensGuestPolicy) -> Self {
+        self.policy = policy;
+        self
     }
 
     #[must_use]
@@ -129,7 +167,6 @@ impl LensExecutionRuntime {
         // the entire run instead of silently broadening its view.
         let mut bindings = BTreeMap::new();
         let mut admission_receipt: Option<ScopedReadReceipt> = None;
-        let mut admitted_bytes = 0usize;
         for row in frame.backing_refs() {
             let bound = frame.resolve_backing_ref_token(read, row.token())?;
             let admitted = frame.scoped_body(read, bound.target().entity_id())?;
@@ -140,14 +177,7 @@ impl LensExecutionRuntime {
             let body = admitted
                 .value
                 .ok_or_else(|| failure("lens backing ref outside read scope"))?;
-            admitted_bytes = admitted_bytes.saturating_add(body.len());
-            if admitted_bytes > MAX_MESSAGE_BYTES {
-                return Err(failure("lens read budget exceeded"));
-            }
             let text = display_body(&body);
-            if text.len() > MAX_MESSAGE_BYTES {
-                return Err(failure("lens read budget exceeded"));
-            }
             bindings.insert(
                 bound.handle().as_str().to_owned(),
                 (text, bound.token().ref_id().as_str().to_owned()),
@@ -161,10 +191,9 @@ impl LensExecutionRuntime {
             GuestState {
                 bindings,
                 atoms: Vec::new(),
-                emitted_bytes: 0,
-                remaining_calls: 256,
+                step_fuel: self.policy.step_fuel,
                 limits: StoreLimitsBuilder::new()
-                    .memory_size(32 * 1024 * 1024)
+                    .memory_size(self.policy.memory_bytes)
                     .memories(1)
                     .tables(4)
                     .instances(16)
@@ -175,7 +204,7 @@ impl LensExecutionRuntime {
         );
         store.limiter(|state| &mut state.limits);
         store
-            .set_fuel(2_000_000)
+            .set_fuel(self.policy.step_fuel)
             .map_err(|_| failure("lens fuel setup failed"))?;
         let instance = self
             .instance
@@ -198,14 +227,11 @@ impl LensExecutionRuntime {
     }
 }
 
-impl GuestState {
-    fn charge(&mut self) -> wasmtime::Result<()> {
-        self.remaining_calls = self
-            .remaining_calls
-            .checked_sub(1)
-            .ok_or_else(|| wasmtime::Error::msg("lens host call budget exceeded"))?;
-        Ok(())
-    }
+/// A host call is a yield: the guest's next step starts with a full step of
+/// fuel, however much the step before it spent (FIX 9898).
+fn next_step(cx: &mut StoreContextMut<'_, GuestState>) -> wasmtime::Result<()> {
+    let step_fuel = cx.data().step_fuel;
+    cx.set_fuel(step_fuel)
 }
 
 fn failure(reason: &'static str) -> Error {

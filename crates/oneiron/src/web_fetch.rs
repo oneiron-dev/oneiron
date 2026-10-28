@@ -26,7 +26,7 @@ mod door;
 mod egress;
 mod ladder;
 
-pub use client::{build_single_hop_client, build_web_fetch_client};
+pub use client::{build_single_hop_client, build_web_fetch_client, hosted_dns_resolver};
 pub use door::{WebCrawlRequest, WebFetchRequest};
 pub use egress::{
     HOSTED_INFRASTRUCTURE_REASON, HOSTED_PRIVATE_NETWORK_REASON, HostedEgressGuard,

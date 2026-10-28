@@ -98,7 +98,8 @@ side_tables! {
     ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
-    ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
+    ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
+        => crate::learning::erase_receipt_scope_in_txn;
     /// One-shot consumption marker and promotion receipt for a specific authoring strategy's sealed
     /// BEAM measurement. Two shapes share this key over its lifetime (a non-JSON consumption
     /// sentinel, then a JSON receipt) and no reader ever decodes it — every access is a raw

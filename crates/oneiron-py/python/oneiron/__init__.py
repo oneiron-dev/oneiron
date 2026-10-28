@@ -3306,7 +3306,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def propose(self, spec):
-            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."""
+            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."""
             return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
         def activate(self, spec):
             """The owner selects a proposed lens revision for its pack slot."""

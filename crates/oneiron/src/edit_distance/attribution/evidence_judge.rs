@@ -2,12 +2,12 @@
 
 use super::stored::{
     EVIDENCE, EVIDENCE_ROW_LABEL, JUDGMENT, JUDGMENT_ROW_LABEL, PREFERENCE, ROW_VERSION,
-    StoredAttempt, StoredEvidence, StoredJudgment, StoredPreference, StoredShare, hex_entity,
-    invalid, normalized_scope,
+    StoredAttempt, StoredEvidence, StoredHunk, StoredJudgment, StoredPreference, StoredShare,
+    hex_entity, invalid, normalized_scope,
 };
 use super::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    PreferenceProposal, class_subject, classify_amendment, cost_predicate,
+    HunkLabel, PreferenceProposal, class_subject, classify_amendment, cost_predicate,
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
@@ -206,7 +206,7 @@ pub fn judge_amendment_hunks(
     let Some(split) = classify_amendment(&evidence, decisions, hunks, floor)? else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
-    persist_amendment_split(vault, receipt_id, &evidence, &delta, split)
+    persist_amendment_split(vault, receipt_id, &evidence, &delta, split, hunks)
 }
 
 /// Judges the amendment recorded against `receipt_id` from explicitly
@@ -270,18 +270,22 @@ pub fn judge_amendment_verdicts(
     if !computed.is_empty() {
         super::taxonomy::validate_share_vector(&computed)?;
     }
-    persist_amendment_split(vault, receipt_id, &evidence, &delta, split)
+    persist_amendment_split(vault, receipt_id, &evidence, &delta, split, hunks)
 }
 
 /// Persists one judged split for `receipt_id`: the judgment row, its
 /// preference note, unclear row and discovery proposal land in one write
 /// transaction. Shared by the judge tiers and the verdict door above.
+///
+/// Each of `hunks` keeps its own label beside its substitution's identity, so
+/// the miner can take a clear hunk and leave an unclear one held (FIX 9808).
 fn persist_amendment_split(
     vault: &Vault,
     receipt_id: &str,
     evidence: &AmendmentEvidence,
     delta: &crate::edit_distance::delta::AmendmentDelta,
     split: crate::skill_attribution::AttributionSplit,
+    hunks: &[EditHunk<'_>],
 ) -> Result<Option<AmendmentJudgment>> {
     let shares: Vec<AmendmentShare> = split
         .shares
@@ -307,6 +311,17 @@ fn persist_amendment_split(
         evidence_receipts: vec![receipt_id.to_owned()],
         d_norm: delta.d_norm,
         at: evidence.at,
+        hunks: hunks
+            .iter()
+            .zip(&split.hunks)
+            .map(|(hunk, class)| HunkLabel {
+                class: *class,
+                substitution_refs: crate::edit_distance::miner::hunk_substitution_refs(
+                    hunk.before,
+                    hunk.after,
+                ),
+            })
+            .collect(),
     };
 
     // The join this judgment is made with rides its row, so a later correction
@@ -337,6 +352,14 @@ fn persist_amendment_split(
         at: judgment.at,
         proposal: None,
         attempt,
+        hunks: judgment
+            .hunks
+            .iter()
+            .map(|hunk| StoredHunk {
+                class: hunk.class.as_str().to_owned(),
+                substitutions: hunk.substitution_refs.clone(),
+            })
+            .collect(),
     };
     let preference_share = judgment.share_of(AmendmentClass::PreferenceShift);
     let preference_row = (preference_share > 0.0).then(|| StoredPreference {
@@ -514,6 +537,17 @@ fn judgment_from_row(
         )),
         None => None,
     };
+    let hunks: Vec<HunkLabel> = row
+        .hunks
+        .iter()
+        .map(|hunk| -> Result<HunkLabel> {
+            Ok(HunkLabel {
+                class: AmendmentClass::parse(&hunk.class)
+                    .ok_or(Error::CorruptedIndex(JUDGMENT_ROW_LABEL))?,
+                substitution_refs: hunk.substitutions.clone(),
+            })
+        })
+        .collect::<Result<_>>()?;
     let judgment = AmendmentJudgment {
         receipt_id,
         split: stored_split(&row)?,
@@ -521,6 +555,7 @@ fn judgment_from_row(
         evidence_receipts: row.evidence_receipts,
         d_norm: row.d_norm,
         at: row.at,
+        hunks,
     };
     Ok((judgment, attempt))
 }

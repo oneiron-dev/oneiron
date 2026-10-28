@@ -11,7 +11,6 @@ use super::{
 use crate::lens::atom::{LensAtom, LensNode};
 use crate::lens::validate::compile_atom_for_surface;
 use crate::lens::wire_ids::{LensAtomId, LensRenderId};
-use crate::lens::wire_limits::deserialize_limited_vec;
 use crate::llm::ContentPart;
 use crate::{Error, Result};
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -208,7 +207,7 @@ impl<'de> Deserialize<'de> for GeneratedUiCard {
             tree: Option<GeneratedLens>,
             #[serde(default)]
             prebuilt: Option<GeneratedUiPrebuilt>,
-            #[serde(default, deserialize_with = "deserialize_limited_vec")]
+            #[serde(default)]
             actions: Vec<GeneratedUiActionDeclaration>,
             #[serde(rename = "$state", default)]
             state: GeneratedUiStateSnapshot,

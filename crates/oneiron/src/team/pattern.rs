@@ -161,7 +161,7 @@ pub trait PatternLaunchRunner: Send + Sync {
 pub fn register_pattern_skill(
     vault: &Vault,
     binding: &PatternSkill,
-    tree_version: u32,
+    tree_version: u64,
     executors: &[String],
     now: u64,
 ) -> Result<()> {
@@ -196,9 +196,12 @@ pub fn register_pattern_skill(
     })?;
     for node in nodes {
         for executor in executors {
+            // An authored line is the vault's prior; a project's cell borrows
+            // it through the vault step of its backoff.
             let cell = pattern_cell(
                 binding.skill,
                 executor,
+                None,
                 &TypeRef {
                     node_id: node.to_owned(),
                     tree_version,
@@ -231,7 +234,7 @@ pub(crate) fn bind_pattern_skill_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     binding: &PatternSkill,
-    tree_version: u32,
+    tree_version: u64,
 ) -> Result<()> {
     let record = vault
         .get_skill_record_in_txn(wtxn, &binding.skill)?
@@ -290,13 +293,20 @@ pub fn pattern_skills(vault: &Vault) -> Result<Vec<PatternSkill>> {
         .collect())
 }
 
-/// The `learning.reliability` cell a pattern skill's payoff lives in.
+/// The `learning.reliability` cell a pattern skill's payoff lives in, in
+/// `project`'s scope (`None`, the vault's).
 #[must_use]
-pub fn pattern_cell(skill: EntityId, executor: &str, type_ref: &TypeRef) -> LearningCell {
+pub fn pattern_cell(
+    skill: EntityId,
+    executor: &str,
+    project: Option<EntityId>,
+    type_ref: &TypeRef,
+) -> LearningCell {
     LearningCell::new(LearningPredicate::Reliability, skill)
         .executor(executor)
         .type_ref(type_ref.clone())
         .axis(PAYOFF_AXIS)
+        .project(project)
 }
 
 /// A team's executor mix: its sorted, distinct model ids joined by `+`, or
