@@ -204,6 +204,13 @@ pub(crate) struct McpCallContext {
     /// carried it, for the home an opened device asks (FIX 2905, FIX 2907).
     /// `None` for an owner-grade caller and off that ingress.
     pub(crate) forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    /// The generated-UI surface profile the request's
+    /// `_meta.clientCapabilities` declares (FIX 7969), read on every call
+    /// because the MCP leg is stateless (ARCH-0048 G3). A lens the call
+    /// renders is lowered for it unless its arguments name their own;
+    /// `None` lowers for the whole atom kit. It selects a rendering and
+    /// grants nothing.
+    pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
 }
 
 impl std::ops::Deref for McpCallContext {

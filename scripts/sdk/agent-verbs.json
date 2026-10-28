@@ -8375,6 +8375,7 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_lens_owner": true,
+      "host_door_client_surface": true,
       "scope": "Read",
       "admission": {
         "projection_record_scope": true

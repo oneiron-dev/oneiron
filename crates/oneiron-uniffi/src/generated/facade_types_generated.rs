@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1161 facade rows, 4156 generated types.
+// UniFFI census: 1161 facade rows, 4160 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1113.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -13001,13 +13001,6 @@ pub struct WeaveDigestRequest {
     pub scheduled_for: Option<u64>,
 }
 
-/// `oneiron::lens::generated_ui::genui_catalog::GeneratedUiCatalog`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum GeneratedUiCatalog {
-    #[serde(rename = "lens_atom_kit")]
-    LensAtomKit,
-}
-
 /// `oneiron::lens::atom::atom_leaves::LensTextSpan`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "type", content = "value")]
@@ -13548,6 +13541,18 @@ pub struct GeneratedUiResultSetAtom {
     pub action_bar: Option<Vec<String>>,
 }
 
+/// `oneiron::lens::generated_ui::genui_app_catalog::GeneratedUiComponentAtom`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiComponentAtom {
+    #[serde(rename = "catalog")]
+    pub catalog: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "props", default, skip_serializing_if = "Option::is_none")]
+    pub props: Option<crate::WireJson>,
+}
+
 /// `oneiron::lens::atom::atom_enum::LensAtomWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "props")]
@@ -13607,6 +13612,8 @@ pub enum LensAtomWire {
     Media(MediaAtom),
     #[serde(rename = "result_set")]
     ResultSet(GeneratedUiResultSetAtom),
+    #[serde(rename = "component")]
+    Component(GeneratedUiComponentAtom),
 }
 
 /// `oneiron::lens::generated_ui::genui_state::SelfUiBindableProperty`.
@@ -13740,11 +13747,15 @@ pub struct GeneratedUiRender {
     #[serde(rename = "protocolVersion")]
     pub protocol_version: u16,
     #[serde(rename = "catalog")]
-    pub catalog: GeneratedUiCatalog,
+    pub catalog: String,
+    #[serde(rename = "catalogVersion")]
+    pub catalog_version: String,
     #[serde(rename = "cardId")]
     pub card_id: String,
     #[serde(rename = "root")]
     pub root: String,
+    #[serde(rename = "fallbackText")]
+    pub fallback_text: String,
     #[serde(rename = "nodes")]
     pub nodes: Vec<GeneratedUiNode>,
     #[serde(rename = "actions")]
@@ -31772,6 +31783,120 @@ pub struct LensDossierSource {
     pub title: String,
 }
 
+/// `oneiron::lens::generated_ui::genui_catalog::GeneratedUiPrimitive`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GeneratedUiPrimitive {
+    #[serde(rename = "text_block")]
+    TextBlock,
+    #[serde(rename = "ledger_row")]
+    LedgerRow,
+    #[serde(rename = "claim_line")]
+    ClaimLine,
+    #[serde(rename = "status_dot")]
+    StatusDot,
+    #[serde(rename = "seal")]
+    Seal,
+    #[serde(rename = "meta_line")]
+    MetaLine,
+    #[serde(rename = "dossier_section")]
+    DossierSection,
+    #[serde(rename = "thread_entry")]
+    ThreadEntry,
+    #[serde(rename = "sheet")]
+    Sheet,
+    #[serde(rename = "slip")]
+    Slip,
+    #[serde(rename = "receipt")]
+    Receipt,
+    #[serde(rename = "charter")]
+    Charter,
+    #[serde(rename = "postmark")]
+    Postmark,
+    #[serde(rename = "pack_line")]
+    PackLine,
+    #[serde(rename = "answer_sheet")]
+    AnswerSheet,
+    #[serde(rename = "two_clocks")]
+    TwoClocks,
+    #[serde(rename = "neighborhood_graph")]
+    NeighborhoodGraph,
+    #[serde(rename = "asof_scrubber")]
+    AsofScrubber,
+    #[serde(rename = "throbber")]
+    Throbber,
+    #[serde(rename = "voice_line")]
+    VoiceLine,
+    #[serde(rename = "quick_filter")]
+    QuickFilter,
+    #[serde(rename = "inspector_sheet")]
+    InspectorSheet,
+    #[serde(rename = "inspector_rail")]
+    InspectorRail,
+    #[serde(rename = "inspector_trail")]
+    InspectorTrail,
+    #[serde(rename = "self_ui")]
+    SelfUi,
+    #[serde(rename = "media")]
+    Media,
+    #[serde(rename = "result_set")]
+    ResultSet,
+    #[serde(rename = "component")]
+    Component,
+}
+
+/// `oneiron::lens::generated_ui::genui_app_catalog::GeneratedUiComponentSchema`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiComponentSchema {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<crate::WireJson>,
+}
+
+/// `oneiron::lens::generated_ui::genui_stream::GeneratedUiStreamProfile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GeneratedUiStreamProfile {
+    #[serde(rename = "full_model")]
+    FullModel,
+    #[serde(rename = "patch")]
+    Patch,
+}
+
+/// `oneiron::lens::generated_ui::genui_catalog::GeneratedUiSurfaceCapabilities`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiSurfaceCapabilities {
+    #[serde(rename = "catalog")]
+    pub catalog: String,
+    #[serde(
+        rename = "catalogVersion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub catalog_version: Option<String>,
+    #[serde(
+        rename = "maxCatalogVersion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_catalog_version: Option<u16>,
+    #[serde(
+        rename = "primitives",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub primitives: Option<Vec<GeneratedUiPrimitive>>,
+    #[serde(
+        rename = "components",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub components: Option<Vec<GeneratedUiComponentSchema>>,
+    #[serde(rename = "stream", default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<GeneratedUiStreamProfile>,
+}
+
 /// `oneiron::lens::sdk::LensDefaultRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -31786,6 +31911,8 @@ pub struct LensDefaultRequest {
     pub threads: Option<Vec<String>>,
     #[serde(rename = "as_of", default, skip_serializing_if = "Option::is_none")]
     pub as_of: Option<u64>,
+    #[serde(rename = "surface", default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<GeneratedUiSurfaceCapabilities>,
 }
 
 /// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `LensFrameCard`.
@@ -52086,9 +52213,13 @@ pub struct GeneratedUiCard {
     #[serde(rename = "protocolVersion")]
     pub protocol_version: u16,
     #[serde(rename = "catalog")]
-    pub catalog: GeneratedUiCatalog,
+    pub catalog: String,
+    #[serde(rename = "catalogVersion")]
+    pub catalog_version: String,
     #[serde(rename = "cardId")]
     pub card_id: String,
+    #[serde(rename = "fallbackText")]
+    pub fallback_text: String,
     #[serde(rename = "tree")]
     pub tree: GeneratedLens,
     #[serde(rename = "actions")]

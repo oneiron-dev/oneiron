@@ -10,7 +10,7 @@ use super::{
     VoiceLineAtom,
 };
 use crate::Result;
-use crate::lens::generated_ui::GeneratedUiPrimitive;
+use crate::lens::generated_ui::{GeneratedUiComponentAtom, GeneratedUiPrimitive};
 use crate::lens::self_ui::SelfUiControl;
 use crate::lens::validate::fallback_lens_text;
 use crate::lens::wire_limits::serialize_tagged;
@@ -45,6 +45,9 @@ pub enum LensAtom {
     SelfUi(SelfUiControl),
     Media(MediaAtom),
     ResultSet(GeneratedUiResultSetAtom),
+    /// A component an app catalog declares (FIX 9891): data its app's
+    /// renderer draws, lowered to `fallbackText` on any other surface.
+    Component(GeneratedUiComponentAtom),
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +85,9 @@ enum LensAtomWire {
     SelfUi(SelfUiControl),
     Media(MediaAtom),
     ResultSet(GeneratedUiResultSetAtom),
+    /// A component an app catalog declares (FIX 9891): data its app's
+    /// renderer draws, lowered to `fallbackText` on any other surface.
+    Component(GeneratedUiComponentAtom),
 }
 
 impl From<LensAtomWire> for LensAtom {
@@ -114,6 +120,7 @@ impl From<LensAtomWire> for LensAtom {
             LensAtomWire::SelfUi(control) => Self::SelfUi(control),
             LensAtomWire::Media(atom) => Self::Media(atom),
             LensAtomWire::ResultSet(atom) => Self::ResultSet(atom),
+            LensAtomWire::Component(atom) => Self::Component(atom),
         }
     }
 }
@@ -202,6 +209,9 @@ impl Serialize for LensAtom {
             Self::ResultSet(props) => {
                 serialize_tagged(serializer, "kind", RESULT_SET_ATOM_KIND, "props", props)
             }
+            Self::Component(props) => {
+                serialize_tagged(serializer, "kind", "component", "props", props)
+            }
         }
     }
 }
@@ -237,6 +247,7 @@ impl LensAtom {
             Self::SelfUi(_) => GeneratedUiPrimitive::SelfUi,
             Self::Media(_) => GeneratedUiPrimitive::Media,
             Self::ResultSet(_) => GeneratedUiPrimitive::ResultSet,
+            Self::Component(_) => GeneratedUiPrimitive::Component,
         }
     }
 
@@ -310,6 +321,7 @@ impl LensAtom {
             // Row labels are display data the host never parses, and a row count is
             // reach metadata. The fallback stays a static literal.
             Self::ResultSet(_) => "result set".to_string(),
+            Self::Component(atom) => return atom.fallback_text(),
         };
         fallback_lens_text(self.kind(), fallback)
     }
@@ -336,6 +348,7 @@ impl LensAtom {
             Self::SelfUi(control) => control.validate(),
             Self::Media(atom) => atom.validate(),
             Self::ResultSet(atom) => atom.validate(),
+            Self::Component(atom) => atom.validate(),
         }
     }
 }
