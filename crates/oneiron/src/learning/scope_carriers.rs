@@ -39,6 +39,10 @@ const REVIEW: SideTable<[u8; 32], rmpv::Value, Named> =
 const REVIEW_ID: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::CRITIC_REVIEW_RESULT_ID);
 
+/// The same pointers by their raw key.
+const REVIEW_POINTER: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::CRITIC_REVIEW_RESULT_ID);
+
 /// Re-keys every terminal attempt receipt's frozen project stamp naming
 /// erased `entity` to one fresh opaque scope.
 ///
@@ -131,6 +135,7 @@ pub(crate) fn erase_review_scope_in_txn(
     let named = entity.to_hex();
     let mut fresh = None;
     let mut renamed = BTreeMap::new();
+    let mut dropped = Vec::new();
     let rows = ARTIFACT
         .iter_raw_from(&vault.store, wtxn, &[])?
         .collect::<Result<Vec<_>>>()?;
@@ -148,7 +153,14 @@ pub(crate) fn erase_review_scope_in_txn(
                     artifact_id: artifact.artifact_id.clone(),
                 };
                 ARTIFACT.delete(&vault.store, wtxn, &key)?;
-                CRITIQUE_ARTIFACT.put(&vault.store, wtxn, &moved, &artifact)?;
+                let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+                match CRITIQUE_ARTIFACT.put(&vault.store, &mut savepoint, &moved, &artifact) {
+                    Ok(()) => savepoint.commit()?,
+                    Err(error) => tracing::warn!(
+                        %error,
+                        "a scoped critique artifact the side-row wall no longer admits is dropped by its project's erase"
+                    ),
+                }
             }
             Ok(_) => {}
             Err(error) => {
@@ -172,6 +184,7 @@ pub(crate) fn erase_review_scope_in_txn(
             Err(error) => {
                 tracing::warn!(%error, "a cached review that no longer decodes is deleted");
                 REVIEW.delete(&vault.store, wtxn, &hash)?;
+                dropped.push(REVIEW.key_bytes(&hash));
                 continue;
             }
         };
@@ -205,14 +218,49 @@ pub(crate) fn erase_review_scope_in_txn(
         hasher.update(&hash);
         let moved = *hasher.finalize().as_bytes();
         REVIEW.delete(&vault.store, wtxn, &hash)?;
-        REVIEW.put(&vault.store, wtxn, &moved, &review)?;
+        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+        if let Err(error) = REVIEW.put(&vault.store, &mut savepoint, &moved, &review) {
+            tracing::warn!(
+                %error,
+                "a scoped review the side-row wall no longer admits is dropped by its project's erase"
+            );
+            drop(savepoint);
+            dropped.push(REVIEW.key_bytes(&hash));
+            continue;
+        }
+        savepoint.commit()?;
         let verdict = field_mut(&mut review, "verdict").and_then(|verdict| {
             verdict
                 .as_str()
                 .and_then(|hex| EntityId::from_hex(hex).ok())
         });
-        if let Some(verdict) = verdict {
-            REVIEW_ID.put(&vault.store, wtxn, &verdict, &REVIEW.key_bytes(&moved))?;
+        match verdict {
+            Some(verdict) => {
+                REVIEW_ID.put(&vault.store, wtxn, &verdict, &REVIEW.key_bytes(&moved))?;
+            }
+            None => dropped.push(REVIEW.key_bytes(&hash)),
+        }
+    }
+    drop_review_pointers_in_txn(vault, wtxn, &dropped)
+}
+
+/// Deletes every review-id pointer to a row in `dropped`, the full keys of
+/// reviews this erase removed or moved without re-pointing, so no pointer
+/// keeps a key derived from the erased project.
+fn drop_review_pointers_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    dropped: &[Vec<u8>],
+) -> Result<()> {
+    if dropped.is_empty() {
+        return Ok(());
+    }
+    let rows = REVIEW_POINTER
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .collect::<Result<Vec<_>>>()?;
+    for (key, pointer) in rows {
+        if dropped.contains(&pointer) {
+            REVIEW_POINTER.delete(&vault.store, wtxn, &key)?;
         }
     }
     Ok(())

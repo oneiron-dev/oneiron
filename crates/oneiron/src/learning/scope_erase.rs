@@ -148,8 +148,17 @@ fn rescope_heads_in_txn(
             };
             after = Some(last);
             for id in page {
-                let Some(mut body) = vault.get_claim_in_txn(wtxn, &id)? else {
-                    continue;
+                let mut body = match vault.get_claim_in_txn(wtxn, &id) {
+                    Ok(Some(body)) => body,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            id = %id.to_hex(),
+                            "a learning head that no longer reads is passed over by its project's erase"
+                        );
+                        continue;
+                    }
                 };
                 if body.source != Some(ClaimSource::Observed)
                     || body.approval != ClaimApprovalStatus::Auto

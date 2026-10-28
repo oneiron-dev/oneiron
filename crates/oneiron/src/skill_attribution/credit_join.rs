@@ -297,7 +297,10 @@ pub(super) fn record_credit_in_txn(
     evidence: &LearningEvidence,
     now: u64,
 ) -> Result<()> {
-    if let Err(error) = capture_first_prior_in_txn(vault, txn, fields, cell, evidence) {
+    // A savepoint, so a capture that fails part-way leaves none of its rows.
+    if let Err(error) = super::derivation_witness::in_savepoint(&vault.store, txn, |txn| {
+        capture_first_prior_in_txn(vault, txn, fields, cell, evidence)
+    }) {
         tracing::warn!(
             kind = ?error.kind(),
             %error,
