@@ -7,7 +7,11 @@
 //! the subject and its share first; this file records what it is handed, one
 //! evidence row per receipt per cell, so a replay overwrites rather than
 //! counts twice. The cell keeps the untouched / amended / rejected counts
-//! beside the mean edit mass.
+//! beside the mean edit mass, and a judged receipt counts its outcome on the
+//! generating actor's cell and its skill's even where no share charges them:
+//! a count-only row that moves no mean and blames nobody (FIX 9797). Each
+//! magnitude carries the engine version it was measured under, and the fold
+//! keeps one version per cell (FIX 7822).
 //!
 //! A cell is qualified by `executor` and `consent_scope`, and by `typeRef`
 //! when a task placed the run. An actor is its own executor. A skill's
@@ -15,11 +19,16 @@
 //! unknown-executor key. Readers ask the cell ([`edit_cost_for`]); no parallel
 //! scalar `actor.edit_cost` / `skill.edit_cost` head is kept (FIX 9797).
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::projector::record_target_in_txn;
 use super::taxonomy::{AmendmentClass, AmendmentJudgment};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::learning::evidence::{
+    cells_for_subject_in_txn, evidence_in_txn, evidence_stands_in_txn, withdraw_evidence_in_txn,
+};
 use crate::learning::{
     Anchor, Estimate, LearningCell, LearningEvidence, LearningPredicate, Observation,
     PREDICATE_LEARNING_EDIT_COST, TypeRef,
@@ -113,19 +122,16 @@ pub(in crate::edit_distance) fn record_untouched_in_txn(
 ) -> Result<()> {
     let cell = edit_cost_cell(actor, &actor.to_hex(), scope, None);
     let evidence = observation(receipt, at, 0.0, 1.0, EditOutcome::Untouched);
-    record_in_txn(vault, txn, &cell, &evidence)
+    record_in_txn(vault, txn, &cell, &evidence, at)
 }
 
-/// Records each charging share of `judgment` on its subject's cell, and
-/// returns the cells charged.
+/// Lands every row of `judgment` (see [`judgment_rows`]) and returns their
+/// cells.
 ///
-/// Only a `skill_defect` share charges the skill and only an
-/// `execution_lapse` share charges the actor; every other class charges
-/// nobody. Each share weighs its fraction of the receipt at the receipt's
-/// edit mass, counted amended, or rejected for a rejection. The charged
-/// subject is recorded in the retraction ledger first, and the receipt's row
-/// moves off any other edit-cost cell of that subject, so a re-judgment onto
-/// another executor, scope or task type never counts in two cells.
+/// Each charged subject is recorded in the retraction ledger first, and the
+/// receipt's row moves off every other edit-cost cell of that subject, so a
+/// re-judgment onto another executor, scope or task type never counts in two
+/// cells. A row that already stands as written is left alone.
 ///
 /// # Errors
 ///
@@ -135,47 +141,168 @@ pub(super) fn charge_judgment_in_txn(
     txn: &mut heed::RwTxn<'_>,
     judgment: &AmendmentJudgment,
 ) -> Result<Vec<LearningCell>> {
-    let mut charged = Vec::new();
-    for (cell, share) in charged_cells(judgment) {
-        let mut evidence = observation(
-            &judgment.receipt_id,
-            judgment.at,
-            f64::from(judgment.d_norm),
-            share,
-            outcome_of(judgment),
-        );
-        evidence.judge.clone_from(&judgment.judge);
-        evidence.on_judge_model = judgment.on_judge_model();
+    let rows = judgment_rows(judgment);
+    let subjects: BTreeSet<EntityId> = rows.iter().map(|(cell, _)| cell.subject).collect();
+    for subject in &subjects {
         record_target_in_txn(
             vault,
             txn,
             PREDICATE_LEARNING_EDIT_COST,
-            &cell.subject,
+            subject,
             &judgment.receipt_id,
         )?;
-        withdraw_receipt_in_txn(
+        settle_receipt_rows_in_txn(
             vault,
             txn,
-            &cell.subject,
+            subject,
             &judgment.receipt_id,
-            Some(&cell),
+            &rows,
             judgment.at,
         )?;
-        record_in_txn(vault, txn, &cell, &evidence)?;
-        charged.push(cell);
     }
-    Ok(charged)
+    Ok(rows.into_iter().map(|(cell, _)| cell).collect())
 }
 
-/// Whether `judgment` charges `subject` any share.
-pub(super) fn charges_subject(judgment: &AmendmentJudgment, subject: &EntityId) -> bool {
-    charged_cells(judgment)
+/// Every row `judgment` lands, each on its cell.
+///
+/// Only a `skill_defect` share charges the skill and only an
+/// `execution_lapse` share charges the actor; every other class charges
+/// nobody. Each charging share weighs its fraction of the receipt at the
+/// receipt's edit mass, measured under its engine version, counted amended,
+/// or rejected for a rejection. The generating actor's own cell (where its
+/// untouched approvals land) and the skill's cell at the drafting executor
+/// count the outcome too: where no share charges that cell, a count-only row
+/// does, with no mass and no judge.
+pub(super) fn judgment_rows(judgment: &AmendmentJudgment) -> Vec<(LearningCell, LearningEvidence)> {
+    let outcome = outcome_of(judgment);
+    let mut rows: Vec<(LearningCell, LearningEvidence)> = charged_cells(judgment)
+        .into_iter()
+        .map(|(cell, share)| {
+            let mut evidence = observation(
+                &judgment.receipt_id,
+                judgment.at,
+                f64::from(judgment.d_norm),
+                share,
+                outcome,
+            );
+            evidence.judge.clone_from(&judgment.judge);
+            evidence.on_judge_model = judgment.on_judge_model();
+            evidence.measurement_version = Some(judgment.engine_ver.clone());
+            (cell, evidence)
+        })
+        .collect();
+    let counted = [
+        judgment
+            .actor
+            .map(|actor| edit_cost_cell(actor, &actor.to_hex(), &judgment.scope, None)),
+        judgment.skill.map(|skill| {
+            edit_cost_cell(
+                skill,
+                judgment.executor_key(),
+                &judgment.scope,
+                judgment.type_ref.as_ref(),
+            )
+        }),
+    ];
+    for cell in counted.into_iter().flatten() {
+        if rows.iter().any(|(charged, _)| *charged == cell) {
+            continue;
+        }
+        let evidence = LearningEvidence::anchored(
+            judgment.receipt_id.as_str(),
+            judgment.at,
+            Anchor::OwnerVerdict,
+            Observation::CountOnly(outcome.as_str().to_owned()),
+        );
+        rows.push((cell, evidence));
+    }
+    rows
+}
+
+/// Brings `receipt`'s rows on `subject`'s edit-cost cells in line with
+/// `rows`: the receipt leaves every cell of `subject` that `rows` does not
+/// name, and each of `subject`'s rows that does not stand as written lands
+/// again, projected at `now`.
+///
+/// # Errors
+///
+/// Storage errors, and whatever the learning door refuses.
+pub(super) fn settle_receipt_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    subject: &EntityId,
+    receipt: &str,
+    rows: &[(LearningCell, LearningEvidence)],
+    now: u64,
+) -> Result<()> {
+    let own: Vec<&(LearningCell, LearningEvidence)> = rows
         .iter()
-        .any(|(cell, _)| cell.subject == *subject)
+        .filter(|(cell, _)| cell.subject == *subject)
+        .collect();
+    let keep: Vec<&LearningCell> = own.iter().map(|(cell, _)| cell).collect();
+    withdraw_receipt_in_txn(vault, txn, subject, receipt, &keep, now)?;
+    for (cell, evidence) in own {
+        if !evidence_stands_in_txn(vault, &*txn, cell, evidence)? {
+            record_in_txn(vault, txn, cell, evidence, now)?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether a receipt's rows on `subject`'s edit-cost cells are exactly
+/// `rows`' rows for `subject`, read in `txn`: each stands as written, and
+/// `holders`, the cells of `subject` that hold the receipt (see
+/// [`receipt_cells_in_txn`]), are all among them. A subject with no stored
+/// entity holds nothing, so its rows stand.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn receipt_rows_stand_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+    rows: &[(LearningCell, LearningEvidence)],
+    holders: &[LearningCell],
+) -> Result<bool> {
+    if !holds_estimates_in_txn(vault, txn, subject)? {
+        return Ok(true);
+    }
+    for (cell, evidence) in rows.iter().filter(|(cell, _)| cell.subject == *subject) {
+        if !evidence_stands_in_txn(vault, txn, cell, evidence)? {
+            return Ok(false);
+        }
+    }
+    Ok(holders
+        .iter()
+        .all(|held| rows.iter().any(|(cell, _)| cell == held)))
+}
+
+/// The edit-cost cells of `subject` that hold each receipt, read in `txn`
+/// with one pass over the subject's cells.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn receipt_cells_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<BTreeMap<String, Vec<LearningCell>>> {
+    let mut held: BTreeMap<String, Vec<LearningCell>> = BTreeMap::new();
+    for row in cells_for_subject_in_txn(vault, txn, subject)? {
+        if row.cell.predicate != LearningPredicate::EditCost {
+            continue;
+        }
+        for (receipt, _) in evidence_in_txn(vault, txn, &row.cell.digest())? {
+            held.entry(receipt).or_default().push(row.cell.clone());
+        }
+    }
+    Ok(held)
 }
 
 /// Withdraws `receipt`'s evidence from every `learning.edit_cost` cell of
-/// `subject` but `keep`, reprojecting each cell it leaves at `now`.
+/// `subject` but those in `keep`, reprojecting each cell it leaves at `now`.
 ///
 /// # Errors
 ///
@@ -185,14 +312,14 @@ pub(super) fn withdraw_receipt_in_txn(
     txn: &mut heed::RwTxn<'_>,
     subject: &EntityId,
     receipt: &str,
-    keep: Option<&LearningCell>,
+    keep: &[&LearningCell],
     now: u64,
 ) -> Result<()> {
-    for row in crate::learning::evidence::cells_for_subject_in_txn(vault, &*txn, subject)? {
-        if row.cell.predicate != LearningPredicate::EditCost || keep == Some(&row.cell) {
+    for row in cells_for_subject_in_txn(vault, &*txn, subject)? {
+        if row.cell.predicate != LearningPredicate::EditCost || keep.contains(&&row.cell) {
             continue;
         }
-        crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, &row.cell, receipt, now)?;
+        withdraw_evidence_in_txn(vault, txn, &row.cell, receipt, now)?;
     }
     Ok(())
 }
@@ -253,21 +380,28 @@ fn observation(
     evidence
 }
 
-/// Lands `evidence` on `cell`. A subject with no stored entity has nowhere to
-/// hold the estimate, and records nothing.
+/// Whether `subject` is a stored entity, the only kind that can hold an
+/// estimate.
+fn holds_estimates_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<bool> {
+    Ok(vault.store.port_entity_record(txn, subject)?.is_some())
+}
+
+/// Lands `evidence` on `cell`, projecting the cell at `now`. A subject with
+/// no stored entity has nowhere to hold the estimate, and records nothing.
 fn record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     cell: &LearningCell,
     evidence: &LearningEvidence,
+    now: u64,
 ) -> Result<()> {
-    if vault
-        .store
-        .port_entity_record(&*txn, &cell.subject)?
-        .is_none()
-    {
+    if !holds_estimates_in_txn(vault, &*txn, &cell.subject)? {
         return Ok(());
     }
-    crate::learning::record_evidence_in_txn(vault, txn, cell, evidence, evidence.at)?;
+    crate::learning::record_evidence_in_txn(vault, txn, cell, evidence, now)?;
     Ok(())
 }
