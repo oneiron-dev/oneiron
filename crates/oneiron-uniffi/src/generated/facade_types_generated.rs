@@ -50482,6 +50482,8 @@ pub struct VoicePackSummary {
     pub origin: VoiceRefOrigin,
     #[serde(rename = "clips")]
     pub clips: Vec<VoiceClipSummary>,
+    #[serde(rename = "crossed")]
+    pub crossed: Vec<String>,
 }
 
 /// `oneiron::voice_identity::ref_bank::owner_acts::VoiceRenderConsentView`.

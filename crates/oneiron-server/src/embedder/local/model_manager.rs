@@ -1091,7 +1091,7 @@ fn send_following(
 }
 
 mod revision;
-pub(crate) use revision::{ResolvedLocalRevision, is_commit};
+pub(crate) use revision::ResolvedLocalRevision;
 
 #[cfg(test)]
 mod tests;

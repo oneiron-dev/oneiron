@@ -42,10 +42,11 @@ pub use bundle::{
 pub(crate) use bundle::{
     CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMeta, PadObjectRefillSource,
     capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
-    current_pad_objects_in_txn, install_captured_pad_objects_in_txn, read_back_pad_objects_in_txn,
+    current_pad_objects_in_txn, index_in, install_captured_pad_objects_in_txn,
+    pad_objects_identity_in_txn, read_back_captured_in_txn, read_back_pad_objects_in_txn,
     refill_pad_object,
 };
-pub(crate) use bundle::{held_pad_object, holds_sealed_bundle};
+pub(crate) use bundle::{held_pad_object, holds_sealed_bundle, read_back_generation_in};
 pub use bundle_access::{
     PadAccessRequest, PadAccessState, PendingPadAccess, PendingPadAccessList,
     ensure_sealed_pad_access, offer_sealed_pad_access, pending_sealed_pad_access,

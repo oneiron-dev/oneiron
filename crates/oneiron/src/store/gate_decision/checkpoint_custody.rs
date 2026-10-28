@@ -17,6 +17,7 @@
 
 mod activation;
 mod destination;
+mod pad_objects;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -35,9 +36,15 @@ use crate::store::key_custody::{
 use crate::store::root_directory::{
     FileIdentity, file_identity, named_directory_identity, refuse_shared_vault_root,
 };
-use crate::store::{Store, not_an_existing_root, read_existing_vault_meta};
+use crate::store::{Store, not_an_existing_root, read_existing_custody_pad_rows};
 
-pub(crate) use self::destination::MadeDestination;
+pub(crate) use self::destination::{MadeDestination, replace_host_holds_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use self::pad_objects::put_back_pad_objects_in_txn;
+pub(crate) use self::pad_objects::{
+    ExpectedPadObjects, PAD_SOURCE_IDENTITY, PadObjectsCapture, PadObjectsLanding,
+    PadSourceIdentity, UncapturedPadObjects, install_source_pad_objects_in_txn,
+};
 use super::keys::GATE_DECISION_KEY_PREFIX;
 use super::orcb::{self, corrupt};
 use super::retention::{checkpoint_retirements, retirement_prefixes};
@@ -124,36 +131,6 @@ pub(crate) fn host_hold_rows_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Ro
     vault_meta_rows(&store.env, txn, &[HOST_HOLD_PREFIX])
 }
 
-/// Replaces every host-order row of a vault with `rows`, in `wtxn`. Rows
-/// outside the family are refused.
-pub(crate) fn replace_host_holds_in_txn(
-    store: &Store,
-    wtxn: &mut RwTxn<'_>,
-    rows: &[(Vec<u8>, Vec<u8>)],
-) -> Result<()> {
-    if rows
-        .iter()
-        .any(|(key, _)| !key.starts_with(HOST_HOLD_PREFIX))
-    {
-        return Err(Error::CorruptedIndex("host-order legal hold rows"));
-    }
-    let vault_meta = store
-        .env
-        .open_database::<Bytes, Bytes>(wtxn, Some("vault_meta"))?
-        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
-    let stale: Vec<Vec<u8>> = vault_meta
-        .prefix_iter(wtxn, HOST_HOLD_PREFIX)?
-        .map(|row| row.map(|(key, _)| key.to_vec()))
-        .collect::<std::result::Result<_, _>>()?;
-    for key in stale {
-        vault_meta.delete(wtxn, &key)?;
-    }
-    for (key, value) in rows {
-        vault_meta.put(wtxn, key, value)?;
-    }
-    Ok(())
-}
-
 /// One vault's live key-custody state, read when a side restore of it
 /// starts: its custody binding, and its key-retirement intents with the
 /// holds they read.
@@ -170,6 +147,10 @@ pub(crate) struct LiveCustody {
     erased_by: BTreeSet<Vec<u8>>,
     /// Its credential erase evidence (KS-6 part 2), read apart from the rest.
     fences: crate::store::CredentialFences,
+    /// Its home's current pad objects, from the read of the rows above
+    /// (PAD-1).
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    pub(crate) pad_objects: PadObjectsCapture,
 }
 
 impl LiveCustody {
@@ -177,7 +158,7 @@ impl LiveCustody {
     /// canonical `own_root`; with no binding its custody is the one beside
     /// `own_root`. An archived vault's custody belongs to the vault that
     /// replaced it, so its own state is no source's.
-    fn from_rows(own_root: &Path, rows: Rows) -> Result<Self> {
+    fn from_rows(own_root: &Path, rows: Rows, pad_objects: PadObjectsCapture) -> Result<Self> {
         let binding = key_custody::binding_in_rows(&rows)?;
         let mut mark = None;
         let mut store_identity = None;
@@ -214,6 +195,7 @@ impl LiveCustody {
             host_holds,
             erased_by,
             fences: crate::store::CredentialFences::default(),
+            pad_objects,
         })
     }
 
@@ -292,10 +274,12 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 }
 
 /// The live custody state of the vault at `vault_dir`, read without opening
-/// it as a vault, through the read-only door (`read_existing_vault_meta`): a
-/// vault another process serves reads beside it, and one this process holds,
-/// under any name, is refused. A sealed vault reads with `page_seal`. A
-/// missing or unreadable vault refuses.
+/// it as a vault, through the read-only door's paired read
+/// (`read_existing_custody_pad_rows`), its pad object rows in the same
+/// transaction: a vault another process serves reads beside it, and one this
+/// process holds, under any name, is refused. A sealed vault reads with
+/// `page_seal`. A missing or unreadable vault refuses; pad object rows that
+/// do not read leave its objects not captured (PAD-1).
 pub(crate) fn read_live_custody(
     vault_dir: &Path,
     page_seal: Option<&crate::world_keys::VaultPageSeal>,
@@ -309,9 +293,15 @@ pub(crate) fn read_live_custody(
         callback();
     }
     let read = crate::world_keys::read_sealed(vault_dir, page_seal, || {
-        read_existing_vault_meta(vault_dir, &live_custody_prefixes())
+        read_existing_custody_pad_rows(
+            vault_dir,
+            &live_custody_prefixes(),
+            &pad_objects::pad_object_prefixes(),
+            pad_objects::is_pad_object_row,
+        )
     })?;
-    let mut live = LiveCustody::from_rows(&read.root, read.rows)?;
+    let pad_objects = pad_objects::disk_capture(read.sync_state);
+    let mut live = LiveCustody::from_rows(&read.root, read.vault_meta, pad_objects)?;
     live.fences = crate::store::CredentialFences::at_vault(&read.root, page_seal);
     Ok(live)
 }
@@ -565,14 +555,18 @@ pub(crate) fn refuse_custody_beside(destination: &Path) -> Result<()> {
 }
 
 impl Store {
-    /// This vault's live custody state, for a side restore of it.
-    pub(crate) fn live_custody(&self) -> Result<LiveCustody> {
+    /// This vault's live custody state, for a side restore of it, with what
+    /// `pad_objects` captures of its pad objects in the same transaction.
+    pub(crate) fn live_custody(
+        &self,
+        pad_objects: impl FnOnce(&RoTxn<'_>) -> PadObjectsCapture,
+    ) -> Result<LiveCustody> {
         if self.env.is_sealed() {
             return Err(archived());
         }
         let txn = self.env.read_txn()?;
         let rows = vault_meta_rows(&self.env, &txn, &live_custody_prefixes())?;
-        let mut live = LiveCustody::from_rows(self.env.path(), rows)?;
+        let mut live = LiveCustody::from_rows(self.env.path(), rows, pad_objects(&txn))?;
         live.fences = self.credential_fences_in_txn(&txn);
         Ok(live)
     }

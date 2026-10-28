@@ -6,12 +6,13 @@ use super::super::{
     BudgetDenied, BudgetGuard, BudgetLease, BudgetSettlement, DispatchBinding,
     InferenceCallReceipt, ModelLocality, PinnedConfigViolation,
 };
-use super::admission::{RunCall, RunDenied, RunInner};
+use super::admission::{CallOrigin, RunCall, RunDenied, RunInner};
 use super::declaration::{LeaseUnit, RunDeclaration};
 use super::host::{
     AllocationRef, KeyCustody, LiveAllocation, PaidConnector, Payer, UnitRate, Unpriced, convert,
 };
 use super::receipt::{PermitFacts, RunStreamUsage};
+use super::resident::ResidentDraw;
 use super::settle::CallOutcome;
 
 /// A one-use admission for one call: the lease to send with it and every fact
@@ -57,6 +58,9 @@ pub(super) struct AllocationHold {
     pub(super) meter: BudgetGuard,
     pub(super) lease: BudgetLease,
     pub(super) unit: LeaseUnit,
+    /// The call's draw on its resident's share of the allocation (FIX
+    /// 7767), when the host keeps residents and the call names one.
+    pub(super) resident: Option<ResidentDraw>,
 }
 
 impl RunPermit {
@@ -147,8 +151,9 @@ impl RunInner {
         revision: u32,
         call: RunCall<'_>,
         request_digest: Option<String>,
-        source_rows: Option<Vec<crate::EntityId>>,
+        origin: CallOrigin,
     ) -> Result<RunPermit, RunDenied> {
+        let resident = self.resident(&origin);
         let RunCall {
             selector,
             request,
@@ -213,6 +218,7 @@ impl RunInner {
             u128::from(line.reserve_units),
             &tokens,
             &offer.rates,
+            resident,
         ) {
             Ok(allocation) => allocation,
             Err(denied) => {
@@ -221,6 +227,12 @@ impl RunInner {
                 return Err(denied);
             }
         };
+        if let Some(draw) = allocation
+            .as_ref()
+            .and_then(|(_, hold)| hold.resident.as_ref())
+        {
+            self.note_overdraft(revision, lease.id(), draw);
+        }
         Ok(RunPermit {
             run: Arc::clone(self),
             facts: PermitFacts {
@@ -253,8 +265,8 @@ impl RunInner {
                     .metered_seat()
                     .map(|tier| tier.0.clone()),
                 rules_enforced,
-                source_rows,
-                initiator: None,
+                source_rows: origin.sources,
+                initiator: origin.initiator,
             },
             revision,
             lease,
@@ -275,8 +287,9 @@ impl RunInner {
         revision: u32,
         connector: &PaidConnector,
         quantity: u64,
-        source_rows: Option<Vec<crate::EntityId>>,
+        origin: CallOrigin,
     ) -> Result<RunPermit, RunDenied> {
+        let resident = self.resident(&origin);
         if !declaration.admits_connector(&connector.connector) {
             return Err(RunDenied::UndeclaredConnector {
                 connector: connector.connector.clone(),
@@ -310,6 +323,7 @@ impl RunInner {
             native,
             &connector.cost_unit,
             &connector.rates,
+            resident,
         ) {
             Ok(allocation) => allocation,
             Err(denied) => {
@@ -317,6 +331,12 @@ impl RunInner {
                 return Err(denied);
             }
         };
+        if let Some(draw) = allocation
+            .as_ref()
+            .and_then(|(_, hold)| hold.resident.as_ref())
+        {
+            self.note_overdraft(revision, lease.id(), draw);
+        }
         Ok(RunPermit {
             run: Arc::clone(self),
             facts: PermitFacts {
@@ -349,8 +369,8 @@ impl RunInner {
                 attribution: self.attribution.clone(),
                 seat: None,
                 rules_enforced,
-                source_rows,
-                initiator: None,
+                source_rows: origin.sources,
+                initiator: origin.initiator,
             },
             revision,
             lease,
@@ -384,18 +404,21 @@ impl RunInner {
             .map_err(|denied| RunDenied::Budget { denied })
     }
 
-    /// Reserves a host-paid call on the vault's live allocation. A refused
-    /// fresh allocation only matters once the live one cannot fit the call. A
-    /// run with no host account has no allocation to draw on, so it admits no
-    /// host-paid call.
+    /// Reserves a host-paid call on the vault's live allocation, and on the
+    /// share of it `resident` holds when the host keeps residents (FIX 7767).
+    /// A refused fresh allocation only matters once the live one cannot fit
+    /// the call. A run with no host account has no allocation to draw on, so
+    /// it admits no host-paid call. A memory-work run takes no hold at all
+    /// (FIX 11003): memory work never needs funds.
     fn hold_allocation(
         &self,
         payer: Payer,
         native_units: u128,
         native: &LeaseUnit,
         rates: &[UnitRate],
+        resident: Option<crate::EntityId>,
     ) -> Result<Option<(AllocationRef, AllocationHold)>, RunDenied> {
-        if payer != Payer::Host {
+        if payer != Payer::Host || self.memory_work() {
             return Ok(None);
         }
         let Some(host) = self.host.as_ref() else {
@@ -425,12 +448,28 @@ impl RunInner {
                 BudgetDenied::Exhausted => short(),
                 denied => RunDenied::Budget { denied },
             })?;
+        let residents = host.residents().zip(resident);
+        let resident = match residents {
+            Some((residents, resident)) => {
+                let allocation_units = meter.read().limit_units;
+                match residents.draw(resident, &reference, allocation_units, units) {
+                    Ok(draw) => Some(draw),
+                    Err(denied) => {
+                        // Not dispatched, so the abort releases the hold.
+                        meter.abort(&lease.lease).ok();
+                        return Err(denied);
+                    }
+                }
+            }
+            None => None,
+        };
         Ok(Some((
             reference,
             AllocationHold {
                 meter,
                 lease: lease.lease,
                 unit,
+                resident,
             },
         )))
     }

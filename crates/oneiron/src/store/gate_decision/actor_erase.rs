@@ -119,7 +119,9 @@ pub(super) fn reseal_gate_decision(
     match (orcb::raw_claim_generation(raw), custody) {
         (Some((_, generation)), Some(custody)) => orcb::encode_hot_at(custody, record, generation),
         (Some(_), None) => Err(orcb::corrupt()),
-        (None, Some(custody)) if orcb::is_policy_sealed(raw) => orcb::encode_policy(custody, record),
+        (None, Some(custody)) if orcb::is_policy_sealed(raw) => {
+            orcb::encode_policy(custody, record)
+        }
         (None, None) if orcb::is_policy_sealed(raw) => Err(orcb::corrupt()),
         (None, _) => encode_gate_decision(record),
     }

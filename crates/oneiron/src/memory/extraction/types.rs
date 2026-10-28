@@ -37,13 +37,33 @@ pub enum EncoderRegister {
     Live,
     /// The whole conversation as it is authorized and stored now: every
     /// earlier turn whole, the turn, then every later turn, in conversation
-    /// order. An import, backfill or other bulk marker reads it. Spans still
-    /// index the turn's own messages alone.
-    Conversation,
+    /// order, with where it stops short of that. An import, backfill or
+    /// other bulk marker reads it. Spans still index the turn's own messages
+    /// alone.
+    Conversation(RegisterReach),
 }
 impl EncoderRegister {
     pub const fn is_live(&self) -> bool {
         matches!(self, Self::Live)
+    }
+}
+/// Where a conversation register stops short of its conversation (FIX
+/// 10705): neither, for one read whole. A side stops at its bound of turns,
+/// keeping the nearest; walking down a DAG it also stops at a branch, whose
+/// lines it does not choose between.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RegisterReach {
+    /// Turns older than the first of `context` were not read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub earlier_cut: bool,
+    /// Turns later than the last of `following` were not read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub later_cut: bool,
+}
+impl RegisterReach {
+    /// Whether the register reads its whole conversation.
+    pub const fn is_whole(&self) -> bool {
+        !self.earlier_cut && !self.later_cut
     }
 }
 #[derive(Debug, Clone, Serialize)]
