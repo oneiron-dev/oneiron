@@ -496,6 +496,7 @@ fn capture_past_adopted(
             observations: &observations,
             posture: store.privacy_posture,
             pin,
+            keep_replay: false,
         },
     )?;
     Ok((captured, parents))

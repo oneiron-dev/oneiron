@@ -118,9 +118,15 @@ pub(super) fn apply_op(
         // execution's (`federation::shared_act`).
         AuthorityOp::OwnerHandover(_) => {}
         // A residence directive is applied by the machine it names
-        // (`sync::residence`); `fold_entry_state`'s result arm returns
+        // (`sync::residence`); the fold keeps its id and machine for a result
+        // past its row (FIX 5412). `fold_entry_state`'s result arm returns
         // before reaching here.
-        AuthorityOp::ResidenceDirective(_) | AuthorityOp::ResidenceResult(_) => {}
+        AuthorityOp::ResidenceDirective(directive) => {
+            state
+                .residence_directives
+                .insert(entry_hash, (directive.id, directive.machine));
+        }
+        AuthorityOp::ResidenceResult(_) => {}
     }
 }
 
