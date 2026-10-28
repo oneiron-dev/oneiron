@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4235 declarations.
+// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4237 declarations.
 // Replies: 1097 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: none.
@@ -3198,8 +3198,10 @@ declare namespace Sdk {
   type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
   type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[] };
   type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: VoiceRefSubjectKind; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: VoiceConsentBasis | null; state: VoiceConsentState; revision: string; sequence: number };
+  type VoiceTargetRender = { kind: "hosted_clone"; locality: ModelLocality } | { kind: "reference"; locality: ModelLocality } | { kind: "unconfigured" };
   type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
-  type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
+  type VoiceReferenceFenceView = { source_packs: string[]; ref_digest: string; incarnation?: string | null; consent_revision: string; revision: string };
+  type VoiceTargetInspection = { target: string; render: VoiceTargetRender; include_generated: boolean; current?: VoiceTargetCloneView | null; reference?: VoiceReferenceFenceView | null };
   type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection };
   type VoiceRenderLineageRequest = { voice_id: string };
   type VoiceDroppedTargetView = { target: string; held: VoiceTargetCloneView };
@@ -7201,7 +7203,7 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.VectorPutRequest): Promise<Sdk.VectorPutReceipt | StoredResult>;
   };
   voices: {
-    /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone. */
+    /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target. */
     inspect(input: Sdk.VoiceBankInspectRequest): Promise<Sdk.VoiceBankInspection | StoredResult>;
     /** A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call. */
     lineage(input: Sdk.VoiceRenderLineageRequest): Promise<Sdk.VoiceRenderEventView[] | StoredResult>;
