@@ -21,6 +21,7 @@
 
 mod activation;
 mod actor_erase;
+mod artifact;
 pub use actor_erase::{ACTOR_ERASE_UNSELECTED_LENS_PROPOSAL, UnselectedLensProposalErase};
 pub(crate) use actor_erase::{erase_proposal_actor_in_txn, erase_slot_actor_in_txn};
 mod atom;
@@ -33,7 +34,9 @@ mod intent;
 pub use crate::claim::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
-pub use guest::LensExecutionRuntime;
+pub use guest::{
+    LENS_GUEST_MEMORY_BYTES, LENS_GUEST_STEP_FUEL, LensExecutionRuntime, LensGuestPolicy,
+};
 pub use inspection::{
     INSPECTION_HANDLE_LEN, INSPECTION_HANDLE_VERSION, InspectionHandle, InspectionResolveRequest,
     InspectionResolved, InspectionState, decode_inspection_handle, encode_inspection_handle,
@@ -54,10 +57,11 @@ pub use proposal::{
     LensListRequest, LensListRow, LensProposalState, LensProposeRequest, LensSlot,
 };
 pub use regen::{
-    LensRegenEnactment, enact_lens_regeneration_embedded, regenerate_and_enact_lens_embedded,
+    LensRegenDecision, LensRegenEnactment, enact_lens_regeneration_embedded,
+    regenerate_and_enact_lens_embedded,
 };
 mod sdk;
-pub use sdk::{LENS_DEFAULT_MAX_SOURCES, LensDefaultRequest, LensDossierSource};
+pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource};
 mod record_ref;
 pub use record_ref::{
     LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_LINKS_TURN_PAGE_MAX,
@@ -105,8 +109,8 @@ pub use mediation::{
     GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedAction, LensApprovedActionArg,
     LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget, LensBackingTargetKind,
     LensExecutionBoundary, LensGateWriteChokepoint, LensHostBackingRef, LensHostImport,
-    LensHostMediatedWrite, LensPrincipalBinding, LensQuoteHandle, LensQuoteRange, LensReadHandle,
-    LensReadReach, LensRenderFrame, LensSpanCursor, LensSpanSelectionRequest,
+    LensHostMediatedWrite, LensPrincipalBinding, LensQuoteHandle, LensQuoteProof, LensQuoteRange,
+    LensReadHandle, LensReadReach, LensRenderFrame, LensSpanCursor, LensSpanSelectionRequest,
 };
 pub use mediation::{HostedLensRender, LensFrameCard};
 pub use self_ui::{

@@ -29,4 +29,4 @@ pub use self::mediation_principal::{
     GeneratedUiAgentCallback, GeneratedUiValidatedAction, LensActingPrincipalKind,
     LensPrincipalBinding,
 };
-pub use self::mediation_quote::{LensQuoteHandle, LensQuoteRange};
+pub use self::mediation_quote::{LensQuoteHandle, LensQuoteProof, LensQuoteRange};

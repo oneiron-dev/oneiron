@@ -15,9 +15,8 @@ use super::super::replay::{
 };
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    MODEL_HEAL_COUNTS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS,
-    finish_output, load_whole_body, next_additive_heal_count, read_body_row_range,
-    replay_generation_matches,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output,
+    load_whole_body, read_body_row_range, replay_generation_matches,
 };
 use super::response_erase::fence_replay_in_txn;
 use super::response_owners::stamp_response_owner_in_txn;
@@ -31,9 +30,10 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod replay;
 
 #[cfg(test)]
-use super::records::CodeRunModelHealCount;
+use super::records::{CodeRunModelHealCount, MODEL_HEAL_COUNTS};
 #[cfg(test)]
 use crate::Error;
 
@@ -172,28 +172,7 @@ impl SessionBinding<'_> {
     ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        self.answered(|| match healed_model {
-            Some(model) => self
-                .session
-                .side_table_compare_and_put_with_counter_routed(
-                    &self.route,
-                    &REPLAY_RECORDS,
-                    &record.run_id,
-                    record,
-                    |current| replay_generation_matches(current, expected),
-                    &MODEL_HEAL_COUNTS,
-                    &model.as_str().to_owned(),
-                    next_additive_heal_count,
-                )
-                .map(drop),
-            None => self.session.side_table_compare_and_put_routed(
-                &self.route,
-                &REPLAY_RECORDS,
-                &record.run_id,
-                record,
-                |current| replay_generation_matches(current, expected),
-            ),
-        })?;
+        self.answered(|| self.put_replay_routed(record, expected, healed_model, |_, _| Ok(())))?;
         Ok(next_generation)
     }
 

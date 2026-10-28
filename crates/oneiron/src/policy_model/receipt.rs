@@ -1,9 +1,14 @@
 //! Gate-ledger rows for policy verdicts.
 //!
-//! Enforcement that carries a signal is receipted; a clean allow the model
-//! examined is not. That asymmetry is deliberate — the ledger records the times
-//! the engine acted or declined to look, so an act it never recorded is an act
-//! it never took.
+//! A decision the owner plane made is receipted by the door that made it,
+//! once: a clean allow it examined included (FIX 7805), as one hash-only row
+//! with no notice, so the ledger holds every time the engine looked. A plane
+//! that is off looked at nothing and records nothing, and a door that only
+//! enforces a decision another door recorded writes no second row.
+//!
+//! Each row names no claim, so it is sealed in the vault's own key custody
+//! under the policy partition (FIX 7806) rather than stored as plain
+//! MessagePack; it reads back through the ledger's one decode door.
 //!
 //! # The receipt is the policy-improvement loop
 //!
@@ -77,7 +82,7 @@ impl Vault {
                 queue_ref.rsplit(':').next().expect("queue token")
             ));
         }
-        self.store.append_gate_decision_in_txn(
+        self.store.append_policy_gate_decision_in_txn(
             wtxn,
             &GateDecisionRecord {
                 version: 0,

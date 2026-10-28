@@ -124,7 +124,8 @@ side_tables! {
     TEAM_PATTERN_SKILL: VaultMeta b"team:pattern_skill:v1:" Named;
     /// One team run's receipt (type, pattern, models, shape, who decided, coverage, confessions,
     /// anchored outcome). Key: string (team reference).
-    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named;
+    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named
+        => crate::learning::erase_team_receipt_scope_in_txn;
     /// One team start as the host saw it: stamp, leader, root TASK, queued members and widenings.
     /// Key: string (leader attempt hex, `:`, team reference).
     TEAM_RUN: VaultMeta b"team:run:v1:" Named;

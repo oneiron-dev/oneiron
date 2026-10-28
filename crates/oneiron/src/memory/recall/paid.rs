@@ -344,6 +344,10 @@ impl Memory<'_> {
     ) -> MemoryResult<MemoryPack> {
         let as_of = input.as_of.unwrap_or_else(crate::unix_seconds_now);
         let format = input.format.as_deref();
+        // Every pass renders under the one budget the request resolves to
+        // (FIX 9962).
+        let render_budget =
+            Some(self.recall_render_budget(input.token_budget, input.reader_agent_ref.as_deref()));
         // Every pass, retry and text read of this recall narrows by the one
         // selection its first pass resolves (FIX 5006), or the door's cut
         // and ready packs before it (FIX 6693).
@@ -390,6 +394,7 @@ impl Memory<'_> {
                         .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
                     door_fallback: fallback,
                     rerank_unavailable: true,
+                    render_budget,
                     ..Default::default()
                 },
                 Some(pin),
@@ -420,6 +425,7 @@ impl Memory<'_> {
                         .as_ref()
                         .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
                     door_fallback: fallback,
+                    render_budget,
                     ..Default::default()
                 },
                 Some(pin),
@@ -556,6 +562,7 @@ impl Memory<'_> {
                         .as_ref()
                         .map(|on_cut| on_cut as &(dyn Fn(MemoryPack) + Sync)),
                     door_fallback: fallback,
+                    render_budget,
                     ..Default::default()
                 },
                 Some(pin),

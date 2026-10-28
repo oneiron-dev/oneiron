@@ -35,7 +35,7 @@ use std::collections::BTreeSet;
 pub(super) mod approved;
 
 /// The curator's finding predicate.
-const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";
+pub(crate) const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";
 
 /// Owner-set rubric dial for the memory-curator maintenance pass.
 const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =

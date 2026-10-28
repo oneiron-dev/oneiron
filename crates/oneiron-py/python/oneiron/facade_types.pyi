@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4170 declarations.
+Census: 1161 facade rows, 4171 declarations.
 Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1161 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 105; unread shapes: 0.
@@ -2649,6 +2649,8 @@ class RecallRequest(TypedDict):
     scope: NotRequired[RecallScope | None]
     limit: NotRequired[int | None]
     format: NotRequired[str | None]
+    token_budget: NotRequired[int | None]
+    reader_agent_ref: NotRequired[str | None]
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
     media: NotRequired[ContextPackMediaQuery | None]
@@ -7253,12 +7255,16 @@ class FilesLimitCrossed(TypedDict):
     row: str
     limit: int
     observed: int
+class FilesOriginalsUnkept(TypedDict):
+    files: int
+    first_error: str
 class FilesRescanView(TypedDict):
     source: EntityId
     folder: str
     counts: NotRequired[FilesRescanCounts | None]
     error: NotRequired[str | None]
     limits_crossed: NotRequired[list[FilesLimitCrossed]]
+    originals_unkept: NotRequired[FilesOriginalsUnkept | None]
 class FilesSourceAttachAnswer(TypedDict):
     world: FilesWorldView
     source: FilesSourceView
@@ -9750,6 +9756,7 @@ class LearningCellKey(TypedDict):
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
+    project: NotRequired[str | None]
 class LearningReadRequest(TypedDict):
     cell: LearningCellKey
     project_ref: NotRequired[str | None]
@@ -10165,6 +10172,7 @@ class LensProposeRequest(TypedDict):
     pack_content_hash: str
     compiled: Any
     intent_prompt: str
+    trigger: NotRequired[MadeByTrigger | None]
 LensApproval = Literal["proposed"]
 class LensProposalReceipt(TypedDict):
     lens_ref: str
@@ -11009,6 +11017,7 @@ class LearningCell(TypedDict):
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
+    project: NotRequired[EntityId | None]
 CritiqueVerdict = Literal["accept", "revise", "discard"]
 CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
 class CodeProposalReviewRequest(TypedDict):
@@ -12887,12 +12896,14 @@ class DoorsLearningCellView(TypedDict):
     executor: str
     type_ref: TypeStamp
     axis: str
+    project: NotRequired[EntityId | None]
 class BorrowedCellView(TypedDict):
     predicate: str
     subject: EntityId
     executor: NotRequired[str | None]
     type_ref: NotRequired[TypeStamp | None]
     axis: NotRequired[str | None]
+    project: NotRequired[EntityId | None]
 class DoorsLearningEvidenceView(TypedDict):
     receipt_ref: str
     at: int
@@ -13434,6 +13445,7 @@ class CriticReviewSubmit(TypedDict):
     catalog: Any
     critics: list[CriticBinding]
     spawn_attempt_ref: NotRequired[str | None]
+    project_ref: NotRequired[str | None]
 class CritiqueTriageScores(TypedDict):
     accept: float
     revise: float

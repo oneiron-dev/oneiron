@@ -54,11 +54,7 @@ pub(crate) fn turn_generate_pre(
     resolved: Option<EntityId>,
     session: Option<&verb_hook_boundary::HookSession>,
 ) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
-    let args = json!({
-        "room": room,
-        "scope": Value::Null,
-        "board_epoch": Value::Null,
-    });
+    let args = turn_generate_args(room);
     crate::server::blocking(|| {
         verb_hook_boundary::hooks_pre(
             vault,
@@ -68,6 +64,16 @@ pub(crate) fn turn_generate_pre(
             session,
             None,
         )
+    })
+}
+
+/// The input of a turn's `host.turn.generate` call in `room`: what its
+/// chain reads, and what its hook session is judged on (FIX 10344).
+pub(in crate::api::ai::chat) fn turn_generate_args(room: &str) -> Value {
+    json!({
+        "room": room,
+        "scope": Value::Null,
+        "board_epoch": Value::Null,
     })
 }
 

@@ -35,6 +35,9 @@ pub const FIELD_LEARNING_TEAM_REF: &str = "learning.team_ref";
 pub const FIELD_LEARNING_PATTERN: &str = "learning.pattern";
 /// OF-540: the pattern's decider kind (`leader|chair|vote|referee`).
 pub const FIELD_LEARNING_DECIDED_BY: &str = "learning.decided_by";
+/// The run's project, frozen beside its typeRef: the scope its learning
+/// cells key on (FIX 6038). Absent, the vault's.
+const FIELD_TYPE_REF_PROJECT: &str = "type_ref.project";
 
 const BOARD_STATE_REF_PREFIX: &str = "board:";
 const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
@@ -344,6 +347,17 @@ pub fn append_task_type_fields(
     Ok(())
 }
 
+/// Stamps the run's project beside the receipt's typeRef (FIX 6038), as the
+/// dispatch froze it: one authoritative value, never re-read from live
+/// state. A run with no project stamps nothing and reads as the vault's.
+pub(super) fn append_task_project_field(receipt: &mut ReceiptRecord, project: Option<EntityId>) {
+    if let Some(project) = project {
+        receipt
+            .fields
+            .insert(FIELD_TYPE_REF_PROJECT.to_owned(), project.to_hex());
+    }
+}
+
 /// Stamps the OF-540 team-run field-set on an ATTEMPT receipt or a TASK
 /// lifecycle body: the run's exact team reference, its pattern token and the
 /// pattern's decider kind, one string each, rendered from the stamp the
@@ -378,6 +392,35 @@ impl ReceiptRecord {
             node_id.clone(),
             tree_version,
         ))
+    }
+
+    /// The run's project frozen beside the typeRef (FIX 6038); `None` is
+    /// the vault's.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidClaimBody`] for a stamp that is not an entity id.
+    pub(crate) fn task_project(&self) -> Result<Option<EntityId>> {
+        self.fields
+            .get(FIELD_TYPE_REF_PROJECT)
+            .map(|hex| {
+                EntityId::from_hex(hex)
+                    .map_err(|_| Error::InvalidClaimBody("a receipt's project is an entity id"))
+            })
+            .transpose()
+    }
+
+    /// Re-keys a frozen project stamp naming erased `project` to the opaque
+    /// `erased` scope (FIX 6038): the run stays apart from the vault's and no
+    /// longer names the project. `true` when the stamp named it.
+    pub(crate) fn rescope_task_project(&mut self, project: EntityId, erased: EntityId) -> bool {
+        match self.fields.get_mut(FIELD_TYPE_REF_PROJECT) {
+            Some(stamp) if *stamp == project.to_hex() => {
+                *stamp = erased.to_hex();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never

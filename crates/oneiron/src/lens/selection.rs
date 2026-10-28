@@ -107,7 +107,6 @@ pub struct LensSelectionResolved {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LensResultSetActionRequest {
     pub event: GeneratedUiResultSetActionEvent,
-    #[serde(deserialize_with = "super::wire_limits::deserialize_limited_vec")]
     pub selected: Vec<String>,
     pub idempotency_key: String,
 }

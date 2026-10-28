@@ -271,7 +271,7 @@ impl<'de> Deserialize<'de> for GeneratedLens {
                     .next_element::<u16>()?
                     .ok_or_else(|| de::Error::invalid_length(1, &self))?;
                 let root = seq
-                    .next_element_seed(LensNodeSeed { depth: 1 })?
+                    .next_element_seed(LensNodeSeed)?
                     .ok_or_else(|| de::Error::invalid_length(2, &self))?;
                 if seq.next_element::<de::IgnoredAny>()?.is_some() {
                     return Err(de::Error::invalid_length(4, &self));

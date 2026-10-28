@@ -12,7 +12,7 @@ use super::{
 use crate::Result;
 use crate::lens::generated_ui::GeneratedUiPrimitive;
 use crate::lens::self_ui::SelfUiControl;
-use crate::lens::validate::{LensBudget, fallback_lens_text};
+use crate::lens::validate::fallback_lens_text;
 use crate::lens::wire_limits::serialize_tagged;
 
 #[derive(Debug, Clone, PartialEq, schemars::JsonSchema)]
@@ -125,11 +125,6 @@ impl<'de> Deserialize<'de> for LensAtom {
     {
         let atom = Self::from(LensAtomWire::deserialize(deserializer)?);
         atom.validate().map_err(de::Error::custom)?;
-
-        let mut budget = LensBudget::default();
-        atom.count_collection_items(&mut budget)
-            .map_err(de::Error::custom)?;
-
         Ok(atom)
     }
 }
@@ -341,38 +336,6 @@ impl LensAtom {
             Self::SelfUi(control) => control.validate(),
             Self::Media(atom) => atom.validate(),
             Self::ResultSet(atom) => atom.validate(),
-        }
-    }
-
-    pub(in crate::lens) fn count_collection_items(&self, budget: &mut LensBudget) -> Result<()> {
-        match self {
-            Self::TextBlock(atom) => budget.add_collection("text block spans", atom.spans.len()),
-            Self::LedgerRow(atom) => budget.add_collection("ledger row cells", atom.cells.len()),
-            Self::ClaimLine(_) | Self::StatusDot(_) | Self::Seal(_) | Self::MetaLine(_) => Ok(()),
-            Self::DossierSection(atom) | Self::Slip(atom) | Self::Charter(atom) => {
-                budget.add_collection("lens section lines", atom.lines.len())
-            }
-            Self::ThreadEntry(_) => Ok(()),
-            Self::Sheet(atom) => atom.count_collection_items(budget),
-            Self::Receipt(atom) => budget.add_collection("receipt lines", atom.lines.len()),
-            Self::Postmark(_) | Self::PackLine(_) | Self::TwoClocks(_) | Self::Throbber(_) => {
-                Ok(())
-            }
-            Self::AnswerSheet(atom) => {
-                budget.add_collection("answer sheet citations", atom.citations.len())
-            }
-            Self::NeighborhoodGraph(atom) => {
-                budget.add_collection("neighborhood graph nodes", atom.nodes.len())?;
-                budget.add_collection("neighborhood graph edges", atom.edges.len())
-            }
-            Self::AsofScrubber(_) | Self::VoiceLine(_) => Ok(()),
-            Self::QuickFilter(atom) => atom.count_collection_items(budget),
-            Self::InspectorSheet(atom) | Self::InspectorRail(atom) | Self::InspectorTrail(atom) => {
-                atom.count_collection_items(budget)
-            }
-            Self::SelfUi(control) => control.count_collection_items(budget),
-            Self::Media(_) => Ok(()),
-            Self::ResultSet(atom) => atom.count_collection_items(budget),
         }
     }
 }

@@ -22,10 +22,15 @@ on. CommitMixin is `session.suffix_commit`'s: prefill only and final-token
 inclusive, over the staged path plus one pad id that never runs, with no
 sampling. It never joins a generation pass; the layer takes its state once
 its prefill has reached the end of the path.
+
+Both run behind the executor's ScheduledJob (`exl3_executor.py`), which
+bounds the stock prefill's chunk by the Job's class; the chunk to the next
+page boundary here is never longer than a page.
 """
 import time
 
 import torch
+from exl3_executor import ScheduledJob
 from exllamav3 import Job
 from exllamav3.constants import PAGE_SIZE
 
@@ -242,5 +247,6 @@ class CommitMixin(SessionJob):
         return seq.kv_position >= len(seq.sequence_ids) - 1
 
 
-class CommitJob(CommitMixin, Job):
-    pass
+class CommitJob(ScheduledJob, CommitMixin, Job):
+    """A commit's Job: the executor's (`exl3_executor.py`), its prefill
+    bounded by its class as a call's is."""

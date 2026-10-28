@@ -10,7 +10,7 @@
 //! owner's [`VoiceMediaIn::Drained`](super::VoiceMediaIn::Drained) for it
 //! closes the generation through `finish_playout` once its brain and every
 //! verdict are done. A sentence the media queue has no room for waits, with
-//! every sentence after it and the brain's Done, until the queue takes it.
+//! every sentence after it and the brain's terminal, until the queue takes it.
 //! A sentence that was not spoken, a safeguard that did not run, a queue
 //! that took nothing for 30 seconds and a brain event the session refused
 //! stop the generation (`StopReason::OutputFailed`).
@@ -177,8 +177,9 @@ pub(super) struct Speech {
     drained: bool,
     /// Sentences waiting, in order, for room in the media queue.
     held: VecDeque<String>,
-    /// The brain's Done, held behind those sentences, with its taint mark.
-    done_held: Option<bool>,
+    /// The brain's terminal, held behind those sentences, with its taint
+    /// mark: a stop or an answer that ended without one.
+    done_held: Option<(BrainEvent, bool)>,
 }
 
 /// A sentence's verdict, or why it has none.
@@ -276,18 +277,19 @@ impl VoiceHost {
         {
             tracing::warn!("voice media: a turn's memories receipt was not delivered");
         }
-        if matches!(event, BrainEvent::Done) {
-            // A trailing sentence is completed before the session hears Done.
+        if ends_turn(&event) {
+            // A trailing sentence is completed before the session hears the
+            // turn's terminal, a stop or an answer that ended without one.
             let tail =
                 speech_mut(bridge, generation).and_then(|speech| speech.chunker.tick(u64::MAX));
             if !self.speak(generation, tail, bridge, outputs) {
                 return Ok(());
             }
-            // The session hears Done only after every sentence before it.
+            // The session hears it only after every sentence before it.
             if let Some(speech) = speech_mut(bridge, generation)
                 && !speech.held.is_empty()
             {
-                speech.done_held = Some(externally_tainted);
+                speech.done_held = Some((event, externally_tainted));
                 return Ok(());
             }
         }
@@ -321,7 +323,12 @@ impl VoiceHost {
                     self.output_failed(generation, bridge, outputs);
                 }
             }
-            Ok((Some(BrainEvent::Done), _)) => self.brain_done(generation, bridge, outputs)?,
+            // A stop, or an answer that ended without one (FIX 7808): its
+            // words are spoken or held already, and the seam is told no
+            // sentence follows them.
+            Ok((Some(BrainEvent::Done | BrainEvent::Incomplete), _)) => {
+                self.brain_done(generation, bridge, outputs)?;
+            }
             Ok((Some(BrainEvent::Error(_)), _)) => {
                 tracing::warn!("voice media: the brain broke off");
                 self.output_failed(generation, bridge, outputs);
@@ -344,15 +351,15 @@ impl VoiceHost {
         bridge: &mut MediaBridge,
         outputs: &mut VoiceOutputs<B, T, C>,
     ) -> io::Result<()> {
-        if let Some((generation, externally_tainted)) = self.release(bridge, outputs) {
-            let done = VoiceBrainOut {
+        if let Some((generation, event, externally_tainted)) = self.release(bridge, outputs) {
+            let held = VoiceBrainOut {
                 generation,
-                event: BrainEvent::Done,
+                event,
                 externally_tainted,
                 memories: None,
                 sources: None,
             };
-            return self.brain_out(done, bridge, outputs);
+            return self.brain_out(held, bridge, outputs);
         }
         let now = bridge.now_ms();
         let Some((generation, text)) = bridge
@@ -369,25 +376,26 @@ impl VoiceHost {
 
     /// Sends held sentences while the media queue has room; they wait, in
     /// order, as long as it has none (Rule 5: a full queue never stops the
-    /// reply). Once nothing is held, the Done held behind them, for the
+    /// reply). Once nothing is held, the terminal held behind them, for the
     /// caller to hand the session.
     fn release<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
         bridge: &mut MediaBridge,
         outputs: &mut VoiceOutputs<B, T, C>,
-    ) -> Option<(GenerationEpoch, bool)> {
+    ) -> Option<(GenerationEpoch, BrainEvent, bool)> {
         loop {
             let room = bridge.queue.has_room();
             let speech = bridge.speech.as_mut()?;
             let generation = speech.generation;
-            let Some(text) = speech.held.front() else {
-                return speech.done_held.take().map(|tainted| (generation, tainted));
-            };
+            if speech.held.is_empty() {
+                let (terminal, tainted) = speech.done_held.take()?;
+                return Some((generation, terminal, tainted));
+            }
             if !room {
                 return None;
             }
-            let text = text.clone();
-            speech.held.pop_front();
+            // Held sentences are never refused: only room holds them back.
+            let text = speech.held.pop_front()?;
             if !self.send_sentence(generation, text, bridge, outputs) {
                 return None;
             }
@@ -551,7 +559,8 @@ impl VoiceHost {
         false
     }
 
-    /// The brain is done: no sentence follows. A generation whose audio a
+    /// The brain is done, or ended without a stop: either way no sentence
+    /// follows, and what it said keeps its speech. A generation whose audio a
     /// safeguard already closed waits on no playout.
     fn brain_done<B: Brain, T: TtsSeamClient, C: CascadeControl>(
         &self,
@@ -599,6 +608,12 @@ impl VoiceHost {
             bridge.speech = None;
         }
     }
+}
+
+/// Whether `event` ends its turn: a whole answer, or one whose stream ended
+/// before it finished. Both close the speech that turn already had.
+fn ends_turn(event: &BrainEvent) -> bool {
+    matches!(event, BrainEvent::Done | BrainEvent::Incomplete)
 }
 
 fn speech_mut(bridge: &mut MediaBridge, generation: GenerationEpoch) -> Option<&mut Speech> {

@@ -56,6 +56,9 @@ pub(crate) fn record_explicit_ruling_in_txn(
     };
     ESCALATION.put(&vault.store, txn, &(scope_key(&scope), id), &row)?;
     if remember {
+        // The remembered row activates at once, so its holder answers the
+        // same door a learned row's acceptance does, in this writer.
+        super::policy::standing_policy_holder_in_txn(vault, &*txn, owner)?;
         let key = ScopeTriggerKey {
             scope_digest: scope_key(&scope),
             trigger: receipt.trigger,

@@ -58,6 +58,10 @@ pub struct ImportedNote {
     pub written_at: u64,
     /// The file as written.
     pub markdown: String,
+    /// The file's own bytes, kept as its original once the note lands (FIX
+    /// 7779); a continuation part, and a note whose original its host keeps
+    /// itself, carries none. A batch's digest binds them.
+    pub original: Option<super::folder_source::OriginalBytes>,
 }
 
 /// A link from one note to another, by path under the folder. Either end may
@@ -588,6 +592,9 @@ fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
                 &note.title,
                 note.written_at,
                 blake3::hash(note.markdown.as_bytes()).to_hex().to_string(),
+                note.original
+                    .as_ref()
+                    .map(|original| (original.media_type.as_str(), original.content_hash())),
             )
         })
         .collect::<Vec<_>>();

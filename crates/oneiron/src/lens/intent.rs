@@ -1,16 +1,17 @@
 //! Vault-scoped lens intent records and the upgrade regeneration door.
 
 use super::{
-    LensEvaluatedRevision, LensLoadAction, LensRegenFailure, LensRegenFailurePhase,
-    LensRegenOutcome, LensRegenRequest, LensRegenerator, LensVersionStamp, lens_load_action,
-    regenerate_lens,
+    LensEvaluatedRevision, LensLoadAction, LensRegenDecision, LensRegenFailure,
+    LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator, LensVersionStamp,
+    lens_load_action, regenerate_lens,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
-/// The authored prompt is separate from generated lens revisions. Key: id16.
-pub(super) const INTENTS: SideTable<EntityId, LensIntentRecord, Named> =
+/// The authored prompt is separate from generated lens revisions: each lens's
+/// index of the `lens/intent` NOTE that holds it (FIX 9896). Key: id16.
+pub(super) const INTENTS: SideTable<EntityId, LensIntentIndex, Named> =
     SideTable::new(&side_table::LENS_INTENT);
 /// Bound prompt storage before allocation or dispatch into a model runner.
 pub const LENS_INTENT_MAX_BYTES: usize = 16_384;
@@ -45,33 +46,29 @@ impl LensIntentRecord {
     }
 }
 
-impl Vault {
-    /// Store the source intent under the lens identity, not the generated body.
-    /// Replacing one lens's intent never changes another's record.
-    pub fn put_lens_intent(&self, lens_id: &EntityId, intent: &LensIntentRecord) -> Result<()> {
-        intent.validate()?;
-        self.with_write_txn_grouped(|txn| INTENTS.put(&self.store, txn, lens_id, intent))
-    }
+/// A lens's stored intent: the ref of the `lens/intent` NOTE holding its
+/// authored prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LensIntentIndex {
+    prompt_ref: String,
+}
 
-    /// Decode the stored intent strictly; corrupt or missing source never becomes an empty prompt.
+impl LensIntentIndex {
+    pub(super) fn of(prompt_ref: &EntityId) -> Self {
+        Self {
+            prompt_ref: prompt_ref.to_hex(),
+        }
+    }
+}
+
+impl Vault {
+    /// Read the intent through its index; corrupt or missing source never
+    /// becomes an empty prompt. `None` when no intent was stored for the
+    /// lens, or its prompt NOTE is gone.
     pub fn get_lens_intent(&self, lens_id: &EntityId) -> Result<Option<LensIntentRecord>> {
         let txn = self.store.env.read_txn()?;
-        INTENTS
-            .get(&self.store, &txn, lens_id)
-            .map_err(|error| {
-                if error.kind() == crate::error::ErrorKind::SideTableRow {
-                    Error::CorruptedIndex("lens intent record")
-                } else {
-                    error
-                }
-            })?
-            .map(|intent| {
-                intent
-                    .validate()
-                    .map_err(|_| Error::CorruptedIndex("lens intent record"))?;
-                Ok(intent)
-            })
-            .transpose()
+        self.lens_intent_in_txn(&txn, lens_id)
     }
 
     /// [`Self::get_lens_intent`] in the caller's `txn`, decoded as strictly.
@@ -81,33 +78,36 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         lens_id: &EntityId,
     ) -> Result<Option<LensIntentRecord>> {
-        INTENTS
-            .get(&self.store, txn, lens_id)
-            .map_err(|error| {
-                if error.kind() == crate::error::ErrorKind::SideTableRow {
-                    Error::CorruptedIndex("lens intent record")
-                } else {
-                    error
-                }
-            })?
-            .map(|intent| {
-                intent
-                    .validate()
-                    .map_err(|_| Error::CorruptedIndex("lens intent record"))?;
-                Ok(intent)
-            })
-            .transpose()
+        let corrupt = || Error::CorruptedIndex("lens intent record");
+        let index = INTENTS.get(&self.store, txn, lens_id).map_err(|error| {
+            if error.kind() == crate::error::ErrorKind::SideTableRow {
+                corrupt()
+            } else {
+                error
+            }
+        })?;
+        let Some(index) = index else {
+            return Ok(None);
+        };
+        let prompt_ref = EntityId::from_hex(&index.prompt_ref).map_err(|_| corrupt())?;
+        let Some(prompt) = super::artifact::lens_prompt_in(self, txn, &prompt_ref)? else {
+            return Ok(None);
+        };
+        LensIntentRecord::new(prompt)
+            .map(Some)
+            .map_err(|_| corrupt())
     }
 
     /// On a shell/contract version mismatch, re-run the vault's intent through
     /// the existing fingerprint gate. `None` means the current body needs no work;
-    /// all failures carry the unchanged last-good revision for mounting.
+    /// all failures carry the unchanged last-good revision for mounting. The
+    /// decision names `lens_id`, the selection it was made against (FIX 9897).
     pub fn regenerate_lens_on_upgrade<R: LensRegenerator + ?Sized>(
         &self,
         lens_id: &EntityId,
         regenerator: &R,
         last_good: LensEvaluatedRevision,
-    ) -> Option<LensRegenOutcome> {
+    ) -> Option<LensRegenDecision> {
         if matches!(
             lens_load_action(
                 last_good.lens().version_stamp(),
@@ -117,16 +117,19 @@ impl Vault {
         ) {
             return None;
         }
-        let intent = match self.get_lens_intent(lens_id) {
-            Ok(Some(intent)) => intent,
-            Ok(None) => return Some(rollback(last_good, "lens intent record is missing")),
-            Err(_) => return Some(rollback(last_good, "lens intent record cannot be read")),
+        let outcome = match self.get_lens_intent(lens_id) {
+            Ok(Some(intent)) => regenerate_lens(
+                regenerator,
+                &LensRegenRequest::new(LensVersionStamp::current(), intent.prompt()),
+                last_good,
+            ),
+            Ok(None) => rollback(last_good, "lens intent record is missing"),
+            Err(_) => rollback(last_good, "lens intent record cannot be read"),
         };
-        Some(regenerate_lens(
-            regenerator,
-            &LensRegenRequest::new(LensVersionStamp::current(), intent.prompt()),
-            last_good,
-        ))
+        Some(LensRegenDecision {
+            active_ref: *lens_id,
+            outcome,
+        })
     }
 }
 

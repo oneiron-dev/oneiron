@@ -10,6 +10,10 @@
 //! outside that instant is left out before composition too, and the sheet
 //! carries the scrubber atom naming the instant. No model call, layout,
 //! navigation or owner proof.
+//!
+//! Every named source is read (FIX 9899): the lists are read in steps of
+//! [`LENS_DEFAULT_READ_STEP`] sources, and every step's receipt is folded
+//! into the projection's, an all-withheld step's included.
 
 use serde::{Deserialize, Serialize};
 
@@ -27,8 +31,9 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
 use crate::thread_lens::ThreadLensEntry;
 use crate::{EntityId, Error, Result};
 
-/// The most sources one default projection reads, across all three lists.
-pub const LENS_DEFAULT_MAX_SOURCES: usize = 64;
+/// The sources one read step of a default projection takes; a longer list
+/// is read in more steps, never cut.
+pub const LENS_DEFAULT_READ_STEP: usize = 64;
 /// The excerpt of a source body a ledger row or thread entry shows.
 const EXCERPT_BYTES: usize = 1024;
 /// The body lines a dossier section shows, and the bytes of each.
@@ -83,12 +88,6 @@ impl Memory<'_> {
         input: LensDefaultRequest,
     ) -> MemoryResult<ScopedReadResult<HostedLensRender>> {
         crate::memory::caps::check_as_of(input.as_of)?;
-        let count = input.ledger.len() + input.dossiers.len() + input.threads.len();
-        if count > LENS_DEFAULT_MAX_SOURCES {
-            return Err(MemoryError::bad_request(format!(
-                "a default projection reads at most {LENS_DEFAULT_MAX_SOURCES} sources"
-            )));
-        }
         let title = LensText::new(input.title)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         let ledger_ids = source_ids(&input.ledger.iter().map(String::as_str).collect::<Vec<_>>())?;
@@ -102,9 +101,17 @@ impl Memory<'_> {
         let thread_ids = source_ids(&input.threads.iter().map(String::as_str).collect::<Vec<_>>())?;
         let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let mut frame = principal_frame(&read)?;
+        let mut steps = read.read_receipt(None, 0)?;
 
         let mut ledger = Vec::new();
-        for (_, admitted) in admit(&read, &mut frame, "ledger", &ledger_ids, input.as_of)? {
+        for (_, admitted) in admit(
+            &read,
+            &mut frame,
+            "ledger",
+            &ledger_ids,
+            input.as_of,
+            &mut steps,
+        )? {
             let row = &admitted.row;
             let value = ScopedReadResult {
                 value: LedgerRowAtom {
@@ -124,7 +131,14 @@ impl Memory<'_> {
             ledger.push(item(value, admitted.token));
         }
         let mut dossiers = Vec::new();
-        for (index, admitted) in admit(&read, &mut frame, "dossier", &dossier_ids, input.as_of)? {
+        for (index, admitted) in admit(
+            &read,
+            &mut frame,
+            "dossier",
+            &dossier_ids,
+            input.as_of,
+            &mut steps,
+        )? {
             let text = super::instrument::display_body(&admitted.body);
             let lines = text
                 .lines()
@@ -143,7 +157,14 @@ impl Memory<'_> {
             dossiers.push(item(value, admitted.token));
         }
         let mut threads = Vec::new();
-        for (_, admitted) in admit(&read, &mut frame, "thread", &thread_ids, input.as_of)? {
+        for (_, admitted) in admit(
+            &read,
+            &mut frame,
+            "thread",
+            &thread_ids,
+            input.as_of,
+            &mut steps,
+        )? {
             if admitted.row.entity_type != ENTITY_TYPE_MESSAGE {
                 return Err(MemoryError::bad_request(
                     "thread sources are MESSAGE entities",
@@ -170,7 +191,7 @@ impl Memory<'_> {
                 })
             })
             .transpose()?;
-        let ScopedReadResult { value, receipt } = compose_default_vault(
+        let ScopedReadResult { value, mut receipt } = compose_default_vault(
             &read,
             &frame,
             DefaultVaultInput {
@@ -181,6 +202,8 @@ impl Memory<'_> {
                 threads,
             },
         )?;
+        // Every step's exclusions, counted once, an all-withheld step's too.
+        receipt.restrict_with(&steps);
         Ok(ScopedReadResult {
             value: HostedLensRender::new(frame, value)?,
             receipt,
@@ -212,59 +235,91 @@ fn principal_frame(read: &ScopedRead<'_>) -> Result<LensRenderFrame> {
 /// one are both left out. The index is the source's position in `ids`.
 /// With `as_of`, the rows are the as-of selection of the same point read:
 /// a source that had not occurred and been learned by then is left out
-/// before any backing ref is minted for it.
+/// before any backing ref is minted for it. The list is read in steps of
+/// [`LENS_DEFAULT_READ_STEP`]; each step's receipt, with its exclusion count,
+/// is folded into `steps` once (FIX 9899).
 fn admit(
     read: &ScopedRead<'_>,
     frame: &mut LensRenderFrame,
     list: &str,
     ids: &[EntityId],
     as_of: Option<u64>,
+    steps: &mut ScopedReadReceipt,
 ) -> Result<Vec<(usize, Admitted)>> {
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let reads: Vec<_> = ids.iter().map(|id| PointRead::id(*id)).collect();
-    let ScopedReadResult {
-        value: rows,
-        receipt,
-    } = match as_of {
-        Some(as_of) => read.read_as_of(&reads, None, as_of)?,
-        None => read.read(&reads, None)?,
-    };
     let mut admitted = Vec::new();
-    for (index, row) in rows.into_iter().enumerate() {
-        let Some(row) = row else { continue };
-        let Some(body) = row.body.clone() else {
-            continue;
+    for (step, chunk) in ids.chunks(LENS_DEFAULT_READ_STEP).enumerate() {
+        let reads: Vec<_> = chunk.iter().map(|id| PointRead::id(*id)).collect();
+        let ScopedReadResult {
+            value: rows,
+            receipt,
+        } = match as_of {
+            Some(as_of) => read.read_as_of(&reads, None, as_of)?,
+            None => read.read(&reads, None)?,
         };
-        let (target, role) = if row.entity_type == ENTITY_TYPE_CLAIM {
-            (
-                LensBackingTarget::claim(row.id, row.id.to_hex(), row.content_hash)?,
-                LensHandleRole::ClaimSet,
-            )
-        } else {
-            (
-                LensBackingTarget::entity(row.id, row.id.to_hex(), row.content_hash)?,
-                LensHandleRole::EntitySet,
-            )
-        };
-        let token = frame.mint_backing_ref(
-            read,
-            LensHandleName::new(format!("{list}-{index}"))?,
-            role,
-            target,
-        )?;
-        admitted.push((
-            index,
-            Admitted {
+        // The step's exclusions are counted once, here; each row it admitted
+        // carries the step's scope without its count again.
+        steps.restrict_with(&receipt);
+        let mut scope = receipt;
+        scope.suppressed_count = 0;
+        scope.record_axes();
+        let first = step * LENS_DEFAULT_READ_STEP;
+        for (offset, row) in rows.into_iter().enumerate() {
+            admit_row(
+                read,
+                frame,
+                list,
+                first + offset,
                 row,
-                body,
-                token,
-                receipt: receipt.clone(),
-            },
-        ));
+                &scope,
+                &mut admitted,
+            )?;
+        }
     }
     Ok(admitted)
+}
+
+/// One row of a read step, admitted under a minted backing ref, unless it
+/// was withheld, missing or bodiless.
+fn admit_row(
+    read: &ScopedRead<'_>,
+    frame: &mut LensRenderFrame,
+    list: &str,
+    index: usize,
+    row: Option<ReadRow>,
+    receipt: &ScopedReadReceipt,
+    admitted: &mut Vec<(usize, Admitted)>,
+) -> Result<()> {
+    let Some(row) = row else { return Ok(()) };
+    let Some(body) = row.body.clone() else {
+        return Ok(());
+    };
+    let (target, role) = if row.entity_type == ENTITY_TYPE_CLAIM {
+        (
+            LensBackingTarget::claim(row.id, row.id.to_hex(), row.content_hash)?,
+            LensHandleRole::ClaimSet,
+        )
+    } else {
+        (
+            LensBackingTarget::entity(row.id, row.id.to_hex(), row.content_hash)?,
+            LensHandleRole::EntitySet,
+        )
+    };
+    let token = frame.mint_backing_ref(
+        read,
+        LensHandleName::new(format!("{list}-{index}"))?,
+        role,
+        target,
+    )?;
+    admitted.push((
+        index,
+        Admitted {
+            row,
+            body,
+            token,
+            receipt: receipt.clone(),
+        },
+    ));
+    Ok(())
 }
 
 fn item<T>(projection: ScopedReadResult<T>, token: LensBackingRefToken) -> DefaultVaultItem<T> {

@@ -461,9 +461,9 @@ pub(crate) fn preflight_absent_custody_rows(
     Ok(CheckpointCustody { plan, erased, lost })
 }
 
-/// A claim-bound receipt row's decision id, claim and key generation, read
-/// without a key: a row that does not spell them is `claim_receipt_invalid`
-/// (FIX 6474).
+/// A sealed receipt row's decision id, custody item (its claim, or a policy
+/// row's partition: FIX 7806) and key generation, read without a key: a row
+/// that does not spell them is `claim_receipt_invalid` (FIX 6474).
 fn receipt_header(
     key: &[u8],
     value: &[u8],
@@ -474,7 +474,7 @@ fn receipt_header(
         .and_then(GateDecisionId::decode_key)
         .ok_or_else(|| invalid(Error::CorruptedIndex("gate decision ledger key")))?;
     let (claim, generation) =
-        orcb::raw_claim_generation(value).ok_or_else(|| invalid(corrupt()))?;
+        orcb::raw_custody_item_generation(value).ok_or_else(|| invalid(corrupt()))?;
     Ok((id, claim, generation))
 }
 

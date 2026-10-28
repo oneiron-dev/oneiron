@@ -15,8 +15,10 @@
 //! Interlocutors are resolved by the existing vault API, including the existing
 //! consent-gated voice roster. Voice attribution never authenticates an owner.
 //!
-//! [`VoiceCascadeSession::complete_sentence`] returns TTS and (only for tainted
-//! context) safeguard work together. Submission never waits for a verdict.
+//! [`VoiceCascadeSession::complete_sentence`] returns TTS and the sentence's
+//! safeguard work together, whenever the vault owner's policy plane is on
+//! (FIX 7856); with it off, only a tainted sentence carries one, as before.
+//! Submission never waits for a verdict.
 //! A blocking engine enforcement and sustained barge-in share [`OutputStop`].
 //! Epoch invalidation is atomic within the session; cross-process delivery is
 //! NOT atomic. Hosts must dispatch the stop before another dequeue, reject old

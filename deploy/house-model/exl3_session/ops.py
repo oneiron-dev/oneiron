@@ -35,7 +35,9 @@ names.
 """
 import hashlib
 import threading
+import time
 
+import exl3_executor
 import torch
 from exllamav3.constants import PAGE_SIZE
 
@@ -200,9 +202,10 @@ def append(layer, body, conversation):
     return answer
 
 
-def _commit(layer, session, op_id, staged):
+def _commit(layer, session, op_id, staged, work):
     """The commit of `staged`: its ids (the path and one pad id, which never
-    runs), where it attaches on its base, and the fresh pages it needs."""
+    runs), where it attaches on its base, the fresh pages it needs, and its
+    scheduling."""
     ids = torch.cat([staged.tokens, staged.tokens[-1:]])
     anchor = staged.base.anchor if staged.base is not None else None
     position, snapshot = anchor.attach_point(ids, staged.lcp) if anchor is not None else (0, None)
@@ -210,12 +213,24 @@ def _commit(layer, session, op_id, staged):
     # output, one more, the draft depth), less the ones it shares.
     depth = int(layer.generator.num_draft_tokens)
     total = -(-(int(ids.numel()) + 2 + depth) // PAGE_SIZE)
-    return Commit(session, op_id, staged, Plan(anchor, position, snapshot), ids, total - position // PAGE_SIZE)
+    return Commit(session, op_id, staged, Plan(anchor, position, snapshot), ids, total - position // PAGE_SIZE,
+                  work)
+
+
+def _work(body):
+    """The op's scheduling (exl3_executor): the class, priority and deadline
+    its body names, each defaulted when absent; refused `invalid_request`
+    for one this side cannot read."""
+    try:
+        return exl3_executor.WorkContext(**exl3_executor.work_fields(body, time.monotonic_ns()))
+    except exl3_executor.SchedulingError as error:
+        raise Refused(INVALID_REQUEST, str(error)) from None
 
 
 def suffix_commit(layer, body, _conversation_):
     handle, binding = _target(body)
     op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
+    work = _work(body)
     with layer.lock:
         session = layer.find(handle, binding)
         kept = layer.replay(session, op_id)
@@ -230,7 +245,7 @@ def suffix_commit(layer, body, _conversation_):
                 raise Refused(LOST_RESIDENCY, "the session's checkpoint is no longer held")
             if staged.base is not session.published:
                 raise Refused(STALE_GENERATION, "another checkpoint is published")
-            kept = _commit(layer, session, op_id, staged)
+            kept = _commit(layer, session, op_id, staged, work)
             if staged.base is not None:
                 staged.base.anchor.pins += 1
             session.commit = kept
@@ -313,6 +328,7 @@ def export(layer, body, _conversation_):
     handle, binding = _target(body)
     op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
     ref = _exact_ref(body, "checkpoint")
+    work = _work(body)
     with layer.lock:
         session = layer.find(handle, binding)
         kept = layer.replay(session, op_id)
@@ -325,7 +341,7 @@ def export(layer, body, _conversation_):
             raise Refused(INVALID_REQUEST, "this op id answered another op")
         return dict(kept.answer), kept.region
     try:
-        fields, tensors = layer.scheduler.run_owned(lambda: layer.export_checkpoint(session, checkpoint))
+        fields, tensors = layer.export_checkpoint(session, checkpoint, work)
         region = snapshot.write_region(fields, tensors)
         tensors = None
         with layer.lock:
@@ -350,6 +366,7 @@ def import_(layer, body, payload):
     op_id, generation = _u64(body, "op_id"), _u64(body, "generation")
     ref = _exact_ref(body, "checkpoint")
     size, sha256 = _u64(body, "snapshot_bytes"), _hex(body, "snapshot_sha256", 32)
+    work = _work(body)
     with layer.lock:
         session = layer.find(handle, binding)
         kept = layer.replay(session, op_id)
@@ -366,8 +383,7 @@ def import_(layer, body, payload):
         if len(payload) != size or hashlib.sha256(payload).hexdigest() != sha256:
             raise Refused(INVALID_INPUT, "the input region is not the snapshot the body names")
         rebuilt = layer.decode_import(payload, ref)
-        answer = layer.scheduler.run_owned(
-            lambda: layer.import_checkpoint(session, op_id, generation, rebuilt, size, sha256))
+        answer = layer.import_checkpoint(session, op_id, generation, rebuilt, size, sha256, work)
     finally:
         layer.end_transfer(session)
     return _with_stats(layer, answer)

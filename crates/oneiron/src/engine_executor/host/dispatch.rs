@@ -347,6 +347,9 @@ impl RecordingJsHost<'_, '_> {
         // A verb hook's view of this call's result, taken whatever came of
         // the call: the guest reads it, the row keeps the outcome.
         let view = self.gated_write.take_hook_view();
+        // The seats this call's spawn resolved, taken whatever came of it:
+        // its row keeps them, a failure's included (FIX 9180).
+        let seats = self.gated_write.take_spawn_seats();
         let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
             Ok(outcome) => outcome,
             Err(err) => {
@@ -363,7 +366,8 @@ impl RecordingJsHost<'_, '_> {
                     started_at_ms,
                     started_at_ms,
                 )?
-                .with_inputs(inputs.as_ref());
+                .with_inputs(inputs.as_ref())
+                .with_spawn_seats(seats);
                 self.bridge_calls.insert(place, row);
                 self.hard_failure = Some(err);
                 return Ok(self.respond(error_outcome, None));
@@ -371,7 +375,8 @@ impl RecordingJsHost<'_, '_> {
         };
         let finished_at_ms = started_at_ms;
         let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?
-            .with_inputs(inputs.as_ref());
+            .with_inputs(inputs.as_ref())
+            .with_spawn_seats(seats);
         if self.durable_wait.is_none()
             && let SelfDispatchOutcome::DurableWait(wait) = &outcome
         {

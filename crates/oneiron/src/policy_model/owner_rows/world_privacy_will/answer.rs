@@ -3,8 +3,10 @@
 //! holder's own act, `by: Owner` with `answer` = the request, written in the
 //! same commit as the request's settlement; the first present holder settles
 //! it, once. Under "widen needs every owner" the yeses are collected on the
-//! ask, and the last one applies it: the live Owners it needs are read again
-//! at each answer, so one who left neither counts nor holds it up.
+//! ask, and the last one applies it: the setting and the live Owners it needs
+//! are read again at each answer (FIX 8206), so an ask opened before the
+//! owners turned it on needs every one of them too, and one who left neither
+//! counts nor holds it up.
 //!
 //! An applied or declined request settles its waits in that same commit: the
 //! tasks bound to it are signalled, and every run parked on it gets its
@@ -78,13 +80,23 @@ impl Vault {
             let holders = world_holders_in_txn(self, txn, world)?;
             // An ask under "widen needs every owner" needs the live Owners as
             // they stand at this answer, not as they stood when it opened
-            // (FIX-LIST "mesh PR1d widen ask needs frozen").
-            let live_needs =
-                if stored.kind == WorldPrivacyRequestKind::WidenAsk && !stored.needs.is_empty() {
-                    Some(unanimity::ask_needs_in_txn(self, txn)?)
-                } else {
-                    None
-                };
+            // (FIX-LIST "mesh PR1d widen ask needs frozen"). The setting is
+            // read in this answer's transaction too (FIX 8206): an ask the
+            // owners' unanimity covers now needs every live Owner, one opened
+            // in default mode included; one opened under it keeps that rule.
+            let live_needs = match stored.kind {
+                WorldPrivacyRequestKind::WidenAsk => {
+                    let now = unanimity::widen_needs_in_txn(self, txn, world)?;
+                    if !now.is_empty() {
+                        Some(now)
+                    } else if !stored.needs.is_empty() {
+                        Some(unanimity::ask_needs_in_txn(self, txn)?)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
             let went_to = match &live_needs {
                 // Default mode: any current holder answers (FIX 10032).
                 None => true,

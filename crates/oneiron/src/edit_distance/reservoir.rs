@@ -80,7 +80,10 @@
 //! reservoir drift from the decision every other door is held to. The effect
 //! is a pure disclosure requiring [`RESERVOIR_EXPORT_AUDIENCE`], so an
 //! uncovered export HIDES (the disclosure fail-safe) rather than asking, and
-//! revocation is immediate because the evaluator loads the grants live.
+//! revocation is immediate because the evaluator loads the grants live. That
+//! grant clears the door, not each pair: every pair and its input source pass
+//! the `eligibility` check before serialization, and a pair that fails is
+//! left out and counted on the receipt (FIX 9796).
 //!
 //! It is TWO-PHASE. Phase 1 takes the consent decision, enumerates, runs the
 //! fence tripwire, resolves every pair and serializes the whole corpus into
@@ -112,8 +115,8 @@ use serde::{Deserialize, Serialize};
 use super::PROPOSAL_ARTIFACT;
 use crate::Vault;
 use crate::consent::{
-    AudienceBound, ComposedEffect, ConsentDecision, DisclosureClass, DisclosureEnvelope,
-    EffectFacts, GrantBound, MAX_CONSENT_REF_LEN, UndoFidelity,
+    AudienceBound, AuthenticatedOwner, ComposedEffect, ConsentDecision, DisclosureClass,
+    DisclosureEnvelope, EffectFacts, GrantBound, MAX_CONSENT_REF_LEN, UndoFidelity,
 };
 use crate::edit_distance::attribution::amendment_evidence_in_txn;
 use crate::edit_distance::delta::amendment_recorded_in_txn;
@@ -122,6 +125,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+
+mod eligibility;
+pub use eligibility::CorpusUse;
 
 // ---------------------------------------------------------------------------
 // Keyspace + pinned strings
@@ -186,6 +192,10 @@ pub const FIELD_EXPORT_CONTENT_HASH: &str = "reservoir_content_hash";
 pub const FIELD_EXPORT_TASK_CLASSES: &str = "reservoir_task_classes";
 /// Receipt field: the `since` floor in Unix seconds; absent means unbounded.
 pub const FIELD_EXPORT_SINCE: &str = "reservoir_since";
+/// Receipt field: how many pairs the source check left out.
+pub const FIELD_EXPORT_EXCLUDED: &str = "reservoir_excluded";
+/// Receipt field: `reason_code=count` for each, comma-joined; absent when none.
+pub const FIELD_EXPORT_EXCLUDED_REASONS: &str = "reservoir_excluded_reasons";
 
 /// Longest accepted task class — the ED lane's scope bound, shared with
 /// `edit_distance::attribution` and `edit_distance::routing` so one scope
@@ -282,6 +292,8 @@ pub struct ExportManifest {
     pub content_hash: String,
     /// The export receipt recording scope, count and hash.
     pub receipt: EntityId,
+    /// Pairs the source check left out, by reason code.
+    pub excluded: BTreeMap<String, u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -299,10 +311,12 @@ pub struct ExportManifest {
 /// never leaves a partial export behind.
 ///
 /// The export is a point-in-time snapshot. It is receipted and handed to the
-/// caller; nothing stores it as truth.
+/// caller; nothing stores it as truth. `owner` reads each pair and its input
+/// source, and `corpus_use` says whether a run's consent ticks also apply.
 ///
 /// # Errors
 ///
+/// * [`GateError::ConsentOwnerNotAuthenticated`] when `owner` no longer holds.
 /// * [`GateError::ConsentGrantNotFound`] when the consent evaluator does not clear
 ///   the export — fail-closed, and revocation is immediate.
 /// * [`Error::InvariantViolation`] when a candidate's `source_turn_ref` is
@@ -312,10 +326,16 @@ pub struct ExportManifest {
 /// * [`Error::CorruptedIndex`] on an undecodable row; storage and I/O errors.
 pub fn export_reservoir(
     vault: &Vault,
+    owner: &AuthenticatedOwner,
     scope: ReservoirScope,
+    corpus_use: CorpusUse<'_>,
     out: &mut dyn io::Write,
 ) -> Result<ExportManifest> {
     let scope = normalized_scope(scope)?;
+    // The owner's own read, for a corpus that leaves this device (CALLS
+    // `FIX 9796 corpus reader off device`).
+    let key = vault.owner_proof_read_key(owner)?;
+    let reader = vault.scoped_read(key.at(crate::claim::CallerLocality::OffDevice));
 
     // ── phase 1: decide, resolve, serialize. Nothing is written. ──────────
     //
@@ -323,9 +343,11 @@ pub fn export_reservoir(
     // an approve-once marker, so it writes, and a read snapshot held across it
     // would be a read txn wrapping a write txn on one thread.
     authorize_export(vault)?;
-    let pairs = {
+    reader.persist_grant_clock()?;
+    let (pairs, excluded) = {
         let rtxn = vault.store.env.read_txn()?;
-        resolve_candidates(vault, &rtxn, &scope)?
+        let pairs = resolve_candidates(vault, &rtxn, &scope)?;
+        eligibility::admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?
     };
     let mut body = Vec::new();
     for pair in &pairs {
@@ -334,7 +356,7 @@ pub fn export_reservoir(
         body.push(b'\n');
     }
     let content_hash = blake3::hash(&body).to_hex().to_string();
-    let receipt = record_export(vault, &scope, pairs.len(), &content_hash)?;
+    let receipt = record_export(vault, &scope, pairs.len(), &excluded, &content_hash)?;
 
     // ── phase 2: the only failure left is the sink's own I/O. ─────────────
     out.write_all(&body)?;
@@ -343,6 +365,7 @@ pub fn export_reservoir(
         pairs: pairs.len(),
         content_hash,
         receipt,
+        excluded,
     })
 }
 
@@ -564,12 +587,14 @@ struct StoredExport {
     task_classes: Option<Vec<String>>,
     since: Option<u64>,
     at: u64,
+    excluded: BTreeMap<String, u64>,
 }
 
 fn record_export(
     vault: &Vault,
     scope: &ReservoirScope,
     pairs: usize,
+    excluded: &BTreeMap<String, u64>,
     content_hash: &str,
 ) -> Result<EntityId> {
     let id = vault.store.clock.entity_id()?;
@@ -580,6 +605,7 @@ fn record_export(
         task_classes: scope.task_classes.clone(),
         since: scope.since,
         at: vault.store.clock.now_recorded_at(),
+        excluded: excluded.clone(),
     };
     vault.with_write_txn_grouped(|wtxn| EXPORT.put(&vault.store, wtxn, &id, &row))?;
     Ok(id)
@@ -633,6 +659,7 @@ fn export_receipt_record(id: &EntityId, row: &StoredExport) -> ReceiptRecord {
     if let Some(since) = row.since {
         fields.insert(FIELD_EXPORT_SINCE.to_owned(), since.to_string());
     }
+    eligibility::excluded_fields(&row.excluded, &mut fields);
     ReceiptRecord {
         receipt_id: format!("{EXPORT_RECEIPT_ID_PREFIX}{}", id.to_hex()),
         receipt_kind: ReceiptKind::ScopedRead,

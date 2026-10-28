@@ -10667,7 +10667,7 @@ impl AgentVerb {
                 "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."
             }
             Self::VaultRecall => {
-                "Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata."
+                "Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens."
             }
             Self::VaultRetrievalAgingGet => {
                 "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."
@@ -11980,7 +11980,7 @@ impl AgentVerb {
                 "Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."
             }
             Self::VaultLensesPropose => {
-                "Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it."
+                "Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."
             }
             Self::VaultLensesActivate => {
                 "The owner selects a proposed lens revision for its pack slot."

@@ -146,20 +146,24 @@ fn install_capsule(
         hydrated.unread += installed.held.len();
     }
     // A restore's bare pad references this install now holds come to rest,
-    // and its retired pads stand erased. The install already committed, so a
-    // failure here is logged, never the fetch's.
-    if let Err(error) = vault.with_write_txn_grouped(|wtxn| {
-        crate::recovery::checkpoint::reconcile_restore_pad_notes_in_txn(
-            vault,
-            wtxn,
-            None,
-            opened.retired(),
-        )
-    }) {
+    // and its retired pads stand erased; then the carried pads (PAD-3) no
+    // epoch owes any longer go. The install already committed, so a failure
+    // here is logged, never the fetch's.
+    if let Err(error) = vault
+        .with_write_txn_grouped(|wtxn| {
+            crate::recovery::checkpoint::reconcile_restore_pad_notes_in_txn(
+                vault,
+                wtxn,
+                None,
+                opened.retired(),
+            )
+        })
+        .and_then(|_| crate::recovery::checkpoint::prune_carried_pads(vault))
+    {
         tracing::warn!(
             %error,
             world = %world.to_hex(),
-            "restore pad references not reconciled after a pad fetch"
+            "restore pad references not reconciled, or carried pads not pruned, after a pad fetch"
         );
     }
     hydrated.skipped += installed.skipped;

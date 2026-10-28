@@ -12,6 +12,7 @@
 //! capsule keeps the step's start without it when the start admits, so a
 //! continuation still finds its checkpoint (FIX 6254).
 
+use std::borrow::Cow;
 use std::ops::Range;
 
 use heed::RwTxn;
@@ -21,6 +22,7 @@ use super::super::super::replay_capsule::{
     StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
 };
 use super::super::records::{REPLAY_RECORDS, finish_output};
+use super::super::spawn_erase::fence_spawn_targets_in_txn;
 use super::erase::actor_gone_in_txn;
 use super::{CAPSULES, capsule_key};
 use crate::batch::secret_scan::{
@@ -403,6 +405,9 @@ fn admitted_start(
     }
     let mut source = stored.clone();
     REPLAY_RECORDS.admit(vault, wtxn, &capture.run, &mut source)?;
+    // A spawn whose target an erase took keeps no ask in the row or in the
+    // prefix taken from it (FIX 9180).
+    let source = fence_spawn_targets_in_txn(&vault.store, wtxn, Cow::Owned(source))?.into_owned();
     if source != stored {
         if source.generation()? != generation {
             return Ok(None);

@@ -1,24 +1,11 @@
-//! ED-04 miner dials, pinned keys, labels and the tone lexicon.
+//! ED-04 miner pinned keys, labels and the tone lexicon. K and the rejection
+//! wait are policy manifest rows (FIX 9809).
 
 use crate::error::Error;
 
 // ---------------------------------------------------------------------------
-// Dials + pinned strings
+// Pinned strings
 // ---------------------------------------------------------------------------
-
-/// K when the dial has never been set.
-///
-/// Three is the smallest count that distinguishes a habit from a coincidence:
-/// two identical corrections are a pair, and a pair is what a decider produces
-/// by fixing the same draft twice.
-pub const MINER_K_DEFAULT: u32 = 3;
-
-/// How long a REJECTED proposal keeps its cluster quiet.
-///
-/// The seconds-flavoured sibling of `DREAMER_GAP_DECAY_MS` (14 days): long
-/// enough that a "no" is respected, short enough that a preference which really
-/// did change can be re-observed rather than lost for good.
-pub const MINER_REJECTION_COOLDOWN_SECS: u64 = 14 * 24 * 60 * 60;
 
 /// The predicate a mined LEXICAL substitution claims.
 ///
@@ -57,8 +44,6 @@ pub(super) const SKILL_EDIT_ROW_LABEL: &str = "mined skill edit proposal row";
 pub(super) const MINED_EVIDENCE_RECEIPTS_KEY: &str = "receipt_refs";
 
 pub(super) const WATERMARK_ROW_LABEL: &str = "substitution miner watermark";
-
-pub(super) const MINER_K_ROW_LABEL: &str = "substitution miner k dial";
 
 /// Longest substitution side the miner will cluster, in whitespace tokens.
 ///

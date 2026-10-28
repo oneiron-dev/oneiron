@@ -540,6 +540,8 @@ impl Vault {
                         Some(actor),
                         now,
                     )?;
+                    // An approved curator finding applies with it (FIX 5423).
+                    self.apply_approved_curator_in_savepoint(wtxn, *id, now)?;
                 } else {
                     self.cancel_deferred_claim_in_txn(wtxn, id)?;
                 }

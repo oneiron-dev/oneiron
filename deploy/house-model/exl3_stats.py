@@ -21,7 +21,14 @@ under `generator`; it is never walked twice.
 
 Peaks are the allocator's own, since their reset just after the models
 loaded (`peak_origin`); the load's peaks are kept apart. They are sampled
-counters, not exact per-category transients.
+counters, not exact per-category transients. `serve_peak_mib` and
+`load_peak_mib` sum the devices' peak reservations since load and during
+it, as `resident_mib` sums the current ones.
+
+Each device row names its CUDA ordinal and the device's total memory
+(`capacity_bytes`, the driver's figure, read once at load); the snapshot
+names when the load completed (`load_completed_at_unix_ms`). Whatever
+cannot be read is left out, never guessed.
 """
 import math
 import time
@@ -47,6 +54,12 @@ def _count(value):
     return value
 
 
+def _ordinal(device):
+    """The CUDA ordinal a device name `cuda:N` names; None for another."""
+    kind, _, index = str(device).partition(":")
+    return int(index) if kind == "cuda" and index.isdigit() else None
+
+
 class Memory:
     """The target, its cache and the Generator this server runs, on the CUDA
     devices the target's modules were placed on."""
@@ -58,10 +71,14 @@ class Memory:
         self.devices = list(devices)
         self.load_peaks = {}
         self.peak_origin = None
+        self.capacities = {}
+        self.load_completed_at_unix_ms = None
 
     def reset_peaks(self):
-        """Keeps the load's peaks, then starts the allocator's peaks again:
-        from here on they are serving peaks."""
+        """Keeps the load's peaks and each device's capacity, notes that the
+        load has completed, then starts the allocator's peaks again: from
+        here on they are serving peaks."""
+        self.load_completed_at_unix_ms = int(time.time() * 1000)
         try:
             import torch
             for device in self.devices:
@@ -74,6 +91,12 @@ class Memory:
             self.peak_origin = {"reset": "after_load", "at_unix_ms": int(time.time() * 1000)}
         except Exception as error:  # counters never stop the server
             print(f"WARN ALLOCATOR_PEAKS_UNREAD {type(error).__name__}: {error}", flush=True)
+        try:
+            import torch
+            for device in self.devices:
+                self.capacities[device] = _count(int(torch.cuda.get_device_properties(device).total_memory))
+        except Exception as error:  # capacity never stops the server
+            print(f"WARN DEVICE_CAPACITY_UNREAD {type(error).__name__}: {error}", flush=True)
 
     def allocator(self):
         """Each device's allocator counters, in bytes; a counter that cannot
@@ -85,6 +108,12 @@ class Memory:
             torch = None
         for device in self.devices:
             row = {"device": device}
+            ordinal = _ordinal(device)
+            if ordinal is not None:
+                row["ordinal"] = ordinal
+            capacity = self.capacities.get(device)
+            if capacity is not None:
+                row["capacity_bytes"] = capacity
             stats = {}
             if torch is not None:
                 try:
@@ -116,14 +145,15 @@ class Memory:
         return out
 
 
-def resident_mib(devices):
-    """The sum of the devices' allocator reservations in MiB, rounded up;
-    None when any is unknown or there is no device."""
+def resident_mib(devices, read=lambda row: row.get("reserved")):
+    """The sum of the devices' allocator reservations in MiB, rounded up
+    (`read` takes one row's: by default its current one); None when any is
+    unknown or there is no device."""
     if not devices:
         return None
     total = 0
     for row in devices:
-        reserved = row.get("reserved")
+        reserved = read(row)
         if reserved is None:
             return None
         total += reserved
@@ -169,11 +199,12 @@ def snapshot(memory, queue, epoch, full):
         "devices": devices,
         "resident_source": RESIDENT_SOURCE,
         "peak_origin": memory.peak_origin if memory is not None else None,
+        "load_completed_at_unix_ms": memory.load_completed_at_unix_ms if memory is not None else None,
         "pages": pages(memory.generator) if memory is not None else None,
+        "resident_mib": resident_mib(devices),
+        "serve_peak_mib": resident_mib(devices, lambda row: row.get("peak_reserved")),
+        "load_peak_mib": resident_mib(devices, lambda row: (row.get("load_peaks") or {}).get("peak_reserved")),
     }
-    resident = resident_mib(devices)
-    if resident is not None:
-        out["resident_mib"] = resident
     if full and memory is not None:
         out["categories"] = memory.categories()
     return {key: value for key, value in out.items() if value is not None}

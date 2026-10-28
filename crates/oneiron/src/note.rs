@@ -107,7 +107,7 @@ pub use documents::{
     NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
     NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
 };
-pub(crate) use kinds::{COMPACTION_INTENT_NOTE_KIND, descriptor_in_txn};
+pub(crate) use kinds::{COMPACTION_INTENT_NOTE_KIND, LENS_INTENT_NOTE_KIND, descriptor_in_txn};
 pub use kinds::{
     ContextDefault, DISSENT_NOTE_KIND, ExtractionDefault, NoteKindDescriptor, RetentionDefault,
 };
@@ -576,7 +576,8 @@ pub use files::{
 mod folder_source;
 pub(crate) use folder_source::erase_folder_source_actor_in_txn;
 pub use folder_source::{
-    FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile,
+    FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
+    FolderSourceFile, OriginalBytes,
 };
 mod import;
 pub use import::{
