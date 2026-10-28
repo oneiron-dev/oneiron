@@ -120,8 +120,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/ai/chat/compaction.rs` | src | m | 18 crate-vis | — | A self agent's chat turn on its own live fork (FIX 4465 D) |
 | `src/api/ai/chat/delivery.rs` | src | s | 3 crate-vis | — | Chat response delivery and producer driving |
 | `src/api/ai/chat/hook_ask.rs` | src | s | 2 crate-vis | — | The hook pause a chat turn's retry resumes (FIX 5526): the ask handle a hook's Pending gave, named in… |
-| `src/api/ai/chat/hooks.rs` | src | s | 6 crate-vis | — | Chat generation and witness hook boundaries |
-| `src/api/ai/chat/recall.rs` | src | s | 2 crate-vis | — | The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the… |
+| `src/api/ai/chat/hooks.rs` | src | s | 7 crate-vis | — | Chat generation and witness hook boundaries |
+| `src/api/ai/chat/recall.rs` | src | s | 6 crate-vis | — | The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the… |
 | `src/api/ai/chat/segments.rs` | src | m | 6 crate-vis | — | A live chat turn's typed segments (DESIGN-V2 R2): the manifest of the call's messages in the order the turn… |
 | `src/api/ai/chat/sitting.rs` | src | s | 1 crate-vis | — | Whether a chat turn signals its caller's durable sitting (FIX 5564; Engine #1968: an anonymous off-record… |
 | `src/api/ai/chat/sources.rs` | src | s | 6 crate-vis | — | The rows a live chat turn's call is read from (FIX 6935), ids only, for its run's permits and metered… |
