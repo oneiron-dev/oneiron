@@ -358,6 +358,20 @@ pub(super) fn capture_adopted_checkpoint_tail(
     })
 }
 
+/// What a fold past an image asks for where it cannot tell which covered
+/// rows a tail row depends on (CALLS "FIX 3007 history closure"): every
+/// covered row not held here. No narrower closure is claimed until a fold
+/// can refold one from held rows and kept states.
+const AUTHORITY_HISTORY_UNKNOWN_DEPENDENCIES: UnknownDependencies =
+    UnknownDependencies::WholeHistory;
+
+/// The policy hook behind [`AUTHORITY_HISTORY_UNKNOWN_DEPENDENCIES`].
+#[derive(Clone, Copy)]
+enum UnknownDependencies {
+    /// Every covered row not held here.
+    WholeHistory,
+}
+
 /// The request only the whole history closes: `gaps`, and every covered row
 /// not held here, since only the whole history folds past such a row.
 fn whole_history(
@@ -365,6 +379,9 @@ fn whole_history(
     gaps: &BTreeSet<AuthorityEntryHash>,
     held_covered: &BTreeSet<AuthorityEntryHash>,
 ) -> AuthorityHistoryRequest {
+    match AUTHORITY_HISTORY_UNKNOWN_DEPENDENCIES {
+        UnknownDependencies::WholeHistory => {}
+    }
     let image = adopted.image();
     let mut missing = gaps.clone();
     missing.extend(
