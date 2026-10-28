@@ -15,6 +15,20 @@ use super::{
 #[cfg(feature = "sync")]
 use super::{LensSpanCursor, LensSpanSelectionRequest};
 
+/// What a span handle refuses with once its cursors no longer select the
+/// text they selected when it was issued (FIX 9895).
+pub(super) const LENS_SPAN_DRIFTED: &str = "lens span drifted from the text its cursors selected";
+
+/// What a span handle's pinned cursors resolve to (FIX 9895).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LensIssuedSpan {
+    /// The id of the document the span quotes.
+    pub(super) document: String,
+    /// The span's live scalar range in the stored text; `None` when it
+    /// drifted.
+    pub(super) live: Option<(usize, usize)>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LensRenderFrame {
     pub(super) render_id: LensRenderId,
@@ -274,39 +288,69 @@ impl LensRenderFrame {
     /// target that stopped hydrating, a render revision that no longer advertises the
     /// binding at the same role, and a same-named row that a later frame minted over a
     /// *different* target all fail here rather than letting an old handle widen — or
-    /// silently relocate — what it reaches.
+    /// silently relocate — what it reaches. A span handle's cursors resolve at their
+    /// pinned version: an edit elsewhere keeps it, and drift refuses it.
     pub fn resolve_read_handle(
         &self,
         scoped_read: &ScopedRead<'_>,
         render: &GeneratedUiRender,
         handle: &LensReadHandle,
     ) -> Result<LensHostBackingRef> {
+        let (resolved, span) = self.resolve_issued_handle(scoped_read, render, handle)?;
+        if span.is_some_and(|span| span.live.is_none()) {
+            return Err(Error::InvalidConfig(LENS_SPAN_DRIFTED.to_string()));
+        }
+        Ok(resolved)
+    }
+
+    /// [`Self::resolve_read_handle`]'s proof, with what a span handle's
+    /// pinned cursors resolve to (FIX 9895). Disclosure is re-proved under
+    /// the current read: the same render, binding, role and readable target
+    /// must issue the same reach. A span is then resolved at its pinned
+    /// version rather than cut again at the current head, so an edit
+    /// elsewhere in the document keeps it, and drift is reported, not
+    /// mistaken for a changed reach.
+    pub(super) fn resolve_issued_handle(
+        &self,
+        scoped_read: &ScopedRead<'_>,
+        render: &GeneratedUiRender,
+        handle: &LensReadHandle,
+    ) -> Result<(LensHostBackingRef, Option<LensIssuedSpan>)> {
         self.ensure_scoped_read_actor(scoped_read)?;
         self.ensure_render_is_ours(render)?;
         let resolved = self.resolve_backing_ref_token(scoped_read, &handle.backing_token)?;
-        let current = match &handle.span {
-            #[cfg(feature = "sync")]
-            Some(span) => {
-                let (start, end) = span.range();
-                self.issue_span_read_handle(
-                    scoped_read,
-                    render,
-                    &handle.atom_id,
-                    &resolved,
-                    start,
-                    end,
-                )?
-            }
-            #[cfg(not(feature = "sync"))]
-            Some(_) => return Err(Error::InvalidConfig("span resolution requires sync".into())),
-            None => self.issue_read_handle(render, &handle.atom_id, &resolved)?,
-        };
-        if current != *handle {
+        let current = self.issue_read_handle(render, &handle.atom_id, &resolved)?;
+        let mut issued = handle.clone();
+        let span = issued.span.take();
+        if current != issued {
             return Err(Error::InvalidConfig(
                 "lens read handle no longer matches the reach this render issues".to_string(),
             ));
         }
-        Ok(resolved)
+        let Some(span) = span else {
+            return Ok((resolved, None));
+        };
+        #[cfg(feature = "sync")]
+        {
+            if current.target_kind != LensBackingTargetKind::Entity {
+                return Err(Error::InvalidConfig(
+                    "lens span requires an entity document".into(),
+                ));
+            }
+            let (start, end) = span.cursors();
+            let (document, live) = scoped_read.vault().entity_text_issued_span(
+                resolved.target.entity_id(),
+                span.frontier(),
+                start,
+                end,
+            )?;
+            Ok((resolved, Some(LensIssuedSpan { document, live })))
+        }
+        #[cfg(not(feature = "sync"))]
+        {
+            let _ = span;
+            Err(Error::InvalidConfig("span resolution requires sync".into()))
+        }
     }
 
     /// Carry proven selections into a model-round-trip callback as *context*.

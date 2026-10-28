@@ -107,8 +107,8 @@ pub use mediation::{
     GeneratedUiValidatedAction, LensActingPrincipalKind, LensApprovedAction, LensApprovedActionArg,
     LensAtomSelectionRequest, LensBackingRefToken, LensBackingTarget, LensBackingTargetKind,
     LensExecutionBoundary, LensGateWriteChokepoint, LensHostBackingRef, LensHostImport,
-    LensHostMediatedWrite, LensPrincipalBinding, LensQuoteHandle, LensQuoteRange, LensReadHandle,
-    LensReadReach, LensRenderFrame, LensSpanCursor, LensSpanSelectionRequest,
+    LensHostMediatedWrite, LensPrincipalBinding, LensQuoteHandle, LensQuoteProof, LensQuoteRange,
+    LensReadHandle, LensReadReach, LensRenderFrame, LensSpanCursor, LensSpanSelectionRequest,
 };
 pub use mediation::{HostedLensRender, LensFrameCard};
 pub use self_ui::{

@@ -337,6 +337,48 @@ impl Vault {
         anchor.quote = quote;
         Ok((anchor, (from, to)))
     }
+
+    /// Where the stable cursors of a span issued at `frontier` stand in
+    /// `entity`'s live text, with the id of the document they belong to
+    /// (FIX 9894, 9895). The span is `None` when it drifted: a cursor that no
+    /// longer maps, an origin a purge dropped, or text between the cursors
+    /// that is no longer the text they selected at `frontier`. An edit
+    /// elsewhere in the document moves the span and keeps it.
+    pub(crate) fn entity_text_issued_span(
+        &self,
+        entity: &EntityId,
+        frontier: &[u8],
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(String, Option<(usize, usize)>)> {
+        let txn = self.store.env.read_txn()?;
+        let h = storage::head(&self.store, &txn, entity)?;
+        let doc = storage::load(&self.store, &txn, &h)?;
+        let span = issued_span(&doc, frontier, start, end);
+        Ok((h.document, span))
+    }
+}
+
+/// [`Vault::entity_text_issued_span`]'s span in `doc`: the live positions
+/// of the cursors, when the text between them is the text they selected at
+/// `frontier`.
+fn issued_span(
+    doc: &EntityDoc,
+    frontier: &[u8],
+    start: &[u8],
+    end: &[u8],
+) -> Option<(usize, usize)> {
+    let origin = doc.fork(frontier).ok()?;
+    let (from, to) = resolve_cursors(&origin, frontier, start, end).ok()?;
+    let (live_from, live_to) = resolve_cursors(doc, frontier, start, end).ok()?;
+    let quoted: String = origin.text().chars().skip(from).take(to - from).collect();
+    let live: String = doc
+        .text()
+        .chars()
+        .skip(live_from)
+        .take(live_to - live_from)
+        .collect();
+    (quoted == live).then_some((live_from, live_to))
 }
 
 pub(super) fn validate_edits(edits: &[AnchoredEdit]) -> Result<()> {
