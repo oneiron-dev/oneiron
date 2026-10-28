@@ -22,6 +22,9 @@ pub(crate) fn delete_document_in_txn(
 
     let own = DocumentSlot::of(*id);
     store.port_document_rows_delete(txn, own, &DocumentRow::ALL)?;
+    // FIX 7608 slice 4 (erase reach, KEY STORE = A): what is kept under the
+    // item's derived copy id goes too, in every build (FIX 10798, 10799).
+    delete_repo_copy_in_txn(store, txn, id)?;
     SYNC_DS_E.delete(store, txn, &HexId(*id))?;
     let heads = NOTE_HEAD_DOC.scan_keys(store, txn, id.as_bytes())?;
     for (note, head) in heads {
@@ -43,5 +46,31 @@ pub(crate) fn delete_document_in_txn(
     super::pin_index::remove_citing(store, txn, *id)?;
     super::pin_index::remove_citing_requests(store, txn, *id)?;
     super::citation_erase::NOTE_ERASE_PENDING.delete_from(store, txn, &key_prefix)?;
+    Ok(())
+}
+
+/// Erase reach for a marked repo item (FIX 7608; owner ruling KEY STORE =
+/// A): every family kept under `source`'s derived copy id goes with it, by
+/// the same absent-ok key deletes its own rows take. Nothing is read or
+/// decoded and no mark is consulted, so an item with no copy erases exactly
+/// as before.
+fn delete_repo_copy_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    source: &EntityId,
+) -> Result<()> {
+    // No copy is ever made under an id that does not derive.
+    let Ok(copy) = crate::origin::secret_projection::copy_id::copy_id(source) else {
+        return Ok(());
+    };
+    let slot = DocumentSlot::of(copy);
+    store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
+    store.port_document_updates_delete(txn, slot)?;
+    SYNC_DS_E.delete(store, txn, &HexId(copy))?;
+    let key_prefix = format!("{}:", copy.to_hex()).into_bytes();
+    SYNC_QD_E.delete_from(store, txn, &key_prefix)?;
+    SYNC_AD_E.delete_from(store, txn, &key_prefix)?;
+    #[cfg(feature = "sync")]
+    crate::sync::residence::erase_item_caches_in_txn(store, txn, &[*source, copy])?;
     Ok(())
 }

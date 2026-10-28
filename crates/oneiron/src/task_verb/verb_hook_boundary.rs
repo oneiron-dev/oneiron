@@ -549,7 +549,14 @@ pub fn row(
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop, session.as_ref()),
     };
-    let result = match run(pre.args.clone()) {
+    // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+    let restriction = pre
+        .landing
+        .is_some()
+        .then(crate::authority::restriction_only_clock);
+    let ran = run(pre.args.clone());
+    drop(restriction);
+    let result = match ran {
         Ok(result) => result,
         Err(error) => {
             abort(memory.vault(), pre);
@@ -578,6 +585,28 @@ where
     I: Serialize + DeserializeOwned,
     O: Serialize + DeserializeOwned,
 {
+    typed_row_validated(memory, verb, input, validate_input, run)
+}
+
+/// [`typed_row`] for a door whose typed input is its own rather than the
+/// row's generated one (a binding's direct call, FIX 8114): the chain sees
+/// that input, and a hook's rewrite must pass `validate`, the door's own
+/// input check, before the admission its door bound on `memory`.
+///
+/// # Errors
+///
+/// As [`typed_row`].
+pub fn typed_row_validated<I, O>(
+    memory: &Memory<'_>,
+    verb: &str,
+    input: I,
+    validate: fn(&str, &Value) -> MemoryResult<()>,
+    run: impl FnOnce(I) -> MemoryResult<O>,
+) -> MemoryResult<O>
+where
+    I: Serialize + DeserializeOwned,
+    O: Serialize + DeserializeOwned,
+{
     let args = encode(&input)?;
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
@@ -588,7 +617,7 @@ where
         args.clone(),
         None,
         None,
-        validate_input,
+        validate,
         session.as_ref(),
     )? {
         Ok(pre) => pre,
@@ -603,6 +632,11 @@ where
                 MemoryError::bad_request(format!("a verb hook rewrote {verb}'s input: {error}"))
             })?
         };
+        // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+        let _restriction = pre
+            .landing
+            .is_some()
+            .then(crate::authority::restriction_only_clock);
         let output = run(input)?;
         let result = encode(&output)?;
         Ok((output, result))

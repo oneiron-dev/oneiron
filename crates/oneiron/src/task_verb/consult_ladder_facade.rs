@@ -32,6 +32,10 @@ use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTer
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
 
+mod consent_ask;
+mod finish;
+pub(super) use self::consent_ask::case_ask_anchor;
+
 impl Memory<'_> {
     /// Registers the DISPLAY handle for one peer actor. Board projections
     /// resolve handles through this table; TASK storage stays actor-addressed,
@@ -100,11 +104,25 @@ impl Memory<'_> {
                 ));
             }
             let current = consent_bound_ladder(expected, facts.consent_required, &transition)?;
+            // A Finish of a consent-required interruption lands on its frozen
+            // case's settled ask, when one was raised (FIX 9742).
+            let consent =
+                if facts.consent_required && matches!(transition, LadderTransition::Finish(_)) {
+                    Some(finish::verify_finish_in(self.vault(), &*wtxn, task_ref)?)
+                } else {
+                    None
+                };
+            let deadline_at = body.ttl.as_ref().map(|ttl| ttl.deadline_at);
+            let consult = body.consult.clone();
             let next = transition_ladder(&current, transition).map_err(ladder_refusal)?;
             let next_state = project_consult_ladder_state(&next);
             body.state = Some(next_state.clone());
             let encoded = encode_task_verb_body(body);
             self.put_task_body_in_txn(wtxn, task_ref, &encoded, now_for_ladder(&next))?;
+            // The ConsentRequired fact and the frozen case are authority
+            // records, kept in a session that keeps no record too, with
+            // authority fields only and no conversation content (Engine
+            // 10-26, ARCH-0052, FIX 10694); so is the case's ask.
             if let ConsultLadderState::Interrupted(interrupted) = &next
                 && interrupted.consent_required
                 && !facts.consent_required
@@ -122,6 +140,45 @@ impl Memory<'_> {
                         occurred_at: interrupted.interrupted_at,
                     },
                 )?;
+                let generation = self
+                    .vault()
+                    .actor_binding_generation_in_txn(&*wtxn, self.actor())
+                    .ok()
+                    .flatten();
+                let lineage = self.opener_lineage_in(&*wtxn, task_ref);
+                finish::freeze_case_in(
+                    self.vault(),
+                    wtxn,
+                    task_ref,
+                    interrupted,
+                    (self.actor(), &lineage),
+                    generation.as_ref(),
+                );
+            }
+            // FIX 10692: the frozen case's ask, raised once it is frozen and
+            // again at a later consent-required interruption until it lands.
+            if let ConsultLadderState::Interrupted(interrupted) = &next
+                && interrupted.consent_required
+            {
+                self.raise_case_ask_in(wtxn, task_ref, consult.as_ref(), deadline_at);
+            }
+            // Every Finish is accepted as claimed and recorded as it was
+            // (FIX 9743): when the engine recorded it, the time it claims,
+            // and whether it came overdue or claims a later time.
+            if let ConsultLadderState::Terminal(terminal) = &next
+                && self.keeps_lifecycle()
+            {
+                finish::record_finish_in(
+                    self.vault(),
+                    wtxn,
+                    finish::FinishRecord {
+                        task_ref,
+                        actor: self.actor(),
+                        terminal,
+                        deadline_at,
+                        consent: consent.as_ref(),
+                    },
+                );
             }
             Ok((next, next_state))
         })?;

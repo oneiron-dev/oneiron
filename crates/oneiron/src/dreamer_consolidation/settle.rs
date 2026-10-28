@@ -843,6 +843,7 @@ fn restore_dreamer_member_in_txn(
             body.value.clone(),
             body.confidence,
         )
+        .with_confidence_details(body.confidence_details())
         .with_validity(body.valid_from, None),
         &body,
     );

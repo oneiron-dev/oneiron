@@ -12,9 +12,11 @@ use super::shape::{
     core_write_times, encode_core_body, entity_id, optional_entity_id, text_pairs,
 };
 use crate::WriteActor;
-use crate::conversation_dag::{AddressMode, AppendRecord, AppendedRecord, QuoteSpan};
+use crate::conversation_dag::{
+    AddressMode, AppendRecord, AppendedRecord, DagReplyTarget, QuoteSpan,
+};
 use crate::memory::{Memory, MemoryResult};
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 
 /// Who a record addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -33,17 +35,25 @@ pub struct CoreDagQuoteInput {
     pub end: u32,
 }
 
-/// One TURN to append to a conversation's DAG.
+/// One TURN to append to a conversation's DAG, or one MESSAGE of a TURN.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DagRecordAppendInput {
     /// The CONVERSATION appended to.
     pub conversation: String,
-    /// The record continued; absent only for the first root.
+    /// The record continued; absent only for the first root. A MESSAGE
+    /// continues only a MESSAGE of its own TURN.
     #[serde(default)]
     pub parent: Option<String>,
+    /// The record answered: a TURN, or one MESSAGE of a TURN.
     #[serde(default)]
     pub reply_to: Option<String>,
+    /// The TURN the appended MESSAGE is part of (FIX 9771). Set, the record
+    /// is a MESSAGE whose `body` names its author, type, content, optional
+    /// metadata, visibility and order; absent, it is a TURN. A MESSAGE never
+    /// enters HEAD.
+    #[serde(default)]
+    pub containing_turn: Option<String>,
     /// Broadcast when omitted.
     #[serde(default)]
     pub addr: Option<CoreDagAddressMode>,
@@ -79,6 +89,14 @@ pub struct DagRecordAppendReceipt {
     pub id: String,
     pub head: Option<String>,
     pub parent: Option<String>,
+    /// The stored record's type: TURN or MESSAGE.
+    pub entity_type: u8,
+    /// The TURN a MESSAGE record is part of; absent for a TURN.
+    #[serde(default)]
+    pub containing_turn: Option<String>,
+    /// What the record answers, at the revision it answered.
+    #[serde(default)]
+    pub reply_target: Option<DagReplyTarget>,
 }
 
 impl From<AppendedRecord> for DagRecordAppendReceipt {
@@ -87,6 +105,9 @@ impl From<AppendedRecord> for DagRecordAppendReceipt {
             id: appended.id.to_hex(),
             head: appended.head.map(|id| id.to_hex()),
             parent: appended.parent.map(|id| id.to_hex()),
+            entity_type: appended.kind,
+            containing_turn: appended.containing_turn.map(|id| id.to_hex()),
+            reply_target: appended.reply_target,
         }
     }
 }
@@ -102,7 +123,14 @@ impl DagRecordAppendInput {
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<AppendRecord> {
         let times = core_write_times(self.occurred_start, self.occurred_end, self.learned_at)?;
-        let body = core_body_for_write(ENTITY_TYPE_TURN, &self.body, announcement);
+        let containing_turn =
+            optional_entity_id(self.containing_turn.as_deref(), "containing_turn")?;
+        let kind = if containing_turn.is_some() {
+            ENTITY_TYPE_MESSAGE
+        } else {
+            ENTITY_TYPE_TURN
+        };
+        let body = core_body_for_write(kind, &self.body, announcement);
         Ok(AppendRecord {
             conversation: entity_id(&self.conversation, "conversation")?,
             parent: optional_entity_id(self.parent.as_deref(), "parent")?,
@@ -129,7 +157,8 @@ impl DagRecordAppendInput {
                 .map(|id| entity_id(id, "to"))
                 .collect::<MemoryResult<Vec<_>>>()?,
             advance: self.advance,
-            kind: ENTITY_TYPE_TURN,
+            kind,
+            containing_turn,
             occurred: times.occurred,
             learned_at: times.learned_at,
             body: encode_core_body(&body)?,
@@ -150,7 +179,8 @@ impl DagRecordAppendInput {
 }
 
 impl Memory<'_> {
-    /// `vault.conversations.records.append`: one TURN on the DAG, bylined
+    /// `vault.conversations.records.append`: one TURN on the DAG, or one
+    /// MESSAGE of a TURN (FIX 9771), bylined
     /// the bound actor, through the append door that checks each named
     /// reference on this handle's read lane. It is a platform announcement
     /// only while the bound actor is a live owner.

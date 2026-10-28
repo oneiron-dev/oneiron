@@ -16,6 +16,11 @@ pub(crate) enum RoomAction {
     GdprSelf,
     GdprManage,
     PostErasureAppend,
+    /// The nearest signed-project leader's answer to a room's admission,
+    /// within its granted scope. Role-less, as `PostErasureAppend`: a row
+    /// allows or denies it for the room. It grants no payer or membership
+    /// consent.
+    Admission,
 }
 impl RoomAction {
     fn parse(value: &str) -> Option<Self> {
@@ -26,8 +31,13 @@ impl RoomAction {
             "gdpr_self" => Some(Self::GdprSelf),
             "gdpr_manage" => Some(Self::GdprManage),
             "post_erasure_append" => Some(Self::PostErasureAppend),
+            "admission" => Some(Self::Admission),
             _ => None,
         }
+    }
+    /// Whether a row of this action allows or denies without naming roles.
+    const fn role_less(self) -> bool {
+        matches!(self, Self::PostErasureAppend | Self::Admission)
     }
     const fn as_str(self) -> &'static str {
         match self {
@@ -37,6 +47,7 @@ impl RoomAction {
             Self::GdprSelf => "gdpr_self",
             Self::GdprManage => "gdpr_manage",
             Self::PostErasureAppend => "post_erasure_append",
+            Self::Admission => "admission",
         }
     }
 }
@@ -66,7 +77,7 @@ pub(crate) struct RoomPolicyRow {
 }
 impl RoomPolicyRow {
     fn admits(&self, role: RoomRole) -> bool {
-        self.allow && (self.action == RoomAction::PostErasureAppend || self.roles.contains(&role))
+        self.allow && (self.action.role_less() || self.roles.contains(&role))
     }
     /// Whether this row, appended after every row a resolution holds, only
     /// narrows `allows` (ARCH-0070 vault shape): a room row that nests only
@@ -139,7 +150,7 @@ pub(in crate::gate) fn parse_rows(value: &Value) -> Option<Vec<RoomPolicyRow>> {
             }
             let action = action?;
             let roles = roles?;
-            if action != RoomAction::PostErasureAppend && roles.is_empty() {
+            if !action.role_less() && roles.is_empty() {
                 return None;
             }
             Some(RoomPolicyRow {
@@ -230,5 +241,6 @@ fn default_rows() -> Value {
         row(RoomAction::GdprSelf, &["owner", "admin", "member"], true),
         row(RoomAction::GdprManage, &["owner", "admin"], true),
         row(RoomAction::PostErasureAppend, &[], true),
+        row(RoomAction::Admission, &[], true),
     ])
 }

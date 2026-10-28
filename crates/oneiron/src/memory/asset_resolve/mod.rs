@@ -1,7 +1,8 @@
 //! Generated images and the form each consumer reads (OF-328, OF-329).
 //!
-//! A generated image lands as one ASSET holding its bytes, with its ASSET_TEXT
-//! written in the same commit, so every form is ready before anyone reads it.
+//! A generated image lands as one ASSET, its metadata, holding its bytes as a
+//! blob by reference (FIX 9949, `blob`), with its ASSET_TEXT written in the
+//! same commit, so every form is ready before anyone reads it.
 //! The resolver then serves each image lazily, down a ladder, per read: the
 //! full image to a reader that takes images in, when it fits the read's room;
 //! else a thumbnail beside the ASSET_TEXT and the image's view handle; else
@@ -43,11 +44,13 @@ use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
 
+mod blob;
 mod generation;
 mod hydrated;
 mod reads;
 mod serving;
 mod types;
+pub(crate) use blob::{asset_media_in, release_asset_blob_in_txn};
 pub(super) use generation::asset_body;
 #[cfg(test)]
 pub(crate) use generation::generated_asset_body;
@@ -59,8 +62,6 @@ pub use types::{
     ResolvedAsset, ServedAssetForm,
 };
 
-/// The ASSET body field that holds the bytes.
-const BODY_BYTES: &str = "bytes";
 /// The ASSET body field that holds the bytes' media type.
 const BODY_MEDIA_TYPE: &str = "mime_type";
 /// The ASSET body field that holds the bytes' BLAKE3 content hash.
@@ -220,32 +221,11 @@ impl std::fmt::Display for ImageHandle {
     }
 }
 
-/// The audio bytes and type an ASSET body holds.
-fn audio_of(body: &[u8]) -> MemoryResult<Option<(Vec<u8>, String)>> {
-    let Some(Value::Map(entries)) = decode_whole(body) else {
-        return Ok(None);
-    };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(BODY_BYTES),
-        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) else {
-        return Ok(None);
-    };
-    if bytes.is_empty() || !media_type.starts_with("audio/") {
-        return Ok(None);
-    }
-    if let Some(recorded) = field(BODY_BLAKE3)
-        && recorded.as_str() != Some(blake3::hash(bytes).to_hex().as_str())
-    {
-        return Err(crate::error::Error::CorruptedIndex("asset content hash").into());
-    }
-    Ok(Some((bytes.clone(), media_type.to_owned())))
+/// The audio bytes and type an ASSET's blob holds, as
+/// [`blob::resolve_asset_blob_in_lane`] read and checked them.
+fn audio_of((media_type, bytes): &(String, Vec<u8>)) -> Option<(Vec<u8>, String)> {
+    (!bytes.is_empty() && media_type.starts_with("audio/"))
+        .then(|| (bytes.clone(), media_type.clone()))
 }
 
 fn no_form(asset_ref: &str) -> MemoryError {
@@ -646,36 +626,14 @@ fn region_pixels(
     ))
 }
 
-/// The image an ASSET body holds, checked against its recorded content hash.
-/// `None` is an ASSET that holds no image: a document, or bytes of no image type.
-fn image_of(body: &[u8]) -> MemoryResult<Option<ImageBytes>> {
-    let Some(Value::Map(entries)) = decode_whole(body) else {
-        return Ok(None);
-    };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(BODY_BYTES),
-        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) else {
-        return Ok(None);
-    };
-    if bytes.is_empty() || !media_type.starts_with("image/") {
-        return Ok(None);
-    }
-    if let Some(recorded) = field(BODY_BLAKE3)
-        && recorded.as_str() != Some(blake3::hash(bytes).to_hex().as_str())
-    {
-        return Err(crate::error::Error::CorruptedIndex("asset content hash").into());
-    }
-    Ok(Some(ImageBytes {
+/// The image an ASSET's blob holds, as [`blob::resolve_asset_blob_in_lane`]
+/// read and checked it against the hash the ASSET names. `None` is an ASSET
+/// that holds no image: a document, or bytes of no image type.
+fn image_of((media_type, bytes): &(String, Vec<u8>)) -> Option<ImageBytes> {
+    (!bytes.is_empty() && media_type.starts_with("image/")).then(|| ImageBytes {
         bytes: bytes.clone(),
-        media_type: media_type.to_owned(),
-    }))
+        media_type: media_type.clone(),
+    })
 }
 
 /// An ASSET_TEXT's text as a memory read releases it: a map body's `text`

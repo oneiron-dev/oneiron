@@ -74,6 +74,7 @@ pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replaye
 #[cfg(test)]
 pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
+pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 #[cfg(test)]
 pub(crate) use self::put_apply::wiped_rows;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep
@@ -92,7 +93,9 @@ pub(crate) use self::phonetic_apply::{
     PHONETIC_POSTING_KEY_LEN, delete_from_phonetic_postings, phonetic_posting_key,
 };
 use self::prepared_index::PreparedIndexWork;
-pub(crate) use self::put_apply::{delete_entity_index_rows, stage_entity_index_rows};
+pub(crate) use self::put_apply::{
+    delete_entity_index_rows, put_target_admitted_in, stage_entity_index_rows,
+};
 pub use self::short_id::short_id_content_hash;
 pub(crate) use self::short_id::{
     delete_short_id_rows_for_id, encode_short_id_forward_key, parse_short_id_value,

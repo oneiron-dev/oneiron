@@ -153,6 +153,12 @@ impl AuthenticatedOwner {
         Ok(())
     }
 
+    /// Whether this proof was authenticated by `vault`'s own open, the
+    /// first thing every revalidation asks.
+    pub(crate) fn belongs_to(&self, vault: &Vault) -> bool {
+        self.check_vault(vault).is_ok()
+    }
+
     /// The Gate decision this AUTHENTICATION is bound to.
     ///
     /// This is the authentication's own decision, not the decision of any act
@@ -584,6 +590,7 @@ impl Vault {
             grant_ref: receipt.grant_ref(),
             diff_handle: receipt.diff_handle(),
             read_frontier_hash: [0_u8; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         self.store.append_gate_decision_in_txn(wtxn, &record)
@@ -637,6 +644,7 @@ impl Vault {
             grant_ref: receipt.grant_ref(),
             diff_handle: receipt.diff_handle(),
             read_frontier_hash: [0_u8; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         self.store.append_gate_decision_in_txn(wtxn, &record)

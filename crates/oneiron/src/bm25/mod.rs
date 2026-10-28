@@ -118,6 +118,9 @@ const TOTAL_LENGTH_KEY: [u8; 16] = [0xFF; 16];
 ///   items per (term, entity); `text_forward` records carry no `tf`.
 pub(crate) const POSTINGS_VALUE_FORMAT_VERSION: u16 = 2;
 
+/// Byte width of the `term_len_u64_le` head of a forward record.
+const FORWARD_TERM_LEN_LEN: usize = 8;
+
 /// Byte width of the `field_id_u16_be` trailer of a forward record.
 const FORWARD_FIELD_ID_LEN: usize = 2;
 

@@ -131,5 +131,11 @@ pub(super) fn has_live_citer(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) 
 /// index.
 pub(super) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     ENTITY_DOC_CITATION_FLOOR.delete_from(store, txn, &entity_prefix(entity))?;
+    // An erased citer names no other document's floor (FIX 904).
+    for key in ENTITY_DOC_CITATION_FLOOR.scan_keys(store, txn, &[])? {
+        if key.1.0 == *entity {
+            ENTITY_DOC_CITATION_FLOOR.delete(store, txn, &key)?;
+        }
+    }
     Ok(())
 }

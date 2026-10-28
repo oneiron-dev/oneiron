@@ -11,9 +11,13 @@ use crate::dreamer_runner::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{
+    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionId, GateDecisionReadContext,
+    GateDecisionRecord, GateLoopLink, GateLoopSource,
+};
 use crate::{EntityId, Vault};
 
+use super::authority::Standing;
 use super::types::{
     ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
     TurnProgramAdmissionRecord, TurnProgramWake, run_id,
@@ -32,7 +36,8 @@ impl Vault {
     /// first receipt (one that differs is a conflict); otherwise the program
     /// must still be armed at the woken revision, the turn must be the live
     /// TURN of the trigger's conversation, landed at or after arming by the
-    /// armed actor, the waking actor's authority must still stand, and the
+    /// armed actor, the waking actor's authority must still stand (an
+    /// attested owner's as the vault's live owner, FIX 11090), and the
     /// pinned SKILL must still be the program pinned. The decision, allowed
     /// or refused, is a Gate receipt; an allowed one queues one Dreamer
     /// program attempt, stamped as the waking actor, the root of its run
@@ -112,8 +117,12 @@ fn judge_in_txn(
     {
         return Ok(Err(NOT_TRIGGERED));
     }
-    if !wake.authority.stands_in_txn(vault, txn)? {
-        return Ok(Err(AUTHORITY_LAPSED));
+    match wake.authority.standing_in_txn(vault, txn)? {
+        Standing::Stands(_) => {}
+        Standing::Lapsed => return Ok(Err(AUTHORITY_LAPSED)),
+        // His own refusal, recorded on this wake's admission alone (FIX
+        // 11090); a host that cannot judge him keeps the wake instead.
+        Standing::OwnerNotLive => return Ok(Err(crate::authority::OWNER_NOT_LIVE)),
     }
     if !super::arm::pin_stands_in_txn(vault, txn, &arming.definition)? {
         return Ok(Err(PIN_MOVED));
@@ -171,6 +180,17 @@ fn gate_decision_in_txn(
         diff_handle: admission.to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        // FIX 7500, 7499: its own admission, about the turn that woke it. A
+        // refused wake runs nothing, so it names no run; neither names an
+        // attempt, which is queued after this decision.
+        context: GateDecisionContext::linked(
+            GateLoopLink::admission(
+                GateLoopSource::TurnProgram,
+                refused.is_none().then(|| run_id(admission)),
+                None,
+            ),
+            GateDecisionReadContext::about(Some(wake.turn.turn), vec![wake.turn.turn]),
+        ),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &decision)?;

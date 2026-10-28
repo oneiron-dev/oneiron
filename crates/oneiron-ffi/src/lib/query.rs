@@ -73,7 +73,7 @@ pub unsafe extern "C" fn oneiron_vault_edges_out(
         }
         let result = with_vault(vault, |handle| {
             let src = parse_entity_id(src_ptr, src_len)?;
-            let edges = engine(handle.vault.edges_out(&src))?;
+            let edges = handle.edges_of(&src, true)?;
             let mut out = Vec::with_capacity(edges.len());
             for edge in edges {
                 let vad = edge.vad;
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn oneiron_vault_edges_in(
         }
         let result = with_vault(vault, |handle| {
             let tgt = parse_entity_id(tgt_ptr, tgt_len)?;
-            let edges = engine(handle.vault.edges_in(&tgt))?;
+            let edges = handle.edges_of(&tgt, false)?;
             let mut out = Vec::with_capacity(edges.len());
             for edge in edges {
                 let vad = edge.vad;
@@ -259,9 +259,9 @@ pub unsafe extern "C" fn oneiron_vault_put_vector(
 ///
 /// `query_text_ptr`, `query_vector_ptr`, `format_ptr` and `media_json_ptr`
 /// are optional: pass a null pointer with length 0 to omit. If
-/// `limit_is_set == 0`, the default limit of 10 is used; otherwise `limit`
-/// must be at most 1000. The returned buffer must be released with
-/// `oneiron_buffer_free`.
+/// `limit_is_set == 0`, the default limit of 10 is used; otherwise the pack
+/// holds up to `limit` items, however many. The returned buffer must be
+/// released with `oneiron_buffer_free`.
 ///
 /// `media_json_ptr` is UTF-8 JSON of the served context pack's media query
 /// (OF-370): `{"space": "<ai.embed rung id>@<provider>", "mime": "image/png",
@@ -351,7 +351,7 @@ pub unsafe extern "C" fn oneiron_vault_get_entity_type(
         }
         let result = with_vault(vault, |handle| {
             let id = parse_entity_id(id_ptr, id_len)?;
-            match engine(handle.vault.get_entity_type(&id))? {
+            match handle.entity_type_of(&id)? {
                 Some(entity_type) => write_out(out_entity_type, u32::from(entity_type)),
                 None => Err(OneironStatus::NotFound),
             }
@@ -422,7 +422,7 @@ pub unsafe extern "C" fn oneiron_vault_targets(
             } else {
                 Some(parse_u8(target_type)?)
             };
-            let ids = engine(handle.vault.targets(&src, kind, target_type))?;
+            let ids = handle.peers_of(&src, kind, target_type, true)?;
             write_out(out_ids, id_list_buffer(ids)?)
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
@@ -462,7 +462,7 @@ pub unsafe extern "C" fn oneiron_vault_sources(
             } else {
                 Some(parse_u8(source_type)?)
             };
-            let ids = engine(handle.vault.sources(&tgt, kind, source_type))?;
+            let ids = handle.peers_of(&tgt, kind, source_type, false)?;
             write_out(out_ids, id_list_buffer(ids)?)
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)

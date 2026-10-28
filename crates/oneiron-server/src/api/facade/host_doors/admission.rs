@@ -185,6 +185,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.authority.audit"
         | "vault.authority.history.export"
         | "vault.authority.history.import"
+        | "vault.authority.clock.repair"
         | "vault.mesh.path_receipts"
         | "vault.mesh.identity"
         | "vault.mesh.bind_machine"
@@ -702,6 +703,9 @@ pub(in crate::api::facade) fn door_admits(
         }
         "execute_code" => crate::api::facade::foreign_code_doors::foreign_code_admits(server, auth),
         "self.saved_query.evaluate" => crate::api::facade::saved_query_doors::admits(server, auth),
+        // The access request answer (FIX 1379): the owner, or the person or
+        // agent a request asks, on their own proof.
+        "self.grants.answer" => crate::api::facade::grants_doors::answer_admits(server, auth, verb),
         "self.credential.attenuate" => crate::api::facade::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" | "vault.artifacts.admit" => artifact_asker(server, auth).map(drop),

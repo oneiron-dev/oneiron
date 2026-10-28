@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::kernel::{
-    FIELD_BRIEF_REF, FIELD_GRANT_REF, FIELD_PERSONA_COMPILE_STAMP, MAX_RECEIPT_QUERY_SCAN,
-    ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, projection_scan_query,
+    FIELD_BRIEF_REF, FIELD_GRANT_REF, FIELD_PERSONA_COMPILE_STAMP, ReceiptKind, ReceiptQuery,
+    ReceiptRecord, hex_lower, projection_scan_query,
 };
 use super::projection::{GrantReceiptProjection, project_receipts_by_grant_limited};
 use crate::Vault;
@@ -210,6 +210,11 @@ fn access_grant_receipt(
         grant.capability.as_str().to_owned(),
     );
     append_access_grant_scope_fields(&mut fields, &grant.scope);
+    // A grant the engine issued on the owner's standing policy names why
+    // (FIX 10895).
+    if let Some(reason) = crate::ingest::connector_witness_read_reason(&id, grant) {
+        fields.insert("reason".to_owned(), reason.to_owned());
+    }
 
     ReceiptRecord {
         receipt_id: format!("scoped_read:{}:{event_name}", id.to_hex()),
@@ -426,6 +431,9 @@ fn persona_snapshot_export_receipt(
     }
 }
 
+/// Hands `visit` every row of `entity_type` in the type index, read to its
+/// end: past its threshold row the walk raises one check and reads on (rule
+/// 5, FIX 3582).
 pub(super) fn scan_entities_by_type(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -433,11 +441,17 @@ pub(super) fn scan_entities_by_type(
     context: &'static str,
     mut visit: impl FnMut(EntityId, EntityMetadataHeader, &[u8]) -> Result<()>,
 ) -> Result<()> {
-    let mut scanned = 0_usize;
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::TypeIndexRows,
+        &[entity_type],
+    )?;
     for entry in vault
         .store
         .port_entity_ids_by_type(txn, entity_type, None)?
     {
+        count.row();
         let id = entry?;
         let Some(raw) = vault
             .store
@@ -451,11 +465,8 @@ pub(super) fn scan_entities_by_type(
             return Err(Error::CorruptedIndex(context));
         }
         visit(id, header, &raw[ENTITY_METADATA_HEADER_LEN..])?;
-        scanned = scanned.saturating_add(1);
-        if scanned >= MAX_RECEIPT_QUERY_SCAN {
-            break;
-        }
     }
+    count.finish(vault);
     Ok(())
 }
 
@@ -469,6 +480,10 @@ fn append_access_grant_scope_fields(
         | AccessGrantScope::RelationshipClaims { space_ref } => {
             fields.insert("scope".into(), scope.required_capability().as_str().into());
             fields.insert("space_ref".into(), space_ref.to_hex());
+        }
+        AccessGrantScope::ConversationMessages { conversation_ref } => {
+            fields.insert("scope".to_owned(), "conversation_messages".to_owned());
+            fields.insert("conversation_ref".to_owned(), conversation_ref.to_hex());
         }
         AccessGrantScope::ChannelIdentity {
             identity_ref,

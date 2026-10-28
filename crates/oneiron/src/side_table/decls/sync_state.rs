@@ -58,6 +58,9 @@ side_tables! {
     /// Admitted request nonce (empty marker), evicted once the proof clock is a day past its
     /// signed timestamp. Key: u64hex16 ":" hex64.
     AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw;
+    /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
+    /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
+    AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
     USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;
@@ -141,9 +144,19 @@ side_tables! {
     /// What one sender's lane holds in `FEDERATION_PARKED_FACET_STAMP`: its rows, then their
     /// bytes (u64 big-endian each), so the per-sender caps read one row. Key: the sender's lane.
     FEDERATION_PARKED_FACET_LANE: SyncState b"fedparklane:" Raw;
+    /// The content-free receipt of a held `FacetOf` stamp that retired (FIX 8890): why (1 past its
+    /// wait, 2 its grant or staged receipt ended), when it was held and when it retired (u64
+    /// big-endian each), then the grant it was held under (a flag byte, then its 16 raw bytes when
+    /// set). Key: as `FEDERATION_PARKED_FACET_STAMP`.
+    FEDERATION_PARKED_FACET_RECEIPT: SyncState b"fedparkreceipt:" Raw;
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;
+    /// The scope a deleted record held, bound to its delete request, so a narrower grant's export
+    /// carries its tombstone only where the grant reads that scope (FIX 10161). Ids and levels
+    /// only, never content. Local to this vault: never replicated or exported. Key: hex32 (entity
+    /// id).
+    FEDERATION_TOMBSTONE_SCOPE: SyncState b"fedtombscope:" Named;
     /// Registers a foreign world as content delivered by one federation pact, scanned when the pact
     /// goes terminal. Key: hex64 (pact id) ":" hex32 (world id).
     FEDERATION_WORLD_REGISTRATION: SyncState b"fedworld:" Raw;
@@ -359,6 +372,19 @@ side_tables! {
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().
     SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
+    /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
+    /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
+    SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw;
+    /// The caller one retained-work queue served last, so its next pass starts after it (FIX
+    /// 7997). Value: the caller's fair key. Key: string (the queue's code).
+    SYNC_RETAINED_WORK_CURSOR: SyncState b"retained:cursor:" Raw;
+    /// A signed maintenance operation kept for its turn instead of refused (FIX 8565, 8858): its
+    /// arrival, deadline, window, lease vault and exact bytes, then a content-free receipt once it
+    /// expires, is refused or is erased. Key: hex64 (signer key) then hex32 (entity id).
+    SYNC_MAINTENANCE_RETAINED_WORK: SyncState b"retained:maintenance:" Named;
+    /// The owner's wait for one retained-work queue (u64 big-endian seconds). Key: string (the
+    /// queue's code).
+    SYNC_RETAINED_WORK_WAIT: SyncState b"retained:wait:" Raw;
     /// A room's host pin or platform handle this device changed while no open window carried the
     /// room, or a join or offer card it changed that its window does not hold yet (FIX 1794),
     /// mirrored as that window opens. Key: string (the row's `room_facts` map key).
@@ -395,6 +421,9 @@ side_tables! {
     /// The Coach's tradeoff router (FIX-LIST 817): each route call it handed a project's leader.
     /// Key: string (proposal hex32 ":" project hex32 ":" question digest).
     SKILL_TRADEOFF_ROUTE: SyncState b"skill:tradeoff:route:v1:" Named;
+    /// A left shared vault's owed orphan body collection (FIX 2413): when its env's purge finished
+    /// and when the collection is due (unix seconds); local only, never synced. Key: ().
+    SYNC_LEFT_ENV_BODY_COLLECT: SyncState b"sl-body-collect" Named;
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
     /// notice's receipt id).
@@ -444,6 +473,13 @@ side_tables! {
     /// supplied idempotency key. Key: hex ":" hex ":" hex (owner, vault, idempotency-key).
     USAGE_EVENT: SyncState b"usage:event:" Named
         => crate::store::erase_usage_source_in_txn;
+    /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write
+    /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" 20-digit period start.
+    USAGE_METER_ROLLUP: SyncState b"usage:meter-rollup:" Named;
+    /// One operational meter row for an owner/vault, kept once under its idempotency key
+    /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" hex (owner, vault,
+    /// metric, idempotency key).
+    USAGE_METER: SyncState b"usage:meter:" Named;
     /// The receipt of one owner repair that removed a stored usage event that no longer decoded
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).
@@ -475,7 +511,9 @@ side_tables! {
     /// zero-padded to 20 digits; window start).
     WIRE_LIMIT_QUESTION: SyncState b"wire:limit-question:v1:" Named;
     /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
-    /// threshold. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
+    /// threshold, kept once each time another verb or actor crossed (FIX 9531). Key: "seq:" u64
+    /// (decimal, zero-padded to 20 digits; the order questions were kept in) | "window:" u64 ":"
+    /// u64 ":" u64 (each zero-padded to 20 digits; window start:end, then the question's seq).
     RC42_WIRE_QUESTION: SyncState b"wire:question:v2:" Named;
     /// Persisted per-window wire call-volume counters (by verb and by actor) for one observation
     /// window. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).

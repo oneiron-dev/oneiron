@@ -401,6 +401,26 @@ fn answer_app_message(
             }
             return Ok(None);
         }
+        // FIX 6458: an old home with no actor session hands its home state on
+        // as its machine alone. Only the home handoff's own calls run on a
+        // socket that bound no actor, under its owner-grade upgrade, each
+        // judged for the machine it proved now; any other call needs a bind.
+        if state.bound_auth.is_none()
+            && context.is_none()
+            && crate::livequery::machine_handoff_method(&request.method)
+        {
+            let peer = state.peer_machine(&server.vault);
+            let conn = connection
+                .as_deref()
+                .map_or(0, crate::livequery::connection::Connection::conn_id);
+            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?.queued(conn)
+            {
+                direct_tx
+                    .send(frame)
+                    .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+            }
+            return Ok(None);
+        }
         let auth = require_bound_app_auth(server, state)?;
         let _ = server.wire_telemetry.record(
             &request.method,

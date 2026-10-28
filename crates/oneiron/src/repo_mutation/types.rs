@@ -10,7 +10,7 @@ use crate::error::{CodeError, Error, Result};
 
 pub type RepoForkHash = [u8; 32];
 
-pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 7] = [
+pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 8] = [
     "commit_file",
     "create_worktree",
     "record_conflict",
@@ -18,6 +18,7 @@ pub const REPO_MUTATION_ALLOWED_OPERATION_KINDS: [&str; 7] = [
     "recover_snapshot",
     "resolve_conflict_file",
     "received_files",
+    "commit_files",
 ];
 pub const REPO_MUTATION_FORBIDDEN_GIT_COMMANDS: [&str; 3] =
     ["git clean", "git reset --hard", "git checkout -- ."];
@@ -92,6 +93,35 @@ pub enum RepoMutationOperation {
         source_operations: Vec<EntityId>,
         message: String,
     },
+    /// Every file of one native reviewed bundle, landed as ONE commit
+    /// through its merge queue (FIX 7608 slice 5). Each file's exact
+    /// state change is the one its proposal stored.
+    CommitFiles {
+        files: Vec<RepoBundleFile>,
+        message: String,
+    },
+}
+
+/// One file of a native reviewed bundle: its path, its new bytes (`None`
+/// removes it) and its Git mode once present (`None` keeps the base's
+/// mode, or a regular file's for a new path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RepoBundleFile {
+    pub path: String,
+    pub content: Option<Vec<u8>>,
+    pub mode: Option<u32>,
+}
+
+impl RepoBundleFile {
+    #[must_use]
+    pub fn new(path: String, content: Option<Vec<u8>>, mode: Option<u32>) -> Self {
+        Self {
+            path,
+            content,
+            mode,
+        }
+    }
 }
 
 impl RepoMutationOperation {
@@ -105,6 +135,7 @@ impl RepoMutationOperation {
             Self::RecoverSnapshot { .. } => "recover_snapshot",
             Self::ResolveConflictFile { .. } => "resolve_conflict_file",
             Self::ReceivedFiles { .. } => "received_files",
+            Self::CommitFiles { .. } => "commit_files",
         }
     }
 }

@@ -496,7 +496,10 @@ impl Journal {
                     cause,
                 } => obligation_name(&subject, through, cause),
                 LogEntry::RetireRecipient(fact) => fact.obligation_name(),
-                LogEntry::Mint(_) | LogEntry::PublicationPolicy(_) | LogEntry::BodyHistory(_) => {
+                LogEntry::Mint(_)
+                | LogEntry::PublicationPolicy(_)
+                | LogEntry::BodyHistory(_)
+                | LogEntry::EraseEvidence(_) => {
                     continue;
                 }
             };

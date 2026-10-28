@@ -13,6 +13,8 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use oneiron_vault_contract::{FacilityNotice, FacilityReason, ManagedFacility};
+
 use crate::config::{LinearMode, ServeConfig};
 use crate::owner::backup::CustodyAnchorCredentials;
 use crate::owner::schedule::OwnerHost;
@@ -33,22 +35,24 @@ use crate::owner::schedule::OwnerHost;
 /// it is ([`say_if_unencrypted`]).
 ///
 /// The backups' label gets its handoff policy here ([`pin_backup_handoff`]),
-/// so retention waits for the node's stage ack of each backup. The host
-/// carries the managed backup duty: hourly when the vault changed, one
-/// before an idle reap, and the prune-only pass after a stage ack
-/// (`owner::schedule`).
+/// so retention waits for the node's stage ack of each backup. A policy that
+/// cannot be installed holds pruning past `keep`, so every backup is kept,
+/// and is answered as the facility notice the vault's readiness names; the
+/// vault serves either way (FIX 6705). The host carries the managed backup
+/// duty: hourly when the vault changed, one before an idle reap, and the
+/// prune-only pass after a stage ack (`owner::schedule`).
 pub(super) fn owner_host(
     config: &ServeConfig,
     rehearsal_config: oneiron::VaultConfig,
     managed: &super::args::ManagedArgs,
     anchor: Option<Arc<CustodyAnchorCredentials>>,
-) -> OwnerHost {
+) -> (OwnerHost, Option<FacilityNotice>) {
     let rehearsals = rehearsal_dir(&config.vault_path);
     // Its custody anchors where `[backup]` names (FIX 5789), a door called
     // with the supervisor's piped credential and never the environment's.
     // Each backup binds the vault id to the registry's name for the vault
     // (FIX 5826), with or without an escrow outbox.
-    let host = OwnerHost::from_config(config, rehearsal_config)
+    let mut host = OwnerHost::from_config(config, rehearsal_config)
         .with_rehearsal_dir(rehearsals.clone())
         .managed_hourly()
         .registered_as(managed.vault_name.clone())
@@ -75,8 +79,12 @@ pub(super) fn owner_host(
             say_if_unencrypted(storage, dir);
         }
     }
-    pin_backup_handoff(&host.backups.dir, &host.backups.label, managed);
-    host
+    host.backups.prune_held = !pin_backup_handoff(&host.backups.dir, &host.backups.label, managed);
+    let held = host.backups.prune_held.then_some(FacilityNotice {
+        facility: ManagedFacility::BackupHandoff,
+        reason: FacilityReason::InstallFailed,
+    });
+    (host, held)
 }
 
 /// Installs the handoff policy of the backups at `dir` labelled `label`
@@ -85,8 +93,9 @@ pub(super) fn owner_host(
 /// root-stage ack names it, and prunes nothing it cannot prove staged. In a
 /// vault VM the outbox companion carries those backups and acks (FIX 5235),
 /// so it is told this same directory and label. Either step that fails is
-/// said, and the vault serves on.
-fn pin_backup_handoff(dir: &Path, label: &str, managed: &super::args::ManagedArgs) {
+/// said, and the vault serves on. Whether the policy is installed: when it
+/// is not, the caller holds pruning past `keep` (FIX 6705).
+fn pin_backup_handoff(dir: &Path, label: &str, managed: &super::args::ManagedArgs) -> bool {
     if let Err(error) =
         oneiron_vault_contract::backup_handoff::install_backup_handoff_policy(dir, label)
     {
@@ -94,9 +103,10 @@ fn pin_backup_handoff(dir: &Path, label: &str, managed: &super::args::ManagedArg
             reason = "backup_handoff_policy_unavailable",
             dir = %dir.display(),
             error = %format!("{error:#}"),
-            "the backup handoff policy is not installed; retention prunes without the node's ack"
+            "the backup handoff policy is not installed; pruning past keep is held and every \
+             backup is kept"
         );
-        return;
+        return false;
     }
     #[cfg(target_os = "linux")]
     if managed.vsock_guest
@@ -112,6 +122,7 @@ fn pin_backup_handoff(dir: &Path, label: &str, managed: &super::args::ManagedArg
     }
     #[cfg(not(target_os = "linux"))]
     let _ = managed;
+    true
 }
 
 /// Makes the direct Linear mirror's response custody `[linear]` names, the

@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::get;
@@ -25,7 +25,8 @@ use oneiron::recovery::checkpoint::CustodyAnchorRoot;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, host, owner, owner_error};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::owner::recovery_kit::{self as view, KitStatusView};
@@ -141,10 +142,10 @@ async fn read_anchor(
 async fn advance_anchor(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnchorAdvanceRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnchorAdvanceRequest>,
 ) -> OwnerReply<AnchorAdvanceView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let anchor = anchor_root(&server)?;
     let advanced = blocking(move || -> OwnerResult<bool> {
         owner.revalidate_person(server.vault())?;

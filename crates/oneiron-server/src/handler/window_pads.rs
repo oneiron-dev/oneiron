@@ -104,9 +104,13 @@ pub(super) fn receipt_frame(
 /// What `frame` becomes as it leaves this socket: a window `UPDATE` or
 /// `REPLACEMENT` in its envelope for the machine the socket proved, sealed
 /// here from this home's custody, or as today's carrier where it may not be;
+/// a message's live partial only where its conversation may go (FIX 9537);
 /// any other frame as it is. A frame no envelope can carry is dropped,
 /// warned: none was sendable before either.
 pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8>) -> Vec<Vec<u8>> {
+    if !super::ephemeral::releases_frame(server, conn_state, &frame) {
+        return Vec::new();
+    }
     let enveloped = frame.first() == Some(&protocol::TAG_WINDOW_SYNC)
         && protocol::decode_window_sync(&frame[1..]).is_ok_and(|(_, sub_tag, _)| {
             matches!(
@@ -125,6 +129,18 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
     };
     let window = server.reassert_manager.window(&key);
     let context = window.as_ref().map(|window| &window.doc);
+    // FIX 7608 slice 4: a peer gets a marked repo item's masked copy, made
+    // before any pad is. One that cannot be masked is withheld, never sent
+    // raw; nothing retires it, so the window's next exchange owes it again.
+    let masked =
+        match oneiron::sync::selector::prepare_repo_sync_frame(server.vault(), payload, context) {
+            Ok(masked) => masked,
+            Err(error) => {
+                tracing::warn!(window = window_key, %error, "window blob withheld: no masked copy");
+                return Vec::new();
+            }
+        };
+    let payload = masked.as_deref().unwrap_or(payload);
     let prepared = if conn_state.window_pad_carrier.contains(&key) {
         carrier_window_pads(server.vault(), &key, payload, context)
     } else {

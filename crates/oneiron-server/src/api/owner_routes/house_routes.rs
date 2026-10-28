@@ -7,13 +7,12 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::house;
 use crate::server::SyncServer;
@@ -35,10 +34,10 @@ struct FinishWorkspace {
 async fn finish(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FinishWorkspace>, JsonRejection>,
+    payload: OwnerJsonBody<FinishWorkspace>,
 ) -> OwnerReply<()> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     blocking(move || house::finish_workspace(&server, &owner, &request.workspace_ref)).await?;
     Ok(Json(()))
 }

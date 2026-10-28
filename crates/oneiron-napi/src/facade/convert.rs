@@ -105,7 +105,7 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
             author,
             message_type: message.message_type.clone(),
             content: message.content.clone(),
-            metadata: message.metadata.clone(),
+            metadata: message.metadata.clone().map(super::js_json::js_json),
             is_visible: message.is_visible.unwrap_or(true),
             order: message.order,
             quote: message.quote.as_ref().map(quote_to_engine).transpose()?,
@@ -231,17 +231,33 @@ pub(super) fn forget_active_matches(
     Ok(receipts)
 }
 
-fn read_scope_from_engine(scope: oneiron::claim::ReadScope) -> NapiReadScope {
-    NapiReadScope {
-        entity_types: scope
-            .entity_types
-            .map(|types| types.into_iter().map(u32::from).collect()),
+/// One receipt scope, its entity types as their registry kinds (FIX 8117).
+/// A type byte the registry does not name is the receipt's own fault, so it
+/// fails the read's output, never narrows or widens the set it reports.
+fn read_scope_from_engine(scope: oneiron::claim::ReadScope) -> BoundaryResult<NapiReadScope> {
+    let entity_types = scope
+        .entity_types
+        .map(|types| {
+            types
+                .into_iter()
+                .map(|entity_type| {
+                    oneiron::registry::entity_type_registry_entry(entity_type)
+                        .map(|entry| entry.kind.to_owned())
+                        .ok_or_else(|| {
+                            format!("read receipt names unregistered entity type {entity_type}")
+                        })
+                })
+                .collect::<BoundaryResult<Vec<_>>>()
+        })
+        .transpose()?;
+    Ok(NapiReadScope {
+        entity_types,
         max_sensitivity_band: u32::from(scope.max_sensitivity_band),
         include_stale: scope.include_stale,
         min_confidence: f64::from(scope.min_confidence),
         min_salience: f64::from(scope.min_salience),
         deny_all: scope.deny_all,
-    }
+    })
 }
 
 /// The engine's read receipt, field for field.
@@ -249,9 +265,9 @@ pub(super) fn read_receipt_from_engine(
     receipt: oneiron::claim::ScopedReadReceipt,
 ) -> BoundaryResult<NapiReadReceipt> {
     Ok(NapiReadReceipt {
-        requested: read_scope_from_engine(receipt.requested),
-        actor_ceiling: read_scope_from_engine(receipt.actor_ceiling),
-        applied: read_scope_from_engine(receipt.applied),
+        requested: read_scope_from_engine(receipt.requested)?,
+        actor_ceiling: read_scope_from_engine(receipt.actor_ceiling)?,
+        applied: read_scope_from_engine(receipt.applied)?,
         narrowed_axes: receipt.narrowed_axes,
         suppressed_count: u32::try_from(receipt.suppressed_count)
             .map_err(|_| "suppressed_count does not fit a 32-bit count".to_owned())?,
@@ -317,7 +333,7 @@ pub(super) fn structural_put_to_engine(
     Ok(StructuralPutInput {
         id: input.id.clone(),
         kind: input.kind.clone(),
-        body: input.body.clone(),
+        body: super::js_json::js_json(input.body.clone()),
         text_fields: input.text_fields.as_ref().map(|fields| {
             fields
                 .iter()
@@ -408,6 +424,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         value_text: item.value_text,
         confidence: f64::from(item.confidence),
         hedge_bucket: item.hedge_bucket,
+        confidence_basis: item.confidence_basis.map(|basis| basis.as_str().to_owned()),
         provenance: NapiMemoryProvenance {
             source: item.provenance.source,
             source_revision_ids: item.provenance.source_revision_ids,
@@ -605,6 +622,8 @@ pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallSc
         world_ref: scope.world_ref,
         facet: scope.facet,
         kinds: scope.kinds,
+        // Omitted or empty selects every project the caller reads (FIX 8115).
+        project_refs: scope.project_refs.unwrap_or_default(),
         ..Default::default()
     })
 }

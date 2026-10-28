@@ -89,6 +89,8 @@ struct ClaimKindReadScan {
     stale_missing_record_ids: HashSet<AttemptId>,
     /// Ready rows whose TASK waits on an unattached comment (OF-368).
     held: Vec<(AttemptId, AnnotationHold)>,
+    /// Ready rows whose record did not decode, skipped (FIX 10708).
+    undecodable: usize,
     candidate: Option<ClaimKindCandidate>,
 }
 #[derive(Debug)]
@@ -123,9 +125,8 @@ impl<'a> AttemptQueue<'a> {
         task_ref: Option<String>,
     ) -> Result<EnqueueOutcome> {
         // This public door is actorless, and stays that way: every caller
-        // reaching it keeps the exact v1 key family, its pre-v1 raw fallback,
-        // and that fallback's self-heal — byte-identical to before the actor
-        // axis existed.
+        // reaching it keeps the actorless v1 key family, whose primary key
+        // alone its dedupe reads (FIX 6008).
         let actor_ref: Option<&str> = None;
         validate_kind(&input.kind)?;
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
@@ -552,7 +553,12 @@ impl<'a> AttemptQueue<'a> {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let record = decode_record(&raw_record, id)?;
+            // FIX 10708: a record that does not decode (an erased marker
+            // among them) is skipped and counted; it never fails the scan.
+            let Ok(record) = decode_record(&raw_record, id) else {
+                scan.undecodable += 1;
+                continue;
+            };
             if !record.state.is_ready_indexed() {
                 scan.stale_ready_keys.push(key.to_vec());
                 continue;
@@ -596,6 +602,7 @@ impl<'a> AttemptQueue<'a> {
             break;
         }
 
+        warn_undecodable_rows("claim_kind", scan.undecodable);
         let candidate = scan.candidate.as_ref().map(|candidate| candidate.id);
         let held = std::mem::take(&mut scan.held);
         self.apply_claim_kind_read_repairs(wtxn, scan)?;
@@ -652,6 +659,7 @@ impl<'a> AttemptQueue<'a> {
         let mut ready_replacements = Vec::new();
         let mut stale_missing_record_ids = HashSet::new();
         let mut held = Vec::new();
+        let mut undecodable = 0usize;
         let mut claimed = None;
         for row in self.store.attempt_ready.iter(&*wtxn)? {
             let (key, value) = row?;
@@ -672,7 +680,11 @@ impl<'a> AttemptQueue<'a> {
                 stale_ready_keys.push(key.to_vec());
                 continue;
             };
-            let mut record = decode_record(&raw_record, id)?;
+            // FIX 10708: skipped and counted, as in the kind scan.
+            let Ok(mut record) = decode_record(&raw_record, id) else {
+                undecodable += 1;
+                continue;
+            };
             if !record.state.is_ready_indexed() {
                 stale_ready_keys.push(key.to_vec());
                 continue;
@@ -714,6 +726,7 @@ impl<'a> AttemptQueue<'a> {
             break;
         }
 
+        warn_undecodable_rows("claim", undecodable);
         self.delete_dedupe_entries_for_ids(wtxn, &stale_missing_record_ids)?;
         for key in stale_ready_keys {
             self.store.attempt_ready.delete(wtxn, &key)?;
@@ -742,5 +755,18 @@ impl<'a> AttemptQueue<'a> {
             .put(wtxn, id.as_bytes(), &encoded)?;
 
         Ok(ClaimOutcome::Claimed(record))
+    }
+}
+
+/// One warning per claim scan that skipped `skipped` ready rows whose record
+/// did not decode (FIX 10708): the count and the scan only, never a row's
+/// bytes. The rows keep their readiness; nothing repairs or drops them here.
+fn warn_undecodable_rows(scan: &'static str, skipped: usize) {
+    if skipped > 0 {
+        tracing::warn!(
+            scan,
+            skipped,
+            "an attempt queue claim scan skipped ready rows whose record did not decode (FIX 10708)"
+        );
     }
 }

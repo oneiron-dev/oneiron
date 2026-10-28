@@ -444,17 +444,10 @@ pub(super) fn with_issuer<T>(
         }
         _ => renewal_error::renewal_refusal(&error).unwrap_or_else(ApiError::unauthorized),
     };
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return operation(issuer).map_err(refusal);
-    }
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .ok_or_else(ApiError::unauthorized)?;
-    let issuer =
-        HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| ApiError::unauthorized())?;
-    operation(&issuer).map_err(refusal)
+    // The managed issuer, else this install's own self-host root issuer
+    // (FIX-LIST 3018); a host holding neither signs nothing.
+    let issuer = server.host_issuer().ok_or_else(ApiError::unauthorized)?;
+    operation(issuer).map_err(refusal)
 }
 
 /// Runs `operation` with the host's own slip issuer as [`with_issuer`] finds
@@ -464,15 +457,7 @@ pub(super) fn with_host_issuer<T>(
     server: &SyncServer,
     operation: impl FnOnce(Option<&HostSlipIssuer>) -> T,
 ) -> T {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return operation(Some(issuer));
-    }
-    let issuer = server
-        .config
-        .auth_secret
-        .as_deref()
-        .and_then(|secret| HostSlipIssuer::from_secret(secret.as_bytes()).ok());
-    operation(issuer.as_ref())
+    operation(server.host_issuer())
 }
 
 #[derive(Deserialize)]

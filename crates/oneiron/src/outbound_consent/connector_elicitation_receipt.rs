@@ -207,6 +207,7 @@ impl Vault {
                 grant_ref: Some(receipt.binding.grant_id.to_hex()),
                 diff_handle: receipt.answer_digest.to_vec(),
                 read_frontier_hash: [0; 32],
+                context: Default::default(),
                 redacted_at: None,
             },
         )?;

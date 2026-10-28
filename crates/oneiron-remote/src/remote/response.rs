@@ -9,10 +9,15 @@ use super::*;
 /// buffer a response it will refuse anyway.
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 
-/// The server's error envelope, exactly as `api/facade.rs` serializes it.
+/// The server's error envelope, exactly as `api/facade.rs` serializes it:
+/// the error, and beside it the read receipt a refused read carries
+/// (FIX 8631).
 #[derive(serde::Deserialize)]
 struct ApiErrorEnvelope {
     error: ApiErrorBody,
+    /// The refused read's narrowing receipt; absent on every other refusal.
+    #[serde(default)]
+    narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
 }
 
 /// `{code, message, requestId, suggestions}`.
@@ -36,6 +41,9 @@ struct ApiErrorBody {
     /// When to call again, in seconds, on a provider outage (FIX 3194).
     #[serde(default, rename = "retryAfter")]
     retry_after: Option<u64>,
+    /// Each time the refused call's limit resets, as Unix seconds (FIX 8190).
+    #[serde(default, rename = "resetsAt")]
+    resets_at: Vec<u64>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -160,11 +168,12 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         suggestions,
         successor_short_id: None,
         gate_denial: None,
-        read_receipt: None,
+        read_receipt: envelope.narrowing,
         policy_denial: None,
         wrong_root: envelope.error.wrong_root.map(Box::new),
         hook: envelope.error.hook.map(Box::new),
         retry_after: envelope.error.retry_after,
+        resets_at: envelope.error.resets_at,
     })
 }
 

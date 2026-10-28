@@ -3,6 +3,7 @@ use super::*;
 use crate::batch::{BatchOp, apply_ops};
 use crate::error::RecordError;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 fn invalid() -> Error {
@@ -54,8 +55,9 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     let mut refs = vec![&body.claims_scope_ref, &body.leader, &body.home_room];
-    if body.parents.len() > 256
-        || body.parents.contains(&id.to_hex())
+    // The parents, side lists and goal axes are kept however many;
+    // `normalize_project_body` counts each against its threshold row (rule 5).
+    if body.parents.contains(&id.to_hex())
         || body.parents.iter().collect::<BTreeSet<_>>().len() != body.parents.len()
         || !super::validity::witnesses_fit(&body.authority())
     {
@@ -77,17 +79,18 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     refs.extend(body.born_from.iter());
     refs.extend(body.wrapper_task.iter());
     refs.extend(body.budget.iter());
-    for list in [&body.board, &body.roster, &body.sessions, &body.branches] {
-        if list.len() > 4096 || list.iter().collect::<BTreeSet<_>>().len() != list.len() {
-            return Err(invalid());
-        }
-        refs.extend(list);
-    }
-    // TASK-bearing lists grow with use, so no count refuses them (rule 5);
-    // `normalize_project_body` counts them against a threshold row. The
-    // nightly fork pass appends to `skill_forks`, so it grows uncounted too
-    // (FIX 5174).
-    for list in [&body.tasks, &body.asks, &body.skill_forks] {
+    // TASK-bearing lists grow with use, and so may the side lists; the
+    // nightly fork pass appends to `skill_forks`, which grows uncounted
+    // (FIX 5174). Every list keeps each entry once.
+    for list in [
+        &body.board,
+        &body.roster,
+        &body.sessions,
+        &body.branches,
+        &body.tasks,
+        &body.asks,
+        &body.skill_forks,
+    ] {
         if list.iter().collect::<BTreeSet<_>>().len() != list.len() {
             return Err(invalid());
         }
@@ -109,7 +112,6 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
             || goal.goal.trim().is_empty()
             || goal.why.trim().is_empty()
             || goal.axes.is_empty()
-            || goal.axes.len() > 128
             || goal.axes.iter().any(|axis| axis.trim().is_empty())
             || body.why.as_deref() != Some(goal.why.as_str())
     }) || body.budget_share.as_ref().is_some_and(|budget| {
@@ -120,13 +122,10 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     slice_refs(&body.slice, &mut ids);
+    // Every anchor is read, however many (rule 5, FIX 9436): the read fold
+    // counts the chain's depth against its threshold row.
     let mut proof = body.write_proof.as_ref();
-    let mut anchors = 0;
     while let Some(signed) = proof {
-        anchors += 1;
-        if anchors > MAX_PROJECT_ANCHORS {
-            return Err(invalid());
-        }
         let slip = crate::authority::CapabilitySlip::from_token(&signed.slip_wire)
             .map_err(|_| invalid())?;
         if let Some(org) = &slip.claims.org_ref {
@@ -201,6 +200,23 @@ fn slip_scope_refs(scope: &crate::federation::Scope, ids: &mut Vec<EntityId>) {
     }
 }
 
+/// Counts `rows` of `scan` under `id` and `list`: past the threshold row the
+/// check is raised for that list, and every entry is kept (rule 5).
+fn observe(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    scan: EngineScan,
+    id: EntityId,
+    list: &str,
+    rows: usize,
+) -> Result<()> {
+    let scope = [id.as_bytes().as_slice(), list.as_bytes()].concat();
+    let mut count = ScanCount::start(store, txn, scan, &scope)?;
+    count.rows(rows);
+    count.defer(store);
+    Ok(())
+}
+
 /// Project membership carries a birth-depth cache, not authority. Replacing
 /// members with an older view must not roll back the policy contribution set.
 pub(crate) fn normalize_project_body(
@@ -217,15 +233,28 @@ pub(crate) fn normalize_project_body(
     }
     // A project's tasks and asks are kept however many; past the threshold
     // row the board's check is raised for the project.
-    let mut tasks = crate::scan_check::ScanCount::start(
-        store,
-        txn,
-        crate::scan_check::EngineScan::ProjectTaskRows,
-        id.as_bytes(),
-    )?;
+    let mut tasks = ScanCount::start(store, txn, EngineScan::ProjectTaskRows, id.as_bytes())?;
     tasks.rows(body.tasks.len());
     tasks.rows(body.asks.len());
     tasks.defer(store);
+    // So are its side lists, direct parents and goal axes, each counted
+    // under the project and the list's name.
+    let side = EngineScan::ProjectSideListEntries;
+    let ancestry = EngineScan::ProjectAncestryRows;
+    let mut lists = vec![
+        (side, "board", body.board.len()),
+        (side, "roster", body.roster.len()),
+        (side, "sessions", body.sessions.len()),
+        (side, "branches", body.branches.len()),
+        (ancestry, "parents", body.parents.len()),
+    ];
+    if let Some(goal) = &body.goal_record {
+        let axes = EngineScan::ProjectBodyGoalAxes;
+        lists.push((axes, "goal_axes", goal.axes.len()));
+    }
+    for (scan, list, rows) in lists {
+        observe(store, txn, scan, id, list, rows)?;
+    }
     body.depth = match crate::gate::project_depth::birth_for_project(store, txn, id)? {
         Some((_, birth)) => birth.depth,
         None if crate::gate::project_depth::implicit_birth_applies(store, txn, posture, id)? => {
@@ -289,10 +318,12 @@ pub(crate) fn reconcile_project_rooms(
             }
         }
         // Fail closed on cycles, dangling parents, and non-project parents.
+        // Every ancestor is walked, however many; past the threshold row the
+        // walk's check is raised for the project (rule 5).
         let mut visited = BTreeSet::from([id.to_hex()]);
         let mut pending = body.parents.clone();
         while let Some(next) = pending.pop() {
-            if next == id.to_hex() || visited.len() > 256 {
+            if next == id.to_hex() {
                 return Err(invalid());
             }
             // A shared ancestor in a diamond is not a cycle.
@@ -307,6 +338,8 @@ pub(crate) fn reconcile_project_rooms(
             )?;
             pending.extend(parent_body.parents);
         }
+        let walk = EngineScan::ProjectAncestryRows;
+        observe(store, txn, walk, *id, "ancestry", visited.len())?;
         origins.push((*id, body.clone()));
         // The body is the authority for the project DAG. Materialize its
         // `belongs_to` links in the same batch as the home room, so PPR and

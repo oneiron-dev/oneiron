@@ -39,13 +39,13 @@ use oneiron::actor_claims::{
 };
 use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
-    COACH_ATTRIBUTION_AUDITS_FACET, COACH_EVAL_AUTHORING_FACET, COACH_EVAL_MEASUREMENT_FACET,
-    COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET,
-    COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET,
-    COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET, COACH_SKILL_DISCOVERY_FACET,
-    COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
-    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET,
-    PersonThresholdPolicy,
+    COACH_ATTRIBUTION_AUDITS_FACET, COACH_BROWSER_PROGRAMS_FACET, COACH_EVAL_AUTHORING_FACET,
+    COACH_EVAL_MEASUREMENT_FACET, COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
+    COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
+    COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET,
+    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
+    COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET,
+    COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -58,6 +58,7 @@ use oneiron::feedback::{
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold};
 use oneiron::session_lifecycle::SessionSpeakers;
+use oneiron::skill_optimize::union_source_rows;
 use oneiron::{EntityId, Error, LlmMessageRole, Vault};
 use serde::Deserialize;
 
@@ -246,6 +247,7 @@ fn run_one(
         COACH_JUDGE_SWAP_FACET => super::judge_swap::run(server, admitted, now),
         COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
+        COACH_BROWSER_PROGRAMS_FACET => super::coach_browser_programs::run(server, admitted, now),
         COACH_FEEDBACK_SWEEP_FACET => super::feedback_triage::run_sweep(server, admitted, now),
         COACH_FEEDBACK_TRIAGE_FACET => super::feedback_triage::run_revision(server, admitted, now),
         COACH_FEEDBACK_TRIAGE_PART_FACET => super::feedback_triage::run_part(server, admitted, now),
@@ -407,14 +409,22 @@ impl SessionActorDistiller for HostDistiller<'_> {
             "speakers": actors.keys().collect::<Vec<_>>(),
             "turns": turns,
         });
+        // The call names the rows it was assembled from (FIX 9072): the
+        // brief's, the sitting whose bound speakers resolved its labels, and
+        // each actor a label resolved to. An unknown brief stays unknown.
+        let speaker_rows: Vec<EntityId> = std::iter::once(brief.session)
+            .chain(actors.values().copied())
+            .collect();
+        let rows = union_source_rows([brief.source_rows.as_deref(), Some(speaker_rows.as_slice())]);
         let text = self
             .models
-            .generate(
+            .generate_sourced(
                 self.models.coach(),
                 vec![
                     message(LlmMessageRole::System, DISTILL_SYSTEM.to_owned()),
                     message(LlmMessageRole::User, data.to_string()),
                 ],
+                rows,
             )?
             .ok_or_else(|| Error::InvalidConfig("no seat took the Coach's distill".into()))?;
         let wire = parse_notes(&text).ok_or_else(|| {

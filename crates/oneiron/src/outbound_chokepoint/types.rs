@@ -235,6 +235,28 @@ pub(crate) trait OutboundTransport {
         None
     }
 
+    /// The remote task handle the last send's provider accepted it as, when
+    /// that send came back [`OutboundSendOutcome::Deferred`] (FIX 7960). By
+    /// default a transport hands on none.
+    fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {
+        None
+    }
+
+    /// The wait the last send's provider asked for when it refused that send
+    /// for rate or quota (FIX 8818). By default a transport names none.
+    fn provider_wait(&self) -> Option<crate::outbound_intent_ledger::ProviderWait> {
+        None
+    }
+
+    /// Whether the transport's own durable record proves that `call`, a row
+    /// the ledger left outcome-free Pending, reached no provider (FIX 9379):
+    /// a crash fell between that record and the ledger's definite
+    /// non-delivery. By default a transport proves nothing, and the row
+    /// stays one whose delivery is unknown.
+    fn known_non_delivery(&self, _call: &FrozenOutboundCall) -> bool {
+        false
+    }
+
     /// Judges a new call once more under the writer that would record its
     /// gate decision, before any decision is recorded (FIX 6404): a refusal
     /// records none and sends nothing. By default a transport takes every

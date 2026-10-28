@@ -41,20 +41,50 @@ pub fn bind_human_wait(
     Ok(binding)
 }
 
-/// The active wait binding for one TASK, if a step on this device is parked on it.
+/// An active wait binding for one TASK, if a step on this device is parked on
+/// it: the first by trap when several workflows wait on the same TASK, each
+/// of which [`human_wait_bindings`] lists.
 pub fn human_wait_binding(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<HumanTaskWaitBinding>> {
-    Ok(stored_human_wait_binding(vault, task_ref)?.filter(|binding| binding.is_active))
+    Ok(human_wait_bindings(vault, task_ref)?.into_iter().next())
 }
 
+/// Every active wait binding for one TASK, one per parked trap (FIX 9867): a
+/// second trap bound to the same TASK keeps the first one's binding.
+pub fn human_wait_bindings(vault: &Vault, task_ref: EntityId) -> Result<Vec<HumanTaskWaitBinding>> {
+    Ok(stored_wait_bindings(vault, task_ref)?
+        .into_iter()
+        .filter(|binding| binding.is_active)
+        .collect())
+}
+
+/// The first stored binding for one TASK, active or retired.
 pub(super) fn stored_human_wait_binding(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<HumanTaskWaitBinding>> {
+    Ok(stored_wait_bindings(vault, task_ref)?.into_iter().next())
+}
+
+/// Every stored binding for one TASK, in trap order.
+fn stored_wait_bindings(vault: &Vault, task_ref: EntityId) -> Result<Vec<HumanTaskWaitBinding>> {
     let rtxn = vault.store.env.read_txn()?;
-    WAIT_BINDINGS.get(&vault.store, &rtxn, &task_ref)
+    WAIT_BINDINGS
+        .iter_from(&vault.store, &rtxn, task_ref.as_bytes())?
+        .map(|row| row.map(|(_, binding)| binding))
+        .collect()
+}
+
+/// The stored binding of one trap on one TASK, active or retired.
+fn stored_wait_binding_for(
+    vault: &Vault,
+    task_ref: EntityId,
+    trap_claim_id: EntityId,
+) -> Result<Option<HumanTaskWaitBinding>> {
+    let rtxn = vault.store.env.read_txn()?;
+    WAIT_BINDINGS.get(&vault.store, &rtxn, &(task_ref, trap_claim_id))
 }
 
 /// Sends the resume signal for one identity-stamped human response.
@@ -72,7 +102,7 @@ pub fn signal_human_response(
 ) -> HumanTaskResult<EntityId> {
     // The caller-supplied binding is a convenience handle; the DEVICE-LOCAL row
     // is the authority, so a forged, inactive, or stale binding cannot signal.
-    let stored = stored_human_wait_binding(vault, binding.task_ref)?
+    let stored = stored_wait_binding_for(vault, binding.task_ref, binding.trap_claim_id)?
         .ok_or(HumanTaskError::UnboundResponse)?;
     if !stored.is_active || !binding.is_active || stored != *binding {
         return Err(HumanTaskError::UnboundResponse);
@@ -141,9 +171,16 @@ fn require_persisted_human_response_trap(
     Ok(())
 }
 
-/// Retires the wait binding once its trap has been consumed.
-pub fn release_human_wait(vault: &Vault, task_ref: EntityId) -> Result<bool> {
-    let Some(binding) = stored_human_wait_binding(vault, task_ref)? else {
+/// Retires the wait binding of one consumed trap on one TASK, leaving every
+/// other trap's binding on that TASK as it stands (FIX 9867). Every release
+/// names the trap it consumed (FIX 10699): a TASK several traps wait on has
+/// no one binding to retire by the TASK alone.
+pub fn release_human_wait_trap(
+    vault: &Vault,
+    task_ref: EntityId,
+    trap_claim_id: EntityId,
+) -> Result<bool> {
+    let Some(binding) = stored_wait_binding_for(vault, task_ref, trap_claim_id)? else {
         return Ok(false);
     };
     if !binding.is_active {

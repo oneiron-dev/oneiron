@@ -95,29 +95,29 @@ pub(crate) const SELF_COMPACTION_BACKEND: &str = "self";
 /// The pinned sub-map keys for a profile's `output_decay`, in encode order.
 pub(super) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
 
-/// The most bytes one literal verbatim pin may hold. A profile carries any
-/// number of pins: its put's scan row asks past 64.
+/// Bytes of one verbatim pin past which a put asks (the length it once
+/// refused past); a pin of any length is kept, as any number of pins is.
 pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
 
 /// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.
 pub const CONTEXT_BUDGET_SPLIT_KEYS: [&str; 4] = ["claims", "turns", "summaries", "other"];
 
-/// Maximum byte length of an `agent_id`.
+/// Bytes of an `agent_id` past which a put asks; any length is kept.
 pub const AGENT_ID_MAX_BYTES: usize = 256;
 
-/// Maximum byte length of a `desc`.
+/// Bytes of a `desc` past which a put asks; any length is kept.
 pub const AGENT_DESC_MAX_BYTES: usize = 4096;
 
-/// Maximum byte length of a `version` string (also reused for ref `min_version`).
+/// Bytes of a `version` (or a ref's `min_version`) past which a put asks.
 pub const AGENT_VERSION_MAX_BYTES: usize = 128;
 
-/// Maximum byte length of the optional `instructions` custom prompt.
+/// Bytes of the optional `instructions` past which a put asks; any are kept.
 pub const AGENT_INSTRUCTIONS_MAX_BYTES: usize = 16_384;
 
-/// Maximum byte length of the optional `model_tier` reference string.
+/// Bytes of a `model_tier` or model reference past which a put asks.
 pub const AGENT_MODEL_TIER_MAX_BYTES: usize = 256;
 
-/// Maximum byte length of a skill/connector/MCP reference id or key.
+/// Bytes of a skill/connector/MCP id or key past which a put asks.
 pub const AGENT_REF_KEY_MAX_BYTES: usize = 256;
 
 /// Entries in one composition list past which a definition's put asks
@@ -229,10 +229,10 @@ pub(super) const SCOPE_WORLD: &str = "world";
 /// place that holds both the body and the row id it is being stored at.
 pub(super) const SYSTEM_LOGICAL_ID_PREFIX: &str = "sys.";
 
-/// Maximum byte length of a `logical_id`.
+/// Bytes of a `logical_id` past which a put asks; any length is kept.
 pub(super) const AGENT_LOGICAL_ID_MAX_BYTES: usize = 256;
 
-/// Maximum byte length of the runtime-editable `display_name`.
+/// Bytes of the runtime-editable `display_name` past which a put asks.
 pub(super) const AGENT_DISPLAY_NAME_MAX_BYTES: usize = 256;
 
 /// A versioned reference to a code-mode MCP, patterned on [`SkillDependency`].

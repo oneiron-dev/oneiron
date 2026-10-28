@@ -103,7 +103,10 @@ pub struct VoiceMediaBindings {
     pub sample_rate: u32,
     pub channels: u16,
     /// The owner's audio side: microphone audio, cuts, VAD and drains.
-    pub audio_in: mpsc::Receiver<VoiceMediaIn>,
+    /// `None` when the connection carries it itself (the wire, a public
+    /// session): absent, never a closed input, so the live hearing ends
+    /// only when the session does (FIX 9543).
+    pub audio_in: Option<mpsc::Receiver<VoiceMediaIn>>,
     /// The brain's events, sent by the brain the connection starts.
     pub brain_out: mpsc::Receiver<VoiceBrainOut>,
     /// The session's cadence for cutting the brain's text into sentences.
@@ -157,7 +160,7 @@ impl VoiceMediaBindings {
             tts,
             MediaBridge {
                 hearing,
-                audio_in: Some(self.audio_in),
+                audio_in: self.audio_in,
                 brain_out: Some(self.brain_out),
                 outputs,
                 playout: self.playout,

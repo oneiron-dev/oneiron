@@ -12,9 +12,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/affect.rs` | src | s | 1 re-export | — | Core VAD value types |
-| `src/affect/vad.rs` | src | s | 2 struct · 2 enum · 6 fn · 1 const | Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
+| `src/affect/vad.rs` | src | s | 3 struct · 2 enum · 6 fn · 1 const | DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
 | `src/authority.rs` | src | s | 1 type · 1 const | — | Authority-log hash vocabulary the write path shares |
-| `src/claim.rs` | src | s | 1 fn · 2 re-export | — | Claim status axes and the scoped-read receipt |
+| `src/claim.rs` | src | s | 1 fn · 3 re-export | — | Claim status axes and the scoped-read receipt |
+| `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 8 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
 | `src/claim/receipt.rs` | src | s | 2 struct · 4 fn | ReadScope, ScopedReadReceipt | Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed |
 | `src/claim/status.rs` | src | s | 3 enum · 7 fn | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
 | `src/code_run.rs` | src | s | 1 mod | — | Shared vocabulary of the code-run vault-read contract |
@@ -49,8 +50,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/limit_ask/cgroup.rs` | src | s | 2 crate-vis | — | The memory cgroup this process runs in (FIX 8067), and what its limits leave (FIX 8066) |
 | `src/limit_ask/engine_rows.rs` | src | m | 2 fn · 1 const | — | The engine rows' tables: every row, its config key and its default (moved out of `limit_ask.rs` whole, so… |
 | `src/limits.rs` | src | s | 3 const | — | Traversal safety caps for the engine's graph walks |
-| `src/memory.rs` | src | s | 8 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
-| `src/memory/error.rs` | src | m | 5 struct · 7 fn · 1 type · 20 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
+| `src/memory.rs` | src | s | 9 re-export | — | The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one… |
+| `src/memory/error.rs` | src | m | 5 struct · 7 fn · 1 type · 21 const | MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryWrongRoot | Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error… |
 | `src/posterior.rs` | src | s | 1 trait · 2 fn | Posterior | Shared Beta posterior bandit seam; outcome admission stays with each estimator |
 | `src/record_layout.rs` | src | s | 6 const | — | Byte layout of the entity metadata header that starts every stored entity row: the type byte, the occurred… |
 | `src/registry/artifact_kinds.rs` | src | s | 2 enum · 2 fn | ArtifactFamilyId, ArtifactFamilyKindId | Semantic artifact kinds under the one artifact family (ARCH-0078) |

@@ -1,6 +1,7 @@
 //! Read-time room thread liveness; the room history and TASK rows remain truth.
 use super::{RoomTurn, invalid};
-use crate::{EntityId, error::Result};
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::{EntityId, Vault, error::Result};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// A TASK fact already bound to a room turn. Never persisted as a liveness row.
@@ -164,7 +165,9 @@ pub struct RoomThreads {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RoomThreadPolicy {
     pub now: u64,
-    pub fresh_for: u64,
+    /// Seconds a thread stays fresh after its last message. `None` reads
+    /// the manifest's freshness; a set value only narrows it.
+    pub fresh_for: Option<u64>,
     pub rows_per_list: usize,
     /// Per-list maximum tokens including the list's count and find/get footer.
     pub tokens_per_list: usize,
@@ -175,7 +178,7 @@ impl Default for RoomThreadPolicy {
     fn default() -> Self {
         Self {
             now: crate::unix_seconds_now(),
-            fresh_for: 7 * 86_400,
+            fresh_for: None,
             rows_per_list: 8,
             tokens_per_list: 512,
             fill: crate::workspace_roster::RoomThreadFill::Stage,
@@ -282,16 +285,97 @@ pub(in crate::workspace_roster) fn thread_task_bindings(
     Ok(bindings)
 }
 
+/// A thread policy resolved against the manifest: the concrete one every
+/// thread fold applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ThreadFold {
+    pub(super) now: u64,
+    pub(super) fresh_for: u64,
+    pub(super) rows_per_list: usize,
+    pub(super) tokens_per_list: usize,
+    pub(super) fill: crate::workspace_roster::RoomThreadFill,
+    pub(super) waits_per_thread: usize,
+}
+
 impl RoomThreadPolicy {
-    pub(super) fn narrowed(mut self, settings: crate::gate::RoomThreadSettings) -> Self {
-        self.fresh_for = self.fresh_for.min(settings.fresh_for);
-        self.rows_per_list = self.rows_per_list.min(settings.rows_per_list);
-        self.tokens_per_list = self.tokens_per_list.min(settings.tokens_per_list);
-        // Ranking is selected by trusted policy, not an ordinal minimum.
-        self.fill = settings.fill;
-        self.waits_per_thread = self.waits_per_thread.min(settings.waits_per_thread);
-        self
+    /// This policy under the manifest's `settings`: the manifest's
+    /// freshness unless the caller asked for a shorter one, so a default
+    /// never narrows a longer owner setting, and each list bound narrowed.
+    fn resolved(self, settings: crate::gate::RoomThreadSettings) -> ThreadFold {
+        ThreadFold {
+            now: self.now,
+            fresh_for: self
+                .fresh_for
+                .map_or(settings.fresh_for, |asked| asked.min(settings.fresh_for)),
+            rows_per_list: self.rows_per_list.min(settings.rows_per_list),
+            tokens_per_list: self.tokens_per_list.min(settings.tokens_per_list),
+            // Ranking is selected by trusted policy, not an ordinal minimum.
+            fill: settings.fill,
+            waits_per_thread: self.waits_per_thread.min(settings.waits_per_thread),
+        }
     }
+}
+
+/// The fold `policy` resolves to for `actor`, under the manifest `txn`
+/// reads: the one resolver every room thread fold uses. A manifest that
+/// fails closed refuses, as the room's thread lists always have.
+pub(super) fn thread_fold_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    policy: RoomThreadPolicy,
+) -> Result<ThreadFold> {
+    let settings =
+        crate::gate::resolve_policy_manifest(&vault.store, txn)?.room_thread_settings(actor)?;
+    let fold = policy.resolved(settings);
+    observe_fold_in(vault, txn, actor, &fold)?;
+    Ok(fold)
+}
+
+/// [`thread_fold_in`] for a direct-by-handle fold at `now`: every row, at
+/// the manifest's freshness. A manifest that fails closed reads the shipped
+/// settings, as these folds did before they read the manifest.
+pub(super) fn direct_thread_fold_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    now: u64,
+) -> Result<ThreadFold> {
+    let settings = crate::gate::resolve_policy_manifest(&vault.store, txn)?
+        .room_thread_settings(actor)
+        .unwrap_or_default();
+    let policy = RoomThreadPolicy {
+        now,
+        ..Default::default()
+    };
+    let fold = ThreadFold {
+        rows_per_list: usize::MAX,
+        ..policy.resolved(settings)
+    };
+    observe_fold_in(vault, txn, actor, &fold)?;
+    Ok(fold)
+}
+
+/// Counts `fold`'s list bounds against their rows (rule 5): none refuses.
+fn observe_fold_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    fold: &ThreadFold,
+) -> Result<()> {
+    let rows = (fold.rows_per_list != usize::MAX).then_some(fold.rows_per_list);
+    for (scan, value) in [
+        (EngineScan::RoomThreadPolicyRows, rows),
+        (EngineScan::RoomThreadTokens, Some(fold.tokens_per_list)),
+        (EngineScan::RoomThreadWaitRows, Some(fold.waits_per_thread)),
+    ] {
+        if let Some(value) = value {
+            let mut count = ScanCount::start(&vault.store, txn, scan, actor.as_bytes())?;
+            count.rows(value);
+            count.defer(&vault.store);
+        }
+    }
+    Ok(())
 }
 
 /// The public room read supplies its exact room id even for an empty history.
@@ -301,28 +385,28 @@ pub(super) fn project_in_room(
     turns: &[RoomTurn],
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
-    policy: RoomThreadPolicy,
+    fold: ThreadFold,
     room: EntityId,
 ) -> Result<RoomThreads> {
-    project_inner(turns, edits, tasks, policy, None, &room.to_hex())
+    project_inner(turns, edits, tasks, fold, None, &room.to_hex())
 }
 
-/// Direct-by-handle fold: no render cap and no unrelated thread rows built.
+/// Direct-by-handle fold under `fold` ([`direct_thread_fold_in`]): no
+/// render cap and no unrelated thread rows built.
 pub(super) fn project_target(
     turns: &[RoomTurn],
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     handle: EntityId,
-    now: u64,
+    fold: ThreadFold,
 ) -> Result<Option<RoomThread>> {
     let projection = project_inner(
         turns,
         edits,
         tasks,
-        RoomThreadPolicy {
-            now,
+        ThreadFold {
             rows_per_list: usize::MAX,
-            ..Default::default()
+            ..fold
         },
         Some(handle),
         &turns
@@ -339,24 +423,24 @@ pub(super) fn project_target(
 }
 
 /// Whether thread `handle` of `room` is live (ARCH-0006a:233): the
-/// direct-by-handle fold lists it active or waiting, never quiet. `None` when
-/// the turns hold no such thread root.
+/// direct-by-handle fold under `fold` ([`direct_thread_fold_in`]) lists it
+/// active or waiting, never quiet. `None` when the turns hold no such
+/// thread root.
 pub(super) fn thread_is_live(
     turns: &[RoomTurn],
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     room: EntityId,
     handle: EntityId,
-    now: u64,
+    fold: ThreadFold,
 ) -> Result<Option<bool>> {
     let projection = project_inner(
         turns,
         edits,
         tasks,
-        RoomThreadPolicy {
-            now,
+        ThreadFold {
             rows_per_list: usize::MAX,
-            ..Default::default()
+            ..fold
         },
         Some(handle),
         &room.to_hex(),
@@ -375,17 +459,13 @@ fn project_inner(
     turns: &[RoomTurn],
     edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
-    policy: RoomThreadPolicy,
+    policy: ThreadFold,
     target: Option<EntityId>,
     room_hex: &str,
 ) -> Result<RoomThreads> {
-    const MAX_ROWS: usize = 100_000;
-    if policy.rows_per_list > MAX_ROWS && policy.rows_per_list != usize::MAX
-        || policy.tokens_per_list == 0
-        || policy.tokens_per_list > 1_000_000
-        || policy.waits_per_thread == 0
-        || policy.waits_per_thread > MAX_ROWS
-    {
+    // Its list bounds are counted where the fold was resolved
+    // ([`observe_fold_in`]); none refuses for its size (rule 5).
+    if policy.tokens_per_list == 0 || policy.waits_per_thread == 0 {
         return Err(invalid());
     }
     let mut by_id = BTreeMap::new();

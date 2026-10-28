@@ -9,6 +9,7 @@ pub mod action_mode;
 pub mod agent_health;
 mod applied;
 pub mod attribution_audits;
+pub mod browser_programs;
 mod calibration_asks;
 pub mod coach;
 pub mod coach_diagnostic;

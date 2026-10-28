@@ -510,9 +510,40 @@ the archive's `manifest.json` Config the way `deploy/firecracker/build.py`
 reads it (FIX 8938). `--store-id` prints instead the id this host's docker
 store answers (`docker image inspect` `.Id`); every route also writes that
 id to stderr. A host whose docker uses the containerd image store pins the
-store id. The checker's `image-id` and `image.json` receipt name the config
-digest on every route. The image-family and `--archive` routes build no
-host fence; stage it as its own step (both READMEs).
+store id. The image-family and `--archive` routes build no host fence;
+stage it as its own step (both READMEs).
+
+Every checker route writes three files to `ONEIRON_CHECKER_OUT`, by default
+`checker-image` under `CARGO_TARGET_DIR` (the checkout's `target/` when that
+is unset). `image-id` holds the config digest, `store-id` the id this docker
+store answers the built image as, and `image.json` the receipt, whose `image`
+is that same config digest. `--store-id` changes only the printed line, never
+these files.
+
+`--when-lock-changed`, which only the checker's script takes, works with any
+route. It builds only when one of two things holds: the lockfile the route
+builds from differs from the one the kept receipt names, or
+`ONEIRON_CHECKER_TAG` no longer names the kept image. The `--dockerfile` route
+builds from HEAD's `Cargo.lock`; the other routes from `release.toml`'s
+`inputs.engine.cargo_lock_sha256`. A `release.toml` that lists no such input
+builds the image.
+
+With the flag, the gate runs before any route fetches, loads or builds an
+image. It reads those three files, and it takes a kept image only while the
+receipt's `image` is the id in `image-id`, `store-id` is not empty, and the
+receipt carries a `cargo_lock_sha256`. Anything else reads as no kept image.
+
+The tag check is an identity check. The id `docker image inspect` reports for
+`ONEIRON_CHECKER_TAG` (default `oneiron-queue-checker:local`) has to match
+`store-id`. A tag that names another image, or names none, fails it.
+
+On a pass the route prints the kept id on stdout, the `store-id` with
+`--store-id` and the `image-id` otherwise. It says on stderr that the kept
+image's store is already of that lockfile, and stops there, before the route
+fetches or builds anything. The three files stay as they are. Otherwise it
+says on stderr the lockfile it wanted, the one the receipt kept, the tag's id
+and the kept `store-id`, deletes the three files and builds. Run it on every
+`Cargo.lock` change (FIX 7317).
 
 ## Candidate hand-off to the acceptance smoke
 

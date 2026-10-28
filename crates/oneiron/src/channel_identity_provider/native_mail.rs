@@ -108,7 +108,7 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         // The common dispatch door canonicalizes and binds the recipient
         // before freezing the intent. This adapter cannot authorize a second
         // delivery path or normalize only the Gate's counterparty copy.
-        vault.dispatch_outbound_intent(request, sink)
+        vault.dispatch_outbound_intent_recorded(request, sink)
     }
 
     /// Owner approval for exactly one cold send. This mints no standing

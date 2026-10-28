@@ -31,10 +31,14 @@ mod request;
 mod response;
 pub mod wav;
 
-pub use backend::{AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility};
+pub use backend::{
+    AiMediaDoor, ImageMedia, MediaBackend, MediaProgressFuture, ReferenceCompatibility,
+};
 pub use caps::{AiOperation, MediaCaps, Modality, NativeUnit};
 pub use request::{MediaPart, MediaRequest, MediaVoice};
-pub use response::{MediaJobState, MediaResponse, MediaUsage};
+// FIX 9517: what a call stopped part way completed, and the stop itself.
+pub use super::error::InterruptedMediaCall;
+pub use response::{MediaCallProgress, MediaJobState, MediaResponse, MediaUsage};
 
 /// What `per` native units cost in token units, rounded up: the rate a run
 /// settles a provider's native count at.

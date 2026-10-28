@@ -28,6 +28,7 @@ use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
 
+use super::erase_evidence::CredentialFenceFact;
 use super::files::{LocalCustody, open_dir, read_whole, replace_file, write_once};
 use super::identity::{CustodyId, CustodyKind, CustodyNamespace, CustodySubject, CustodyVaultId};
 use super::recipients::RecipientRetirement;
@@ -62,6 +63,9 @@ const OP_PUBLICATION_POLICY: u8 = 4;
 /// History rows a writer is about to commit (FIX 6229): ids only, an op of
 /// its own.
 const OP_BODY_HISTORY: u8 = 5;
+/// An erased credential's value-free fact (FIX 10584 item 3): its id and
+/// where its erase stands, never a key; an op of its own.
+const OP_ERASE_EVIDENCE: u8 = 6;
 
 pub(super) fn log_corrupt() -> Error {
     Error::CorruptedIndex("key custody log")
@@ -255,6 +259,10 @@ pub(crate) enum LogEntry {
     /// obligations' ids, never a key. It moves the log on, so every
     /// member's head is sealed and acknowledged again.
     BodyHistory(Vec<(Vec<u8>, Vec<u8>)>),
+    /// An erased credential's fact (FIX 10584 item 3): its id and where its
+    /// erase stands, never a key or a value. It moves the log on, so every
+    /// member's head is sealed again carrying it.
+    EraseEvidence(CredentialFenceFact),
 }
 
 impl LogEntry {
@@ -268,6 +276,11 @@ impl LogEntry {
             Self::PublicationPolicy(digest) => {
                 let mut out = vec![OP_PUBLICATION_POLICY];
                 out.extend_from_slice(digest);
+                return out;
+            }
+            Self::EraseEvidence(fact) => {
+                let mut out = vec![OP_ERASE_EVIDENCE];
+                out.extend_from_slice(&fact.encode());
                 return out;
             }
             Self::BodyHistory(rows) => {
@@ -309,6 +322,11 @@ impl LogEntry {
             return <[u8; 32]>::try_from(digest)
                 .map(Self::PublicationPolicy)
                 .map_err(|_| log_corrupt());
+        }
+        if let Some((&OP_ERASE_EVIDENCE, fact)) = bytes.split_first() {
+            return CredentialFenceFact::decode(fact)
+                .map(Self::EraseEvidence)
+                .ok_or_else(log_corrupt);
         }
         if let Some((&OP_BODY_HISTORY, rows)) = bytes.split_first() {
             return super::body_history::decode_rows(rows)

@@ -22,13 +22,14 @@
 //! An action stands while its requester does. One asked through a transport
 //! carries the capability slip its request was admitted on, and runs only
 //! while that slip verifies and still binds the requester: revoking it stops
-//! the queued action. Only the in-process host queues one without a slip.
+//! the queued action. A managed vault's attested owner presents no slip: his
+//! carries his person alone and runs only while the vault records him as its
+//! live owner (FIX 11090). Only the in-process host queues one with neither.
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, EnqueueAttempt, EnqueueOutcome};
-use crate::authority::{InvocationSlipBinding, VerifiedSlip};
 use crate::claim::{CallerLocality, ClaimReadStatus, ScopedRead};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Result;
@@ -38,6 +39,9 @@ use crate::memory::{
 };
 use crate::workspace_roster::RoomRegenerationPermit;
 use crate::{EntityId, Error, Vault};
+
+mod standing;
+pub use standing::TurnActionAuthority;
 
 /// The attempt kind a host's turn-action worker claims.
 pub const TURN_ACTION_ATTEMPT_KIND: &str = "conversation.turn_action";
@@ -86,12 +90,8 @@ pub struct TurnActionAttempt {
     /// the reply's turn is a run on this actor's budget line.
     pub actor: EntityId,
     pub actor_class: u8,
-    /// The slip the request was admitted on, verified again whenever the
-    /// action's standing is judged. `None` only on a native attempt.
-    pub invocation_slip: Option<InvocationSlipBinding>,
-    /// The in-process host asked, with no transport and no slip: the
-    /// actor's binding alone is its standing.
-    pub native: bool,
+    /// What the action stands on, judged again whenever its standing is.
+    pub authority: TurnActionAuthority,
     /// The requester read from off this device; the run reads there too.
     pub off_device: bool,
 }
@@ -140,56 +140,6 @@ impl TurnActionAttempt {
             .ok_or(Error::CorruptedIndex("turn action actor class"))?;
         Ok((self.actor, class))
     }
-
-    /// Whether the action still stands, in `txn`: the requester's actor
-    /// binding holds and, unless the attempt is native, the slip it was
-    /// asked with does too. The action's standing, as a credential's
-    /// liveness is a request's.
-    #[must_use]
-    pub fn requester_live_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> bool {
-        self.requester_proof_in(vault, txn).is_ok()
-    }
-
-    /// The requester's standing in `txn`, and the slip's proof as it stands
-    /// there: verified at this snapshot's fold and clock, every caveat
-    /// included, still held by the requester at its class and granting a
-    /// write. A native attempt stands on the actor binding, with no proof.
-    fn requester_proof_in(
-        &self,
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-    ) -> MemoryResult<Option<VerifiedSlip>> {
-        let (actor, class) = self.requester()?;
-        crate::memory::verify_actor_binding_in_txn(vault, txn, actor, class)?;
-        let binding = match (&self.invocation_slip, self.native) {
-            (None, true) => return Ok(None),
-            (Some(binding), false) => binding,
-            // No attempt is queued native with a slip, or slip-less without
-            // being native.
-            _ => return Err(standing_lost()),
-        };
-        let proof = vault
-            .invocation_slip_in_txn(txn, binding)
-            .map_err(|_| standing_lost())?;
-        let claims = proof.claims();
-        if claims.holder_ref != actor.to_hex()
-            || claims.actor_class.as_deref() != Some(class.gate_actor_class())
-            || !(proof.allows_verb("write") || proof.allows_verb("core:write"))
-        {
-            return Err(standing_lost());
-        }
-        Ok(Some(proof))
-    }
-
-    /// [`Self::requester_live_in`] in a snapshot of its own.
-    #[must_use]
-    pub fn requester_live(&self, vault: &Vault) -> bool {
-        vault
-            .store
-            .env
-            .read_txn()
-            .is_ok_and(|txn| self.requester_live_in(vault, &txn))
-    }
 }
 
 /// The turn an action acts on, resolved and checked as its caller.
@@ -205,15 +155,6 @@ fn invalid_state(message: &str) -> MemoryError {
         MEMORY_CODE_INVALID_STATE,
         message,
         &["Read the conversation's transcript again before acting on the turn."],
-    )
-}
-
-/// The slip a turn action was asked with no longer stands for its requester.
-fn standing_lost() -> MemoryError {
-    MemoryError::new(
-        crate::memory::MEMORY_CODE_FORBIDDEN,
-        "the slip this turn action was asked with no longer stands for its requester",
-        &["Ask for the action again with a live credential."],
     )
 }
 
@@ -473,6 +414,7 @@ impl Memory<'_> {
             recipients: Vec::new(),
             advance: false,
             kind: crate::registry::ENTITY_TYPE_TURN,
+            containing_turn: None,
             occurred: crate::TimeRange { start: at, end: at },
             learned_at: at,
             body,
@@ -504,15 +446,23 @@ impl Memory<'_> {
         request: &TurnActionRequest,
     ) -> MemoryResult<TurnActionReceipt> {
         // A transport's caller acts on the slip its request was admitted
-        // on; only the in-process host acts with none.
-        let native = self.native_invocation();
-        if !native && self.invocation_slip().is_none() {
+        // on, or a managed vault's attested owner on his live ownership
+        // (FIX 11090); only the in-process host acts with neither.
+        let authority = if self.native_invocation() {
+            TurnActionAuthority::Native
+        } else if let Some(binding) = self.invocation_slip() {
+            TurnActionAuthority::Slip {
+                binding: binding.clone(),
+            }
+        } else if let Some(holder) = self.attested_owner_holder() {
+            TurnActionAuthority::AttestedOwner { holder }
+        } else {
             return Err(MemoryError::new(
                 crate::memory::MEMORY_CODE_FORBIDDEN,
                 "a turn action over a transport needs the slip its request was admitted on",
                 &["Present a capability slip with its holder proof."],
             ));
-        }
+        };
         let assistant_turn = resolve_entity_ref(self.vault(), &request.turn_id)?;
         // The history is read again when the action runs; none is kept here.
         let resolved = self.resolve_turn_action(action, assistant_turn, 0)?;
@@ -524,13 +474,13 @@ impl Memory<'_> {
             message: resolved.message,
             actor: self.actor(),
             actor_class: self.actor_class() as u8,
-            invocation_slip: self.invocation_slip().cloned(),
-            native,
+            authority,
             off_device: self.locality() == CallerLocality::OffDevice,
         };
-        // Queued only while the slip it carries stands for this actor, and
-        // a project room's Retry only while the room lets its agent answer
-        // the claimed turn again (FIX 3149).
+        // Queued only while the slip it carries stands for this actor, or
+        // its attested owner is the vault's live owner, and a project room's
+        // Retry only while the room lets its agent answer the claimed turn
+        // again (FIX 3149).
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             payload.requester_proof_in(self.vault(), &txn)?;

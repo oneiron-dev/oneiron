@@ -6,15 +6,17 @@ use crate::federation::Scope;
 use crate::secret_lease::VaultInstant;
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::Signer;
 use std::collections::BTreeSet;
-use zeroize::Zeroizing;
 
 mod connect;
 mod connect_lifecycle;
 pub use connect_lifecycle::ConnectRescopeOffer;
 mod courtesy;
 pub use connect::ConnectOffer;
+mod issuer_custody;
+mod issuer_seed;
+pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};
 
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
 /// The attestation a host's own root roster row carries.
@@ -24,26 +26,7 @@ pub(super) const HOST_ROOT_ATTESTATION: &str = "HostRoot";
 const HOST_ROOT_SLIP_CACHE: SideTable<String, String, Raw> =
     SideTable::new(&side_table::AUTHORITY_HOST_ROOT_SLIP_CACHE);
 
-/// A dedicated host signing key. Never loaded from device-key residue.
-/// The configured retained root secret is the recovery material for bootstrap.
-pub struct HostSlipIssuer {
-    secret: Zeroizing<Vec<u8>>,
-    signing: SigningKey,
-}
 impl HostSlipIssuer {
-    pub fn from_secret(secret: &[u8]) -> Result<Self> {
-        if secret.is_empty() {
-            return Err(invalid_authority());
-        }
-        let seed = Zeroizing::new(blake3::derive_key(
-            "oneiron/host-authority-signing/v2",
-            secret,
-        ));
-        Ok(Self {
-            secret: Zeroizing::new(secret.to_vec()),
-            signing: SigningKey::from_bytes(&seed),
-        })
-    }
     #[must_use]
     pub fn public_key(&self) -> AuthorityKey {
         AuthorityKey::Ed25519(self.binding_key())
@@ -239,7 +222,7 @@ impl Vault {
         let mut fold = self.authority_fold_readonly_in_txn(txn)?;
         let mut pending = Vec::new();
         if fold.append_sequences.is_empty() {
-            let recovery = blake3::derive_key("oneiron/host-genesis-recovery/v2", issuer.secret());
+            let recovery = issuer.genesis_recovery();
             let genesis = issuer.sign_entry(
                 None,
                 0,
@@ -401,9 +384,23 @@ impl Vault {
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
-        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let now = self.instant_in_txn(&txn)?.secs();
+        let verified =
+            self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
+        txn.commit()?;
+        Ok(verified)
+    }
+    /// [`Self::admit_capability_slip_request`] in the caller's writer.
+    pub(super) fn admit_capability_slip_request_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let request_now = super::slip_replay::admission_now_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
         let challenge = super::slip_replay::request_challenge(timestamp, nonce, request_now)?;
         let key = &fold
             .slips
@@ -412,20 +409,19 @@ impl Vault {
             .ok_or_else(invalid_authority)?
             .signer;
         let verified = slip.verify(key, &fold, now, &challenge, signature)?;
-        let verified = self.admitted_slip_view_in_txn(&txn, verified, now)?;
+        let verified = self.admitted_slip_view_in_txn(txn, verified, now)?;
         if verified.claims().single_use {
             return Err(invalid_authority());
         }
         super::slip_replay::record_nonce(
             self,
-            &mut txn,
+            txn,
             &verified.claims().binding_key,
             nonce,
             timestamp,
             request_now,
         )?;
-        self.receipt_support_use_in_txn(&mut txn, verified.claims(), nonce, timestamp)?;
-        txn.commit()?;
+        self.receipt_support_use_in_txn(txn, verified.claims(), nonce, timestamp)?;
         Ok(verified)
     }
     /// Read-only transport verification from the signed authority-log mint.

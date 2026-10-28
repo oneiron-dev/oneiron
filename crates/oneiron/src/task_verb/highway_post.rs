@@ -36,21 +36,20 @@ use crate::write_envelope::WriteActor;
 
 use super::brief::{QueueTaskBrief, StoredBrief, brief_digest, hex32};
 use super::consts::{
-    TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE, TASK_POST_ID_DOMAIN,
-    TASK_POST_STAMP_KEY, TASK_SETTLE_ID_DOMAIN,
+    TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CANCEL_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE,
+    TASK_POST_ID_DOMAIN, TASK_POST_STAMP_KEY, TASK_SETTLE_ID_DOMAIN,
 };
 use super::create_origin::{
     TaskCreateOrigin, proposal_origin_in, put_proposal_origin_in_txn, task_create_origin_in_txn,
 };
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 use super::create_validation::{
-    admit_task_parent, task_body_in_txn, task_create_proposal_value, validate_task_create,
-    validate_task_create_in,
+    admit_task_parent, task_body_in_txn, task_create_proposal_value, task_parent_refusal_in,
+    validate_task_create, validate_task_create_in,
 };
 use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask};
 use super::highway::{
-    forbidden, invalid_state, not_found, post_provenance, provenance_digest, qualified_key,
-    stamp_fields,
+    forbidden, invalid_state, not_found, post_provenance, provenance_digest, qualify, stamp_fields,
 };
 use super::highway_types;
 use super::highway_types::{TaskCall, TaskCallReceipt, TaskHandle, TaskOutcome, TaskPost, TaskVia};
@@ -65,8 +64,10 @@ use super::wire_decode::{
 use super::wire_encode::canonical_bytes;
 
 mod brief;
+mod key;
 mod parking;
 mod settlement;
+use self::key::{PostKey, observe_key_in};
 pub(crate) use self::settlement::settle_task_proposal_in_txn;
 pub(super) use self::settlement::{envelope_actor_class, proposer_of};
 
@@ -95,6 +96,10 @@ struct PostStamp {
     #[serde(default)]
     birth_facet: Option<EntityId>,
     brief: QueueTaskBrief,
+    /// The TASK a redo copies (FIX 9001): settlement lands the copy as the
+    /// post did, its moved pins reported, never refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    redo_of: Option<EntityId>,
 }
 
 /// The value of one `tasks.brief` revision proposal.
@@ -106,7 +111,28 @@ pub(super) struct BriefRevision {
     report_key: String,
     actor_class: u8,
     pub(super) brief: QueueTaskBrief,
+    /// The brief this revision replaces when that is the TASK's first, read
+    /// in the snapshot `base_rev` was (FIX 9005): no `tasks.brief` CLAIM
+    /// landed a first brief, so the history reads it here once it moves on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) base_brief: Option<QueueTaskBrief>,
 }
+
+/// What a post copied from an earlier TASK carries (FIX 9001): the TASK it
+/// copies, and the parent that TASK filed under when that parent can no
+/// longer take a Task, which the copy is born without. A copy keeps its
+/// brief as written: a pin whose row moved since is reported, never refused.
+pub(super) struct PostCopy {
+    pub(super) of: EntityId,
+    pub(super) dropped_parent: Option<EntityId>,
+}
+
+/// The receipt field naming the TASK a redo copied.
+const REDO_OF_FIELD: &str = "redo_of";
+/// The receipt field naming the parent a redo was born without.
+const REDO_PARENT_DROPPED_FIELD: &str = "redo_parent_dropped";
+/// The receipt field naming a copied brief's pins whose rows moved.
+const STALE_PINS_FIELD: &str = "stale_pins";
 
 /// What the Auto branch of one post found.
 enum PostDirect {
@@ -170,6 +196,23 @@ fn map_entry<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
         return None;
     };
     task_body_optional(entries, key).ok().flatten()
+}
+
+/// A copy's receipt fields (FIX 9001): the TASK it copied, the parent it
+/// was born without, and its brief's pins whose rows moved since, as hex.
+fn stamp_copy_fields(
+    fields: &mut std::collections::BTreeMap<String, String>,
+    copy: &PostCopy,
+    stale_pins: &[EntityId],
+) {
+    fields.insert(REDO_OF_FIELD.to_owned(), copy.of.to_hex());
+    if let Some(parent) = copy.dropped_parent {
+        fields.insert(REDO_PARENT_DROPPED_FIELD.to_owned(), parent.to_hex());
+    }
+    if !stale_pins.is_empty() {
+        let pins = stale_pins.iter().map(EntityId::to_hex).collect::<Vec<_>>();
+        fields.insert(STALE_PINS_FIELD.to_owned(), pins.join(","));
+    }
 }
 
 /// The digest one post's request binds: the actor, the key, the brief,
@@ -435,25 +478,48 @@ impl Memory<'_> {
         post: TaskPost,
         decisions: Option<&TaskDecisions<'_>>,
     ) -> MemoryResult<TaskCallReceipt> {
-        let key = qualified_key(via, &post.intent_key, "intent key")?;
+        self.post_as(via, post, decisions, None)
+    }
+
+    /// [`Self::highway_post`] of `post`, the copy `copy` describes when it
+    /// names one (FIX 9001). The key's hash is the post's identity (FIX
+    /// 9002); its receipt shows the caller's key text.
+    pub(super) fn post_as(
+        &self,
+        via: &TaskVia,
+        post: TaskPost,
+        decisions: Option<&TaskDecisions<'_>>,
+        copy: Option<&PostCopy>,
+    ) -> MemoryResult<TaskCallReceipt> {
+        let key = PostKey::of(via, &post.intent_key)?;
         let now = self.vault().now_recorded_at();
         post.brief.admit_references(self, "tasks.create")?;
         admit_task_parent(self, post.parent_ref)?;
-        let type_ref = {
+        let task_ref = EntityId::derive(
+            TASK_POST_ID_DOMAIN,
+            &[self.actor().as_bytes(), key.stored.as_bytes()],
+        )?;
+        let (type_ref, stale_pins) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            post.brief
-                .validate_in(self.vault(), &txn, Some(post.assignee))?;
-            brief_type_ref_in(self.vault(), &txn, &post.brief)?
+            observe_key_in(self.vault(), &txn, &post.intent_key, task_ref);
+            let stale_pins = if copy.is_some() {
+                post.brief
+                    .validate_copy_in(self.vault(), &txn, Some(post.assignee))?
+            } else {
+                post.brief
+                    .validate_in(self.vault(), &txn, Some(post.assignee))?;
+                Vec::new()
+            };
+            (
+                brief_type_ref_in(self.vault(), &txn, &post.brief)?,
+                stale_pins,
+            )
         };
-        let digest = request_digest(self.actor(), &key, &post)?;
+        let digest = request_digest(self.actor(), &key.text, &post)?;
         let spec = create_spec_of(&post, self.actor(), type_ref, now);
         let validated = validate_task_create(self.vault(), &spec, now)?;
         let stored = StoredBrief::first(post.brief.clone());
-        let task_ref = EntityId::derive(
-            TASK_POST_ID_DOMAIN,
-            &[self.actor().as_bytes(), key.as_bytes()],
-        )?;
-        let provenance = post_provenance(&key, &digest, None);
+        let provenance = post_provenance(&key.stored, &digest, None);
         let rate_now = self.vault().store.clock.now_recorded_at();
         let keep = self.keeps_lifecycle();
 
@@ -462,7 +528,13 @@ impl Memory<'_> {
         stamp_fields(&mut lifecycle.fields, Some(&stored));
         lifecycle
             .fields
-            .insert("intent_key".to_owned(), key.clone());
+            .insert("intent_key".to_owned(), key.text.clone());
+        lifecycle
+            .fields
+            .insert("intent_key_hash".to_owned(), key.stored.clone());
+        if let Some(copy) = copy {
+            stamp_copy_fields(&mut lifecycle.fields, copy, &stale_pins);
+        }
         lifecycle
             .fields
             .insert("assignee".to_owned(), post.assignee.as_str().to_owned());
@@ -499,6 +571,16 @@ impl Memory<'_> {
             }
             if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
                 return Err(MemoryError::bad_request("task post id is already occupied"));
+            }
+            // An earlier proposal of this post, landed or not, answers it
+            // whatever the actor's ceiling is now (FIX 10180): the gated
+            // branch replays that proposal's handle and its landed TASK,
+            // and refuses changed arguments, instead of minting another.
+            if self
+                .held_proposal_in(&*wtxn, TASK_CREATE_PROPOSAL_PREDICATE, &key.stored)?
+                .is_some()
+            {
+                return Ok(PostDirect::Gated);
             }
             let creator = match via {
                 TaskVia::Host(binding) => Some(binding),
@@ -600,7 +682,16 @@ impl Memory<'_> {
                     TaskVia::Wire => None,
                 };
                 self.park_post(
-                    &post, &spec, &key, digest, now, decisions, lifecycle, creator, keep,
+                    &post,
+                    &spec,
+                    &key.stored,
+                    digest,
+                    now,
+                    decisions,
+                    lifecycle,
+                    creator,
+                    keep,
+                    copy.map(|copy| copy.of),
                 )
             }
         }

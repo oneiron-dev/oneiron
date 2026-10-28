@@ -58,7 +58,7 @@ pub(super) fn completion(
     }
 }
 
-fn finish_reason(reason: &FinishReason) -> &str {
+pub(super) fn finish_reason(reason: &FinishReason) -> &str {
     match reason {
         FinishReason::Stop => "stop",
         FinishReason::Length => "length",
@@ -72,6 +72,14 @@ fn finish_reason(reason: &FinishReason) -> &str {
     }
 }
 
+/// A refusal's own code and message, carried on its reply for the call's
+/// receipt (FIX 3389) and never written to the wire.
+#[derive(Clone, Debug)]
+pub(super) struct Refusal {
+    pub(super) code: String,
+    pub(super) message: String,
+}
+
 /// An OpenAI error body: `{"error": {"message", "type", "param", "code"}}`.
 pub(super) fn error(
     status: StatusCode,
@@ -79,13 +87,24 @@ pub(super) fn error(
     code: &str,
     message: impl Into<String>,
 ) -> Response {
-    let body = json!({"error": {
-        "message": message.into(),
+    let message = message.into();
+    let body = envelope(kind, code, &message);
+    let mut response = (status, Json(body)).into_response();
+    response.extensions_mut().insert(Refusal {
+        code: code.to_owned(),
+        message,
+    });
+    response
+}
+
+/// [`error`]'s body, before it is sent.
+pub(super) fn envelope(kind: &str, code: &str, message: &str) -> Value {
+    json!({"error": {
+        "message": message,
         "type": kind,
         "param": null,
         "code": code,
-    }});
-    (status, Json(body)).into_response()
+    }})
 }
 
 pub(super) fn invalid(code: &str, message: impl Into<String>) -> Response {
@@ -128,9 +147,11 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
             "insufficient_quota",
             "quota_spent",
         ),
-        LlmError::Retryable(RetryableLlmError::Timeout) => {
-            (StatusCode::GATEWAY_TIMEOUT, "api_error", "timeout")
-        }
+        LlmError::Retryable(RetryableLlmError::Timeout) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "api_error",
+            super::choices::TIMEOUT_CODE,
+        ),
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => (
             StatusCode::SERVICE_UNAVAILABLE,
             "api_error",
@@ -138,17 +159,19 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
         ),
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "api_error", "upstream_error"),
     };
-    error(status, kind, code, failure.to_string())
+    let timing = super::timing::RetryTiming::of(&failure);
+    super::timing::timed_error(status, kind, code, failure.to_string(), &timing)
 }
 
-/// Preserve the raw door's refusal code on the typed facade's error envelope.
+/// Preserve the raw door's refusal code, and when to call again (FIX 8190),
+/// on the typed facade's error envelope.
 pub(super) async fn facade_error(response: Response) -> oneiron::memory::MemoryError {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await;
     let value: Value = bytes
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or(Value::Null);
-    oneiron::memory::MemoryError::new(
+    let refusal = oneiron::memory::MemoryError::new(
         value["error"]["code"]
             .as_str()
             .unwrap_or(oneiron::memory::MEMORY_CODE_INTERNAL),
@@ -156,5 +179,6 @@ pub(super) async fn facade_error(response: Response) -> oneiron::memory::MemoryE
             .as_str()
             .unwrap_or("the memory proxy did not finish"),
         &["Use a live paired proxy credential and a supported buffered request."],
-    )
+    );
+    super::timing::carried(&value["error"], refusal)
 }

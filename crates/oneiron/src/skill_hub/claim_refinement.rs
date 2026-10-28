@@ -220,6 +220,7 @@ impl Vault {
             body.value.clone(),
             body.confidence,
         )
+        .with_confidence_details(body.confidence_details())
         .with_validity(body.valid_from, body.valid_to)
         .with_stale(body.stale)
         .with_scope_stamps(body.scope_facet, body.scope_project);

@@ -86,14 +86,17 @@ use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
 mod codec;
+mod companion_bind;
 mod intent;
 mod records;
 mod runner;
+mod scrub;
 mod sharing;
 mod steps;
 mod work_companion;
 
 use codec::*;
+use companion_bind::*;
 use steps::*;
 
 pub use self::intent::CompanionChoice;
@@ -108,6 +111,10 @@ use self::records::{
 pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
     WorkspaceRosterEntry, WorkspaceRosterRole,
+};
+pub(crate) use self::scrub::{
+    erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
+    erase_member_intent_actor_in_txn,
 };
 pub use self::sharing::{
     CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp,
@@ -228,7 +235,7 @@ pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
-pub(crate) use rooms::{room_upkeep_host, upkeep_rooms};
+pub(crate) use rooms::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]

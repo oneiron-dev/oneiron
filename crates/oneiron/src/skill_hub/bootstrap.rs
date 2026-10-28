@@ -36,7 +36,7 @@ impl Vault {
 /// Marker (engine version string) that the built-in bootstrap skill set has
 /// been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
-const FILES: [(&str, &str); 4] = [
+const FILES: [(&str, &str); 5] = [
     (
         "skill-optimize",
         include_str!("../../../../skills/skill-optimize/SKILL.md"),
@@ -47,6 +47,10 @@ const FILES: [(&str, &str); 4] = [
         include_str!("../../../../skills/goal-intake/SKILL.md"),
     ),
     ("wake", include_str!("../../../../skills/wake/SKILL.md")),
+    (
+        "agent-health-review",
+        include_str!("../../../../skills/agent-health-review/SKILL.md"),
+    ),
 ];
 
 /// Expected bootstrap source beside the current resident, when one remains.
@@ -58,7 +62,7 @@ pub(crate) struct BootstrapSkillSource {
 }
 
 impl Vault {
-    /// Reads the required four without seeding, fetching or restoring anything.
+    /// Reads the required five without seeding, fetching or restoring anything.
     pub(crate) fn bootstrap_skill_sources(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -235,6 +239,13 @@ fn package(name: &str, markdown: &str) -> Result<HubPackage> {
         files.push(HubFile::new(
             crate::agent_dispatch::TASK_TYPE_TREE_FILE,
             tree,
+        ));
+    }
+    // The reviewer's typed T1 seeds ride beside its recipe (FIX 8075).
+    if name == crate::dreamer_runner::maintenance::agent_health::AGENT_HEALTH_REVIEW_SKILL_ID {
+        files.push(HubFile::new(
+            crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE,
+            include_bytes!("../../../../skills/agent-health-review/policy.json").as_slice(),
         ));
     }
     // Native format: the shipped markdown carries no versioned folder

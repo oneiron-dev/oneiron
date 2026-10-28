@@ -75,6 +75,22 @@ side_tables! {
     /// pending. Canonical (FIX 5337): a checkpoint carries it with the record it was taken into,
     /// and a restore over a live vault keeps the live vault's. Key: hex32(entity id).
     SECRET_CUSTODY_REBIND: VaultMeta b"secret_custody:rebind:v1:" Raw Engine;
+    /// A restore batch whose owner's confirm stands on this vault while any of its credentials
+    /// still waits (FIX-LIST 10671 (b)): the custody passes land those under it. Runtime tier, so
+    /// no image carries one and an image's receipt is never an election here. Holds nothing but
+    /// its key. Key: id16 (restore batch).
+    SECRET_CUSTODY_RESTORE_ELECTION: VaultMeta b"secret_custody:restore_election:v1:" Named Engine;
+    /// One credential a restore keeping this host's custody landed withheld, pending, because
+    /// its source vault did not read (FIX-LIST 10671 (a)): its row as the image carried it, the
+    /// value sealed under its generation's key, the digest of the withheld row that took its
+    /// place, and the binding whose source it waits on. Never a plaintext or a key. Key: id16
+    /// (restore batch) + id16 (custody record id).
+    SECRET_CUSTODY_RESTORE_PENDING: VaultMeta b"secret_custody:restore_pending:v1:" Named Ciphertext;
+    /// The owner's release of one restore batch's pending credentials (FIX-LIST 10671 (b)): who
+    /// confirmed, when, the typed confirm and what each credential came to. Value-free; his
+    /// election, never a check of the source. Key: id16 (restore batch).
+    SECRET_CUSTODY_RESTORE_RELEASE: VaultMeta b"secret_custody:restore_release:v1:" Named Engine
+        => crate::secret_custody::erase_pending_restore_actor_in_txn;
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).
@@ -157,7 +173,8 @@ side_tables! {
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
-    SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
+    SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named
+        => crate::self_heal::erase_centroid_source_in_txn;
     /// When a host detector graded one telemetry window under one wording. Key: bytes32
     /// (blake3 of the tier, the detector policy and the window's run ids).
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
@@ -305,6 +322,10 @@ side_tables! {
     SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
+    /// One holder's delivery of one export-first removal archive: the delivery version it was
+    /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
+    /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).
+    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named;
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
@@ -454,6 +475,9 @@ side_tables! {
     SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION: VaultMeta b"skill_hub/marketplace-code-auto-install-revision/v1" Raw;
     /// Owner switch (`0` off, `1` on) for auto-installing code-bearing marketplace folders. Key: ().
     SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL: VaultMeta b"skill_hub/marketplace-code-auto-install/v1" Raw;
+    /// Owner setting (`0` rule fit, `1` owner-asked fit) choosing the fit an ordinary skill install
+    /// runs; an absent row is the rule fit. Key: ().
+    SKILL_HUB_MARKETPLACE_SKILL_FIT: VaultMeta b"skill_hub/marketplace-skill-fit/v1" Raw;
     /// Origin marker for a hub-materialized skill (imported flag, optional forked-from parent id);
     /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.
     SKILL_HUB_ORIGIN: VaultMeta b"skill_hub/origin/v1\0" Raw;

@@ -7,13 +7,12 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::get;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
@@ -47,17 +46,23 @@ async fn read(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn put(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ModelSettings>, JsonRejection>,
+    payload: OwnerJsonBody<ModelSettings>,
 ) -> OwnerReply<ModelSettings> {
     let owner = owner(&auth, &server)?;
-    let settings = json_payload(payload)?;
+    let settings = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<ModelSettings> {
         server
             .vault()
             .set_responses_store(&owner, settings.responses_store)?;
+        // Only this server's providers read it (FIX 9516), once its vault
+        // kept it.
+        server
+            .ai
+            .models()
+            .responses_context()
+            .set_store(settings.responses_store);
         Ok(settings)
     })
     .await?;
-    crate::models::set_responses_store(settings.responses_store);
     Ok(Json(settings))
 }

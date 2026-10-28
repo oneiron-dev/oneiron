@@ -311,13 +311,16 @@ side_tables! {
     WEAVE_WRONG_LINK_LABEL: VaultMeta b"weave:wrong-link:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
-    WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw;
+    WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw
+        => crate::workspace_roster::erase_companion_principal_actor_in_txn;
     /// One onboarded member's roster row (actor, optional companion person/actor/facet, identity).
     /// Key: string (workspace_ref) "\x00" hex32 (person id).
-    WORKSPACE_ROSTER_MEMBER: VaultMeta b"workspace_roster:member:v1:" Raw;
+    WORKSPACE_ROSTER_MEMBER: VaultMeta b"workspace_roster:member:v1:" Raw
+        => crate::workspace_roster::erase_member_actor_in_txn;
     /// Guards one member's workspace-onboarding slot against a second onboarding with different
     /// inputs. Key: string (workspace_ref) "\x00" id16 (person id).
-    WORKSPACE_ROSTER_MEMBER_INTENT: VaultMeta b"workspace_roster:member_intent:v1:" Raw;
+    WORKSPACE_ROSTER_MEMBER_INTENT: VaultMeta b"workspace_roster:member_intent:v1:" Raw
+        => crate::workspace_roster::erase_member_intent_actor_in_txn;
     /// Idempotency journal tracking one member-onboarding request's progress through the pinned step
     /// ladder. Key: string (caller-supplied onboarding_id).
     WORKSPACE_ONBOARDING: VaultMeta b"workspace_roster:onboarding:v1:" Raw;

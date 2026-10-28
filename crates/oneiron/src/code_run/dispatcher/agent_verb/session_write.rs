@@ -82,7 +82,8 @@ impl HostSelfDispatcher<'_> {
         };
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
-                .with_model_provider(self.model_provider());
+                .with_model_provider(self.model_provider())
+                .with_bound_run(self.bound_run);
         let reader = admission
             .as_ref()
             .and_then(SessionWriteAdmission::key)

@@ -8,12 +8,10 @@ use super::field_set::{
     append_pack_manifest_fields, append_pack_source_rows_fields, append_task_project_field,
     append_task_type_fields, append_team_receipt_fields,
 };
-#[cfg(test)]
-use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
 use super::kernel::{
     FIELD_AUDIT_REGISTER, FIELD_CARE_REGISTER, FIELD_ENGINE_REGISTER, FIELD_INTENT_REF,
-    FIELD_MODEL, FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED,
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptRecord, ReceiptScan, hex_lower,
+    FIELD_MODEL, FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind,
+    ReceiptRecord, ReceiptScan, hex_lower,
 };
 #[cfg(test)]
 use super::send_receipt_txn::persist_send_receipt_in_txn;
@@ -22,6 +20,7 @@ use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound::OutboundIntent;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{SEND_RECEIPT_RECORD_VERSION, Store};
 
@@ -32,6 +31,9 @@ const PACK_RECEIPT: SideTable<String, ReceiptRecord, Named> =
     SideTable::new(&side_table::ATTEMPT_PACK_RECEIPT);
 /// `receipt_id` namespace of the same ledger.
 const ATTEMPT_PACK_RECEIPT_ID_PREFIX: &str = "attempt:";
+/// The most receipts one [`attempt_pack_receipt_page`] serves: a page
+/// quantum, the rest owed through its cursor (FIX 3582).
+const ATTEMPT_PACK_RECEIPT_PAGE: usize = 1024;
 
 const OUTBOUND_RECEIPT_SCHEMA: &str = "outbound_receipt.v1";
 const OUTBOUND_ENGINE_REGISTER: &str = "neutral";
@@ -219,58 +221,49 @@ pub(crate) fn put_attempt_pack_receipt_for_test(
     Ok(())
 }
 
-/// Collects the attempt pack receipt ledger under the family DoS guard.
-///
-/// Walks the key range NEWEST-FIRST — the key embeds the UUIDv7 attempt id, so
-/// key order IS mint order — and caps the walk at [`MAX_RECEIPT_QUERY_SCAN`].
-/// Direction is the whole point of the cap: these rows persist for the life of
-/// the vault (unlike the attempt events they project from, which drain), so an
-/// oldest-first cap would permanently hide every RECENT receipt behind an
-/// attacker-grown backlog, and the family query is newest-first by contract.
-/// Callers sort and truncate downstream, so below the cap this returns the
-/// same set the unbounded walk did.
-///
-/// Compatibility view for callers that do not consume completeness metadata.
+/// Collects the whole attempt pack receipt ledger, newest first. Callers
+/// sort and truncate downstream.
 pub(super) fn attempt_pack_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
     Ok(scan_attempt_pack_receipts(vault)?.records)
 }
 
-/// Scans the same bounded prefix and reports a source continuation in production.
-/// The overflow probe is never projected and does not increase the projection cap.
+/// Reads every row of the attempt pack receipt ledger, newest first (key
+/// order is the UUIDv7 attempt id's mint order), so the scan is complete and
+/// owes no source continuation (FIX 3582). Past its threshold row the walk
+/// raises one check and reads on (rule 5).
 pub(super) fn scan_attempt_pack_receipts(vault: &Vault) -> Result<ReceiptScan> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut scan = ReceiptScan::from_complete_records(Vec::new());
-    let mut before = None;
-    // One row PAST the cap is read and never projected: it is what separates a
-    // ledger holding exactly the cap from one the cap truncated.
-    for row in PACK_RECEIPT
-        .iter_rev_from(&vault.store, &rtxn, &[])?
-        .take(MAX_RECEIPT_QUERY_SCAN + 1)
-    {
-        let (key, record) = row?;
-        if scan.records.len() == MAX_RECEIPT_QUERY_SCAN {
-            scan.mark_incomplete().attempt_pack_before = before;
-            note_attempt_pack_scan_capped();
-            break;
-        }
-        scan.records.push(record);
-        before = Some(PACK_RECEIPT.key_bytes(&key));
+    let mut count = ScanCount::start(
+        &vault.store,
+        &rtxn,
+        EngineScan::ReceiptSourceRows,
+        b"attempt_pack",
+    )?;
+    let mut records = Vec::new();
+    for row in PACK_RECEIPT.iter_rev_from(&vault.store, &rtxn, &[])? {
+        count.row();
+        let (_, record) = row?;
+        records.push(record);
     }
-    Ok(scan)
+    count.finish(vault);
+    Ok(ReceiptScan::from_complete_records(records))
 }
 
 /// Forward, continuation-bearing scan for production receipt consumers. One extra
 /// key proves completeness; unlike the UI lens this can reach older receipts.
+/// A `limit` past [`ATTEMPT_PACK_RECEIPT_PAGE`] is served that many a page,
+/// the rest owed after the page's last receipt (FIX 3582).
 pub(crate) fn attempt_pack_receipt_page(
     vault: &Vault,
     after: Option<&str>,
     limit: usize,
 ) -> Result<(Vec<ReceiptRecord>, bool)> {
-    if !(1..=1024).contains(&limit) {
+    if limit == 0 {
         return Err(Error::InvalidConfig(
-            "receipt page limit must be in 1..=1024".to_owned(),
+            "receipt page limit must be at least 1".to_owned(),
         ));
     }
+    let limit = limit.min(ATTEMPT_PACK_RECEIPT_PAGE);
     if after.is_some_and(|id| !id.starts_with(ATTEMPT_PACK_RECEIPT_ID_PREFIX)) {
         return Err(Error::CorruptedIndex("receipt sweep cursor"));
     }
@@ -293,20 +286,6 @@ pub(crate) fn attempt_pack_receipt_page(
         records.push(record);
     }
     Ok((records, true))
-}
-
-/// Surfaces an attempt pack receipt scan that stopped at the work cap.
-///
-/// The discarded remainder is unbounded by construction, so it is never
-/// counted — the signal is that the cap FIRED, which is the fact an operator
-/// (or a test) needs to know the query answered from a prefix.
-fn note_attempt_pack_scan_capped() {
-    tracing::warn!(
-        scan_cap = MAX_RECEIPT_QUERY_SCAN,
-        "attempt pack receipt scan hit the receipt-family work cap; older rows were not projected"
-    );
-    #[cfg(test)]
-    ATTEMPT_PACK_SCAN_CAPPED.with(|fired| fired.set(fired.get() + 1));
 }
 
 /// Test fixture for delivered/failed send receipt summary and idempotency.

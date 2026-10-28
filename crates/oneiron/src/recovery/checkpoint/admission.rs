@@ -179,6 +179,10 @@ impl Vault {
                     .fence(anchor)
                     .map_err(|rejected| rejected.at(P::TakeoverFence))?;
                 report.custody_note = landing.note().map(str::to_owned);
+                super::credential_custody::note_landed_access(
+                    &mut report.credential_notes,
+                    landing.owner_compartment_unopened(),
+                );
                 Some(
                     landing
                         .facts()

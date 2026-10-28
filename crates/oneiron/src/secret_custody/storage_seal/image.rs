@@ -331,6 +331,22 @@ impl PlannedCredentials {
         true
     }
 
+    /// Whether `credential` is the last one named here, PendingCustody: one
+    /// [`Self::fenced`] withheld because its evidence did not read.
+    pub(crate) fn named_pending(&self, credential: &EntityId) -> bool {
+        self.noted.last().is_some_and(|(named, disposition)| {
+            named.id == *credential && *disposition == CredentialDisposition::PendingCustody
+        })
+    }
+
+    /// Names `credential` LocalOnlyReenter, never planned: a cloud
+    /// registration slot a copy beside its source never holds a usable key
+    /// of (CALLS G7_COPY_RECOVERY), so its owner signs in again there.
+    pub(crate) fn reenter(&mut self, credential: CredentialRef) {
+        self.noted
+            .push((credential, CredentialDisposition::LocalOnlyReenter));
+    }
+
     /// Takes every value `other` named or planned as this one's too.
     pub(crate) fn merge(&mut self, mut other: Self) {
         self.live.append(&mut other.live);

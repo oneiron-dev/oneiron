@@ -113,7 +113,9 @@ impl Vault {
     /// holds open, as a managed host's isolation probe does. The writer lease
     /// and, on Linux, the LMDB environment bind that descriptor, so a
     /// directory renamed in under `path` after the caller's checks is refused,
-    /// never opened. Refuses unless `path` still names `directory`.
+    /// never opened. Refuses unless `path` still names `directory`. A lease
+    /// another host holds for one owner act is waited out as
+    /// [`Self::open_owned`] waits it out (FIX 5897).
     #[cfg(unix)]
     pub fn open_owned_held(
         directory: std::fs::File,
@@ -122,7 +124,7 @@ impl Vault {
     ) -> Result<Self> {
         validate_open_config(&config)?;
         let canonical = path.as_ref().canonicalize()?;
-        let lease = VaultWriterLease::acquire_held(directory, &canonical)?;
+        let lease = VaultWriterLease::acquire_held_after_owner_act(directory, &canonical)?;
         Self::open_leased(&canonical, config, lease)
     }
 
@@ -507,26 +509,6 @@ impl Vault {
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
-        // The document runtime is optional, but its ownership of stored bodies is
-        // not. A featureless handle must never overwrite a pointer or delete its
-        // row while leaving document history, forks and citation quotes behind.
-        #[cfg(not(feature = "sync"))]
-        {
-            use crate::side_table::{self, HexId, Named, SideTable};
-            const HEADS: SideTable<HexId, rmpv::Value, Named> =
-                SideTable::new(&side_table::ENTITY_DOC_HEAD);
-            let txn = store.env.read_txn()?;
-            if HEADS
-                .iter_raw_from(&store, &txn, &[])?
-                .next()
-                .transpose()?
-                .is_some()
-            {
-                return Err(Error::InvalidConfig(
-                    "this vault contains entity documents and requires the sync feature".to_owned(),
-                ));
-            }
-        }
         crate::batch::sweep_scope_stamps(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
@@ -608,6 +590,7 @@ impl Vault {
             attempt_cancels: Default::default(),
             active_wakes: Default::default(),
             code_consent_host: Default::default(),
+            managed_owner_check: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -689,6 +672,7 @@ impl Vault {
         // The image a restore in this vault's place set aside reads, and
         // refuses every write from here on (`Store::swap_out`).
         vault.store.seal_if_archived()?;
+        vault.resolve_pending_credential_restores_logged();
         Ok(vault)
     }
 

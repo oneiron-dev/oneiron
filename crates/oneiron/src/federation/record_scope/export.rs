@@ -44,6 +44,8 @@ impl Vault {
             ReadDestination::from(CallerLocality::OffDevice)
         };
         let txn = self.store.env.read_txn()?;
+        // FIX 7608 slice 4: a marked repo row leaves as its masked copy.
+        let copies = super::secret_projection::ExportProjection::read_in_txn(self, &txn)?;
         let device_only = crate::settings::device_local_worlds_for(self, &txn, &recipient)?;
         let withheld = |source: &crate::EntityId| {
             crate::settings::device_only_withholds(&self.store, &txn, &device_only, source)
@@ -57,13 +59,13 @@ impl Vault {
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
             if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                || crate::secret_custody::holds_masked_keys_in_txn(
+                || (crate::secret_custody::holds_masked_keys_in_txn(
                     &self.store,
                     &txn,
                     &id,
                     h.entity_type,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
-                )?
+                )? && !copies.carries_copy(&id, &raw))
                 || crate::origin::lfs::unpublished_lfs_chunk_in_txn(
                     &self.store,
                     &txn,
@@ -98,9 +100,11 @@ impl Vault {
                     &withheld,
                 )?
             {
+                let (id, bytes) =
+                    copies.released(id, self.scoped_row_bytes_in_txn(&txn, &id, raw)?);
                 out.push(ScopedRecord {
                     id,
-                    bytes: self.scoped_row_bytes_in_txn(&txn, &id, raw)?,
+                    bytes,
                     scope: Some(scope),
                     suppressed: false,
                     birth: None,
@@ -109,13 +113,52 @@ impl Vault {
         }
         // A birth leaves naming only the rows this export carries; one key
         // per export, so its handles link to no other copy.
-        let ships: std::collections::BTreeSet<crate::EntityId> =
-            out.iter().map(|record| record.id).collect();
+        let ships: std::collections::BTreeSet<crate::EntityId> = out
+            .iter()
+            .map(|record| copies.source_of(&record.id))
+            .collect();
         let key = WithheldKey::for_export();
         for record in &mut out {
-            record.birth = row_birth_in_txn(&self.store, &txn, &record.id)?
-                .map(|birth| birth.masked(|row| ships.contains(row), &key));
+            record.birth =
+                row_birth_in_txn(&self.store, &txn, &copies.source_of(&record.id))?.map(|birth| {
+                    copies.translated_birth(birth.masked(|row| ships.contains(row), &key))
+                });
         }
         Ok(out)
+    }
+
+    /// The position each of `ids`, records an export carries, stands at in
+    /// `txn`, read as [`Self::export_records_in_scope_for`] reads it: off
+    /// the stored row the record stands for (a marked item's copy by its
+    /// source). `None` for one whose row is gone or holds no position. An
+    /// export-first removal reads them in its archive's own snapshot
+    /// (FIX-LIST 8224), so each frozen position labels the bytes archived.
+    pub(crate) fn export_positions_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &std::collections::BTreeSet<crate::EntityId>,
+    ) -> Result<Vec<(crate::EntityId, Option<Scope>)>> {
+        let copies = super::secret_projection::ExportProjection::read_in_txn(self, txn)?;
+        let mut positions = Vec::with_capacity(ids.len());
+        for &id in ids {
+            let source = copies.source_of(&id);
+            let scope =
+                match crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &source)? {
+                    Some(raw) => {
+                        let h = EntityMetadataHeader::parse(&raw)
+                            .ok_or(Error::CorruptedIndex("record header"))?;
+                        disclosure_scope_for_stored_row(
+                            &self.store,
+                            txn,
+                            source,
+                            h.entity_type,
+                            &raw[ENTITY_METADATA_HEADER_LEN..],
+                        )?
+                    }
+                    None => None,
+                };
+            positions.push((id, scope));
+        }
+        Ok(positions)
     }
 }

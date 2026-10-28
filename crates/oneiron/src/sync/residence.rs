@@ -89,6 +89,7 @@ pub use policy::{
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::demote_resident_window;
+pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
@@ -105,7 +106,7 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::federation::FederationGrantScope;
@@ -222,7 +223,12 @@ pub fn index_selection_revision(vault: &Vault) -> Result<([u8; 32], u64, u64)> {
     let txn = vault.store.env.read_txn()?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     Ok((
-        policy.read_frontier_hash()?,
+        // FIX 7608 slice 4: a re-mask of a marked repo copy is a new selection.
+        super::selector::secret_projection::with_copy_generation_in_txn(
+            vault,
+            &txn,
+            policy.read_frontier_hash()?,
+        )?,
         crate::ppr::read_graph_version(&vault.store, &txn)?,
         crate::federation::record_scope::read_scope_revision(&vault.store, &txn)?,
     ))
@@ -266,6 +272,9 @@ pub fn window_index_projection_with(
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<WindowIndexEntry>> {
     let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
+    // FIX 7608 slice 4: a marked repo item is listed by its copy id and
+    // titled by its copy, never by its raw body.
+    let copies = super::selector::secret_projection::IndexCopies::read(vault)?;
     let mut entries = Vec::new();
     let mut result = Ok(());
     map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
@@ -283,8 +292,8 @@ pub fn window_index_projection_with(
         };
         match readable(id) {
             Ok(true) => entries.push(WindowIndexEntry {
-                entity_id: key.to_owned(),
-                title: title_from_body(&blob[ENTITY_METADATA_HEADER_LEN..], title_max_chars),
+                entity_id: copies.shown(&id, key),
+                title: copies.title(&id, blob, |body| title_from_body(body, title_max_chars)),
                 learned_at: header.learned_at,
             }),
             Ok(false) => {}
@@ -351,8 +360,11 @@ pub fn selected_item_blob_with(
     withhold: Withhold<'_>,
     item: EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
-    Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
+    // FIX 7608 slice 4: a copy id reads its source; a marked row is its copy.
+    super::selector::secret_projection::released_item_blob(vault, item, |item| {
+        let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
+        Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
+    })
 }
 
 /// Refuse a local put at an item held only as a thin read cache. The check

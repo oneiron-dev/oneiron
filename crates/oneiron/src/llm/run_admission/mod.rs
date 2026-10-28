@@ -18,6 +18,7 @@ mod gate;
 mod host;
 mod job_maximum;
 mod media;
+mod media_job;
 mod permit;
 mod receipt;
 mod settle;

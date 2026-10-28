@@ -9,22 +9,27 @@
 //! the restore-only sink, each from a holder's copy that opened; a row a
 //! holder that did not open holds up goes, and nothing else does.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use heed::{RoTxn, RwTxn};
 
 use super::rows::{Class, Client, kind_class};
-use super::{Carrier, Getter, MixedCarrierProjection};
+use super::{Carrier, DocumentCarrierRow, Getter, ImageFilter, MixedCarrierProjection, db_name};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    Captured, OpenedOwnerRows, OwnerRef, Restored, RowPart, Unresolved, bad_part,
+    Captured, OpenedOwnerRows, OwnerRef, Restored, RowDb, RowPart, Unresolved, bad_part,
     restore_row_in_txn,
 };
 use crate::sync::checkpoint_payload::{
     AtomRef, CapturedSyncRow, CapturedSyncRows, KindPlacement, OpenedAtom, OpenedSyncAtoms,
     SkeletonRow, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncSkeleton, SyncUnclassified,
-    project_checkpoint_sync, restore_checkpoint_sync,
+    project_checkpoint_documents, project_checkpoint_sync, read_document_basis,
+    restore_checkpoint_documents, restore_checkpoint_sync,
 };
+use crate::sync::selector::RepoCopyAliases;
 
 /// A CLAIM's and a NOTE core's cached copy: their getter places them by
 /// more than their kind (a dreamer step's response, an origin claim's
@@ -38,11 +43,28 @@ const PENDING_LORO: &str = "a window's Loro history, which KS7-3b splits";
 /// families' codecs, and the manifest databases a restore writes through.
 pub(in crate::recovery::checkpoint) struct SyncCarriers<'d, D> {
     dbs: &'d D,
+    /// The capture's masked repo copy aliases: a copy's rows are placed
+    /// under its source (FIX 7608, FIX 10799). Empty unless the capture read
+    /// them; a read that fails leaves today's placement.
+    aliases: RepoCopyAliases,
 }
 
 impl<'d, D: ManifestDbs> SyncCarriers<'d, D> {
     pub(in crate::recovery::checkpoint) fn new(dbs: &'d D) -> Self {
-        Self { dbs }
+        Self {
+            dbs,
+            aliases: RepoCopyAliases::default(),
+        }
+    }
+
+    /// Place a masked copy's rows under its source: `aliases` as the
+    /// capture's transaction reads them (`RepoCopyAliases::read_in_txn`).
+    pub(in crate::recovery::checkpoint) fn with_copy_aliases(
+        mut self,
+        aliases: RepoCopyAliases,
+    ) -> Self {
+        self.aliases = aliases;
+        self
     }
 }
 
@@ -57,10 +79,17 @@ fn sync_carrier(carrier: Carrier) -> SyncCarrier {
     }
 }
 
-/// An entity kind placed as the registry places it ([`super::rows`]).
-struct RegistryOwners;
+/// An entity kind placed as the registry places it ([`super::rows`]); a
+/// masked copy's rows under its source.
+struct RegistryOwners<'a> {
+    aliases: &'a RepoCopyAliases,
+}
 
-impl SyncPayloadOwners for RegistryOwners {
+impl SyncPayloadOwners for RegistryOwners<'_> {
+    fn owner_entity(&self, id: EntityId) -> EntityId {
+        self.aliases.stored(&id)
+    }
+
     fn entity_kind(&self, entity_type: u8) -> KindPlacement {
         let Some(entry) = entity_type_registry_entry(entity_type) else {
             return KindPlacement::Unclassified(SyncUnclassified::UnknownKind);
@@ -119,7 +148,10 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
             }
             Ok(ordinal)
         };
-        let skeleton = project_checkpoint_sync(&rows, &RegistryOwners, &mut emit)?;
+        let owners = RegistryOwners {
+            aliases: &self.aliases,
+        };
+        let skeleton = project_checkpoint_sync(&rows, &owners, &mut emit)?;
         for row in skeleton.rows {
             match row {
                 SkeletonRow::Sealed { .. } => {}
@@ -152,9 +184,12 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         let db = sync_carrier(carrier).db();
         let mut skeleton = SyncSkeleton::default();
         for (ordinal, part) in opened.rows.iter().enumerate() {
-            // The port seals whole rows only, each in its carrier's database.
-            let RowPart::Exact { at, .. } = part else {
-                return Err(bad_part());
+            // The port seals whole rows, each in its carrier's database, and
+            // a document group's parts, which its own restore joins.
+            let at = match part {
+                RowPart::Exact { at, .. } => at,
+                RowPart::NoActor { at, .. } if at.db == db => continue,
+                _ => return Err(bad_part()),
             };
             if at.db != db {
                 return Err(bad_part());
@@ -166,13 +201,55 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
             });
         }
         let restored = restore_checkpoint_sync(&skeleton, &OpenedParts(&opened))?;
-        for (at, value) in &restored.rows {
+        let documents = restore_checkpoint_documents(sync_carrier(carrier), &opened)?;
+        for (at, value) in restored.rows.iter().chain(&documents) {
             restore_row_in_txn(self.dbs, txn, at, value)?;
         }
         Ok(Restored {
-            written: restored.rows.len(),
+            written: restored.rows.len() + documents.len(),
             dropped: restored.dropped,
         })
+    }
+
+    fn project_documents(
+        &self,
+        txn: &RoTxn<'_>,
+        filter: &ImageFilter,
+        rows: &[DocumentCarrierRow],
+        out: &mut BTreeMap<Carrier, Captured>,
+    ) -> Result<BTreeSet<usize>> {
+        let captured = rows.iter().map(|row| CapturedSyncRow {
+            carrier: sync_carrier(row.carrier),
+            key: &row.key,
+            value: &row.value,
+        });
+        let captured = CapturedSyncRows::new(captured.collect());
+        let carriers: BTreeMap<&[u8], Carrier> = rows
+            .iter()
+            .map(|row| (row.key.as_slice(), row.carrier))
+            .collect();
+        let takes = |db: RowDb, key: &[u8], value: &[u8]| filter.takes(db_name(db), key, value);
+        let mut basis = |entity: EntityId| read_document_basis(self.dbs, txn, entity, &takes);
+        // A group's parts rest at its rows' keys: each goes to that row's
+        // carrier, its actors split out beside it.
+        let mut emit = |owner: OwnerRef, atom: SyncAtom| -> Result<()> {
+            let unnamed = Error::InvariantViolation("a document part names no captured row");
+            let carrier = carriers
+                .get(atom.at.key.as_slice())
+                .copied()
+                .ok_or(unnamed)?;
+            let held = out.entry(carrier).or_default().owner(owner);
+            held.actor_parts.extend(atom.actors);
+            held.rows.push(RowPart::NoActor {
+                at: atom.at,
+                value: atom.value,
+            });
+            Ok(())
+        };
+        let owners = RegistryOwners {
+            aliases: &self.aliases,
+        };
+        project_checkpoint_documents(&captured, &owners, &mut basis, &mut emit)
     }
 }
 

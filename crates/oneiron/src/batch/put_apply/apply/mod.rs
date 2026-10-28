@@ -281,9 +281,9 @@ pub(in crate::batch) fn apply_put(
             check_authority_log_store_key(store, wtxn, &id, &entry_hash, data)?
                 == AuthorityLogKeyOccupant::CrossTypeSquatter;
         // H72: every store door, local or replicated, holds rows no key that
-        // may vouch signed. The owner's work always lands; another key's rows
-        // past its bound wait (rule 5), a replica retrying them each drain.
-        match crate::authority::authority_door(store, wtxn, posture, &entry)? {
+        // may vouch signed. A vouched key's rows land (FIX 8564); strangers'
+        // past their shared bound wait (rule 5), a replica retrying each drain.
+        match crate::authority::authority_door(store, wtxn, &entry)? {
             crate::authority::AuthorityDoor::Lands => {}
             crate::authority::AuthorityDoor::AtBound => {
                 let signer = crate::authority::authority_signer_label(entry.signer_key());
@@ -716,6 +716,7 @@ pub(in crate::batch) fn apply_put(
             learned_at,
             data,
             envelope: write_envelope,
+            transition,
         },
     )?;
     crate::gate::manifest_authenticity::update_manifest_origin(
@@ -730,7 +731,7 @@ pub(in crate::batch) fn apply_put(
     if body_changed && let Some(body) = decoded_claim_body.as_ref() {
         crate::dreamer_consolidation::mark_person_about_moved_in_txn(store, wtxn, id, body)?;
     }
-    stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
+    stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref(), replicated)?;
     stage_optional_side_row(store, wtxn, hub_origin_marker)?;
     crate::skill_hub::stage_source_custody_put(
         store,

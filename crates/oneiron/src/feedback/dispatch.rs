@@ -343,6 +343,7 @@ where
         EngineLimit::MaintenanceTextBytes,
         preview.bundle().longest_text() as u64,
     );
+    preview.bundle().measure_diagnosis_counts(vault);
     let logical_send_ref = request.receipt_id.clone();
     let approval_receipt_ref = request.intent.trigger_ref.clone();
     let mut adapter = FeedbackOutboundAdapter {
