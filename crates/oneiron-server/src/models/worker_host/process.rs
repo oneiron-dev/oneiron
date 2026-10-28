@@ -2,7 +2,8 @@
 //! process group of its own, reaped by one task, checked for liveness on its
 //! health route, asked what it holds on its native socket when it has one,
 //! asked there to drain and shut down before it is stopped, and stopped by
-//! signals to that group alone.
+//! signals to that group alone. An abort kills that group at once and
+//! waits for its reaper, asking the worker nothing.
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -140,6 +141,18 @@ impl RunningWorker for ProcessWorker {
             }
             self.signal(Signal::TERM);
             if let Ok(exit) = tokio::time::timeout(grace, self.exited()).await {
+                return exit;
+            }
+            self.signal(Signal::KILL);
+            self.exited().await
+        })
+    }
+
+    fn abort(&self) -> LauncherFuture<'_, WorkerExit> {
+        // An abort asks the worker nothing: no native drain, no terminate
+        // signal and no grace. The group is killed and the reaper awaited.
+        Box::pin(async move {
+            if let Some(exit) = self.already_exited() {
                 return exit;
             }
             self.signal(Signal::KILL);

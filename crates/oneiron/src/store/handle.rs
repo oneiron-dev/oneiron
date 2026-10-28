@@ -298,6 +298,11 @@ pub struct StoreCore {
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
     pub(crate) result_memory: RwLock<Arc<crate::result_memory::ResultMemoryPool>>,
+    /// The inference snapshot admission generation, closing gate, disk line
+    /// and host runtime port every handle on this vault shares (V2-R3). A
+    /// lock closes the gate and waits for the runtime's release before the
+    /// key goes. Never persisted.
+    pub(crate) inference_snapshots: crate::inference_snapshot::SnapshotLifecycle,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.

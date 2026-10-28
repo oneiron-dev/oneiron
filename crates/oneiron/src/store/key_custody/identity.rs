@@ -67,6 +67,7 @@ impl CustodyVaultId {
 /// | `0x09` | `CustodyTransition` | KS-6 custody transition instances        |
 /// | `0x0a` | `CustodyRequestInput` | KS-6 custody request inputs, whole     |
 /// | `0x0b` | `ConnectorResume` | a connector call's resume state (FIX 9157) |
+/// | `0x0c` | `InferenceSnapshot` | an inference snapshot's wrapped data key |
 /// | `0x0d` | `ErasableKey` | erasable keys: a home handoff's actor content, a grant's scope opening (FIX 8875) |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
@@ -122,11 +123,15 @@ pub(crate) enum CustodyKind {
     /// = the call ref (16 bytes), generation = the caller's round
     /// generation; secret = the resume state's sealing key (32 bytes).
     ConnectorResume,
+    /// One inference snapshot's wrapped data key: item = the snapshot
+    /// catalog's id (16 bytes), at generation 0; secret = the serialized
+    /// wrapped key (61 bytes), kept here alone.
+    InferenceSnapshot,
     /// One erasable key (FIX 8875): item = purpose (1) | parent (16: the
     /// actor a home handoff key seals for, or a grant) | incarnation (32) |
     /// the key's random ref (32), so every key of one parent is found by its
     /// directory names, orphans included; generation 0; secret = the
-    /// content key (32 bytes). Tag `0x0c` stays reserved.
+    /// content key (32 bytes).
     ErasableKey,
 }
 
@@ -144,6 +149,7 @@ impl CustodyKind {
             Self::CustodyTransition => 0x09,
             Self::CustodyRequestInput => 0x0a,
             Self::ConnectorResume => 0x0b,
+            Self::InferenceSnapshot => 0x0c,
             Self::ErasableKey => 0x0d,
         }
     }
@@ -161,6 +167,7 @@ impl CustodyKind {
             0x09 => Some(Self::CustodyTransition),
             0x0a => Some(Self::CustodyRequestInput),
             0x0b => Some(Self::ConnectorResume),
+            0x0c => Some(Self::InferenceSnapshot),
             0x0d => Some(Self::ErasableKey),
             _ => None,
         }
@@ -171,7 +178,10 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => 16,
             Self::BodyInstance => 17,
-            Self::KnownValueEntry | Self::CredentialValue | Self::ConnectorResume => 16,
+            Self::KnownValueEntry
+            | Self::CredentialValue
+            | Self::ConnectorResume
+            | Self::InferenceSnapshot => 16,
             Self::CustodyTransition | Self::CustodyRequestInput => 32,
             Self::WorldPad => 40,
             Self::CheckpointPayload => 49,
@@ -196,6 +206,7 @@ impl CustodyKind {
             | Self::ConnectorResume
             | Self::ErasableKey => 32,
             Self::KnownValueEntry => 44,
+            Self::InferenceSnapshot => 61,
         }
     }
 
@@ -214,6 +225,7 @@ impl CustodyKind {
             Self::CustodyTransition => Error::CorruptedIndex("custody transition custody"),
             Self::CustodyRequestInput => Error::CorruptedIndex("custody request input custody"),
             Self::ConnectorResume => Error::CorruptedIndex("connector resume custody"),
+            Self::InferenceSnapshot => Error::CorruptedIndex("inference snapshot custody"),
             Self::ErasableKey => Error::CorruptedIndex("erasable key custody"),
         }
     }

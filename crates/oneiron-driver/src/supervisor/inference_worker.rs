@@ -150,6 +150,14 @@ pub trait RunningWorker: Send + Sync {
     /// Sends the terminate signal to its own process group, waits `grace`,
     /// then kills and reaps that group alone. Called only after the drain.
     fn terminate(&self, grace: Duration) -> LauncherFuture<'_, WorkerExit>;
+
+    /// Kills its own process group now and waits for the reaper: no drain,
+    /// no grace, nothing asked of the worker. Called only for an abort
+    /// ([`InferenceWorker::abort_incarnation`]). A launcher that names no
+    /// way of its own terminates with no grace.
+    fn abort(&self) -> LauncherFuture<'_, WorkerExit> {
+        self.terminate(Duration::ZERO)
+    }
 }
 
 /// The supervisor's timing for one worker.
@@ -234,6 +242,10 @@ struct State {
     activity: Option<WorkerActivity>,
     /// An external worker's last probe.
     probed: WorkerReadiness,
+    /// The epoch the current incarnation qualified with, once it has.
+    epoch: Option<String>,
+    /// The incarnation an abort was asked for; it ends with no drain.
+    abort: Option<u64>,
 }
 
 struct Inner {
@@ -344,6 +356,8 @@ impl InferenceWorker {
             used_at: None,
             activity: None,
             probed: WorkerReadiness::Unchecked,
+            epoch: None,
+            abort: None,
         };
         Self {
             inner: Arc::new(Inner {
@@ -495,6 +509,39 @@ impl InferenceWorker {
     /// read itself; the supervisor's own polls land here too.
     pub fn report(&self, activity: WorkerActivity) {
         self.inner.note_activity(Some(activity));
+    }
+
+    /// Aborts the incarnation that qualified with `epoch`, if it is still
+    /// the one running: admission closes, its process group is killed and
+    /// reaped with no drain, its leases are revoked, and the supervisor
+    /// launches the next one at once. Returns once that incarnation has
+    /// ended: `true`, or `false` at once when `epoch` names no running
+    /// incarnation (it already ended, or never qualified) or the worker is
+    /// external. A call through a revoked lease fails as a cut, under its
+    /// caller's own retry authority.
+    pub async fn abort_incarnation(&self, epoch: &str) -> bool {
+        let target = {
+            let mut state = self.inner.lock();
+            if self.inner.launcher.is_none()
+                || !state.driving
+                || state.epoch.as_deref() != Some(epoch)
+            {
+                return false;
+            }
+            state.abort = Some(state.incarnation);
+            state.incarnation
+        };
+        self.inner.notify();
+        loop {
+            let mut changes = self.inner.changed.subscribe();
+            {
+                let state = self.inner.lock();
+                if state.incarnation != target || !state.driving {
+                    return true;
+                }
+            }
+            let _ = changes.changed().await;
+        }
     }
 
     /// Retires the worker: no lease is granted again, a running managed

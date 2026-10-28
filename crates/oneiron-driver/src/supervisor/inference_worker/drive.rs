@@ -10,6 +10,8 @@ use super::{Inner, LaunchFailure, Phase, RunningWorker, WORKER_CRASH_BACKOFF_SEC
 /// How one incarnation ended.
 enum Ended {
     Exited(WorkerExit),
+    /// An abort killed and reaped it, with no drain.
+    Aborted(WorkerExit),
     Stopped(Phase),
     Parked {
         readiness: WorkerReadiness,
@@ -82,8 +84,39 @@ impl Inner {
             state.incarnation = state.incarnation.wrapping_add(1);
             state.leases = 0;
             state.activity = None;
+            state.epoch = None;
+            state.abort = None;
         }
         self.notify();
+    }
+
+    /// Whether an abort was asked for the running incarnation.
+    fn abort_requested(&self) -> bool {
+        let state = self.lock();
+        state.abort == Some(state.incarnation)
+    }
+
+    /// Resolves once an abort is asked for the running incarnation, so any
+    /// wait on the worker (its liveness, its stats, its drain) ends there.
+    async fn abort_wanted(&self) {
+        loop {
+            let mut changes = self.changed.subscribe();
+            if self.abort_requested() {
+                return;
+            }
+            let _ = changes.changed().await;
+        }
+    }
+
+    /// Closes admission and kills the incarnation's process group, waiting
+    /// for the reaper: no drain, nothing asked of the worker.
+    async fn abort(&self, running: &dyn RunningWorker) -> Ended {
+        {
+            self.lock().phase = Phase::Draining;
+        }
+        self.notify();
+        tracing::warn!(worker = %self.spec.worker_id, "model worker aborted; relaunching it");
+        Ended::Aborted(running.abort().await)
     }
 
     /// Waits out relaunch number `attempt` in `Backoff`; `false` when the
@@ -116,7 +149,13 @@ impl Inner {
         };
         *attempt = 0;
         {
-            self.lock().phase = Phase::Ready(observed);
+            let mut state = self.lock();
+            state.epoch = observed
+                .identity
+                .backend_epoch
+                .as_ref()
+                .map(|epoch| epoch.as_str().to_owned());
+            state.phase = Phase::Ready(observed);
         }
         self.notify();
         tracing::info!(worker = %self.spec.worker_id, model = %self.spec.model, "model worker ready");
@@ -124,6 +163,9 @@ impl Inner {
         let mut next_poll = tokio::time::Instant::now() + self.policy.activity_poll;
         loop {
             let mut changes = self.changed.subscribe();
+            if self.abort_requested() {
+                return self.abort(running).await;
+            }
             if self.retiring() {
                 return self.drain_and_stop(running, Phase::Stopped).await;
             }
@@ -137,6 +179,7 @@ impl Inner {
             let activity = tokio::select! {
                 biased;
                 exit = running.exited() => return Ended::Exited(exit),
+                () = self.abort_wanted() => return self.abort(running).await,
                 activity = running.activity() => activity,
             };
             self.note_activity(activity);
@@ -156,7 +199,12 @@ impl Inner {
             let since = used_at.map_or(*since, |used| used.max(*since));
             if now.duration_since(since) >= span && self.close_if_idle() {
                 tracing::info!(worker = %self.spec.worker_id, "model worker idle; stopping it");
-                let _ = running.terminate(self.policy.stop_grace).await;
+                // An abort asked during the drain reaches the worker there.
+                tokio::select! {
+                    biased;
+                    () = self.abort_wanted() => return self.abort(running).await,
+                    _ = running.terminate(self.policy.stop_grace) => {}
+                }
                 return Ended::Stopped(Phase::IdleStopped);
             }
         }
@@ -178,12 +226,14 @@ impl Inner {
             let live = tokio::select! {
                 biased;
                 exit = running.exited() => return Err(Ended::Exited(exit)),
+                () = self.abort_wanted() => return Err(self.abort(running).await),
                 live = running.live() => live,
             };
             if live {
                 let readiness = tokio::select! {
                     biased;
                     exit = running.exited() => return Err(Ended::Exited(exit)),
+                    () = self.abort_wanted() => return Err(self.abort(running).await),
                     readiness = self.probe.probe(&self.spec) => readiness,
                 };
                 match readiness {
@@ -242,6 +292,9 @@ impl Inner {
         self.notify();
         loop {
             let mut changes = self.changed.subscribe();
+            if self.abort_requested() {
+                return self.abort(running).await;
+            }
             if self.lock().leases == 0 {
                 break;
             }
@@ -255,6 +308,7 @@ impl Inner {
             let activity = tokio::select! {
                 biased;
                 _ = running.exited() => return Ended::Stopped(next),
+                () = self.abort_wanted() => return self.abort(running).await,
                 activity = running.activity() => activity,
             };
             if activity.is_none_or(|activity| activity.is_idle()) {
@@ -263,10 +317,16 @@ impl Inner {
             tokio::select! {
                 biased;
                 _ = running.exited() => return Ended::Stopped(next),
+                () = self.abort_wanted() => return self.abort(running).await,
                 () = tokio::time::sleep(self.policy.liveness_poll) => {}
             }
         }
-        let _ = running.terminate(self.policy.stop_grace).await;
+        // An abort asked during the drain reaches the worker there.
+        tokio::select! {
+            biased;
+            () = self.abort_wanted() => return self.abort(running).await,
+            _ = running.terminate(self.policy.stop_grace) => {}
+        }
         Ended::Stopped(next)
     }
 
@@ -335,6 +395,11 @@ pub(super) async fn drive(inner: Arc<Inner>) {
             inner.release_device();
             inner.revoke();
             match ended {
+                // An abort relaunches at once: the next incarnation serves
+                // the other vaults, and its first call starts it anyway.
+                Ended::Aborted(exit) => {
+                    tracing::info!(%worker, exit = %exit.description, "aborted model worker reaped");
+                }
                 Ended::Exited(exit) => {
                     tracing::warn!(%worker, exit = %exit.description, "model worker exited; relaunching after its backoff");
                     if !inner.back_off(&mut attempt).await {

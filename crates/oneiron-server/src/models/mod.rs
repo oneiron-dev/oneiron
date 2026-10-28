@@ -109,9 +109,10 @@ pub use run_backend::RunBackend;
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
+    SnapshotReceipt, SnapshotStatus,
 };
 pub use token_ratio::TokenRatios;
-pub(crate) use worker_host::permit_worker_launch;
+pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator.
 pub(crate) use worker_host::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
 

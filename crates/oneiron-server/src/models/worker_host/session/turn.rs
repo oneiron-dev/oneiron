@@ -2,16 +2,27 @@
 //! working branch forked at the frontier the worker verified for the turn's
 //! canonical path, and the `session` field its `session.generate` carries.
 //! Any step that does not hold leaves the turn to run as it always did.
+//!
+//! A turn whose canonical path no longer starts with the path its
+//! session's published checkpoint succeeded (the history window slid, so
+//! the attach would fall below every retained snapshot) runs as a plain
+//! generate, with no create, fork or suffix commit, and so does every next
+//! turn on that binding until one's path extends the last one's: a cached
+//! turn never costs more than a plain one there (FIX 10632). A vault whose
+//! snapshot admission a lock closed gets no session at all, and a session
+//! created or forked while a lock ran is not registered: the turn runs
+//! plain, and a handle created for it is released.
 use std::path::Path;
 
 use oneiron::llm::{
-    CanonicalCheckpointRef, SegmentManifest, SessionBinding, SessionCreate, SessionCreated,
-    SessionFork, SessionForked, SessionGenerate, SessionInvalidation, SessionKey, SessionOp,
-    SessionOpStamp, SessionResidency, SessionRestore, SessionRestored, SessionTarget,
+    CanonicalCheckpointRef, MessageStamp, SegmentManifest, SessionBinding, SessionCreate,
+    SessionCreated, SessionFork, SessionForked, SessionGenerate, SessionInvalidation, SessionKey,
+    SessionOp, SessionOpStamp, SessionResidency, SessionRestore, SessionRestored, SessionTarget,
     WorkerDescriptor,
 };
 use serde_json::Value as JsonValue;
 
+use super::lifecycle::{self, Admitted};
 use super::policy;
 use super::registry::{self, PendingTurn, Place, Serves, Session, send};
 use crate::models::native_exl3::session_capability;
@@ -42,6 +53,7 @@ pub(in crate::models) async fn open_turn(
 ) -> Option<JsonValue> {
     let messages = conversation.get("messages")?.as_array()?;
     let anchor = manifest.anchor()?;
+    let admitted = lifecycle::admission(&anchor.vault)?;
     let cut = policy::canonical_cut(manifest)?;
     let newest = policy::newest_user(manifest).filter(|index| *index >= cut)?;
     if !policy::describes(manifest, messages) {
@@ -60,7 +72,11 @@ pub(in crate::models) async fn open_turn(
         worker: route.worker.clone(),
     };
     let restore = serves(&worker_id, &place).await?;
-    let opened = session(&worker_id, &place, &key, restore).await?;
+    let path = manifest.messages().get(..cut)?;
+    if !attaches(&worker_id, &place, &key, path) {
+        return None;
+    }
+    let opened = session(&worker_id, &place, &key, restore, admitted).await?;
     let binding = key.binding();
     let fork = SessionFork {
         target: opened.target.clone(),
@@ -82,6 +98,11 @@ pub(in crate::models) async fn open_turn(
     let stale = policy::stale_after_fork(opened.published.as_ref(), anchor.head, &forked);
     {
         let mut workers = registry::lock();
+        // A lock since the admission keeps the fork unregistered: the lock
+        // retires the session, or already has.
+        if lifecycle::admission(&anchor.vault) != Some(admitted) {
+            return None;
+        }
         let session = registry::current(&mut workers, &worker_id, &place)?
             .sessions
             .get_mut(&binding)
@@ -102,6 +123,42 @@ pub(in crate::models) async fn open_turn(
         op_id: policy::next_op_id(),
     })
     .ok()
+}
+
+/// Whether a turn on `key` whose canonical path is `path` may run on a
+/// session (FIX 10632). A binding marked sliding runs plain until a turn's
+/// path extends the marked one, which clears the mark. A session whose
+/// published checkpoint succeeded a path this one does not start with
+/// cannot be attached at all: it is retired, the binding is marked, and
+/// the turn runs plain.
+fn attaches(worker_id: &str, place: &Place, key: &SessionKey, path: &[MessageStamp]) -> bool {
+    let binding = key.binding();
+    let retired = {
+        let mut workers = registry::lock();
+        let worker = registry::bind(&mut workers, worker_id, place);
+        if let Some(marked) = worker.sliding.get(&binding) {
+            let extends = path.starts_with(marked);
+            if extends {
+                worker.sliding.remove(&binding);
+            } else {
+                worker.sliding.insert(binding, path.to_vec());
+            }
+            return extends;
+        }
+        let slid = worker
+            .sessions
+            .get(&binding)
+            .is_some_and(|session| session.published.is_some() && !path.starts_with(&session.path));
+        if !slid {
+            return true;
+        }
+        worker.sliding.insert(binding, path.to_vec());
+        worker.retire(&binding)
+    };
+    if let Some((target, at)) = retired {
+        registry::release_later(target, at, SessionInvalidation::PathChanged);
+    }
+    false
 }
 
 /// Whether the incarnation at `place` serves sessions, from its hello the
@@ -139,6 +196,7 @@ async fn session(
     place: &Place,
     key: &SessionKey,
     restore: bool,
+    admitted: Admitted,
 ) -> Option<Opened> {
     let binding = key.binding();
     let (found, retired) = {
@@ -182,7 +240,7 @@ async fn session(
         Some((opened, residency)) => {
             resident(worker_id, place, &binding, opened, residency, restore).await
         }
-        None => create(worker_id, place, key).await,
+        None => create(worker_id, place, key, admitted).await,
     }
 }
 
@@ -243,8 +301,14 @@ async fn resident(
 }
 
 /// A new session for `key` on `place`: not warm until a checkpoint is
-/// published.
-async fn create(worker_id: &str, place: &Place, key: &SessionKey) -> Option<Opened> {
+/// published. It registers only while its vault admits under `admitted`,
+/// read under the registry's lock; otherwise its handle is released.
+async fn create(
+    worker_id: &str,
+    place: &Place,
+    key: &SessionKey,
+    admitted: Admitted,
+) -> Option<Opened> {
     let body = SessionCreate {
         binding: key.binding(),
         op_id: policy::next_op_id(),
@@ -258,15 +322,26 @@ async fn create(worker_id: &str, place: &Place, key: &SessionKey) -> Option<Open
         residency: SessionResidency::default(),
         pending: None,
         stale: None,
+        path: Vec::new(),
     };
     let opened = Opened {
         target: session.target(),
         generation: session.generation,
         published: None,
     };
-    let mut workers = registry::lock();
-    registry::current(&mut workers, worker_id, place)?
-        .sessions
-        .insert(key.binding(), session);
+    let refused = {
+        let mut workers = registry::lock();
+        let worker = registry::current(&mut workers, worker_id, place)?;
+        if lifecycle::admission(&key.anchor.vault) == Some(admitted) {
+            worker.sessions.insert(key.binding(), session);
+            None
+        } else {
+            Some(worker.owe(key.anchor.vault, session.target(), session.residency))
+        }
+    };
+    if let Some((target, at)) = refused {
+        registry::release_later(target, at, SessionInvalidation::Evicted);
+        return None;
+    }
     Some(opened)
 }

@@ -27,8 +27,14 @@
 //! its entry's bytes leave the accounting; the worker's cheap stats on each
 //! answer move the device ledger. Receipts claim nothing from metadata: the
 //! native `final`'s passes say what was read and what was computed.
+//!
+//! Each served vault attaches this process's snapshot port (V2-R3): its
+//! lock releases every session of it under one total bound, aborting a
+//! worker that does not answer, and its erases drop its sessions.
 #[cfg(unix)]
 mod commit;
+#[cfg(unix)]
+mod lifecycle;
 #[cfg(unix)]
 mod policy;
 #[cfg(unix)]
@@ -41,6 +47,10 @@ use std::sync::Arc;
 use oneiron::EntityId;
 use oneiron::llm::{SegmentManifest, SessionInvalidation};
 
+#[cfg(unix)]
+pub(super) use lifecycle::{
+    install as install_snapshots, set_policy as set_snapshot_policy, status as snapshot_status,
+};
 #[cfg(unix)]
 pub(super) use registry::Registry;
 #[cfg(unix)]

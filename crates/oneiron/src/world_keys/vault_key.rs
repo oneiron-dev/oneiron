@@ -502,6 +502,8 @@ impl Vault {
             .vault_key
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(key));
+        // An unlock opens a new snapshot admission generation, never readiness.
+        self.store.inference_snapshots.reopen();
     }
 
     /// Holds the data key a sealed vault opened with (OF-570 maximum tier).
