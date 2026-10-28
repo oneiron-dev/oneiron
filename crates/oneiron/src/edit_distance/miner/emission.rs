@@ -296,7 +296,9 @@ pub(super) fn emit_preference_value(
         end: cluster.at,
     };
     vault.with_write_txn_grouped(|wtxn| {
-        if !cluster_is_eligible(vault, wtxn, handle, now)? {
+        if !cluster_is_eligible(vault, wtxn, handle, now)?
+            || !super::erase::receipts_stand_in_txn(vault, wtxn, cluster)?
+        {
             return Ok(None);
         }
         // FIRST, and in this transaction: the door validates the candidate
@@ -406,7 +408,9 @@ fn emit_skill_edit(
     };
     let mark = StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id);
     vault.with_write_txn_grouped(|wtxn| {
-        if !cluster_is_eligible(vault, wtxn, handle, now)? {
+        if !cluster_is_eligible(vault, wtxn, handle, now)?
+            || !super::erase::receipts_stand_in_txn(vault, wtxn, cluster)?
+        {
             return Ok(None);
         }
         // Inside the transaction with the row it proposes to edit: a proposal

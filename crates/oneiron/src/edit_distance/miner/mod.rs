@@ -83,6 +83,7 @@
 
 mod config;
 mod emission;
+mod erase;
 mod feedback;
 mod hunks;
 mod influence;
@@ -96,6 +97,7 @@ mod win;
 pub use self::config::{
     MINER_K_DEFAULT, MINER_REJECTION_COOLDOWN_SECS, PREDICATE_PREFERENCE_PHRASING,
 };
+pub(crate) use self::erase::{erase_principal_decision_entity_in_txn, erase_source_claim_in_txn};
 pub use self::feedback::bind_amendment_preference_principal;
 pub(crate) use self::feedback::record_inbox_learning_in_txn;
 pub(in crate::edit_distance) use self::hunks::hunk_substitution_ref;
