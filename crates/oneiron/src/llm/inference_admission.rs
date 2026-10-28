@@ -210,7 +210,7 @@ fn invalid(reason: &'static str) -> Error {
 /// The purpose whose defaults row and gates admit and route a call. An
 /// agent's free time sends its own records out as an extraction does, so
 /// both autonomy labels are admitted and routed as extraction (FIX 4453).
-pub(crate) fn admitted_as(purpose: &CallPurpose) -> &CallPurpose {
+pub fn admitted_as(purpose: &CallPurpose) -> &CallPurpose {
     match purpose {
         CallPurpose::AutonomyForHuman | CallPurpose::AutonomyOwnTime => &CallPurpose::Extraction,
         purpose => purpose,
