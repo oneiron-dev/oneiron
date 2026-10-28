@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -25,7 +25,8 @@ use oneiron::task_verb::sdk::{
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, hooked_row, memory_refusal};
 use crate::server::SyncServer;
@@ -49,10 +50,10 @@ fn no_issuer() -> OwnerError {
 async fn mint(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SupportGrantMintRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SupportGrantMintRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         hooked_row(
             server.vault(),
@@ -108,10 +109,10 @@ async fn list(
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SupportGrantRevokeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SupportGrantRevokeRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         hooked_row(
             server.vault(),

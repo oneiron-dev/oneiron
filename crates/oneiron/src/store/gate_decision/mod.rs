@@ -7,6 +7,7 @@ use super::*;
 mod actor_erase;
 mod checkpoint_custody;
 mod claim_refs;
+mod context;
 mod keys;
 mod ledger;
 mod lookup;
@@ -31,6 +32,11 @@ pub(crate) use self::checkpoint_custody::{
 #[cfg(test)]
 pub(crate) use self::checkpoint_custody::{
     arm_after_restore_destination_made, arm_before_activation_fork, arm_before_live_custody_read,
+};
+pub use self::context::{
+    GateAnalysisCoverage, GateClaimReadSelectors, GateDecisionAnalysis, GateDecisionContext,
+    GateDecisionReadContext, GateLoopFamily, GateLoopLink, GateLoopOrigin, GateLoopSource,
+    GateReadPosition, GateRiskAxis, GateRiskState,
 };
 pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,

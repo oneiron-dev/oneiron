@@ -20,6 +20,8 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Sync a machine to its home](device-sync.md) — the `[device_sync]` section: the home a
   machine dials over the paired mesh, the credential file the `/ws` upgrade presents, its MACRO
   home candidacy, and what the log shows.
+- [A relay room's locker](relay-room.md) — `oneiron host relay`: the locker's routes under the
+  room's access token, and its connection pressure check (`GET /v1/relay/{vault}/pressure`).
 - [Connect Claude Code or Codex](connect-an-agent.md) — `oneiron token agent` mints a scoped,
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports

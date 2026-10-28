@@ -5,13 +5,13 @@
 
 use super::super::paging::{BoardPageCursor, decode_page_cursor, encode_page_cursor, page_binding};
 use super::admission::{AdmittedPluginSection, PluginSectionRegistry};
-use super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
+use super::claim::PluginInstallClaimPayload;
+use super::fit_install::section_install_authorized;
 use super::manifest::SectionId;
 use super::pages::{BoardBlockPage, PluginSectionSnapshotPage};
 use super::render::{PluginSectionRow, PluginSectionSnapshot};
 use super::validate::provenance_matches_record;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, LegacyJson, SideKey, SideTable};
@@ -115,6 +115,7 @@ fn refused_block() -> MemoryError {
         wrong_root: None,
         hook: None,
         retry_after: None,
+        resets_at: Vec::new(),
     }
 }
 
@@ -194,7 +195,7 @@ fn block_key(row: &BoardBlockRecord) -> MemoryResult<BlockKey> {
     })
 }
 
-/// Recheck the actual approved install and exact Active skill in the same
+/// Recheck the actual authorized install and exact Active skill in the same
 /// snapshot as the block operation. A cached registry is never authority.
 fn require_live_section(
     vault: &crate::Vault,
@@ -216,10 +217,10 @@ fn require_live_section(
     let claim = vault
         .get_claim_in_txn(txn, install_claim_id)?
         .ok_or_else(refused_block)?;
-    if claim.predicate != PREDICATE_PLUGIN_SECTION_INSTALL
-        || claim.approval != ClaimApprovalStatus::Approved
-        || claim.lifecycle != ClaimLifecycleStatus::Active
-        || claim.stale
+    // The owner's consent or a ready fit's receipt (FIX 9752), in this same
+    // snapshot.
+    if !section_install_authorized(vault, txn, install_claim_id, &claim)
+        .map_err(|_| refused_block())?
     {
         return Err(refused_block());
     }

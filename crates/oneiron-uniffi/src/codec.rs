@@ -14,7 +14,7 @@
 //! `BAD_REQUEST`, an engine value past the foreign width an `INTERNAL`.
 
 use base64::Engine as _;
-use oneiron::claim::{ScopedReadReceipt, ScopedReadResult};
+use oneiron::claim::{ConfidenceDetails, ScopedReadReceipt, ScopedReadResult};
 use oneiron::dreamer_runner::maintenance::identity;
 use oneiron::memory as engine;
 use oneiron::retrieval_quality as quality;
@@ -56,6 +56,8 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         replacement: None,
         schema_ref: None,
         pending: None,
+        retry_after: None,
+        resets_at: Vec::new(),
     }
 }
 
@@ -374,6 +376,16 @@ impl Lower<engine::ClaimInput> for ClaimInput {
             occurred_at: optional_seconds("occurred_at", self.occurred_at)?,
             learned_at: optional_seconds("learned_at", self.learned_at)?,
             salience: self.salience,
+            confidence_details: ConfidenceDetails::from_names(
+                self.confidence_band.as_deref(),
+                self.confidence_basis.as_deref(),
+            )
+            .map_err(|reason| {
+                bad_request(
+                    reason.to_owned(),
+                    "Pass both confidence_band and confidence_basis, or neither.",
+                )
+            })?,
         })
     }
 }
@@ -1019,6 +1031,7 @@ impl Lift<engine::MemoryItem> for MemoryItem {
             value_text: item.value_text,
             confidence: item.confidence,
             hedge_bucket: item.hedge_bucket,
+            confidence_basis: item.confidence_basis.map(|basis| basis.as_str().to_owned()),
             provenance: MemoryProvenance {
                 source: item.provenance.source,
                 source_revision_ids: item.provenance.source_revision_ids,

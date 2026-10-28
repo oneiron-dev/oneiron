@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post, put};
@@ -27,7 +27,8 @@ use oneiron::feedback::{
 };
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -48,10 +49,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 async fn run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FeedbackTriageRunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<FeedbackTriageRunRequest>,
 ) -> OwnerReply<FeedbackTriageRun> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let run = blocking(move || -> OwnerResult<FeedbackTriageRun> {
         Ok(server.vault().queue_feedback_triage(&owner, request)?)
     })
@@ -60,7 +61,8 @@ async fn run(
 }
 
 /// `GET /v1/owner/feedback/triage/status?attempt=<32 hex>`: one sweep's
-/// status; not found when the queue holds no such attempt.
+/// status, with every repository `[feedback.triage]` binds, so one never
+/// swept shows (FIX 7632); not found when the queue holds no such attempt.
 async fn status(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -69,10 +71,17 @@ async fn status(
     let owner = owner(&auth, &server)?;
     let request = query_params(query)?;
     let status = blocking(move || -> OwnerResult<FeedbackTriageStatus> {
-        server
+        let mut status = server
             .vault()
             .feedback_triage_status(&owner, &request)?
-            .ok_or_else(|| OwnerError::NotFound("feedback triage run", request.attempt.to_hex()))
+            .ok_or_else(|| OwnerError::NotFound("feedback triage run", request.attempt.to_hex()))?;
+        status.bound_sources = server
+            .feedback_triage
+            .github_sources
+            .iter()
+            .filter_map(|endpoint| crate::config::github_issue_source(endpoint.as_str()))
+            .collect();
+        Ok(status)
     })
     .await?;
     Ok(Json(status))
@@ -98,10 +107,10 @@ async fn binding(
 async fn set_binding(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FeedbackTriageBindingRequest>, JsonRejection>,
+    payload: OwnerJsonBody<FeedbackTriageBindingRequest>,
 ) -> OwnerReply<FeedbackTriageBinding> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let binding = blocking(move || -> OwnerResult<FeedbackTriageBinding> {
         Ok(server
             .vault()
@@ -117,10 +126,10 @@ async fn set_binding(
 async fn delivery_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReportDeliveryRunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ReportDeliveryRunRequest>,
 ) -> OwnerReply<ReportDeliveryRun> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let run = blocking(move || -> OwnerResult<ReportDeliveryRun> {
         Ok(server
             .vault()
@@ -156,10 +165,10 @@ async fn delivery_status(
 async fn delivery_binding(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReportPublisherBindingRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ReportPublisherBindingRequest>,
 ) -> OwnerReply<ReportPublisherBinding> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let endpoint = if request.bound {
         let route = super::feedback_host(&server)?.config.route();
         Some(ReportPublisherEndpoint {

@@ -55,6 +55,7 @@ use oneiron_container::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
 use crate::server::SyncServer;
@@ -125,7 +126,8 @@ pub(crate) async fn serve(
     shutdown: impl Future<Output = ()>,
 ) {
     let pool = ConnectionPool::new(&limits, questions);
-    serve_with_pool(listener, app, &pool, limits, shutdown).await;
+    let mut connections = JoinSet::new();
+    serve_with_pool(listener, app, &pool, limits, &mut connections, shutdown).await;
 }
 
 /// The descriptor floor and the strangers' shares one set of limits
@@ -185,15 +187,19 @@ impl HostNetFloor for DescriptorFloor {
     }
 }
 
-/// [`serve`], taking its permits and strangers' places from `pool`.
+/// [`serve`], taking its permits and strangers' places from `pool`. Each
+/// connection is a task of `connections`: dropped before it returns, at its
+/// caller's drain grace, it leaves the open ones there for the caller to
+/// end and reap (FIX 9261).
 pub(crate) async fn serve_with_pool(
     listener: TcpListener,
     app: Router,
     pool: &ConnectionPool,
     limits: ConnectionLimits,
+    connections: &mut JoinSet<()>,
     shutdown: impl Future<Output = ()>,
 ) {
-    serve_from_pool(listener, app, pool, limits, None, shutdown).await;
+    serve_from_pool(listener, app, pool, limits, None, connections, shutdown).await;
 }
 
 /// [`serve_with_pool`] for the API listener: past the floor its socket in
@@ -205,9 +211,19 @@ pub(crate) async fn serve_api_with_pool(
     pool: &ConnectionPool,
     limits: ConnectionLimits,
     server: Arc<SyncServer>,
+    connections: &mut JoinSet<()>,
     shutdown: impl Future<Output = ()>,
 ) {
-    serve_from_pool(listener, app, pool, limits, Some(server), shutdown).await;
+    serve_from_pool(
+        listener,
+        app,
+        pool,
+        limits,
+        Some(server),
+        connections,
+        shutdown,
+    )
+    .await;
 }
 
 async fn serve_from_pool(
@@ -216,6 +232,7 @@ async fn serve_from_pool(
     pool: &ConnectionPool,
     limits: ConnectionLimits,
     server: Option<Arc<SyncServer>>,
+    connections: &mut JoinSet<()>,
     shutdown: impl Future<Output = ()>,
 ) {
     let ConnectionPool {
@@ -233,12 +250,13 @@ async fn serve_from_pool(
         )
     });
     let (stopping, stop) = watch::channel(false);
-    let (open, open_watch) = watch::channel(());
     let mut shutdown = pin!(shutdown);
     'serving: loop {
         let (stream, peer) = tokio::select! {
             accepted = axum::serve::Listener::accept(&mut listener) => accepted,
             () = &mut shutdown => break,
+            // A connection is reaped as it ends, so the set holds open ones.
+            Some(_) = connections.join_next(), if !connections.is_empty() => continue,
         };
         let address = peer.ip().to_canonical();
         // Past its share, an API socket is a probe when the owner's reserve is
@@ -329,8 +347,7 @@ async fn serve_from_pool(
             )
         });
         let mut stop = stop.clone();
-        let open = open_watch.clone();
-        tokio::spawn(async move {
+        connections.spawn(async move {
             let mut builder = hyper::server::conn::http1::Builder::new();
             builder
                 .timer(TokioTimer::new())
@@ -351,13 +368,11 @@ async fn serve_from_pool(
                     () = custody.parked() => {}
                 }
             }
-            drop(open);
         });
     }
     let _ = stopping.send(true);
     drop(listener);
-    drop(open_watch);
-    open.closed().await;
+    while connections.join_next().await.is_some() {}
 }
 
 /// A permit from `floor` for one socket. The first time the socket finds it

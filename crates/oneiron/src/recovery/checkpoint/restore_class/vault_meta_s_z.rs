@@ -29,6 +29,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
+    // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).
+    (&t::SECRET_CUSTODY_RESTORE_PENDING, LIVE),
+    (&t::SECRET_CUSTODY_RESTORE_RELEASE, LIVE),
     (&t::SECRET_CUSTODY_TRANSITION, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_WITNESS, LIVE),
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
@@ -106,6 +109,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_POLICY_CHANGE, LIVE),
     (&t::SHARED_ACT_RECEIPT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
+    // A holder's delivery and ack of a removal archive are facts about bytes
+    // that left the vault: a restore stands them as the live vault holds them.
+    (&t::SHARED_ACT_REMOVAL_DELIVERY, LIVE),
     // An archive delivered to a removed Owner has left the vault: a restore
     // neither revives a purged one nor drops one still within its term.
     (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
@@ -154,6 +160,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_MARKETPLACE_BLOCKED_HASH, LIVE),
     (&t::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION, LIVE),
     (&t::SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL, LIVE),
+    (&t::SKILL_HUB_MARKETPLACE_SKILL_FIT, LIVE),
     (&t::SKILL_HUB_ORIGIN, CONTENT),
     (&t::SKILL_HUB_PACKAGE, CONTENT),
     (&t::SKILL_HUB_REF_SYNC, CONTENT),

@@ -246,15 +246,11 @@ fn verify_live(
         .mints
         .get(&slip.claims.slip_id)
         .ok_or_else(|| refused("project write slip not minted"))?;
-    let floor = crate::authority::AUTHORITY_FIRST_SEEN
-        .get_lenient(
-            store,
-            txn,
-            &crate::authority::authority_first_seen_clock_key(),
-        )?
-        .unwrap_or(0);
-    let now =
-        crate::authority::authority_observation_secs(store, floor, store.clock.now_recorded_at());
+    let now = crate::authority::authority_clock_reading_in_txn(
+        store,
+        txn,
+        store.clock.now_recorded_at(),
+    )?;
     if proof.signed_at > now {
         return Err(refused("project write proof is dated ahead"));
     }

@@ -311,31 +311,46 @@ fn check_task_parent_in(
     txn: &heed::RoTxn<'_>,
     parent_ref: EntityId,
 ) -> MemoryResult<()> {
+    match task_parent_refusal_in(vault, txn, parent_ref)? {
+        Some(refusal) => Err(refusal),
+        None => Ok(()),
+    }
+}
+
+/// Why `parent_ref` cannot take a Task child, read in `txn`, as
+/// [`check_task_parent_in`] refuses it; `None` when it can. A row that does
+/// not read is an error, never a refusal. A redo leaves out a parent this
+/// refuses (FIX 9001).
+pub(super) fn task_parent_refusal_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    parent_ref: EntityId,
+) -> MemoryResult<Option<MemoryError>> {
     const SUGGESTION: &str = "Name a Milestone TASK as parent_ref, or omit it for a root task.";
     let Some(raw) = vault.get_raw_in(txn, &parent_ref)? else {
-        return Err(MemoryError::bad_request_with(
+        return Ok(Some(MemoryError::bad_request_with(
             "parent_ref names no stored TASK",
             &[SUGGESTION],
-        ));
+        )));
     };
     let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
     if header.entity_type != ENTITY_TYPE_TASK {
-        return Err(MemoryError::bad_request_with(
+        return Ok(Some(MemoryError::bad_request_with(
             format!(
                 "parent_ref names entity type {}, not a TASK",
                 header.entity_type
             ),
             &[SUGGESTION],
-        ));
+        )));
     }
     let role = task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
     if !role.allows_child(TaskRole::Task) {
-        return Err(MemoryError::bad_request_with(
+        return Ok(Some(MemoryError::bad_request_with(
             format!("a {role:?} TASK cannot parent a Task; only a Milestone does"),
             &[SUGGESTION],
-        ));
+        )));
     }
-    Ok(())
+    Ok(None)
 }
 
 /// DOOR-113 slice B (FIX 4418): refuses a parent its writer cannot read,
@@ -442,6 +457,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         wrong_root: None,
         hook: None,
         retry_after: None,
+        resets_at: Vec::new(),
     }
 }
 
@@ -535,7 +551,18 @@ pub(crate) fn settled_task_result_binding(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<(TaskTerminalDisposition, EntityId)>> {
-    Ok(task_verb_body(vault, task_ref)?
+    let txn = vault.store.env.read_txn()?;
+    settled_task_result_binding_in_txn(vault, &txn, task_ref)
+}
+
+/// [`settled_task_result_binding`] in the caller's transaction, for a
+/// `contextFrom` check that runs inside a writer or a snapshot it holds.
+pub(crate) fn settled_task_result_binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<(TaskTerminalDisposition, EntityId)>> {
+    Ok(task_verb_body_in(vault, txn, task_ref)?
         .and_then(|body| body.terminal().cloned())
         .and_then(|terminal| {
             terminal

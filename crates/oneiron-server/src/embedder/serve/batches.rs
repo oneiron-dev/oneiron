@@ -28,9 +28,7 @@ use base64::Engine as _;
 use serde::Serialize;
 
 use super::budget::{Fixed, answer_bytes, encoding_bytes};
-use super::{
-    ANSWER_PIECE, EmbeddingRow, Encoded, MAX_INPUTS, Served, Usage, refuse, waited_out,
-};
+use super::{ANSWER_PIECE, EmbeddingRow, Encoded, MAX_INPUTS, Served, Usage, refuse, waited_out};
 use crate::admission::Permit;
 use crate::byte_line::HeldBytes;
 use crate::embedder::local::{Priority, Side};

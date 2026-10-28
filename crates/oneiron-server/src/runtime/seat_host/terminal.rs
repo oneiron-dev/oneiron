@@ -136,9 +136,9 @@ fn note_route(route: &SeatRoute) {
             skipped = %skipped_seats_note(&receipt.skipped_seats),
             "a seat run's seat is spent; the next seat took its work"
         ),
-        SeatRoute::InternalModels { .. } => tracing::info!(
-            "a seat run's seat is spent; its work goes back to the internal models"
-        ),
+        SeatRoute::InternalModels { .. } => {
+            tracing::info!("a seat run's seat is spent; its work goes back to the internal models")
+        }
         _ => tracing::info!("a seat run's work was routed"),
     }
 }

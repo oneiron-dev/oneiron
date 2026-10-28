@@ -283,18 +283,13 @@ impl Vault {
                 return Ok(());
             }
 
-            let floor_key = authority_first_seen_clock_key();
-            let previous_floor = AUTHORITY_FIRST_SEEN
-                .get_lenient(&self.store, wtxn, &floor_key)?
-                .unwrap_or(0);
-            let observed_floor = authority_observation_secs(
+            // A damaged floor is read strictly and never overwritten (FIX
+            // 10106).
+            let observed_floor = advance_authority_clock_in_txn(
                 &self.store,
-                previous_floor,
+                wtxn,
                 self.store.clock.now_recorded_at(),
-            );
-            if observed_floor != previous_floor {
-                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &observed_floor)?;
-            }
+            )?;
 
             let mut missing_sidecars = Vec::new();
             for entry in
@@ -372,20 +367,25 @@ impl Vault {
         // Update the monotonic local observation in a committed writer before
         // the cached read view opens its own snapshot.
         self.with_write_txn_grouped(|wtxn| {
-            let floor_key = authority_first_seen_clock_key();
-            let floor = AUTHORITY_FIRST_SEEN
-                .get_lenient(&self.store, wtxn, &floor_key)?
-                .unwrap_or(0);
-            let now =
-                authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
-            if now != floor {
-                AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &now)?;
-            }
-            Ok(())
+            advance_authority_clock_in_txn(&self.store, wtxn, self.store.clock.now_recorded_at())
+                .map(drop)
         })?;
         let rtxn = self.store.env.read_txn()?;
         self.authority_view_readonly_in_txn(&rtxn)
             .map(|view| (*view).clone())
+    }
+
+    /// This vault's authority id, as the shared verified fold of the current
+    /// snapshot names it; `None` until the vault is rooted. It only reads:
+    /// unlike [`Self::authority_fold`] it moves no first-seen clock, so a
+    /// host may ask it while it builds a caller's handle (FIX 11063).
+    ///
+    /// # Errors
+    ///
+    /// A fold that does not compute, or storage errors.
+    pub fn authority_vault_id(&self) -> Result<Option<[u8; 32]>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self.authority_view_readonly_in_txn(&rtxn)?.vault_id)
     }
 
     pub(crate) fn authority_fold_readonly_in_txn(

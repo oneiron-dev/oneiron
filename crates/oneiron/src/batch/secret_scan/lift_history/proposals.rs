@@ -376,6 +376,7 @@ fn receipt_in_txn(
         grant_ref: None,
         diff_handle: blake3::hash(row_key).as_bytes().to_vec(),
         read_frontier_hash: [0; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &record)?;

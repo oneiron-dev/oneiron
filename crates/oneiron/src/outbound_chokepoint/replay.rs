@@ -15,8 +15,13 @@ use crate::outbound_intent_ledger::{
     FrozenOutboundCall, IntentDispatchResult, IntentEscalation, IntentEscalationReason, IntentId,
     IntentLedgerError, IntentState, OutboundCallClass, OutboundSendOutcome,
     RecordedOutboundOutcome, abandon_record, begin_definite_non_delivery_retry,
-    complete_record_bridged, record_definite_non_delivery, record_possible_delivery,
+    complete_record_bridged, defer_record, provider_wait_edge, record_definite_non_delivery,
+    record_possible_delivery, record_provider_refusal,
 };
+
+/// The receipt reason a send held by its provider's stated wait carries
+/// (FIX 8818): nothing went, and the send stays queued.
+pub(crate) const PROVIDER_WAIT_REASON: &str = "provider_wait";
 
 pub(super) enum RecoveryGovernance {
     Allow,
@@ -44,6 +49,13 @@ pub(super) fn replay_record<T: OutboundTransport>(
             true,
             None,
         )),
+        // A Deferred send is never sent again (FIX 7960).
+        (IntentState::Deferred, Some(RecordedOutboundOutcome::Deferred)) => Ok(effect_result(
+            &record,
+            Some(OutboundSendOutcome::Deferred),
+            true,
+            None,
+        )),
         (
             IntentState::Abandoned,
             Some(RecordedOutboundOutcome::Abandoned(IntentEscalationReason::DedupeSuppressed)),
@@ -52,11 +64,25 @@ pub(super) fn replay_record<T: OutboundTransport>(
             Ok(effect_result(&record, None, true, Some(reason)))
         }
         (IntentState::Pending, Some(RecordedOutboundOutcome::DefiniteNonDelivery)) => {
+            // FIX 8818: before the edge its provider named, a refused send
+            // stays queued and nothing goes.
+            if provider_wait_edge(vault, &record.id, vault.now_recorded_at())?.is_some() {
+                let mut held = effect_result(&record, None, true, None);
+                held.gate_receipt_reasons
+                    .push(PROVIDER_WAIT_REASON.to_owned());
+                return Ok(held);
+            }
             send_pending_with_gate(
                 vault, authority, record, prepared, None, now_ms, true, transport,
             )
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
+            // FIX 9379: a transport whose own record proves this call
+            // reached no provider retries it as a definite non-delivery.
+            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
+                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                return replay_record(vault, authority, proven, prepared, now_ms, transport);
+            }
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
             record_possible_delivery(vault, record.id)?;
@@ -79,6 +105,11 @@ pub(super) fn replay_record<T: OutboundTransport>(
             {
                 let txn = vault.store.env.read_txn().map_err(Error::from)?;
                 verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
+            }
+            // FIX 9379: as above, a proven non-delivery is retried as one.
+            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
+                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                return replay_record(vault, authority, proven, prepared, now_ms, transport);
             }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
@@ -371,9 +402,53 @@ fn send_pending_with_gate<T: OutboundTransport>(
             ))
         }
         OutboundSendOutcome::Failed(_) => {
-            let retryable = record_definite_non_delivery(vault, record.id, now_ms)?;
+            // A provider's rate or quota refusal keeps its wait with the
+            // definite non-delivery, in one writer (FIX 8818).
+            let retryable = match transport.provider_wait() {
+                Some(wait) => record_provider_refusal(
+                    vault,
+                    record.id,
+                    wait.directive_at(vault.now_recorded_at()),
+                    now_ms,
+                )?,
+                None => record_definite_non_delivery(vault, record.id, now_ms)?,
+            };
             Ok(effect_result(&retryable, Some(outcome), replayed, None))
         }
+        // The provider accepted the send as a remote task (FIX 7960): the
+        // row is Deferred with its handle and never sent again. A transport
+        // that names no handle cannot be followed, so its send reads as one
+        // whose delivery is unknown.
+        OutboundSendOutcome::Deferred => match transport.remote_task() {
+            Some(handle) => {
+                let deferred = defer_record(vault, record.id, handle, now_ms)?;
+                Ok(effect_result(&deferred, Some(outcome), replayed, None))
+            }
+            None if record.idempotency_supported => {
+                let uncertain = record_possible_delivery(vault, record.id)?;
+                Ok(effect_result(
+                    &uncertain,
+                    Some(OutboundSendOutcome::Ambiguous),
+                    replayed,
+                    None,
+                ))
+            }
+            None => {
+                record_possible_delivery(vault, record.id)?;
+                let abandoned = abandon_record(
+                    vault,
+                    record.id,
+                    IntentEscalationReason::NonIdempotentAmbiguous,
+                    now_ms,
+                )?;
+                Ok(effect_result(
+                    &abandoned,
+                    Some(OutboundSendOutcome::Ambiguous),
+                    replayed,
+                    Some(IntentEscalationReason::NonIdempotentAmbiguous),
+                ))
+            }
+        },
     }
 }
 

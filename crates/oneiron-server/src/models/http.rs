@@ -16,8 +16,8 @@ use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 
 mod reply_line;
 
-use reply_line::{read_booked, read_whole};
 pub(super) use reply_line::{ReplyBytes, charge_read, holding_replies};
+use reply_line::{read_booked, read_whole};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
@@ -99,9 +99,15 @@ pub(super) enum MediaSend {
     Delete,
     Json(JsonValue),
     Multipart(reqwest::multipart::Form),
-    /// A framed binary body (`application/octet-stream`).
-    Octets(Vec<u8>),
+    /// A framed binary body (`application/octet-stream`) carrying an upload
+    /// its admission allowed for one request (FIX 9517): a refused
+    /// compressed body's plain resend asks it again and goes only while it
+    /// still allows the upload.
+    Octets(Vec<u8>, UploadAdmission),
 }
+
+/// Asked right before an upload goes again: `false` sends nothing more.
+pub(super) type UploadAdmission = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// A finished, non-streamed exchange.
 pub(super) struct JsonReply {
@@ -287,18 +293,20 @@ impl ProviderHttp {
     /// (ARCH-0081 §6).
     fn post(&self, path: &str, headers: &BTreeMap<String, String>, body: &JsonValue) -> Sending {
         let plain = serde_json::to_vec(body).unwrap_or_default();
-        self.send_body(path, || self.request(path, headers), plain)
+        self.send_body(path, || self.request(path, headers), plain, None)
     }
 
     /// Sends `plain` on a request `request` builds, compressed when this
     /// provider's route takes it. A 400 or 415 to a compressed body is sent
-    /// once more, plain; when the plain answer differs, the encoding was the
-    /// cause and compression turns off for this process.
+    /// once more, plain, while `admission`, when there is one, still allows
+    /// the upload, and otherwise stands; when the plain answer differs, the
+    /// encoding was the cause and compression turns off for this process.
     fn send_body(
         &self,
         path: &str,
         request: impl Fn() -> reqwest::RequestBuilder,
         plain: Vec<u8>,
+        admission: Option<UploadAdmission>,
     ) -> Sending {
         let encoded = self.compression.as_ref().and_then(|compressor| {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
@@ -313,7 +321,9 @@ impl ProviderHttp {
                 .body(encoded)
                 .send()
                 .await?;
-            if !matches!(response.status().as_u16(), 400 | 415) {
+            if !matches!(response.status().as_u16(), 400 | 415)
+                || admission.is_some_and(|admits| !admits())
+            {
                 return Ok(response);
             }
             let refused = response.status();
@@ -387,7 +397,7 @@ impl ProviderHttp {
             MediaSend::Delete => self.client.delete(url.as_str()).send().await?,
             MediaSend::Json(json) => {
                 let plain = serde_json::to_vec(&json).unwrap_or_default();
-                self.send_body(path, body("application/json"), plain)
+                self.send_body(path, body("application/json"), plain, None)
                     .await?
             }
             MediaSend::Multipart(form) => {
@@ -397,9 +407,9 @@ impl ProviderHttp {
                     .send()
                     .await?
             }
-            MediaSend::Octets(octets) => {
-                self.send_body(path, body("application/octet-stream"), octets)
-                    .await?
+            MediaSend::Octets(octets, admission) => {
+                let send = body("application/octet-stream");
+                self.send_body(path, send, octets, Some(admission)).await?
             }
         };
         let status = response.status().as_u16();

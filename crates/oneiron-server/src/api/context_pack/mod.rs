@@ -4,11 +4,13 @@
 mod audience;
 mod companion_assembly;
 mod controls;
+mod instruction_files;
 mod interlocutor;
 mod media_query;
 mod reader;
 mod resolve;
 mod response;
+mod response_limits;
 
 pub(crate) use self::audience::*;
 pub(crate) use self::companion_assembly::*;

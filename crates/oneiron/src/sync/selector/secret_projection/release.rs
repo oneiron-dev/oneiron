@@ -13,8 +13,8 @@ use std::borrow::Cow;
 
 use loro::LoroDoc;
 
+use super::SyncSecretProjection;
 use super::frames::WindowAdmission;
-use super::{CopyRow, SyncSecretProjection};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -44,7 +44,22 @@ pub fn prepare_repo_sync_frame(
     payload: &[u8],
     context: Option<&LoroDoc>,
 ) -> Result<Option<Vec<u8>>> {
-    SyncSecretProjection::read(vault)?.release_window_blob(&vault.store, payload, context)
+    SyncSecretProjection::read(vault)?.release_window_blob(&vault.store, payload, context, false)
+}
+
+/// [`prepare_repo_sync_frame`] for a device's send to its home, `context`
+/// its window: an update that goes as it is also carries each marked
+/// snapshot ASSET's current copy re-authored under a fresh id, so a re-masked
+/// copy reaches a home that already holds an older one (FIX 10729).
+///
+/// # Errors
+/// As [`prepare_repo_sync_frame`].
+pub fn prepare_repo_sync_frame_for_home(
+    vault: &Vault,
+    payload: &[u8],
+    context: Option<&LoroDoc>,
+) -> Result<Option<Vec<u8>>> {
+    SyncSecretProjection::read(vault)?.release_window_blob(&vault.store, payload, context, true)
 }
 
 /// `payload`, a window blob of `window` a peer sent, as this window takes
@@ -113,10 +128,10 @@ where
 {
     let projection = SyncSecretProjection::read(vault)?;
     let source = projection.source_of_copy(&item).unwrap_or(item);
-    Ok(
-        read(source)?.map(|raw| match projection.project_row(&source, &raw) {
-            CopyRow::Copy { row, .. } => row,
-            CopyRow::Keep => raw,
-        }),
-    )
+    Ok(read(source)?.map(|raw| {
+        projection
+            .project_row(&source, &raw)
+            .released(source, raw)
+            .1
+    }))
 }

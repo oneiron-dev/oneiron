@@ -467,6 +467,32 @@ pub enum EngineLimit {
     /// and the row asks whether everything is okay; only the memory floor
     /// and a round's own deadline end a question.
     ConnectorLiveQuestions,
+    /// UTF-8 bytes of the context one connector reply's model call reads:
+    /// the agent's instructions, the conversation's whole witnessed history
+    /// and the inbound message (FIX 2404). Past it the row asks whether
+    /// everything is okay and the call reads the context whole; nothing is
+    /// cut, refused or skipped.
+    ConnectorReplyContextBytes,
+    /// Rows one campaign judgment request joins (FIX 9655). Past it the row
+    /// asks whether everything is okay and every row is still joined, a
+    /// read chunk at a time; nothing is refused or cut.
+    CampaignJudgmentRows,
+    /// Active budget rows one connector key holds (FIX 8680). Past it the row
+    /// asks whether everything is okay and every row is kept and enforced.
+    ConnectorBudgetRows,
+    /// Suggested budget rows one connector key holds awaiting the owner
+    /// (FIX 8680). Past it the row asks and every suggestion is kept.
+    ConnectorSuggestedBudgetRows,
+    /// Cap rows one compiled connector charter carries (FIX 8685). Past it the
+    /// row asks and every cap is compiled and enforced.
+    ConnectorCharterCaps,
+    /// Verbs one connector's advertised catalog carries (FIX 8687). Past it
+    /// the row asks and the whole catalog is kept.
+    ConnectorCatalogVerbs,
+    /// Dispatches one connector-key batch admission accounts (FIX 8683). Past
+    /// it the row asks and the whole batch is accounted, one transaction
+    /// chunk after another.
+    ConnectorDispatchBatch,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

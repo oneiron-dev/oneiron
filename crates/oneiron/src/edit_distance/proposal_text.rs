@@ -37,6 +37,7 @@
 //! provenance: finalization refuses any history with missing or untrusted receipts.
 
 mod receipts;
+pub(crate) use receipts::cut_receipted_message;
 
 use std::ops::ControlFlow;
 

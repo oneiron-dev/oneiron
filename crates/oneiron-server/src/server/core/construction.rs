@@ -34,23 +34,36 @@ impl SyncServer {
         vault.recover_admission_intents()?;
         // Genuine host authority must exist before any scoped-read fail-closed
         // policy applies. Dev/no-secret and blind-relay modes mint nothing.
-        // An empty configured secret mints nothing either: it carries no key
-        // material, and every upgrade bearing it (or nothing) still 401s at
-        // the auth door, so booting rootless here is fail-closed, not open.
+        // An empty configured secret mints nothing either, and every upgrade
+        // bearing it (or nothing) still 401s at the auth door, so booting
+        // rootless here is fail-closed, not open. The configured secret
+        // admits rooting; the root signs with this install's own issuer seed
+        // for the vault (FIX-LIST 3018), drawn only for a vault no root has
+        // reached. An install holding no seed serves rootless, said once.
         let issuer = match host_root_secret(&vault, &config) {
-            Some(secret) => {
-                let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
-                vault.ensure_host_root_slip(&issuer)?;
-                // The engine's MACHINE writers sign with host-held keys (ONE-1634).
-                vault.provision_engine_machine_identities(&issuer)?;
-                Some(issuer)
-            }
+            Some(_) => match vault.bootstrap_host_slip_issuer() {
+                Ok(issuer) => {
+                    vault.ensure_host_root_slip(&issuer)?;
+                    // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+                    vault.provision_engine_machine_identities(&issuer)?;
+                    Some(Arc::new(issuer))
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        reason = %error,
+                        "this install holds no host issuer seed for the vault, so it serves without \
+                         signing as its root; reads and sync go on"
+                    );
+                    None
+                }
+            },
             None => None,
         };
         // This install's own machine profile, before any request is admitted,
         // so it carries the owner's acts from its first start (FIX 4648):
         // self-hosted and embedded serving alike. A start goes on without it.
-        vault.ensure_serving_install_profile_at_start(issuer.as_ref(), "serve");
+        vault.ensure_serving_install_profile_at_start(issuer.as_deref(), "serve");
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
@@ -128,10 +141,12 @@ impl SyncServer {
             Arc::clone(wire_telemetry.limit_questions()),
         ));
         let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
+        let message_scopes = Arc::new(super::message_stream::MessageScopes::default());
         super::message_stream::spawn_message_stream_producer(
             &vault,
             &ephemeral_store,
             &presence,
+            &message_scopes,
             &broadcast_tx,
             &config,
         );
@@ -150,6 +165,11 @@ impl SyncServer {
         let model_budgets = crate::models::ModelHostBudgets::new(
             &config.limits,
             Arc::clone(wire_telemetry.limit_questions()),
+        );
+        // The cloud registration client reads its pins once, here; no
+        // request is made until the owner asks.
+        let cloud_registration = crate::cloud_registration::CloudRegistration::new(
+            config.cloud_registration_pins.as_deref(),
         );
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
@@ -219,9 +239,11 @@ impl SyncServer {
             live_voice: Default::default(),
             asr_sessions: Default::default(),
             model_streams: Default::default(),
+            export_transfers: Default::default(),
             lens_frames,
             retained,
             presence,
+            removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
             usage_ledger: UsageLedger::new(vault.clone()),
             host_account: oneiron::llm::run_admission::HostAccount::new(),
             transfers: crate::api::Transfers::new(
@@ -232,9 +254,11 @@ impl SyncServer {
             memory: memory.clone(),
             renderer_turns,
             wire_telemetry,
+            mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
             vault,
             root_doc,
             ephemeral_store,
+            message_scopes,
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),
@@ -250,6 +274,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            host_root_issuer: issuer,
             policy_doors: Default::default(),
             account_keys: None,
             mcp_registry,
@@ -258,6 +283,7 @@ impl SyncServer {
             live_runs,
             secret_destinations: Default::default(),
             model_budgets,
+            cloud_registration,
             connector_elicitations: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),

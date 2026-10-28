@@ -17,10 +17,13 @@
 //! the member's file ([`scan`]); a session sends the difference and takes the
 //! other end's ([`transfer`]). A receiver publishes into its own tree through
 //! held directories, never through a link ([`local`]), syncs, records and only
-//! then acks. Nothing here carries a key or a credential, decides a
-//! business receipt, schedules or prunes a backup, ages anything out, or caps
-//! a file, a set or an outbox; a full disk or an absent host is a typed
-//! deferral that keeps the work on both ends and never stops the vault.
+//! then acks. A put whose bytes did not hash to its digest on arrival goes
+//! again at its set's pacing, its file read again first, and a file damaged
+//! at its source waits, typed, until it changes ([`source_check`]). Nothing
+//! here carries a key or a credential, decides a business receipt, schedules
+//! or prunes a backup, ages anything out, or caps a file, a set or an
+//! outbox; a full disk or an absent host is a typed deferral that keeps the
+//! work on both ends and never stops the vault.
 
 mod endpoint;
 mod guest;
@@ -28,6 +31,7 @@ mod host;
 mod link;
 mod local;
 mod scan;
+mod source_check;
 mod store;
 mod transfer;
 
@@ -48,9 +52,10 @@ use std::time::{Duration, Instant};
 /// How long an idle end waits before it looks for changes again: the
 /// cadence of a scan, not a deadline on anything.
 const RESCAN_EVERY: Duration = Duration::from_secs(2);
-/// The longest a set the other end deferred waits before it is sent again:
-/// the pacing of a retry, which doubles from [`RESCAN_EVERY`] up to this so
-/// a full disk is not streamed to every two seconds. Nothing is dropped.
+/// The longest a set the other end deferred, or refused a put of as
+/// `digest_mismatch`, waits before it is sent again: the pacing of a retry,
+/// which doubles from [`RESCAN_EVERY`] up to this so a full disk is not
+/// streamed to every two seconds. Nothing is dropped.
 const PACE_CEILING: Duration = Duration::from_secs(128);
 /// What a kind's wait on its carrier records is said under: no member's
 /// name, as no part of one starts with a dot.
@@ -81,16 +86,19 @@ struct Carrier {
     /// What was last said of each member's deferral or failure, so one
     /// repeated every turn is said once.
     said: HashMap<(VmOutboxKind, String), String>,
-    /// When each set the other end deferred goes again, and its step.
+    /// When each set the other end deferred, or refused a put of as
+    /// `digest_mismatch`, goes again, and its step.
     paced: HashMap<(VmOutboxKind, String), (Instant, Duration)>,
     /// The host's, for its session: why its backup sets wait, once a backup
     /// label the guest named was not kept; `None` until then, once one is
     /// kept again, and always on the guest.
     backup_wait: Option<VmOutboxOutcome>,
     /// Why each kind waits on this end's carrier records, once one of them
-    /// did not write as its sets were scanned or readied, or as a set the
-    /// other end sent was applied. Kept across sessions until each applied
-    /// record is written again and a scan of the kind writes its own.
+    /// did not write as its sets were scanned or readied, as a set the other
+    /// end sent was applied, as the other end's answer to a set this end
+    /// sent was taken, or as this end's copy was offered again. Kept across
+    /// sessions until each kept record is written again and a scan of the
+    /// kind writes its own.
     record_wait: HashMap<VmOutboxKind, RecordWait>,
 }
 
@@ -100,9 +108,13 @@ struct RecordWait {
     outcome: VmOutboxOutcome,
     at: Instant,
     step: Duration,
-    /// Each member's record a set the other end sent did not write as it
-    /// was applied, by member: its file is published, and only this record
-    /// written whole proves it received (FIX 7891). Held in memory only.
+    /// Each member's record that did not write, by member: as a set the
+    /// other end sent was applied, its file published, so only this record
+    /// written whole proves it received (FIX 7891); or as the other end's
+    /// durable or refused answer was taken, so only this record retires its
+    /// transfer (FIX 7624); or as this end, the member's origin, cleared its
+    /// refusal to offer its copy again, so only this record lets a scan
+    /// offer it (FIX 6686). Held in memory only.
     retry: BTreeMap<String, MemberRecord>,
 }
 
@@ -211,8 +223,9 @@ impl Carrier {
 
     /// Makes `kind` wait on its carrier records, as [`Self::records_failed`],
     /// once `error` did not write `member`'s `record` as a set the other end
-    /// sent was applied, and keeps `record` to write again before the wait
-    /// can end.
+    /// sent was applied, as its answer to one this end sent was taken, or as
+    /// this end's copy was offered again, and keeps `record` to write again
+    /// before the wait can end.
     fn received_failed(
         &mut self,
         kind: VmOutboxKind,
@@ -262,8 +275,7 @@ impl Carrier {
     }
 
     /// Ends `kind`'s wait on its carrier records, once a scan of it wrote
-    /// them and no record a set the other end sent left unwritten is kept to
-    /// write again.
+    /// them and no record left unwritten is kept to write again.
     fn records_written(&mut self, kind: VmOutboxKind) {
         if self
             .record_wait
@@ -272,6 +284,23 @@ impl Carrier {
         {
             self.record_wait.remove(&kind);
             self.settled(kind, RECORDS_SAID);
+        }
+    }
+
+    /// Offers this end's copy of `kind`'s `member` again, once the other end
+    /// asked to retire a version of it this end does not hold. This end is
+    /// its origin, so both ends converge on its copy, and a refusal of that
+    /// copy the other end gave before no longer stands: the other end's
+    /// copy is gone (FIX 6686). A record that does not write is kept to
+    /// write again, as [`Self::received_failed`] keeps one, so the kind
+    /// waits on its records until it is written and the next scan offers
+    /// the copy.
+    fn reoffer(&mut self, kind: VmOutboxKind, member: &str) {
+        let mut record = self.store.get(kind, member);
+        if record.refused.take().is_some()
+            && let Err(error) = self.store.put(kind, member, record.clone())
+        {
+            self.received_failed(kind, member, record, &error);
         }
     }
 }

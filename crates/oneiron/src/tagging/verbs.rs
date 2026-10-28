@@ -28,9 +28,7 @@ use crate::attempt_queue::{AttemptRecord, AttemptState};
 use crate::claim::{ClaimReadStatus, ScopedReadReceipt, ScopedReadResult};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::extraction::{EncoderExecution, SpeakerTarget};
-use crate::memory::{
-    MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, resolve_entity_ref,
-};
+use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult, resolve_entity_ref};
 use crate::{EntityId, Error};
 
 /// One TURN ref: the turn whose marker, tags or trace history is read.

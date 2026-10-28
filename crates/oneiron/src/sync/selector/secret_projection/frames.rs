@@ -50,6 +50,12 @@ const ROWS: &str = "entities";
 const UNMASKABLE: &str =
     "a window blob carrying a marked repo item the checkpoint cannot mask is withheld";
 
+/// Why a blob carrying an item whose copy is unread this pass is withheld.
+const UNREAD: &str = "a window blob carrying a marked repo item whose copy is unread is withheld";
+
+/// Why a peer's write of a row whose copy is unread this pass is not admitted.
+const UNREAD_EDIT: &str = "a write of a marked repo row whose copy is unread is not admitted";
+
 /// What a peer's window blob becomes here.
 pub(crate) enum WindowAdmission<'a> {
     /// Import these bytes as today: the blob as it came, or translated onto
@@ -84,6 +90,8 @@ impl SyncSecretProjection {
     /// `encoded`, a window blob leaving this device, as a sync peer gets it;
     /// `context` holds an update's dependencies, copied and never changed.
     /// `None` when nothing marked is in it: the caller sends it as it is.
+    /// `home` is set for a device's send to its home: an update that goes as
+    /// it is then also carries each marked copy re-authored (FIX 10729).
     ///
     /// # Errors
     /// A store failure, or a blob carrying a marked item that cannot be
@@ -93,12 +101,16 @@ impl SyncSecretProjection {
         store: &Store,
         encoded: &[u8],
         context: Option<&LoroDoc>,
+        home: bool,
     ) -> Result<Option<Vec<u8>>> {
         if self.is_empty() {
             return Ok(None);
         }
+        // A blob whose import metadata does not decode has unread contents:
+        // while any mark exists it is withheld and stays owed, never sent
+        // raw (FIX 10831).
         let Some(input) = meta(encoded) else {
-            return Ok(None);
+            return Err(Error::InvariantViolation(UNMASKABLE));
         };
         match input.mode {
             EncodedBlobMode::Snapshot | EncodedBlobMode::ShallowSnapshot => {
@@ -107,7 +119,7 @@ impl SyncSecretProjection {
                 let Some(mut parts) = parts_of(&doc) else {
                     return self.unclassified(&doc, &VersionVector::default(), &doc.oplog_vv());
                 };
-                if !self.release_parts(store, &mut parts) {
+                if !self.release_parts(store, &mut parts)? {
                     return Ok(None);
                 }
                 let bytes = joined(&parts)?;
@@ -117,19 +129,41 @@ impl SyncSecretProjection {
                     .ok_or(Error::InvariantViolation(UNMASKABLE))
             }
             EncodedBlobMode::Updates => {
-                let Some(scratch) = with_update(context, encoded)? else {
+                // An update is judged by its own operations before anything
+                // is rebuilt (FIX 10794): one that carries nothing marked goes
+                // as it is. One this device cannot read (it does not hold the
+                // update's dependencies) has unknown contents: withheld, owed.
+                let Some(scratch) = with_update(context, encoded) else {
                     return Err(Error::InvariantViolation(UNMASKABLE));
                 };
+                if !readable_from(&scratch, &input.partial_start_vv) {
+                    return Err(Error::InvariantViolation(UNMASKABLE));
+                }
+                let mut json =
+                    scratch.export_json_updates(&input.partial_start_vv, &input.partial_end_vv);
+                // A row held as a pad reference is judged by its carrier.
+                resolve_carriers(store, &mut json, |_, _| true);
+                let carried = self.project_history(&mut json);
+                if carried.changed.is_empty() && carried.preserving {
+                    // Its registers are not rebuilt, so a re-authored copy
+                    // rides along without meeting a rekeyed one (FIX 10729).
+                    return match context.filter(|_| home) {
+                        Some(window) => self.reauthored(
+                            store,
+                            window,
+                            window.peer_id(),
+                            encoded,
+                            spans_of(&input),
+                        ),
+                        None => Ok(None),
+                    };
+                }
                 let spans = spans_of(&input);
-                let Some(mut parts) = parts_of(&scratch) else {
-                    return self.unclassified(
-                        &scratch,
-                        &input.partial_start_vv,
-                        &input.partial_end_vv,
-                    );
+                let Some(mut parts) = parts_of(&scratch).filter(|_| carried.preserving) else {
+                    return Err(Error::InvariantViolation(UNMASKABLE));
                 };
-                if !self.release_parts(store, &mut parts) {
-                    return Ok(None);
+                if !self.release_parts(store, &mut parts)? {
+                    return Err(Error::InvariantViolation(UNMASKABLE));
                 }
                 let slice = scratch
                     .export(ExportMode::updates_in_range(spans.clone()))
@@ -191,7 +225,7 @@ impl SyncSecretProjection {
                     return as_sent();
                 };
                 let mut held = Vec::new();
-                if !self.admit_parts(store, &mut parts, &mut held)? {
+                if !self.admit_parts(store, context, &mut parts, &mut held)? {
                     return as_sent();
                 }
                 if !held.is_empty() {
@@ -200,7 +234,7 @@ impl SyncSecretProjection {
                 Ok(WindowAdmission::Admit(Cow::Owned(joined(&parts)?)))
             }
             EncodedBlobMode::Updates => {
-                let Some(scratch) = with_update(context, encoded)? else {
+                let Some(scratch) = with_update(context, encoded) else {
                     return as_sent();
                 };
                 let mut json =
@@ -210,11 +244,13 @@ impl SyncSecretProjection {
                 if !translated.held.is_empty() {
                     return Ok(WindowAdmission::Held(translated.held));
                 }
+                self.unread_rows(store, context, &json)?;
                 if translated.sources.is_empty() {
                     return as_sent();
                 }
-                let Some(target) = isolated(context)? else {
-                    return as_sent();
+                // A proven copy edit is never admitted untranslated.
+                let Some(target) = isolated(context) else {
+                    return Err(Error::InvariantViolation(UNMASKABLE));
                 };
                 let status = target
                     .import_json_updates(json)
@@ -235,7 +271,10 @@ impl SyncSecretProjection {
     /// marked source as its copy's, in place; whether any changed. A row held
     /// as a pad reference whose pad is here is judged by its carrier, so a
     /// marked row is never shipped as a reference whose pad carries it raw.
-    fn release_parts(&self, store: &Store, parts: &mut Parts) -> bool {
+    ///
+    /// # Errors
+    /// A row whose copy is unread this pass: the blob is withheld and owed.
+    fn release_parts(&self, store: &Store, parts: &mut Parts) -> Result<bool> {
         let rows = parts.skeleton.roots.iter().position(|root| root == ROWS);
         let sites = sites(&parts.skeleton);
         let mut changed = false;
@@ -248,20 +287,28 @@ impl SyncSecretProjection {
             };
             let raw: &[u8] = raw;
             let carrier = crate::world_keys::image_pad_row(store, raw);
-            let projected = self.project_row(&id, carrier.as_deref().unwrap_or(raw));
-            if let CopyRow::Copy { row, .. } = projected {
-                atom.payload = Payload::Value(LoroValue::Binary(row.into()));
-                changed = true;
+            match self.project_row(&id, carrier.as_deref().unwrap_or(raw)) {
+                CopyRow::Keep => {}
+                CopyRow::Copy { row, .. } => {
+                    atom.payload = Payload::Value(LoroValue::Binary(row.into()));
+                    changed = true;
+                }
+                CopyRow::Sealed { .. } => return Err(Error::InvariantViolation(UNREAD)),
             }
         }
-        rekey_skeleton(&mut parts.skeleton, |key| self.rekey(key)) || changed
+        Ok(rekey_skeleton(&mut parts.skeleton, |key| self.rekey(key)) || changed)
     }
 
     /// Each copy row value of `parts` as its source row, and each copy key as
     /// its source's, in place; whether any changed. Ruled holds go to `held`.
+    ///
+    /// # Errors
+    /// The visible diff's own failure, or a row [`Self::unread_row`] cannot
+    /// judge this pass.
     fn admit_parts(
         &self,
         store: &Store,
+        context: Option<&LoroDoc>,
         parts: &mut Parts,
         held: &mut Vec<(EntityId, RepoProjectionDiffResult)>,
     ) -> Result<bool> {
@@ -283,10 +330,70 @@ impl SyncSecretProjection {
                     changed = true;
                 }
                 InboundRow::Held { id, cause } => held.push((id, cause)),
-                InboundRow::Ordinary => {}
+                InboundRow::Ordinary => self.unread_row(store, context, &id)?,
             }
         }
         Ok(rekey_skeleton(&mut parts.skeleton, |key| self.source_key(key)) || changed)
+    }
+
+    /// Fails when this window's own row `id` (in `context`, its pad carrier
+    /// read) is a marked blob's whole bytes whose copy is unread this pass,
+    /// and `id` is no marked source: a peer's write of it may be an edit of
+    /// that copy, which this pass cannot judge, so it is not admitted and
+    /// stays the peer's pending work (fail closed for unknown markedness,
+    /// CALL S4FIX-UNKNOWN-MARK). A marked source's own id is a raw holder's
+    /// write, admitted as today.
+    fn unread_row(&self, store: &Store, context: Option<&LoroDoc>, id: &EntityId) -> Result<()> {
+        if self.unread.is_empty() || self.sources.contains_key(id) {
+            return Ok(());
+        }
+        let Some(context) = context else {
+            return Ok(());
+        };
+        let Some(loro::ValueOrContainer::Value(LoroValue::Binary(raw))) =
+            context.get_map(ROWS).get(&id.to_hex())
+        else {
+            return Ok(());
+        };
+        let raw: &[u8] = &raw;
+        let carrier = crate::world_keys::image_pad_row(store, raw);
+        let unread = carrier
+            .as_deref()
+            .unwrap_or(raw)
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .is_some_and(|body| self.unread.contains_key(blake3::hash(body).as_bytes()));
+        if unread {
+            return Err(Error::InvariantViolation(UNREAD_EDIT));
+        }
+        Ok(())
+    }
+
+    /// [`Self::unread_row`] for every row `json` writes.
+    fn unread_rows(
+        &self,
+        store: &Store,
+        context: Option<&LoroDoc>,
+        json: &JsonSchema,
+    ) -> Result<()> {
+        if self.unread.is_empty() {
+            return Ok(());
+        }
+        for op in json.changes.iter().flat_map(|change| &change.ops) {
+            let ContainerID::Root {
+                name,
+                container_type: ContainerType::Map,
+            } = &op.container
+            else {
+                continue;
+            };
+            if let (true, JsonOpContent::Map(MapOp::Insert { key, .. })) =
+                (name.as_str() == ROWS, &op.content)
+                && let Ok(id) = EntityId::from_hex(key)
+            {
+                self.unread_row(store, context, &id)?;
+            }
+        }
+        Ok(())
     }
 
     /// A blob the checkpoint does not take: released as it is only when
@@ -332,7 +439,9 @@ impl SyncSecretProjection {
     }
 
     /// The copy generation `doc`'s state carries: one fingerprint over the
-    /// stamp of every marked row it holds; `None` when it holds none.
+    /// stamp of every marked row it holds, a known copy id's row included
+    /// (FIX 10795), and an unread copy as [`super::UNREAD_STAMP`]; `None`
+    /// when it holds none.
     pub(crate) fn window_generation(&self, doc: &LoroDoc) -> Option<[u8; 32]> {
         if self.is_empty() {
             return None;
@@ -348,15 +457,20 @@ impl SyncSecretProjection {
             let (Ok(id), LoroValue::Binary(raw)) = (EntityId::from_hex(key), value) else {
                 continue;
             };
-            let hash = match self.sources.get(&id) {
+            let bound = self.sources.get(&id).or_else(|| {
+                self.copies
+                    .get(&id)
+                    .and_then(|source| self.sources.get(source))
+            });
+            let hash = match bound {
                 Some(hash) => *hash,
                 None => match raw.get(ENTITY_METADATA_HEADER_LEN..) {
                     Some(body) => *blake3::hash(body).as_bytes(),
                     None => continue,
                 },
             };
-            if let Some(blob) = self.blobs.get(&hash) {
-                carried.insert(id, blob.stamp);
+            if let Some(stamp) = self.stamp_of(&hash) {
+                carried.insert(id, stamp);
             }
         }
         if carried.is_empty() {
@@ -381,32 +495,41 @@ impl SyncSecretProjection {
     /// whose carrier is a copy, as that carrier: the visible diff reads copy
     /// bytes, never a reference. Every other value stays as it came.
     fn resolve_copy_carriers(&self, store: &Store, json: &mut JsonSchema) {
-        for change in &mut json.changes {
-            for op in &mut change.ops {
-                let ContainerID::Root {
-                    name,
-                    container_type: ContainerType::Map,
-                } = &op.container
-                else {
-                    continue;
-                };
-                if name.as_str() != ROWS {
-                    continue;
-                }
-                let JsonOpContent::Map(MapOp::Insert { key, value }) = &mut op.content else {
-                    continue;
-                };
-                let LoroValue::Binary(raw) = &*value else {
-                    continue;
-                };
-                let Some(carrier) = crate::world_keys::image_pad_row(store, raw) else {
-                    continue;
-                };
-                let copy = EntityId::from_hex(key).is_ok_and(|id| self.binds(&id))
-                    || self.is_copy_row(&carrier);
-                if copy {
-                    *value = LoroValue::Binary(carrier.into());
-                }
+        resolve_carriers(store, json, |key, carrier| {
+            EntityId::from_hex(key).is_ok_and(|id| self.binds(&id)) || self.is_copy_row(carrier)
+        });
+    }
+}
+
+/// Each row value of `json` held as a pad reference whose pad is here, and
+/// whose carrier `take` takes, as that carrier.
+fn resolve_carriers<F>(store: &Store, json: &mut JsonSchema, take: F)
+where
+    F: Fn(&str, &[u8]) -> bool,
+{
+    for change in &mut json.changes {
+        for op in &mut change.ops {
+            let ContainerID::Root {
+                name,
+                container_type: ContainerType::Map,
+            } = &op.container
+            else {
+                continue;
+            };
+            if name.as_str() != ROWS {
+                continue;
+            }
+            let JsonOpContent::Map(MapOp::Insert { key, value }) = &mut op.content else {
+                continue;
+            };
+            let LoroValue::Binary(raw) = &*value else {
+                continue;
+            };
+            let Some(carrier) = crate::world_keys::image_pad_row(store, raw) else {
+                continue;
+            };
+            if take(key, &carrier) {
+                *value = LoroValue::Binary(carrier.into());
             }
         }
     }
@@ -446,24 +569,33 @@ fn decode(context: &'static str) -> impl FnOnce(loro::LoroError) -> Error {
 }
 
 /// An isolated copy of `context`, through the checkpoint so a shallow root
-/// stays one; a fresh document without one. `None` when the checkpoint does
-/// not take `context`.
-fn isolated(context: Option<&LoroDoc>) -> Result<Option<LoroDoc>> {
+/// stays one, or as a plain snapshot when the checkpoint does not take it
+/// (FIX 10794); a fresh document without one. `None` when neither copy
+/// reads.
+pub(super) fn isolated(context: Option<&LoroDoc>) -> Option<LoroDoc> {
     let Some(context) = context else {
-        return Ok(Some(LoroDoc::new()));
+        return Some(LoroDoc::new());
     };
-    let Some(parts) = parts_of(context) else {
-        return Ok(None);
-    };
-    LoroDoc::from_snapshot(&joined(&parts)?)
-        .map(Some)
-        .map_err(decode("window copy context"))
+    let read = |bytes: Vec<u8>| LoroDoc::from_snapshot(&bytes).ok();
+    parts_of(context)
+        .and_then(|parts| joined(&parts).ok())
+        .and_then(read)
+        .or_else(|| context.export(ExportMode::Snapshot).ok().and_then(read))
+}
+
+/// Whether every operation `doc` holds from `start` on is still history,
+/// not folded into a shallow root: its JSON from `start` is then whole.
+fn readable_from(doc: &LoroDoc, start: &VersionVector) -> bool {
+    doc.shallow_since_vv()
+        .to_vv()
+        .iter()
+        .all(|(peer, counter)| start.get(peer).copied().unwrap_or(0) >= *counter)
 }
 
 /// An isolated copy of `context` holding the update `encoded` as well;
 /// `None` when the update does not import whole on it (a dependency it does
 /// not hold).
-fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Result<Option<LoroDoc>> {
+fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Option<LoroDoc> {
     let input = meta(encoded);
     // A self-contained update (a detached selector document's) imports on a
     // fresh document first, so it never merges into the window's own state.
@@ -478,7 +610,7 @@ fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Result<Option<LoroD
         tries.push(context);
     }
     for context in tries {
-        let Some(scratch) = isolated(context)? else {
+        let Some(scratch) = isolated(context) else {
             continue;
         };
         let Ok(status) = scratch.import(encoded) else {
@@ -492,10 +624,10 @@ fn with_update(context: Option<&LoroDoc>, encoded: &[u8]) -> Result<Option<LoroD
                 .all(|(peer, end)| held.get(peer).is_some_and(|held| held >= end))
         });
         if status.pending.is_none() && complete {
-            return Ok(Some(scratch));
+            return Some(scratch);
         }
     }
-    Ok(None)
+    None
 }
 
 /// The op spans an update blob carries.

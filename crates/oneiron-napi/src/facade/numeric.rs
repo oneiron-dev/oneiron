@@ -1,5 +1,6 @@
 //! JavaScript numbers must be validated before N-API can narrow them.
 
+use oneiron::claim::ConfidenceDetails;
 use oneiron::{ClaimInput, MemoryError};
 
 use super::NapiClaimInput;
@@ -26,6 +27,7 @@ pub(super) fn dimensions_to_engine(value: f64) -> Result<usize, MemoryError> {
             wrong_root: None,
             hook: None,
             retry_after: None,
+            resets_at: Vec::new(),
         });
     }
     // The whole number is positive and at most MAX_DIMENSIONS (16,384).
@@ -50,6 +52,7 @@ pub(super) fn limit_to_engine(value: f64) -> Result<usize, MemoryError> {
             wrong_root: None,
             hook: None,
             retry_after: None,
+            resets_at: Vec::new(),
         });
     }
     // Positive whole u32 values are exact JS integers and fit usize on N-API targets.
@@ -73,16 +76,21 @@ pub(super) fn claim_input_to_engine(input: &NapiClaimInput) -> Result<ClaimInput
         id: input.id.clone(),
         predicate: input.predicate.clone(),
         subject_ref: input.subject_ref.clone(),
-        value: input.value.clone(),
+        value: super::js_json::js_json(input.value.clone()),
         confidence: input.confidence as f32,
         source: input.source.clone(),
         world_ref: input.world_ref.clone(),
         relationship_ref: input.relationship_ref.clone(),
-        scope: input.scope.clone(),
+        scope: input.scope.clone().map(super::js_json::js_json),
         valid_from: claim_timestamp(input.valid_from, "valid_from")?,
         valid_to: claim_timestamp(input.valid_to, "valid_to")?,
         occurred_at: claim_timestamp(input.occurred_at, "occurred_at")?,
         learned_at: claim_timestamp(input.learned_at, "learned_at")?,
         salience: input.salience.map(|s| s as f32),
+        confidence_details: ConfidenceDetails::from_names(
+            input.confidence_band.as_deref(),
+            input.confidence_basis.as_deref(),
+        )
+        .map_err(MemoryError::bad_request)?,
     })
 }

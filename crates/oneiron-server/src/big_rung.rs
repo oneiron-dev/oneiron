@@ -10,6 +10,8 @@
 //! (OF-184), with no owner's fallback, so the model that answers is the one
 //! named. A seat's answer names the model that served it on its receipt
 //! (FIX 2730), so a held judge is one model the exact path can ask again.
+//! Where a call goes, and whether its text leaves the host, is judged on the
+//! route it takes ([`route`], FIX 9525).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -19,16 +21,18 @@ use oneiron::llm::decision::{
     ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{
     BudgetExhaustionPolicy, BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart,
-    EntityId, Error, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality,
-    ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    EntityId, Error, LlmCapability, LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelTierRef,
+    ResponseFormat, TierPrecedence, Vault,
 };
 use serde_json::{Value, json};
 
 use crate::config::models::{BigReply, BigSettings};
-use crate::models::{ModelRuntime, OfferLadder};
+use crate::models::ModelRuntime;
+
+mod route;
+use route::{DecisionSendConstraint, ResolvedDecisionRoute};
 
 /// The purpose a Big-rung call stamps, and the tier it asks for by default.
 const PURPOSE: &str = "decision.big";
@@ -45,6 +49,7 @@ fn message(role: LlmMessageRole, text: String) -> LlmMessage {
 }
 
 /// What answers the rung's questions.
+#[derive(Clone)]
 enum Answerer {
     /// The seat a role names, routed against the vault's live model policy.
     Seat(ModelRole),
@@ -64,6 +69,8 @@ pub(crate) struct BigModel {
     runtime: tokio::runtime::Handle,
     pin: ProviderPin,
     trial_usage: Option<Arc<std::sync::Mutex<Vec<oneiron::LlmUsage>>>>,
+    /// Where its calls may send unit text (FIX 9525).
+    send: DecisionSendConstraint,
 }
 
 impl BigModel {
@@ -98,6 +105,7 @@ impl BigModel {
             vault,
             runtime,
             pin,
+            send: DecisionSendConstraint::Any,
         })
     }
 
@@ -127,6 +135,7 @@ impl BigModel {
                 model: model.to_string(),
                 version: self.pin.version.clone(),
             },
+            send: DecisionSendConstraint::Any,
         })
     }
 
@@ -152,6 +161,7 @@ impl BigModel {
                 model: seat.model.to_string(),
                 version: self.pin.version.clone(),
             },
+            send: DecisionSendConstraint::Any,
         })
     }
 
@@ -185,97 +195,36 @@ impl BigModel {
     /// Whether the model the seat routes to hears audio: the vault
     /// manifest's binding of the role says so (with no manifest the seat is
     /// the binding, and its provider's explicit `audio_input` capability is
-    /// the declaration), and every rung serving that model admits
-    /// [`LlmCapability::AudioInput`]. One model alone hears audio when its
-    /// provider's capability says so.
+    /// the declaration), and every offer its call may go to admits
+    /// [`LlmCapability::AudioInput`]: the route its text takes (FIX 9525).
+    /// One model alone hears audio when its provider's capability says so.
     fn hears_audio(&self) -> bool {
-        let role = match &self.answerer {
-            Answerer::Seat(role) => *role,
-            Answerer::Model(model) => {
-                return self
-                    .models
-                    .router()
-                    .and_then(|router| router.served(model))
-                    .is_some_and(|(_, ladder)| ladder.supports(model, &LlmCapability::AudioInput));
-            }
-        };
-        let Some(seat) = self.models.seat(role) else {
+        let Ok(route) = self.resolve_decision_route() else {
             return false;
         };
-        let declared = match self.vault.model_manifest() {
-            Ok(Some(manifest)) => manifest
-                .binding(role)
-                .is_ok_and(|binding| binding.reads_audio),
-            Ok(None) => true,
-            Err(_) => false,
+        let declared = match &self.answerer {
+            Answerer::Seat(role) => match self.vault.model_manifest() {
+                Ok(Some(manifest)) => manifest
+                    .binding(*role)
+                    .is_ok_and(|binding| binding.reads_audio),
+                Ok(None) => true,
+                Err(_) => false,
+            },
+            Answerer::Model(_) => true,
         };
         declared
-            && self
-                .models
-                .route_role(&self.vault, role, seat)
-                .is_ok_and(|route| {
-                    route
-                        .ladder
-                        .supports(&route.model, &LlmCapability::AudioInput)
-                })
+            && route
+                .ladder
+                .supports(&route.model, &LlmCapability::AudioInput)
     }
 
-    /// The model a call names and where it runs: the seat's, or the one
-    /// model's as the router serves it.
-    fn target(&self) -> oneiron::Result<(ModelId, ModelLocality)> {
-        match &self.answerer {
-            Answerer::Seat(role) => self
-                .models
-                .seat(*role)
-                .map(|seat| (seat.model.clone(), seat.locality))
-                .ok_or_else(|| failed("the seat is gone")),
-            Answerer::Model(model) => self
-                .models
-                .router()
-                .and_then(|router| router.locality(model))
-                .map(|locality| (model.clone(), locality))
-                .ok_or_else(|| failed("the model is gone")),
-        }
-    }
-
-    /// `request` admitted, and the ladder that serves it: the seat's route
-    /// under the vault's live model policy, or the one model under the
-    /// policy a raw call naming it meets.
-    fn admit(&self, request: LlmRequest) -> oneiron::Result<(Arc<OfferLadder>, LlmRequest)> {
-        match &self.answerer {
-            Answerer::Seat(role) => {
-                let admitted = self
-                    .models
-                    .admit_role(&self.vault, *role, request)
-                    .map_err(|refusal| failed(format!("refused: {refusal}")))?;
-                Ok((admitted.ladder, admitted.request))
-            }
-            Answerer::Model(model) => {
-                let (locality, ladder) = self
-                    .models
-                    .router()
-                    .and_then(|router| router.served(model))
-                    .ok_or_else(|| failed("the model is gone"))?;
-                let authorized = self
-                    .vault
-                    .authorize_raw_inference(
-                        request,
-                        &HostInferenceContext {
-                            binding: HostInferenceBinding::Advertised {
-                                model: model.clone(),
-                                locality,
-                            },
-                            extraction_egress: None,
-                        },
-                    )
-                    .map_err(|error| failed(format!("refused: {error}")))?;
-                Ok((ladder, authorized.into_request()))
-            }
-        }
-    }
-
-    fn request(&self, call: &DecisionCall<'_>) -> oneiron::Result<LlmRequest> {
-        let (model, locality) = self.target()?;
+    /// The call as the route it takes names it: its model, where that runs.
+    fn request(
+        &self,
+        call: &DecisionCall<'_>,
+        route: &ResolvedDecisionRoute,
+    ) -> oneiron::Result<LlmRequest> {
+        let (model, locality) = (route.model.clone(), route.locality);
         let purpose = CallPurpose::Other {
             name: PURPOSE.to_owned(),
         };
@@ -454,20 +403,22 @@ impl DecisionModel for BigModel {
         self.hears_audio()
     }
 
-    /// The seat routes to, or the one model is, a third party's model.
+    /// The route its call takes may send the text to a third party's model
+    /// (FIX 9525).
     fn leaves_host(&self) -> bool {
-        self.target()
-            .is_ok_and(|(_, locality)| locality == ModelLocality::ThirdParty)
+        self.route_leaves_host()
     }
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         if call.question.contract.locates() {
             return Ok(abstained());
         }
-        let request = self.request(call)?;
-        // A route the vault narrowed past what this server serves ends the
-        // call here, before anything leaves.
-        let (ladder, request) = self.admit(request)?;
+        let route = self.resolve_decision_route()?;
+        let request = self.request(call, &route)?;
+        // A route the vault narrowed past what this server serves, or one
+        // with no offer the call may go to, ends the call here, before
+        // anything leaves.
+        let (ladder, request) = self.admit_decision_route(request)?;
         let left = call.deadline.decision_time_left();
         if left.is_zero() {
             return Err(failed("admitted after the work time"));

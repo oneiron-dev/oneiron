@@ -109,3 +109,57 @@ fn reaches_opener_lineage(
         .iter()
         .any(|slip| opener.contains(slip) || roots.contains(slip))
 }
+
+impl Vault {
+    /// The verified credential chain `credential` heads, in `txn`'s
+    /// authority snapshot (FIX 10693): the slip, its verified parent or the
+    /// slip a renewal renews, and every logged ancestor up to their
+    /// delegation root, as a proof's carried slip reads in
+    /// [`AuthenticatedOwner::credential_lineage_in_txn`]. A consult consent
+    /// case freezes it as its opener's lineage.
+    ///
+    /// # Errors
+    /// A failure to read the authority snapshot.
+    pub(crate) fn slip_lineage_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        credential: &crate::authority::VerifiedSlip,
+    ) -> Result<Vec<[u8; 32]>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let claims = credential.claims();
+        let mut lineage = vec![claims.slip_id];
+        let prior = claims
+            .parent_id
+            .or_else(|| fold.slips.lineage_link(&claims.slip_id));
+        if let Some(prior) = prior {
+            for slip in fold.slips.delegation_chain(&prior) {
+                if !lineage.contains(&slip) {
+                    lineage.push(slip);
+                }
+            }
+        }
+        Ok(lineage)
+    }
+
+    /// Whether the credential chains `answer`, frozen with a word, come from
+    /// the lineage `opener` froze, or from a fork of it, in `txn`'s
+    /// authority snapshot (FIX 10693): the boundary
+    /// [`AuthenticatedOwner::answers_from_slip_lineage_in_txn`] draws for a
+    /// live proof, drawn over chains already frozen. An empty `opener`
+    /// shares no lineage.
+    ///
+    /// # Errors
+    /// A failure to read the authority snapshot.
+    pub(crate) fn frozen_lineages_meet_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        answer: &[[u8; 32]],
+        opener: &[[u8; 32]],
+    ) -> Result<bool> {
+        if opener.is_empty() {
+            return Ok(false);
+        }
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(reaches_opener_lineage(&fold.slips, answer, opener))
+    }
+}

@@ -185,8 +185,7 @@ impl SyncServer {
                 .ok_or(oneiron::Error::InvariantViolation(
                     "embedding worker started without an embedder",
                 ))?;
-            let embedder: Arc<dyn QueryEmbedder> =
-                slot.ensure_ready_for(server.vault())?;
+            let embedder: Arc<dyn QueryEmbedder> = slot.ensure_ready_for(server.vault())?;
             let config = slot.config();
             server.vault.cold_attach_embedder()?;
             server
@@ -314,10 +313,7 @@ impl SyncServer {
         let readmitted = tokio::task::spawn_blocking(move || {
             let _admission = admission;
             let slot = server.embedder.as_ref()?;
-            Some(
-                slot.ensure_ready_for(server.vault())
-                    .map(drop),
-            )
+            Some(slot.ensure_ready_for(server.vault()).map(drop))
         })
         .await;
         if let Ok(Some(Err(error))) = readmitted {

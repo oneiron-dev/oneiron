@@ -174,7 +174,14 @@ fn validate_response(response: LlmResponse) -> Result<PartialEnrichment, HostErr
     {
         return Err(HostError::InvalidResponse);
     }
-    let [ContentPart::Text { text }] = response.message.content.as_slice() else {
+    // A thinking model's Reasoning part is not the answer: read the one Text
+    // part beside it (FIX 11038).
+    let mut answer = response
+        .message
+        .content
+        .iter()
+        .filter(|part| !matches!(part, ContentPart::Reasoning { .. }));
+    let (Some(ContentPart::Text { text }), None) = (answer.next(), answer.next()) else {
         return Err(HostError::InvalidResponse);
     };
     let extraction: Extraction =

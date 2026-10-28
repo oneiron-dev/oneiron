@@ -16,6 +16,7 @@
 
 mod admission;
 mod artifacts_audit;
+mod authority_clock;
 mod diary;
 mod media;
 mod packs;
@@ -24,6 +25,7 @@ mod verdict_hooks;
 
 pub(super) use self::admission::*;
 pub(crate) use self::artifacts_audit::*;
+pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
@@ -115,6 +117,8 @@ pub(crate) use super::off_record_room_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
+// The general access request answer (FIX 1379), likewise.
+pub(crate) use super::grants_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
@@ -177,6 +181,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
 pub(crate) use super::connector_revision_doors::*;
 pub(crate) use super::connector_slate_doors::*;
+// The owner's witness-read grant revoke (FIX 10895), likewise.
+pub(crate) use super::connector_witness_read_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.

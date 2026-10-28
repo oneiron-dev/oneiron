@@ -79,6 +79,7 @@ fn seed_read_authority(vault: &Vault, agents: usize) -> Result<()> {
                 created_at: AT,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )?;
     }
@@ -95,7 +96,7 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
     let server = Arc::new(SyncServer::new(
         vault.clone(),
         SyncServerConfig {
-            auth_secret: Some(secret.clone()),
+            auth_secret: Some(secret),
             ..Default::default()
         },
     )?);
@@ -117,7 +118,11 @@ pub(super) async fn measure(plan: &Plan) -> Result<Observation> {
         .iter()
         .map(|address| format!("ws://{address}/ws"))
         .collect::<Vec<_>>();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    // The bench's vault holds no keystore, so the server above roots
+    // nothing; the bench roots it with an explicit seed of its own, drawn
+    // here (FIX-LIST 3018), never one the shared secret derives.
+    let seed: [u8; oneiron::authority::HOST_ISSUER_SEED_BYTES] = rand::random();
+    let issuer = oneiron::authority::HostSlipIssuer::from_seed(&seed)?;
     let root = vault.ensure_host_root_slip(&issuer)?;
     let credentials = (0..plan.agents)
         .map(|index| super::wire::credential(&vault, &issuer, &id(0x31, index)?.to_hex()))

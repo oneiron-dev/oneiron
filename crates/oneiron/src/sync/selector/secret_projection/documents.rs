@@ -26,9 +26,9 @@
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, LoroDoc, UpdateOptions, VersionVector};
+use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
 
-use super::{CopyRow, GENERATION_CONTEXT, SyncSecretProjection, copy_id};
+use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -38,9 +38,8 @@ use crate::origin::secret_projection::edit::{
 };
 use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks};
 use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
-use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::secret_custody::KeyPlaces;
-use crate::store::Store;
 use crate::sync::documents::storage;
 
 /// The text root of an entity document.
@@ -50,8 +49,11 @@ const AUTHOR_CONTEXT: &str = "oneiron.repo-sync-projection.document-author.v1";
 
 /// A marked document's copy lineage, current with its source.
 pub(crate) struct DocumentCopy {
-    /// The id its frames go under: the source's copy id.
+    /// The lineage's own id, its rows' slot: the copy id of the document.
     pub(crate) id: EntityId,
+    /// The id its frames go under: the copy id for a marked snapshot ASSET,
+    /// else the document's own id, as [`super::CopyRow`] keys a row.
+    pub(crate) key: EntityId,
     /// The lineage itself.
     pub(crate) doc: LoroDoc,
     /// The copy's stamp fingerprint.
@@ -74,6 +76,8 @@ impl DocumentCopy {
 
 /// The copy of one source text this pass makes.
 struct TextCopy {
+    /// The id its frames go under (see [`DocumentCopy::key`]).
+    key: EntityId,
     /// Exactly the text a peer gets.
     copy: String,
     /// The spans `copy` overwrites; `None` for the sealed-file placeholder.
@@ -82,24 +86,129 @@ struct TextCopy {
     stamp: [u8; 32],
 }
 
-/// The copy of `text`, the document text of `source`; `None` when `source`
-/// is no marked repo item. Text that is not the marked blob reads as the
-/// sealed-file placeholder (an empty text has nothing to mask).
+impl TextCopy {
+    /// The sealed-file placeholder under `key`, for a document whose own
+    /// copy is unread this pass (FIX 10793): never its stored text.
+    fn sealed(key: EntityId) -> Self {
+        Self {
+            key,
+            copy: String::from_utf8_lossy(REPO_OPAQUE_FILE_BYTES).into_owned(),
+            places: None,
+            stamp: super::UNREAD_STAMP,
+        }
+    }
+
+    /// Whether this is [`Self::sealed`]: no edit of it can be translated.
+    fn unread(&self) -> bool {
+        self.stamp == super::UNREAD_STAMP
+    }
+}
+
+/// The marked blob the document `id` names, and the bytes its copy is made
+/// from: a marked snapshot ASSET's text; a known copy id's source blob, as
+/// stored here (FIX 10795; none held: the placeholder); any other document
+/// whose whole text is a marked blob (FIX 10796). `None` for an unmarked
+/// document.
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode.
+/// A failed copy id derivation.
+fn text_bound_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoIndexMarks,
+    id: &EntityId,
+    text: &str,
+) -> Result<Option<TextBound>> {
+    if let Some(hash) = marks.source_of(id) {
+        return Ok(Some(TextBound {
+            key: copy_id(id)?,
+            hash,
+            bytes: text.as_bytes().to_vec(),
+            own: true,
+        }));
+    }
+    for (source, hash) in marks.marked_sources() {
+        if copy_id(&source)? != *id {
+            continue;
+        }
+        // Its exact bytes unread or not held here: the placeholder.
+        let stored = vault
+            .store
+            .port_entity_raw(txn, &source)
+            .ok()
+            .flatten()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
+            .filter(|body| blake3::hash(body).as_bytes() == &hash);
+        return Ok(Some(TextBound {
+            key: *id,
+            hash,
+            bytes: stored.unwrap_or_default(),
+            own: false,
+        }));
+    }
+    let hash = *blake3::hash(text.as_bytes()).as_bytes();
+    Ok(marks.is_marked(&hash).then(|| TextBound {
+        key: *id,
+        hash,
+        bytes: text.as_bytes().to_vec(),
+        own: true,
+    }))
+}
+
+/// What [`text_bound_in_txn`] found.
+struct TextBound {
+    key: EntityId,
+    hash: [u8; 32],
+    bytes: Vec<u8>,
+    /// `bytes` are the document's own text, not its source blob's.
+    own: bool,
+}
+
+/// The copy of `text`, the document text of `id`; `None` when `id` is no
+/// marked repo item ([`text_bound_in_txn`]). Bytes that are not the marked
+/// blob read as the sealed-file placeholder (an empty text has nothing to
+/// mask). A failure making this document's own copy answers
+/// [`TextCopy::sealed`], never its stored text (FIX 10793).
+///
+/// # Errors
+/// A failed copy id derivation.
 fn text_copy_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
     marks: &RepoIndexMarks,
-    source: &EntityId,
+    id: &EntityId,
     text: &str,
 ) -> Result<Option<TextCopy>> {
-    let Some(hash) = marks.source_of(source) else {
+    let Some(bound) = text_bound_in_txn(vault, txn, marks, id, text)? else {
         return Ok(None);
     };
-    let bytes = text.as_bytes().to_vec();
+    let key = bound.key;
+    match project_text_in_txn(vault, txn, marks, bound) {
+        Ok(copy) => Ok(copy),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "sync: a marked document's copy is unreadable; it leaves sealed"
+            );
+            Ok(Some(TextCopy::sealed(key)))
+        }
+    }
+}
+
+fn project_text_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoIndexMarks,
+    bound: TextBound,
+) -> Result<Option<TextCopy>> {
+    let TextBound {
+        key,
+        hash,
+        bytes,
+        own,
+    } = bound;
     let whole = blake3::hash(&bytes).as_bytes() == &hash;
+    let empty = own && bytes.is_empty();
     let input = marks.source_input_in_txn(vault, txn, &hash, bytes)?;
     let Some(stamp) = input.stamp().cloned() else {
         return Ok(None);
@@ -109,7 +218,7 @@ fn text_copy_in_txn(
         _ => None,
     };
     let fingerprint = stamp.fingerprint();
-    let (copy, places) = if text.is_empty() {
+    let (copy, places) = if empty {
         (String::new(), None)
     } else {
         match String::from_utf8(input.into_bytes()) {
@@ -122,6 +231,7 @@ fn text_copy_in_txn(
         }
     };
     Ok(Some(TextCopy {
+        key,
         copy,
         places,
         stamp: fingerprint,
@@ -180,18 +290,20 @@ fn bring_current(lineage: &LoroDoc, source: &EntityId, copy: &str) -> Result<boo
 }
 
 /// `doc`, the document of `source`, as every sync peer gets it, brought
-/// current in `txn`; `None` when `source` is no marked repo item.
+/// current in `txn`; `None` when `source` is no marked repo item. Its
+/// lineage is its own, under its copy id and author, whatever names it
+/// ([`text_bound_in_txn`]).
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode. Nothing falls back to
-/// the stored text.
+/// A store failure, or a mark that does not decode and names no blob.
+/// Nothing falls back to the stored text.
 pub(crate) fn document_copy_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     source: EntityId,
     doc: &LoroDoc,
 ) -> Result<Option<DocumentCopy>> {
-    let marks = RepoIndexMarks::read_in_txn(vault, txn)?;
+    let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
     if marks.is_empty() {
         return Ok(None);
     }
@@ -206,6 +318,7 @@ pub(crate) fn document_copy_in_txn(
     }
     Ok(Some(DocumentCopy {
         id,
+        key: copy.key,
         doc: lineage,
         stamp: copy.stamp,
     }))
@@ -232,11 +345,18 @@ where
 {
     vault.with_write_txn_grouped(|txn| {
         admit(txn)?;
-        let marks = RepoIndexMarks::read_in_txn(vault, txn)?;
+        let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
         let text = resident.get_text(BODY).to_string();
         let copy = text_copy_in_txn(vault, txn, &marks, &source, &text)?.ok_or(
             Error::InvariantViolation("copy edit of an unmarked document"),
         )?;
+        // An unread copy cannot be diffed: the edit is not admitted and
+        // stays the peer's pending work (FIX 10793).
+        if copy.unread() {
+            return Err(Error::InvariantViolation(
+                "a copy edit whose copy is unread this pass is not admitted",
+            ));
+        }
         let id = copy_id(&source)?;
         let lineage = load_lineage(vault, txn, id)?;
         bring_current(&lineage, &source, &copy.copy)?;
@@ -313,16 +433,85 @@ pub fn repo_document_copy_vector(vault: &Vault, source: EntityId) -> Result<Vec<
 }
 
 /// The document `id` names on this device: the marked source a copy id
-/// stands for, when that source's row is held here; else `id`.
+/// stands for, when that source's row is held here; else `id`. A copy row
+/// held here beside its source (a device holding both roles) names its
+/// source too (FIX 10832). For an id held here a mark read that fails
+/// answers `id`, today's path (FIX 10793): a source-id update meets no new
+/// failure.
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode.
+/// A store failure, or, for an id not held here, a mark that does not decode
+/// and names no blob.
 pub fn repo_document_source(vault: &Vault, id: EntityId) -> Result<EntityId> {
+    if vault.entity_exists(&id)? {
+        let txn = vault.store.env.read_txn()?;
+        return Ok(held_copy_source(vault, &txn, id).unwrap_or(id));
+    }
     let source = RepoCopyAliases::read(vault)?.stored(&id);
     if source == id || !vault.entity_exists(&source)? {
         return Ok(id);
     }
     Ok(source)
+}
+
+/// The marked source a copy row held here as `id` stands for, when that
+/// source's row is held here too (FIX 10832). `None` for any other id, and
+/// whenever the marks or the source row do not read.
+fn held_copy_source(vault: &Vault, txn: &RoTxn<'_>, id: EntityId) -> Option<EntityId> {
+    let source = RepoCopyAliases::read_in_txn(vault, txn).ok()?.stored(&id);
+    (source != id && matches!(vault.store.port_entity_raw(txn, &source), Ok(Some(_))))
+        .then_some(source)
+}
+
+/// Whether `update`, a peer's update sent under the id `id` of a document
+/// held here, edits the copy lineage kept for `id` rather than the document
+/// itself (FIX 10829): a whole-text copy and a re-released copy id keep their
+/// lineage under `copy_id(id)` and release its frames under `id`. It does
+/// when the lineage holds every operation the update depends on and the
+/// document (`resident_vv`, its encoded version vector) does not. Reads no
+/// mark: an update with no dependency, one whose metadata does not decode,
+/// or an id with no stored lineage takes today's path.
+#[must_use]
+pub fn repo_document_lineage_edit(
+    vault: &Vault,
+    id: EntityId,
+    resident_vv: &[u8],
+    update: &[u8],
+) -> bool {
+    let Ok(meta) = LoroDoc::decode_import_blob_meta(update, true) else {
+        return false;
+    };
+    let Ok(copy) = copy_id(&id) else {
+        return false;
+    };
+    let lineage = vault.store.env.read_txn().ok().and_then(|txn| {
+        vault
+            .store
+            .port_document_row(&txn, DocumentSlot::of(copy), DocumentRow::StateVector)
+            .ok()
+            .flatten()
+    });
+    let (Some(Ok(lineage)), Ok(resident)) = (
+        lineage.map(|bytes| VersionVector::decode(&bytes)),
+        VersionVector::decode(resident_vv),
+    ) else {
+        return false;
+    };
+    // What the update builds on: its outside dependencies, and each
+    // author's operations before its first one here.
+    let needed: Vec<ID> = meta
+        .start_frontiers
+        .iter()
+        .chain(meta.partial_start_vv.iter().filter_map(|(peer, start)| {
+            start
+                .checked_sub(1)
+                .filter(|last| *last >= 0)
+                .map(|last| ID::new(*peer, last))
+        }))
+        .collect();
+    !needed.is_empty()
+        && needed.iter().all(|dep| lineage.includes_id(*dep))
+        && !needed.iter().all(|dep| resident.includes_id(*dep))
 }
 
 /// One read's marked repo aliases: the copy id a peer knows each marked
@@ -334,10 +523,11 @@ pub struct RepoCopyAliases {
 }
 
 impl RepoCopyAliases {
-    /// The aliases this vault's marks name now.
+    /// The aliases this vault's marks name now, an unreadable mark's blob
+    /// included (FIX 10793).
     ///
     /// # Errors
-    /// A store failure, or a mark that does not decode.
+    /// A store failure, or a mark that does not decode and names no blob.
     pub fn read(vault: &Vault) -> Result<Self> {
         let txn = vault.store.env.read_txn()?;
         Self::read_in_txn(vault, &txn)
@@ -345,7 +535,7 @@ impl RepoCopyAliases {
 
     pub(crate) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
         let mut aliases = Self::default();
-        for (source, _) in RepoIndexMarks::read_in_txn(vault, txn)?.marked_sources() {
+        for (source, _) in RepoIndexMarks::read_scoped_in_txn(vault, txn)?.marked_sources() {
             let copy = copy_id(&source)?;
             aliases.copies.insert(source, copy);
             aliases.sources.insert(copy, source);
@@ -393,10 +583,7 @@ impl IndexCopies {
     where
         F: Fn(&[u8]) -> Option<String>,
     {
-        let released = match self.0.project_row(id, row) {
-            CopyRow::Copy { row, .. } => row,
-            CopyRow::Keep => row.to_vec(),
-        };
+        let (_, released) = self.0.project_row(id, row).released(*id, row.to_vec());
         released.get(ENTITY_METADATA_HEADER_LEN..).and_then(title)
     }
 }
@@ -423,32 +610,17 @@ pub(crate) fn with_copy_generation_in_txn(
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// Erase reach (owner ruling KEY STORE = A): the copy lineage kept for
-/// `source`'s document goes with that document. Its rows and floors are
-/// deleted by key under the derived copy id; nothing is read or decoded, so
-/// an unreadable copy row never fails the erase.
-///
-/// # Errors
-/// A store failure deleting the rows.
-pub(crate) fn erase_copy_lineage_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    source: &EntityId,
-) -> Result<()> {
-    let copy = copy_id(source)?;
-    let slot = DocumentSlot::of(copy);
-    store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
-    store.port_document_updates_delete(txn, slot)?;
-    let floors = format!("{}:", copy.to_hex()).into_bytes();
-    crate::sync::documents::AD_E.delete_from(store, txn, &floors)?;
-    Ok(())
-}
-
 /// The stored item a residence request's `id` stands for: a copy id is
-/// judged as its source.
+/// judged as its source, a copy row held here beside its source too (FIX
+/// 10832). For an id held here a mark read that fails answers `id` (FIX
+/// 10793).
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode.
+/// A store failure, or, for an id not held here, a mark that does not decode
+/// and names no blob.
 pub(crate) fn stored_item_in_txn(vault: &Vault, txn: &RoTxn<'_>, id: EntityId) -> Result<EntityId> {
+    if vault.store.port_entity_raw(txn, &id)?.is_some() {
+        return Ok(held_copy_source(vault, txn, id).unwrap_or(id));
+    }
     Ok(RepoCopyAliases::read_in_txn(vault, txn)?.stored(&id))
 }

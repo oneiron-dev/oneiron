@@ -441,12 +441,18 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
 
-                if let Some(bounds) = decoded.diagnostic_bounds {
+                if let Some(row) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
-                        None => resolution.diagnostic_bounds = Some(bounds),
-                        Some(existing) if existing == bounds => {}
+                        None => resolution.diagnostic_bounds = Some(row.bounds),
+                        Some(existing) if existing == row.bounds => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
+                    row.attribute(
+                        &mut resolution.diagnostic_bounds_origin,
+                        resolution.diagnostic_bounds,
+                        id,
+                        body,
+                    );
                 }
                 resolution.policy_values.extend(decoded.policy_values);
                 if let Some(ask_policy) = decoded.ask_policy {
@@ -471,11 +477,10 @@ pub(crate) fn resolve_policy_manifest(
                     .sheet_answer_limits
                     .extend(decoded.sheet_answer_limits);
                 if let Some(limits) = decoded.goal_limits {
-                    resolution.goal_limits = Some(
-                        resolution
-                            .goal_limits
-                            .map_or(limits, |old| old.restrict(limits)),
-                    );
+                    resolution.goal_limits = Some(match resolution.goal_limits.take() {
+                        Some(old) => old.restrict(limits),
+                        None => limits,
+                    });
                 }
                 if let Some(limits) = decoded.voice_ref_limits {
                     if id == crate::gate::default_policy_manifest_id()? {

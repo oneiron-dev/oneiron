@@ -283,7 +283,7 @@ impl HostSelfDispatcher<'_> {
         let decisions = host
             .zip(planner_clock.as_ref())
             .map(|(host, clock)| host.planner(clock));
-        let receipt = self.plan_agent_spawn(
+        let mut receipt = self.plan_agent_spawn(
             &LivePlanRequest {
                 need: ask.into_need(type_ref),
                 seats: &planner.seats,
@@ -295,6 +295,9 @@ impl HostSelfDispatcher<'_> {
         )?;
         // FIX 9180: the plan's seat, noted before anything below can fail.
         self.spawn_capture.observe(receipt.plan.agent_def);
+        // FIX 9181: the plan names the asker the host authenticated, so that
+        // asker's erase takes the ask it carries.
+        receipt.asker_ref = Some(self.actor.entity_ref());
         narrow_budget(&mut context, receipt.asked.budget_cap_units.as_ref());
         context.type_ref = Some(receipt.asked.type_ref.clone());
         let target = AgentDispatchTarget::Custom(receipt.plan.agent_def);

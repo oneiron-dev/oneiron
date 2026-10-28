@@ -10,7 +10,11 @@
 //! it journaled, `receipt_ref` and all. A fence refusal, a take another holds
 //! and a status read keep none. A call in an anonymous off-record session
 //! keeps none either (Engine ruling, #1968), as every receipt writer there:
-//! such a session keeps nothing.
+//! such a session keeps nothing. One record is exempt (Engine 10-26,
+//! ARCH-0052, FIX 10694): a consult interruption's frozen consent case is an
+//! authority record, kept in such a session too, with its authority fields
+//! only and no conversation content, as is the ConsentRequired fact beside
+//! it.
 //!
 //! Each receipt is indexed in the transaction that keeps it: by its TASK and
 //! time, which a status read names the newest of (FIX 3270) and whose row of
@@ -28,8 +32,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult};
 use crate::receipt::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, append_task_type_fields,
-    retain_newest_receipt,
+    ReceiptKind, ReceiptQuery, ReceiptRecord, append_task_type_fields, retain_newest_receipt,
 };
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::task_type::TaskTypeRef;
@@ -358,9 +361,10 @@ pub(crate) fn erase_lifecycle_actor_in_txn(
 }
 
 /// The kept lifecycle receipts `query` matches, for the receipt family
-/// (`Vault::receipts`). Reads at most [`MAX_RECEIPT_QUERY_SCAN`] rows of the
-/// time index within the query's time bounds, newest first (FIX 3271), and
-/// stops once a full page can take no older row.
+/// (`Vault::receipts`). Reads the time index within the query's time bounds,
+/// newest first (FIX 3271), to its end or until a full page can take no
+/// older row; no count cuts it short (FIX 3582), and past its threshold row
+/// it raises one check (rule 5).
 pub(crate) fn task_lifecycle_receipts(
     vault: &Vault,
     query: &ReceiptQuery,
@@ -380,10 +384,14 @@ pub(crate) fn task_lifecycle_receipts(
     // rows come newest first. An older row cannot displace any of it; one as
     // old may, by the page's tie order.
     let mut floor: Option<u64> = None;
-    for row in BY_TIME
-        .iter_rev_range(&vault.store, &rtxn, start.as_ref(), end.as_ref())?
-        .take(MAX_RECEIPT_QUERY_SCAN)
-    {
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &rtxn,
+        crate::scan_check::EngineScan::ReceiptSourceRows,
+        b"task_lifecycle",
+    )?;
+    for row in BY_TIME.iter_rev_range(&vault.store, &rtxn, start.as_ref(), end.as_ref())? {
+        count.row();
         let ((at, id), ()) = row?;
         if query.job_ref.is_none()
             && out.len() >= query.limit
@@ -404,5 +412,6 @@ pub(crate) fn task_lifecycle_receipts(
             retain_newest_receipt(&mut out, receipt, query.limit);
         }
     }
+    count.finish(vault);
     Ok(out)
 }

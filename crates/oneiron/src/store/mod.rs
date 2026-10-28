@@ -133,6 +133,8 @@ mod diagnostics;
 mod gate_decision;
 mod group_commit;
 mod handle;
+// FIX 8875: the home handoff's custody contract, for L03's carrier.
+pub(crate) mod home_handoff_custody;
 mod key_custody;
 mod key_encoding;
 mod known_history;
@@ -204,9 +206,9 @@ pub(crate) use body_envelope::{
 pub(crate) use body_envelope::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     ResponseOwners, ResponseRead, ResponseScan, bind_response_in_txn, carrier_row,
-    erase_response_owner_in_txn, is_opaque_erased, release_response_in_txn,
+    erase_response_owner_in_txn, is_opaque_erased, opaque_retired_at, release_response_in_txn,
     response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
-    settle_shared_response_in_txn,
+    settle_shared_response_in_txn, stamp_opaque_erased,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{
@@ -279,8 +281,8 @@ pub(crate) use structural_kind_registry::{
 pub(crate) use sync_responses::media_job_put_fenced_in_txn;
 #[doc(hidden)]
 pub use sync_responses::{
-    IdempotencyEntry, ResponseStamps, http_response_read, media_job_erased_state,
-    media_response_read,
+    IdempotencyEntry, ResponseStamps, http_opaque_retired_at, http_response_read,
+    media_job_erased_state, media_response_read,
 };
 pub(crate) use sync_responses::{
     MediaKey, erase_sync_response_owner_in_txn, http_erase_drop_caller, http_owners, http_scan,

@@ -11,8 +11,7 @@
 
 use std::fmt;
 use std::io::Read as _;
-use std::os::fd::{FromRawFd as _, RawFd};
-use std::os::unix::fs::FileTypeExt as _;
+use std::os::fd::{AsRawFd as _, FromRawFd as _, RawFd};
 #[cfg(target_os = "linux")]
 use std::path::Path;
 use std::sync::Arc;
@@ -23,6 +22,7 @@ use serde_json::value::RawValue;
 use zeroize::{Zeroize as _, Zeroizing};
 
 use super::anchor_transport::AnchorRoute;
+use crate::pipe_proof::pipe_end;
 
 /// How many bytes one read off the pipe takes.
 const READ_CHUNK: usize = 1024;
@@ -83,8 +83,9 @@ impl CustodyAnchorCredentials {
     }
 
     /// Takes `fd` over, the read end of a pipe, reads it to EOF and decodes
-    /// the one credentials object it carries. The descriptor is closed
-    /// either way.
+    /// the one credentials object it carries. A descriptor that is no pipe's
+    /// read end is refused before a byte of it is read, on Linux a named FIFO
+    /// among them (FIX 11068); the descriptor is closed either way.
     pub(crate) fn read_fd(fd: RawFd) -> Result<Self, String> {
         if fd < 0 {
             return Err(format!("{fd} is not a file descriptor"));
@@ -92,17 +93,27 @@ impl CustodyAnchorCredentials {
         // SAFETY: `fd` arrives on argv (`--custody-anchor-credentials-fd`)
         // from whoever started this process, and is this process's to own:
         // it is read once, here. The `File` takes it over exactly once and
-        // closes it on drop, which is also what lets the writer's EOF end
-        // the read.
+        // closes it on drop, whichever way the proof below ends, which is
+        // also what lets the writer's EOF end the read.
         let file = unsafe { std::fs::File::from_raw_fd(fd) };
-        if !file
-            .metadata()
-            .is_ok_and(|metadata| metadata.file_type().is_fifo())
-        {
-            return Err("it is not a pipe: the credentials ride a pipe, never a file".into());
-        }
+        // Its read end, proven as the restore proves its own pipes: a named
+        // FIFO has a pipe's type, and on Linux only the kernel's own pipe
+        // passes (FIX 6580, FIX 11068).
+        pipe_end(file.as_raw_fd(), false)
+            .map_err(|reason| format!("{reason}; the credentials ride a pipe, never a file"))?;
         let held = read_to_end(file).map_err(|error| format!("it did not read: {error}"))?;
         Self::decode(&held)
+    }
+
+    /// The name an embedding app keeps the credential under in its
+    /// keychain (FIX 6516): the same one object the pipe carries.
+    pub(crate) const KEYCHAIN_NAME: &str = "custody_anchor_credentials";
+
+    /// The credentials an embedding app keeps under [`Self::KEYCHAIN_NAME`],
+    /// decoded from `held`, its keychain's wiped buffer, as the pipe's
+    /// object is.
+    pub(crate) fn from_keychain(held: &[u8]) -> Result<Self, String> {
+        Self::decode(held)
     }
 
     /// The one credentials object in `bytes`, with nothing after it.

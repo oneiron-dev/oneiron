@@ -265,6 +265,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.grants.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GrantAnswerRequest,
+                >(),
+            ),
+            (
                 "vault.personas.preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
@@ -1408,6 +1414,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::SignedAuthorityHistory,
                 >(),
+            ),
+            (
+                "vault.authority.clock.repair",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
                 "vault.wire_health.thresholds.get",
@@ -3814,6 +3824,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.repo.git_push.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GitPushGrantRevokeInput,
+                >(),
+            ),
+            (
+                "vault.connectors.read_grants.grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorWitnessReadGrantRequest,
+                >(),
+            ),
+            (
+                "vault.connectors.read_grants.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest,
                 >(),
             ),
             (
@@ -6874,6 +6896,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.connectors.slates.reask_issuer",
     "vault.authority.history.export",
     "vault.authority.history.import",
+    "vault.authority.clock.repair",
     "vault.wire_health.thresholds.get",
     "vault.wire_health.thresholds.set",
     "vault.slim.policy",
@@ -6995,6 +7018,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.get",
     "vault.research.reserve_exploration",
     "vault.research.budget",
+    "vault.authority.handoff_alarms",
+    "vault.authority.handoff_alarms.acknowledge",
     "vault.cleanup.run",
     "vault.cleanup.review",
     "vault.cleanup.decide",
@@ -7162,6 +7187,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.grants.revoke",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
+    "vault.connectors.read_grants.grant",
+    "vault.connectors.read_grants.revoke",
     "vault.repo.anchor.bind",
     "vault.repo.snapshots.get",
     "vault.repo.snapshots.read",
@@ -8029,9 +8056,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.packs.connector.grants.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ConnectorPackGrants,
         >(),
-        "vault.packs.sections.propose" => {
-            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionProposal>()
-        }
+        "vault.packs.sections.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::PluginSectionInstallOutcome,
+        >(),
         "vault.packs.sections.list" => {
             crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionsView>()
         }
@@ -8085,6 +8112,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.authority.history.import" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AuthorityHistoryImported,
+        >(),
+        "vault.authority.clock.repair" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AuthorityClockRepair,
         >(),
         "vault.wire_health.thresholds.get" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WireThresholds>()
@@ -8459,6 +8489,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.research.budget" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchBudgetView,
         >(),
+        "vault.authority.handoff_alarms" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::authority::AuthorityHandoffAlarm>,
+        >(),
+        "vault.authority.handoff_alarms.acknowledge" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::AuthorityHandoffAlarm>()
+        }
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
         >(),
@@ -8967,6 +9003,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.repo.git_push.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantRevokeOutput,
+        >(),
+        "vault.connectors.read_grants.grant" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorWitnessReadGranted,
+        >(),
+        "vault.connectors.read_grants.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked,
         >(),
         "vault.repo.anchor.bind" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::RepoAnchorBindOutput,
@@ -10243,6 +10285,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.companions.access_requests.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.grants.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11929,6 +11978,13 @@ pub fn mcp_arguments_schema_from_input(
         }
         "vault.authority.history.export" => &[],
         "vault.authority.history.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.authority.clock.repair" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -14741,6 +14797,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.repo.git_push.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.read_grants.grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.read_grants.revoke" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18192,6 +18262,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest =
                 decode(value.clone())?;
         }
+        "self.grants.answer" => {
+            let _input: crate::task_verb::sdk::GrantAnswerRequest = decode(value.clone())?;
+        }
         "vault.personas.preview" => {
             let _input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest =
                 decode(value.clone())?;
@@ -18518,7 +18591,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.receipts" => {
             let input: crate::task_verb::sdk::VaultReceiptsRequest = decode(value.clone())?;
-            crate::memory::caps::check_limit(
+            crate::memory::caps::check_limit_nonzero(
                 input
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
@@ -18955,6 +19028,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.authority.history.import" => {
             let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
+        }
+        "vault.authority.clock.repair" => {
+            let _input: EmptyRequest = decode(value.clone())?;
         }
         "vault.wire_health.thresholds.get" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
@@ -20344,6 +20420,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.repo.git_push.revoke" => {
             let _input: crate::task_verb::sdk::GitPushGrantRevokeInput = decode(value.clone())?;
         }
+        "vault.connectors.read_grants.grant" => {
+            let _input: crate::task_verb::sdk::ConnectorWitnessReadGrantRequest =
+                decode(value.clone())?;
+        }
+        "vault.connectors.read_grants.revoke" => {
+            let _input: crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest =
+                decode(value.clone())?;
+        }
         "vault.repo.anchor.bind" => {
             let _input: crate::task_verb::sdk::RepoAnchorBindInput = decode(value.clone())?;
         }
@@ -20947,7 +21031,6 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "ai.verdict" => {
             let input: crate::task_verb::sdk::AiVerdictRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
         "vault.graph.ask" => {
@@ -21088,8 +21171,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_consolidation::ThingDecideInput = decode(value.clone())?;
         }
         "vault.commit" => {
-            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            let _input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
         }
         "vault.remember" => {
             let input: crate::memory::ClaimInput = decode(value.clone())?;
@@ -21256,8 +21338,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             )?;
         }
         "vault.hydrate" => {
-            let input: HydrateRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("refs", input.refs.len())?;
+            let _input: HydrateRequest = decode(value.clone())?;
         }
         "vault.get" => {
             let _input: EntityRequest = decode(value.clone())?;
@@ -21576,8 +21657,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::SignalExtractionResultRequest = decode(value.clone())?;
         }
         "vault.claims.seed" => {
-            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            let _input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
         }
         "vault.channel_identities.provision" => {
             let _input: crate::memory::channel_doors::ChannelIdentityProvisionRequest =
@@ -22201,6 +22281,7 @@ pub fn invoke(
         "vault.companions.access_requests.answer" => encode(
             vault_companions_access_requests_answer(memory, decode(value)?)?,
         ),
+        "self.grants.answer" => encode(self_grants_answer(memory, decode(value)?)?),
         "vault.personas.preview" => encode(vault_personas_preview(memory, decode(value)?)?),
         "vault.personas.export" => encode(vault_personas_export(memory, decode(value)?)?),
         "vault.personas.edit" => encode(vault_personas_edit(memory, decode(value)?)?),
@@ -22627,6 +22708,9 @@ pub fn invoke(
         }
         "vault.authority.history.import" => {
             encode(vault_authority_history_import(memory, decode(value)?)?)
+        }
+        "vault.authority.clock.repair" => {
+            encode(vault_authority_clock_repair(memory, decode(value)?)?)
         }
         "vault.wire_health.thresholds.get" => {
             encode(vault_wire_health_thresholds_get(memory, decode(value)?)?)
@@ -23455,6 +23539,12 @@ pub fn invoke(
         "vault.agents.grants.revoke" => encode(vault_agents_grants_revoke(memory, decode(value)?)?),
         "vault.repo.git_push.mint" => encode(vault_repo_git_push_mint(memory, decode(value)?)?),
         "vault.repo.git_push.revoke" => encode(vault_repo_git_push_revoke(memory, decode(value)?)?),
+        "vault.connectors.read_grants.grant" => {
+            encode(vault_connectors_read_grants_grant(memory, decode(value)?)?)
+        }
+        "vault.connectors.read_grants.revoke" => {
+            encode(vault_connectors_read_grants_revoke(memory, decode(value)?)?)
+        }
         "vault.repo.anchor.bind" => encode(vault_repo_anchor_bind(memory, decode(value)?)?),
         "vault.repo.snapshots.get" => encode(vault_repo_snapshots_get(memory, decode(value)?)?),
         "vault.repo.snapshots.read" => encode(vault_repo_snapshots_read(memory, decode(value)?)?),
@@ -24913,6 +25003,12 @@ pub fn vault_companions_access_requests_answer(
 ) -> MemoryResult<crate::task_verb::sdk::CompanionAccessRequestAnswered> {
     crate::task_verb::sdk::host_only(memory, "vault.companions.access_requests.answer", &input)
 }
+pub fn self_grants_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GrantAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::GrantAnswered> {
+    crate::task_verb::sdk::host_only(memory, "self.grants.answer", &input)
+}
 pub fn vault_personas_preview(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
@@ -25749,8 +25845,8 @@ pub fn vault_retrieval_policy_update(
 pub fn vault_export(
     memory: &Memory<'_>,
     input: crate::memory::ExportOptions,
-) -> MemoryResult<crate::memory::MemoryExport> {
-    memory.export(&input)
+) -> MemoryResult<crate::memory::ExportAnswer> {
+    Ok(crate::memory::ExportAnswer::Inline(memory.export(&input)?))
 }
 pub fn self_credential_attenuate(
     memory: &Memory<'_>,
@@ -25779,17 +25875,18 @@ pub fn vault_export_scoped(
 pub fn vault_receipts(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::VaultReceiptsRequest,
-) -> MemoryResult<Vec<crate::memory::MemoryReceipt>> {
-    crate::memory::caps::check_limit(
+) -> MemoryResult<crate::task_verb::sdk::VaultReceiptsPage> {
+    crate::memory::caps::check_limit_nonzero(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
     )?;
-    memory.receipts_of_kinds(
+    memory.receipts_page(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
-        &input.kinds,
+        input.kinds.as_deref().unwrap_or_default(),
+        input.after.as_deref(),
     )
 }
 pub fn vault_assets_ingest(
@@ -26697,7 +26794,7 @@ pub fn vault_packs_remove(
 pub fn vault_packs_sections_propose(
     memory: &Memory<'_>,
     input: crate::memory::PluginSectionProposeRequest,
-) -> MemoryResult<crate::memory::PluginSectionProposal> {
+) -> MemoryResult<crate::memory::PluginSectionInstallOutcome> {
     memory.plugin_section_propose(&input)
 }
 pub fn vault_packs_sections_list(
@@ -26892,6 +26989,15 @@ pub fn vault_authority_history_import(
         memory.vault(),
         &memory.embedded_owner("vault.authority.history.import")?,
         input,
+    )
+}
+pub fn vault_authority_clock_repair(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::AuthorityClockRepair> {
+    crate::task_verb::sdk::repair_authority_clock_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.clock.repair")?,
     )
 }
 pub fn vault_wire_health_thresholds_get(
@@ -29273,7 +29379,7 @@ pub fn host_budget_hit(
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::HooksReplayRequest,
-) -> MemoryResult<Vec<crate::task_verb::sdk::HookReplayRow>> {
+) -> MemoryResult<crate::task_verb::sdk::HooksReplayPage> {
     input.limit()?;
     crate::task_verb::sdk::host_only(memory, "vault.hooks.replay", &input)
 }
@@ -30262,6 +30368,26 @@ pub fn vault_repo_git_push_revoke(
         memory.vault(),
         &memory.embedded_owner("vault.repo.git_push.revoke")?,
         crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_connectors_read_grants_grant(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectorWitnessReadGrantRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorWitnessReadGranted> {
+    crate::task_verb::sdk::grant_connector_witness_read_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.read_grants.grant")?,
+        input,
+    )
+}
+pub fn vault_connectors_read_grants_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked> {
+    crate::task_verb::sdk::revoke_connector_witness_read_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.read_grants.revoke")?,
         input,
     )
 }
@@ -31740,7 +31866,6 @@ pub fn ai_verdict(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::AiVerdictRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AiVerdict> {
-    crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::host_only(memory, "ai.verdict", &input)
 }
@@ -32113,7 +32238,6 @@ pub fn vault_commit(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
-    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.commit",
@@ -32473,7 +32597,6 @@ pub fn vault_hydrate(
     memory: &Memory<'_>,
     input: HydrateRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>> {
-    crate::memory::caps::check_batch_len("refs", input.refs.len())?;
     memory.hydrate(&input.refs)
 }
 pub fn vault_get(
@@ -33385,7 +33508,6 @@ pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
-    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.claims.seed",

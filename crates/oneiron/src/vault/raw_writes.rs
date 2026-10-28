@@ -16,28 +16,38 @@
 //!   decisions are receipted as any batch's are. It is held to the caller's
 //!   own read (OF-063, FIX 1223, 6068): a put over a stored row it does not
 //!   read refuses as missing, and a CLAIM's typed record refs must resolve
-//!   for it. A caller whose credential grants no read puts only fresh rows,
-//!   and no CLAIM.
+//!   for it. A caller whose credential grants no read is held to the bounds
+//!   of what that credential may write to: a put over a stored row outside
+//!   them refuses as missing, and its CLAIMs commit as before.
 //! - A delete is the `vault.delete` row: its target is admitted as a record
 //!   ref, so an id naming no record is refused `INVENTED_REFERENCE` with a
 //!   reference-refusal receipt, none inside an anonymous off-record session
 //!   the actor is verified in; then the owner's
 //!   [`Memory::safe_delete`] runs with its gate and redaction receipt.
 //!
-//! A raw body is opaque bytes here. NOTE and keyed-value prose admission
-//! (L01's, FIX 1228) runs on their typed writers only, so a raw put of such
-//! a body is not read for links.
+//! A handle bound inside an off-record session writes into its room while
+//! the room is off record, and reads the room over base (FIX 8119, 8603;
+//! `session`); a raw CLAIM put carries its verified caller's envelope
+//! through its gate and apply (FIX 8118).
+//!
+//! A raw body is opaque bytes here, except for prose admission (OF-063,
+//! FIX 1228, 3734): a NOTE's markdown and a keyed value's nested value are
+//! read for links once, through the caller, as their typed writers read
+//! them, and their `unlinked` receipt is written only once the batch lands.
+//! A put its room stages lands in no base batch and earns none.
 
 use crate::batch::BatchBuilder;
-use crate::claim::ClaimReadStatus;
+use crate::core_write::CoreWriteLane;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult, SafeDeleteReason};
-use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::task_verb::sdk::{SafeDeleteRequest, vault_delete};
 use crate::temporal::TimeRange;
+
+mod session;
+
+use self::session::RawOp;
 
 /// One entity blob a bound raw write puts ([`Memory::raw_put_entities`]).
 #[derive(Debug, Clone, Copy)]
@@ -75,17 +85,19 @@ impl Memory<'_> {
     /// refusal (a put that turns an agent definition back on), or the
     /// batch's own refusal; nothing is written then.
     pub fn raw_put_entities(&self, puts: &[RawEntityPut<'_>]) -> MemoryResult<()> {
+        let staged: Vec<_> = puts.iter().copied().map(RawOp::Put).collect();
+        if self.raw_write_in_session(&staged)? {
+            return Ok(());
+        }
+        // Read before the writer opens; receipted only for a batch that lands.
+        let unlinked_prose = self.raw_put_prose(puts)?;
         let mut batch = self.vault().batch();
         for put in puts {
-            batch = batch.put(
-                &put.id,
-                put.entity_type,
-                put.occurred,
-                put.learned_at,
-                put.data,
-            );
+            batch = self.raw_put_on(batch, put)?;
         }
-        self.commit_raw_batch(batch, puts)
+        self.commit_raw_batch(batch, puts)?;
+        crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
+        Ok(())
     }
 
     /// Puts a directed edge as this surface's caller.
@@ -100,6 +112,15 @@ impl Memory<'_> {
         tgt: &EntityId,
         weight: f32,
     ) -> MemoryResult<()> {
+        let staged = RawOp::Edge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+        };
+        if self.raw_write_in_session(&[staged])? {
+            return Ok(());
+        }
         self.commit_raw_batch(self.vault().batch().edge(src, kind, tgt, weight), &[])
     }
 
@@ -109,6 +130,9 @@ impl Memory<'_> {
     ///
     /// As [`Self::raw_put_entities`], and the vector's own refusal.
     pub fn raw_put_vector(&self, id: &EntityId, vector: &[f32]) -> MemoryResult<()> {
+        if self.raw_write_in_session(&[RawOp::Vector { id: *id, vector }])? {
+            return Ok(());
+        }
         self.commit_raw_batch(self.vault().batch().vector(id, vector), &[])
     }
 
@@ -132,41 +156,34 @@ impl Memory<'_> {
 
     /// Commits `batch`, which puts `puts`, below owner grade once its writer
     /// snapshot proves this surface's actor, keeping that proof's typed
-    /// refusal. It is held to this surface's own read lane (FIX 1223, 6068);
-    /// a lane its credential refuses keeps that refusal for a CLAIM or a put
-    /// over a stored row.
+    /// refusal. It is held to this surface's write lane
+    /// ([`Memory::core_write_lane`], FIX 1223, 6068): a read lane in the
+    /// batch's own terminal, a target lane in that same writer snapshot.
     fn commit_raw_batch(
         &self,
         batch: BatchBuilder<'_>,
         puts: &[RawEntityPut<'_>],
     ) -> MemoryResult<()> {
-        let lane = match self.read_lane(ClaimReadStatus::Recorded) {
-            Ok(lane) => Ok(lane),
-            Err(unread) if puts.iter().any(|put| put.entity_type == ENTITY_TYPE_CLAIM) => {
-                return Err(unread);
-            }
-            Err(unread) => Err(unread),
-        };
+        let lane = self.core_write_lane()?;
+        let ids: Vec<EntityId> = puts.iter().map(|put| put.id).collect();
         let mut refusal = None;
         let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
             if let Err(error) = self.verify_actor_write_in_txn(txn) {
                 refusal = Some(error);
-                return Err(Error::InvariantViolation("a bound raw write's actor was refused"));
+                return Err(Error::InvariantViolation(
+                    "a bound raw write's actor was refused",
+                ));
             }
-            if let Err(unread) = &lane {
-                let store = &self.vault().store;
-                for put in puts {
-                    if store.port_entity_present(txn, &put.id)? {
-                        refusal = Some(unread.clone());
-                        return Err(Error::EntityNotFound);
-                    }
-                }
+            if matches!(lane, CoreWriteLane::Target(_)) && !lane.admits_puts_in(txn, &ids)? {
+                return Err(Error::EntityNotFound);
             }
             Ok(())
         };
         let committed = match &lane {
-            Ok(lane) => batch.commit_below_owner_read_by(lane, guard),
-            Err(_) => batch.commit_below_owner_with_guard(guard),
+            CoreWriteLane::Read(lane) => batch.commit_below_owner_read_by(lane, guard),
+            CoreWriteLane::Target(_) | CoreWriteLane::Unbound => {
+                batch.commit_below_owner_with_guard(guard)
+            }
         };
         committed.map_err(|error| refusal.take().unwrap_or_else(|| error.into()))
     }

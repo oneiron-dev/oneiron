@@ -72,6 +72,10 @@ pub struct MaintenanceReport {
     /// live window blocked compaction, an undecodable/malformed `h:` row,
     /// or a non-`sync` build facing CRDT carrier rows (fail closed).
     pub sweep_jobs_deferred: u64,
+    /// Of `sweep_jobs_deferred`, the jobs whose pending receipt needed a
+    /// signed completion row while this install's signer was not loaded
+    /// (FIX 2597): obligation and receipts kept, retried with no backoff.
+    pub sweep_jobs_deferred_signer_unavailable: u64,
     /// Jobs whose attempt FAILED this run — `retry_state` rewritten in
     /// place (attempt_count, next_attempt_at backoff, last_error_code);
     /// the row is never deleted on failure.
@@ -87,6 +91,10 @@ pub struct MaintenanceReport {
     /// (anti-clobber re-read guard). SIBLING of `sweep_windows_deferred_live`
     /// — a raced window is neither compacted nor a live-registry deferral.
     pub sweep_windows_deferred_raced: u64,
+    /// Windows deferred because the cut's encoded root was not proved to be
+    /// the window's tip (FIX 6520). SIBLING of the raced deferrals (FIX
+    /// 6629): nothing is written and the next run cuts again.
+    pub sweep_windows_deferred_unproved: u64,
     /// Windows and documents left as they are because a legal hold names a
     /// row their compaction would destroy (OF-470). SIBLING of the live and
     /// raced deferrals.
@@ -348,10 +356,12 @@ impl<'a> MaintenanceBuilder<'a> {
             let run = crate::sweep::run_hard_erase_sweep(self.vault)?;
             report.sweep_jobs_processed = run.jobs_processed;
             report.sweep_jobs_deferred = run.jobs_deferred;
+            report.sweep_jobs_deferred_signer_unavailable = run.jobs_deferred_signer_unavailable;
             report.sweep_jobs_failed = run.jobs_failed;
             report.sweep_windows_compacted = run.windows_compacted;
             report.sweep_windows_deferred_live = run.windows_deferred_live;
             report.sweep_windows_deferred_raced = run.windows_deferred_raced;
+            report.sweep_windows_deferred_unproved = run.windows_deferred_unproved;
             report.sweep_windows_deferred_held = run.windows_deferred_held;
             report.sweep_receipts_finalized = run.receipts_finalized;
             report.sweep_deadline_breaches = run.deadline_breaches;

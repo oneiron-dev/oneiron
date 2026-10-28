@@ -283,8 +283,8 @@ impl Vault {
                     "a source is not the applied review it names",
                 );
             }
-            if proposal.received_candidate().is_some() {
-                if let Err(gap) = self.received_promotion_documents(&proposal, &mut reviewed)? {
+            if proposal.is_file_bundle() {
+                if let Err(gap) = self.bundle_promotion_documents(&proposal, &mut reviewed)? {
                     return Ok(Err(gap));
                 }
                 continue;
@@ -328,32 +328,34 @@ impl Vault {
         Ok(Ok(ids))
     }
 
-    /// Each present file of the applied received bundle `proposal`, as its
-    /// own child receipt's frontier at its reviewed mode, into `reviewed`
-    /// (G4 PR2). A mode-only change earns its own fold here.
-    fn received_promotion_documents(
+    /// Each present file of the applied file bundle `proposal`, as its own
+    /// child receipt's frontier at its reviewed mode, into `reviewed` (G4
+    /// PR2). A mode-only change earns its own fold here.
+    fn bundle_promotion_documents(
         &self,
         proposal: &crate::repo_mutation::proposal::RepoProposal,
         reviewed: &mut BTreeMap<[u8; 32], (crate::code_document::CodeDocumentFrontier, u32)>,
     ) -> Result<std::result::Result<(), QueuePromotionGap>> {
-        for file in proposal.files.iter().filter(|file| file.content.is_some()) {
+        for (index, file) in proposal.files.iter().enumerate() {
+            if file.content.is_none() {
+                continue;
+            }
             let gap = |why: &str| {
                 Ok(Err(QueuePromotionGap::Unreviewed(format!(
                     "{}: {why}",
                     file.path
                 ))))
             };
-            let (Some(source), Some(mode)) = (
-                file.source_operation,
-                file.metadata_edit
-                    .as_ref()
-                    .and_then(|edit| edit.replacement.mode),
-            ) else {
-                return gap("a received file has no reviewed state");
+            let Some(mode) = file
+                .metadata_edit
+                .as_ref()
+                .and_then(|edit| edit.replacement.mode)
+            else {
+                return gap("a bundle file has no reviewed state");
             };
-            let operation = crate::repo_mutation::received_file_operation(proposal.id, source)?;
+            let operation = proposal.file_operation(index)?;
             let Some(edit) = self.code_file_edit_receipt(operation)? else {
-                return gap("a received file has no document receipt");
+                return gap("a bundle file has no document receipt");
             };
             if edit.session_id != proposal.session
                 || edit.actor.map(|actor| actor.entity_ref()) != proposal.actor.id()

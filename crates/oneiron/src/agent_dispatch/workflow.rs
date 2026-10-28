@@ -170,17 +170,19 @@ impl AgentDispatcher<'_> {
                 .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
             super::attenuation::child_depth_from(Some(parent_input))?;
         }
-        // Validate all leaves while the writer serializes revocation. Resolution
-        // opens read snapshots, so finish it before any fork or queue mutation.
+        // Validate all leaves while the writer serializes revocation, each
+        // resolved in the writer's own view (FIX 9438), before any fork or
+        // queue mutation.
         for step in &definition.steps {
             let live =
                 self.dispatchable_definition_in_txn(txn, &AgentDispatchTarget::Custom(*step))?;
             match approved_parent {
                 Some(parent) => {
-                    parent.resolve_child(self, &input, &spawn, live.scope.to_world_scope())?;
+                    parent.resolve_child(self, txn, &input, &spawn, live.scope.to_world_scope())?;
                 }
                 None => {
-                    self.resolve_dispatch_context(
+                    self.resolve_dispatch_context_in_txn(
+                        txn,
                         input.parent_attempt,
                         spawn.context_spec.as_ref(),
                         &spawn.context_from,
@@ -297,6 +299,7 @@ impl AgentDispatcher<'_> {
             results: Vec::new(),
             launch: Some(launch.statement),
             task_settled: None,
+            release_refusal: None,
         };
         record.active = self.enqueue_prepared_workflow_step(txn, &record, first, 0, input.now)?;
         RECORD.admit(self.vault, txn, &root.id, &mut record)?;
@@ -367,7 +370,8 @@ impl AgentDispatcher<'_> {
             &frozen.definition,
             frozen.project_ref,
         )?;
-        self.resolve_dispatch_context(
+        self.resolve_dispatch_context_in_txn(
+            txn,
             record.intent.parent,
             frozen.context_spec.as_ref(),
             &frozen.context_from,

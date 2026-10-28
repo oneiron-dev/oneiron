@@ -178,7 +178,10 @@ pub(super) fn media_job_carriage(value: &[u8]) -> Option<Vec<u8>> {
 /// in `wtxn`, unless an erase took the row already: then nothing is
 /// written, so a late end or a retried one never puts erased content back,
 /// and `false` is returned. The erased marker of a retired job that never
-/// decoded is that erase too, read before the row is (FIX 9390).
+/// decoded is that erase too, read before the row is (FIX 9390). With
+/// `existing`, the write is an update of a row already kept: a row a delete
+/// dropped is not there, so nothing is written and `false` is returned, and
+/// a late end never puts a deleted job or its clips back (FIX 9511).
 ///
 /// # Errors
 ///
@@ -191,6 +194,7 @@ pub(crate) fn media_job_put_fenced_in_txn(
     key: &str,
     row: &[u8],
     parts: &[(String, Vec<u8>)],
+    existing: bool,
 ) -> crate::error::Result<bool> {
     let clip = |part: &str| {
         super::media_key(part.as_bytes()) == Some(super::MediaKey::Part { job: key.len() })
@@ -203,10 +207,12 @@ pub(crate) fn media_job_put_fenced_in_txn(
             "a media job put outside its rows",
         ));
     }
-    let fenced = dbs.side_sync_state()?.get(wtxn, key)?.is_some_and(|kept| {
+    let kept = dbs.side_sync_state()?.get(wtxn, key)?;
+    let dropped = existing && kept.is_none();
+    let fenced = kept.is_some_and(|kept| {
         crate::store::is_opaque_erased(&kept) || job_map(&kept).is_some_and(|e| erased(&e))
     });
-    if fenced {
+    if fenced || dropped {
         return Ok(false);
     }
     for (part, bytes) in parts {

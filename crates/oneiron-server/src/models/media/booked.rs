@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use oneiron::llm::BrokerIsolation;
 use oneiron::llm::media::{
-    MediaBackend, MediaFuture, MediaJobState, MediaRequest, MediaResponse, ReferenceCompatibility,
+    MediaBackend, MediaFuture, MediaJobState, MediaProgressFuture, MediaRequest, MediaResponse,
+    ReferenceCompatibility,
 };
 use oneiron::{BudgetLease, LlmResult, ModelId};
 
@@ -16,7 +17,10 @@ use crate::models::ModelHostBudgets;
 use crate::models::http::holding_replies;
 
 /// `0`, its calls holding their replies' bytes on `1`'s media-reply line.
-pub(super) struct BookedReplies(pub(super) Arc<dyn MediaBackend>, pub(super) ModelHostBudgets);
+pub(super) struct BookedReplies(
+    pub(super) Arc<dyn MediaBackend>,
+    pub(super) ModelHostBudgets,
+);
 
 impl MediaBackend for BookedReplies {
     fn run<'a>(
@@ -25,6 +29,18 @@ impl MediaBackend for BookedReplies {
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
         Box::pin(holding_replies(&self.1, self.0.run(request, lease)))
+    }
+
+    /// FIX 9517: a call stopped part way keeps what it completed.
+    fn run_progress<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+    ) -> MediaProgressFuture<'a> {
+        Box::pin(holding_replies(
+            &self.1,
+            self.0.run_progress(request, lease),
+        ))
     }
 
     fn submit<'a>(

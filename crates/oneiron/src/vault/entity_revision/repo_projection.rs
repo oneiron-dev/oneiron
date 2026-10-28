@@ -43,7 +43,7 @@ pub(super) fn project_revision_input_in_txn(
     marks: &RepoIndexMarks,
     input: IndexedRevisionInput,
 ) -> Result<IndexedRevisionInput> {
-    if !marks.touches(&input.entity, &input.body, &input.fields) {
+    if !marks.touches_in_txn(vault, txn, &input.entity, &input.body, &input.fields)? {
         return Ok(input);
     }
     let IndexedRevisionInput {
@@ -107,7 +107,8 @@ pub(super) fn revision_copy_current_in_txn(
 
 /// The staged inputs of `entity` at `revision`, as publication may use
 /// them: every staged field kept as its copy, and a staged vector dropped
-/// when the record is a marked blob's or a staged field had to be copied.
+/// when the record is a marked blob's or a text derived from one (FIX
+/// 10405), or a staged field had to be copied.
 ///
 /// # Errors
 /// A store failure reading a mask row.
@@ -128,6 +129,10 @@ pub(super) fn staged_inputs_in_txn(
         copied |= projected != fields;
         staged.fields = Some(projected);
     }
+    if !copied && staged.vector.is_some() {
+        copied = crate::embed::repo_derived_index_text_in(vault, &vault.store, txn, marks, entity)?
+            .is_some();
+    }
     if copied {
         staged.vector = None;
         staged.provenance = None;
@@ -135,8 +140,9 @@ pub(super) fn staged_inputs_in_txn(
     Ok(staged)
 }
 
-/// [`super::phonetic::take_phonetic`] for `input`, a marked blob's record
-/// first dropping the codes staged from its stored bytes.
+/// [`super::phonetic::take_phonetic`] for `input`, a record that reads a
+/// copy (a marked blob's, or a text derived from one) first dropping the
+/// codes staged from its stored bytes.
 ///
 /// # Errors
 /// A store failure.
@@ -146,7 +152,7 @@ pub(super) fn take_phonetic_in_txn(
     marks: &RepoIndexMarks,
     input: &IndexedRevisionInput,
 ) -> Result<Vec<String>> {
-    if marks.source_of(&input.entity).is_some() {
+    if marks.touches_in_txn(vault, txn, &input.entity, &input.body, &input.fields)? {
         super::phonetic::clear_phonetic(&vault.store, txn, &input.entity)?;
     }
     super::phonetic::take_phonetic(
@@ -161,9 +167,10 @@ pub(super) fn take_phonetic_in_txn(
 
 /// A mask change on the blob record `entity` stands for: its staged codes
 /// are dropped, its published text and codes are published again as their
-/// copy through the batch door, and a vector it holds is queued for
-/// refill. `false` for a record with no revision state, whose index the
-/// caller refreshes by its own door.
+/// copy through the batch door, and a vector it holds is dropped now and
+/// queued for refill (FIX 10405: no vector of an older copy stays
+/// searchable meanwhile). `false` for a record with no revision state,
+/// whose index the caller refreshes by its own door.
 ///
 /// # Errors
 /// A store failure, or the batch door's.
@@ -222,6 +229,7 @@ pub(crate) fn refresh_repo_revision_projection_in_txn(
         .port_vector_with_raw(txn, entity, |_| Ok(()))?
         .is_some()
     {
+        super::drop_vector_state(vault, txn, entity)?;
         REFILL.put(&vault.store, txn, entity, &())?;
     }
     Ok(true)

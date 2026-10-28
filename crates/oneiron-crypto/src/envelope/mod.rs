@@ -142,6 +142,11 @@ pub enum Purpose {
     /// `key_id`, and the snapshot's manifest as extra associated data, so no
     /// chunk opens reordered, truncated or under another manifest.
     InferenceSnapshotChunk = 25,
+    /// One erasable custody key's use: the content a home handoff seals under it, or
+    /// the key in transit to a live target's session-ephemeral key (FIX 8875). The
+    /// owner binds the key's ref in `key_id`; content binds the caller's associated
+    /// data, transit the target machine and session.
+    ErasableKey = 26,
 }
 
 impl Purpose {
@@ -172,6 +177,7 @@ impl Purpose {
             23 => Self::HomeHandoff,
             24 => Self::CheckpointPayload,
             25 => Self::InferenceSnapshotChunk,
+            26 => Self::ErasableKey,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

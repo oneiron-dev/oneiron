@@ -1,16 +1,18 @@
 //! Host-authorized home-node candidate updates, independent of socket liveness.
+//! Each committed election also publishes the route device sync dials the
+//! elected home by (FIX 3131).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tokio::sync::{mpsc, watch};
 
-use crate::Vault;
 use crate::dreamer_runner::{
     DreamerHomeNodeCandidate, DreamerHomeNodeDesignation, DreamerRunnerStore,
 };
 use crate::error::Result;
 use crate::sync::client::{ResidenceHomeRoute, SyncEvent};
+use crate::{EntityId, Vault};
 
 /// The host's current MACRO home-node candidates for one vault.
 ///
@@ -21,6 +23,19 @@ use crate::sync::client::{ResidenceHomeRoute, SyncEvent};
 #[derive(Debug, Clone)]
 pub struct HomeNodeTopology {
     updates: watch::Sender<TopologySnapshot>,
+    /// The route each committed election names (FIX 3131).
+    routes: watch::Sender<Option<HomeRoute>>,
+}
+
+/// The home a committed election names, as device sync dials it (FIX
+/// 3131): its sync node, the MACHINE whose home candidacy declares that node
+/// when one alone does, and the endpoint the host's topology names for it.
+/// Nothing here elects, dials or waits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HomeRoute {
+    pub node_id: u64,
+    pub machine: Option<EntityId>,
+    pub endpoint: Option<String>,
 }
 
 /// One host snapshot: the candidates, and the sync endpoint of each when the
@@ -40,7 +55,16 @@ impl HomeNodeTopology {
             candidates: initial,
             endpoints: None,
         });
-        Self { updates }
+        let (routes, _) = watch::channel(None);
+        Self { updates, routes }
+    }
+
+    /// The route the last committed election named, and each one after it:
+    /// `None` before the connection's first election, or while it names no
+    /// home.
+    #[must_use]
+    pub fn home_route(&self) -> watch::Receiver<Option<HomeRoute>> {
+        self.routes.subscribe()
     }
 
     /// Publish a new host-authorized candidate snapshot, including explicit
@@ -101,25 +125,61 @@ fn route_home(
     }
 }
 
-/// FIX 5661 C2a: the endpoint a home move to node `to` is captured at. A
-/// snapshot that names endpoints gives that node's, or none when it names
-/// none for it; one that names none leaves residence reads on the route the
-/// host keeps (else `server`), and that route is the move's. Delivery dials
-/// it only while its socket proves the move's target.
-fn move_endpoint(
+/// Publishes the route of the committed election's `home` (FIX 3131), when
+/// it moved.
+fn publish_route(
+    vault: &Vault,
+    routes: &watch::Sender<Option<HomeRoute>>,
+    snapshot: &TopologySnapshot,
+    home: Option<&DreamerHomeNodeDesignation>,
+) {
+    let route = home.map(|home| HomeRoute {
+        node_id: home.node_id,
+        machine: declaring_machine(vault, home.node_id),
+        endpoint: snapshot
+            .endpoints
+            .as_ref()
+            .and_then(|endpoints| endpoints.get(&home.node_id).cloned()),
+    });
+    routes.send_if_modified(|current| {
+        let moved = *current != route;
+        if moved {
+            current.clone_from(&route);
+        }
+        moved
+    });
+}
+
+/// The MACHINE whose folded home candidacy declares `node`, when one alone
+/// does; `None` when none does, two do, or the fold does not read.
+fn declaring_machine(vault: &Vault, node: u64) -> Option<EntityId> {
+    let txn = vault.store.env.read_txn().ok()?;
+    let fold = vault.authority_view_readonly_in_txn(&txn).ok()?;
+    let mut declaring = fold
+        .home_candidacy
+        .iter()
+        .filter(|(_, declared)| declared.node_id == node)
+        .map(|(machine, _)| *machine);
+    let machine = declaring.next()?;
+    declaring.next().is_none().then_some(machine)
+}
+
+/// FIX 6459: feeds the routes a home move's target is captured at, before
+/// the election they inform: each candidate's endpoint when the snapshot
+/// names them, and the route residence reads take where it names none (the
+/// host's route, else `server`). The election's own writer captures each
+/// move's route from them; delivery dials it only while its socket proves
+/// the move's target.
+fn feed_routes(
+    vault: &Vault,
     snapshot: &TopologySnapshot,
     route: Option<&ResidenceHomeRoute>,
     server: &str,
-    to: u64,
-) -> Option<String> {
-    match snapshot.endpoints.as_ref() {
-        Some(endpoints) => endpoints.get(&to).cloned(),
-        None => Some(
-            route
-                .and_then(ResidenceHomeRoute::current)
-                .unwrap_or_else(|| server.to_owned()),
-        ),
-    }
+) {
+    let fallback = route
+        .and_then(ResidenceHomeRoute::current)
+        .unwrap_or_else(|| server.to_owned());
+    super::home_handoff::feed_move_routes(vault, snapshot.endpoints.clone(), fallback);
 }
 
 /// Apply the initial snapshot before any socket work, then consume later
@@ -128,8 +188,8 @@ fn move_endpoint(
 /// owner's home pick re-elects where it lands, in its own commit; on the
 /// wake that follows, the route moves to the committed home over the last
 /// host snapshot, and only a host update replaces that snapshot. Each
-/// election that moved the home captures the move's route from that same
-/// snapshot (FIX 5661 C2a).
+/// snapshot's routes are fed before its election, which captures a move's
+/// route as it commits the move (FIX 6459).
 pub(super) fn watch_topology(
     vault: Arc<Vault>,
     source: &HomeNodeTopology,
@@ -138,14 +198,14 @@ pub(super) fn watch_topology(
     events: mpsc::UnboundedSender<SyncEvent>,
 ) -> Result<TopologyWatcher> {
     let mut updates = source.subscribe();
+    let routes = source.routes.clone();
     let mut wakes = vault.subscribe_proactivity_changes();
     let mut snapshot = updates.borrow_and_update().clone();
+    feed_routes(&vault, &snapshot, route.as_ref(), &server);
     let mut routed =
         DreamerRunnerStore::new(&vault).sync_topology_changed(&snapshot.candidates, now_secs())?;
     route_home(route.as_ref(), &snapshot, routed.as_ref());
-    super::home_handoff::capture_move_route(&vault, |to| {
-        move_endpoint(&snapshot, route.as_ref(), &server, to)
-    });
+    publish_route(&vault, &routes, &snapshot, routed.as_ref());
     Ok(TopologyWatcher(tokio::spawn(async move {
         loop {
             let home = tokio::select! {
@@ -154,6 +214,7 @@ pub(super) fn watch_topology(
                         break;
                     }
                     snapshot = updates.borrow_and_update().clone();
+                    feed_routes(&vault, &snapshot, route.as_ref(), &server);
                     DreamerRunnerStore::new(&vault)
                         .sync_topology_changed(&snapshot.candidates, now_secs())
                 }
@@ -168,9 +229,7 @@ pub(super) fn watch_topology(
             match home {
                 Ok(home) => {
                     route_home(route.as_ref(), &snapshot, home.as_ref());
-                    super::home_handoff::capture_move_route(&vault, |to| {
-                        move_endpoint(&snapshot, route.as_ref(), &server, to)
-                    });
+                    publish_route(&vault, &routes, &snapshot, home.as_ref());
                     routed = home;
                 }
                 Err(error) => {

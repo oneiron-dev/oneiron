@@ -692,6 +692,7 @@ pub(super) fn land_in_txn(
             recipients: vec![],
             advance: true,
             kind: ENTITY_TYPE_TURN,
+            containing_turn: None,
             occurred: TimeRange {
                 start: now,
                 end: now,

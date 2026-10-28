@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EdgeActorClass;
@@ -16,7 +15,7 @@ use oneiron::memory::MemoryError;
 use oneiron::task_verb::sdk::{SteerReceipt, SteerRequest, steer_child_as_owner};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -39,10 +38,10 @@ fn steer_error(error: MemoryError) -> OwnerError {
 async fn steer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SteerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SteerRequest>,
 ) -> OwnerReply<SteerReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let receipt = blocking(move || -> OwnerResult<SteerReceipt> {
         let vault = server.vault();

@@ -17,9 +17,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) mod cache_warmth;
+mod decision_posture;
 mod live_fork;
 mod shadow_capture;
 mod step_attempt;
+mod step_quota;
 mod worker_lease;
 
 use futures_util::StreamExt;
@@ -36,7 +38,7 @@ use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
 use super::cooldown::{
-    Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Refusal, Rest, leaves_device,
+    Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Rest, leaves_device,
 };
 use super::driven::Driven;
 use super::forward::{Ended, forward};
@@ -276,6 +278,14 @@ impl OfferLadder {
     pub(super) fn scoped(mut self, scope: SeatScope) -> Self {
         self.scope = scope;
         self
+    }
+
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order.
+    pub(super) fn rung_models(&self) -> impl Iterator<Item = (&ModelId, Option<&str>)> {
+        self.rungs
+            .iter()
+            .map(|rung| (&rung.model, rung.prompt.as_deref()))
     }
 
     /// The offers of the rungs that could serve `request` (FIX 3194): each
@@ -810,26 +820,11 @@ impl OfferLadder {
     /// limit for its wait or a backoff, a spent window until its reset,
     /// spent credit until the owner clears it (OF-305).
     fn rest_if_limited(&self, index: usize, error: &LlmError) -> Option<Option<Rest>> {
-        let refusal = match error {
-            LlmError::Retryable(RetryableLlmError::RateLimited {
-                retry_after,
-                resets_at,
-            }) => Refusal {
-                retry_after: *retry_after,
-                resets_at,
-                spent: None,
-            },
-            LlmError::Retryable(RetryableLlmError::QuotaSpent {
-                kind,
-                retry_after,
-                resets_at,
-            }) => Refusal {
-                retry_after: *retry_after,
-                resets_at,
-                spent: Some(*kind),
-            },
-            _ => return None,
+        let LlmError::Retryable(limited) = error else {
+            return None;
         };
+        // The providers' one limit vocabulary, read as every offer rest reads it.
+        let refusal = super::soniox::limit_refusal_of(limited)?;
         let rung = &self.rungs[index];
         let rest = self
             .rests
@@ -1478,7 +1473,7 @@ impl OfferLadder {
                 }
             };
         }
-        let answered = gate.run(bound, permit.lease()).await;
+        let answered = gate.run_progress(bound, permit.lease()).await;
         match answered {
             Ok(mut response) => {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
@@ -1492,9 +1487,21 @@ impl OfferLadder {
                 }
                 Ok(Some(MediaAnswer::Done(response)))
             }
-            Err(error) => {
+            // FIX 9517: what answered before the stop is settled once, on
+            // its usage and receipts, never lost behind the error.
+            Err(stopped) if !stopped.progress.is_empty() => {
+                let sent = permit.dispatched();
+                if let Err(denied) =
+                    permit.settle_interrupted_media(&stopped.progress, operation, &media.caps)
+                {
+                    tracing::error!(%denied, "an interrupted media call's settlement was refused");
+                }
+                self.failed(index, stopped.error, sent, walk)?;
+                Ok(None)
+            }
+            Err(stopped) => {
                 let sent = settle_failed(permit);
-                self.failed(index, error, sent, walk)?;
+                self.failed(index, stopped.error, sent, walk)?;
                 Ok(None)
             }
         }

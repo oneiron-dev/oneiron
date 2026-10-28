@@ -230,8 +230,10 @@ impl AgentDispatcher<'_> {
     /// names none yet, and `exposure`, where the run put the pack's SKILL.md
     /// in its task, under the run's own id, which a continuation of the run
     /// reuses. Another run's exposure stays as it was. An erased intent's
-    /// team records nothing: its run keeps what it already read, and no
-    /// write brings the pack back.
+    /// team records nothing, and no write brings the pack back. Answers
+    /// whether the exposure was recorded (FIX 9184): `false` when an erase
+    /// took the intent's pack, before this writer or at its fence, so the
+    /// caller takes back what it just put in the run's task.
     ///
     /// # Errors
     ///
@@ -244,7 +246,7 @@ impl AgentDispatcher<'_> {
         exposure: &TaskExposure,
         executor: &str,
         at: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let lease_owner = leased
             .lease_owner
             .as_deref()
@@ -256,7 +258,7 @@ impl AgentDispatcher<'_> {
             .planned_leader_in_txn(&txn, leased.id)?
             .ok_or_else(|| invalid(NOT_A_LEADER))?;
         let Some(pack) = &launch.pack else {
-            return Ok(());
+            return Ok(false);
         };
         let entry = ManifestEntry::new(ManifestKind::Skill, pack.skill_id(), pack.version(), at);
         if exposure.skill != pack.entity()
@@ -274,7 +276,8 @@ impl AgentDispatcher<'_> {
         row.updated_at = at;
         put_intent_in_txn(&self.vault.store, &mut txn, &key, &mut row)?;
         txn.commit()?;
-        Ok(())
+        // The fence writes an erased intent back with no exposure at all.
+        Ok(row.leader_exposures.contains_key(&run))
     }
 
     /// The planned team `leader` leads and its intent's row key, read on

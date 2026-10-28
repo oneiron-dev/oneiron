@@ -15,7 +15,7 @@ use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call::{
     ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    PENDING_CALLS, PendingConnectorCall, connector_call_ref, now_ms,
+    ConnectorResultAbsence, PENDING_CALLS, PendingConnectorCall, connector_call_ref, now_ms,
 };
 
 /// The reason a call gets when its host identity already names a held call
@@ -189,6 +189,7 @@ impl Vault {
                     .unwrap_or(ConnectorCallOutcome::Delivered {
                         intent: None,
                         result: None,
+                        result_absence: Some(ConnectorResultAbsence::NotRetained),
                     }),
                 held.source_rows,
             )),

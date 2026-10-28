@@ -200,7 +200,8 @@ impl ExtractionEncoder for ProviderTagger {
 
     /// A call that names no caller shares its room as this server's own.
     fn infer(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt {
-        self.dispatcher.call(input, work, &ExtractionCaller::new("host"))
+        self.dispatcher
+            .call(input, work, &ExtractionCaller::new("host"))
     }
 
     fn infer_for(

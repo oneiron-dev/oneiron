@@ -191,18 +191,43 @@ async fn serve_prepared<A: AppHost>(
     // The paired-machine mesh listener (OF-535): off unless the host names
     // its bind address. Its requests carry the drain as the channel's do.
     let mesh_app = app.clone().layer(axum::Extension(upgrades.clone()));
-    let mesh = crate::handler::mesh::start(
-        Arc::clone(&mesh_server),
-        &crate::handler::mesh::MeshConfig::from_env()?,
-        &mesh_app,
-        config.limits.connections(),
-    )
-    .await?;
-    // A machine that is not the elected home dials its home, on that mesh
-    // when the home has a paired address there.
-    let device_sync =
-        crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
-    host.ready()?;
+    // A startup error from here on stops what started and joins every
+    // worker before it is returned, as plain serve's does (FIX 7386, 10689).
+    let (mut mesh, mut device_sync) = (None, None);
+    let startup = async {
+        mesh = crate::handler::mesh::start(
+            Arc::clone(&mesh_server),
+            &crate::handler::mesh::MeshConfig::from_env()?,
+            &mesh_app,
+            config.limits.connections(),
+        )
+        .await?;
+        // A machine that is not the elected home dials its home, on that
+        // mesh when the home has a paired address there.
+        device_sync =
+            crate::device_sync::DeviceSyncHost::start(&mesh_server, &config, mesh.as_ref()).await;
+        host.ready()?;
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(error) = startup {
+        let _ = stopping.send(true);
+        if let Some(mesh) = &mesh {
+            mesh.end_streams().await;
+        }
+        upgrades.drained().await;
+        if let Some(device_sync) = device_sync {
+            device_sync.stop().await;
+        }
+        if let Some(mesh) = mesh {
+            mesh.stop().await;
+        }
+        mesh_server.live_voice.stop_all().await;
+        if let Err(cleanup) = started.workers.shutdown(|| host.on_stop()).await {
+            tracing::warn!(error = %cleanup, "the workers of a failed start did not stop cleanly");
+        }
+        return Err(error);
+    }
     // Each channel's HTTP connections are tasks of its set here.
     let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
     let api = serve_channel(connections, app, timeouts, upgrades.clone(), &mut api_http);

@@ -2,6 +2,7 @@
 //! gate decision, delivery-window door, connector execution, and receipt fields.
 
 pub(super) mod admission;
+mod degrade;
 mod effect;
 mod esign_delivery;
 mod frozen_payload;
@@ -9,6 +10,7 @@ mod govern;
 mod pipeline;
 mod policy_risk;
 mod publisher_signature;
+mod replay_presentation;
 mod request_binding;
 pub(super) mod retry_after;
 pub(super) mod seat_policy;
@@ -16,6 +18,7 @@ mod transport;
 mod vault;
 pub(super) mod verdict;
 
+pub(super) use self::degrade::ALTERNATIVE_OUTCOME_FIELD;
 pub(crate) use self::esign_delivery::{
     EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn, failure_signals_approval_digest_from_frozen_payload,

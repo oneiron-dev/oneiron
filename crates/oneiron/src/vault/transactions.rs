@@ -63,6 +63,7 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
         crate::side_table::DELETION_ROW_FENCE.prefix,
         crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
         crate::side_table::DELETION_TOPOLOGY_DELETE_INTENT.prefix,
+        crate::side_table::FEDERATION_TOMBSTONE_SCOPE.prefix,
     ]
     .iter()
     .any(|prefix| key.as_bytes().starts_with(prefix))
@@ -792,6 +793,7 @@ impl Vault {
 
 #[cfg(feature = "sync")]
 mod sync_state_delete;
+mod sync_state_page;
 #[cfg(feature = "sync")]
 mod sync_state_reclaim;
 #[cfg(feature = "sync")]

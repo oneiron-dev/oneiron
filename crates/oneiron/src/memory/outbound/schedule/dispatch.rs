@@ -13,10 +13,15 @@ impl Memory<'_> {
     /// scheduling an invite. Such a draft still resolves the registered
     /// capability, but it carries no five-field body, so the chokepoint's verb
     /// wall refuses it at the last durable boundary.
+    ///
+    /// `continuation` is what the TASK carries on beside the schedule
+    /// context: the caller's deadline and the ambient alternative (FIX 7962,
+    /// 8818).
     pub(in crate::memory::outbound) fn schedule_outbound_inner(
         &self,
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
+        continuation: &crate::outbound::OutboundScheduleContinuation,
         calendar_invite: Option<&crate::calendar::CalendarInvitePayload>,
         counterparty_ref: Option<&str>,
     ) -> MemoryResult<(OutboundIntentReceipt, Option<EntityId>)> {
@@ -128,12 +133,8 @@ impl Memory<'_> {
 
         // Pre-validate the channel/verb capability before either the gate or
         // durable enqueue, preserving a clean retry for malformed requests.
-        outbound_verb_contract(&draft.channel, &draft.verb).map_err(|capability| {
-            MemoryError::bad_request_with(
-                format!("unsupported outbound capability: {capability}"),
-                &["Use a registered channel/verb pair from the connector manifest."],
-            )
-        })?;
+        outbound_verb_contract(&draft.channel, &draft.verb)
+            .map_err(|capability| facade_error_from_unsupported_capability(&capability))?;
 
         let mut intent_draft = OutboundIntentDraft::new(
             self.actor.to_hex(),
@@ -288,6 +289,7 @@ impl Memory<'_> {
                     self.actor_class,
                     originating_session_ref.as_deref(),
                     schedule_context,
+                    continuation,
                     calendar_invite,
                     counterparty_ref,
                     now,

@@ -8,6 +8,8 @@ mod media;
 #[cfg(feature = "sync")]
 mod release;
 mod repo_projection;
+#[cfg(feature = "sync")]
+mod routing;
 mod session_media;
 mod space;
 mod space_card;
@@ -34,7 +36,13 @@ pub(crate) use eligibility::{
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
-pub(crate) use repo_projection::{repo_envelope_copies_in_txn, requeue_repo_embedding_in_txn};
+pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
+pub(crate) use repo_projection::{
+    apply_ops_session_projected, finalize_repo_derived_index_copies_in_txn,
+    refresh_repo_derived_projection_in_txn, repo_derived_batch, repo_derived_fields,
+    repo_derived_index_text_in, repo_envelope_copies_in_txn, repo_media_bytes,
+    requeue_repo_embedding_in_txn, retire_repo_derived_index_copies_in_txn,
+};
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 pub use space::{
@@ -57,6 +65,7 @@ pub use space_move::{
     SPACE_PROBE_MIN_FAMILIES, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState,
     SpaceProbeEncoder, SpaceRef,
 };
+pub(crate) use space_probe::erase_probe_sources_in_txn;
 pub use space_probe::{
     SPACE_PROBE_COHORT_SECS, SPACE_PROBE_QUERY_MAX_LEN, SPACE_PROBES_PER_KIND, SpaceProbe,
     SpaceProbeAuthor, SpaceProbeReport,
@@ -193,7 +202,9 @@ pub trait EgressPredicate: Send + Sync {
     /// Egress verdict for one typed payload. `Deny` and `NoVerdict` both
     /// route the entity to the local (OnDevice) embedder — fail-closed; a
     /// missing verdict can never send bytes off-device and never stalls
-    /// the queue.
+    /// the queue. On a primary rung, with no embedder on this device, they
+    /// leave it pending and unsent instead
+    /// ([`PendingEmbeddingReconciler::with_primary_rung`], FIX 10009).
     ///
     /// Called under a held write transaction: host trait impls invoked
     /// under a held txn/lock must be non-blocking cached lookups; hosts run
@@ -380,6 +391,7 @@ pub struct PendingEmbeddingReconciler {
     batch_size: usize,
     lease_duration_ms: u64,
     remote_rung: Option<RemoteRung>,
+    rung_role: routing::RungRole,
 }
 
 #[cfg(feature = "sync")]
@@ -395,6 +407,7 @@ impl PendingEmbeddingReconciler {
             batch_size: 32,
             lease_duration_ms: DEFAULT_PENDING_EMBEDDING_LEASE_MS,
             remote_rung: None,
+            rung_role: routing::RungRole::Fallback,
         }
     }
 
@@ -439,6 +452,34 @@ impl PendingEmbeddingReconciler {
             ));
         }
         self.remote_rung = Some(rung);
+        Ok(self)
+    }
+
+    /// Holds a primary embedder off this device to the owner's egress
+    /// `predicate`, as a remote rung's rows are held (FIX 10009): it is sent
+    /// only the rows `predicate` allows, and a row it denies, or gives no
+    /// verdict on, stays pending, unleased and unsent, for a later pass. An
+    /// explicit act of the host, which passes the owner's predicate; without
+    /// it the primary is sent its rows as before. Requires: the primary off
+    /// this device, and no rung attached.
+    pub fn with_primary_rung(
+        mut self,
+        predicate: std::sync::Arc<dyn EgressPredicate>,
+    ) -> Result<Self> {
+        if self.embedder.locality() == EmbedderLocality::OnDevice {
+            return Err(Error::InvalidConfig(
+                "a primary rung holds a primary embedder off this device".to_owned(),
+            ));
+        }
+        if self.remote_rung.is_some() {
+            return Err(Error::InvalidConfig(
+                "a remote rung is already configured".to_owned(),
+            ));
+        }
+        let mut rung = RemoteRung::new(std::sync::Arc::clone(&self.embedder), predicate);
+        rung.lease_duration_ms = self.lease_duration_ms;
+        self.remote_rung = Some(rung);
+        self.rung_role = routing::RungRole::Primary;
         Ok(self)
     }
 
@@ -702,20 +743,10 @@ impl PendingEmbeddingReconciler {
                         continue;
                     }
                 }
-                let (route, lease_duration_ms) = match &self.remote_rung {
-                    None => (EmbedRoute::Local, self.lease_duration_ms),
-                    Some(_) if device_local => (EmbedRoute::Local, self.lease_duration_ms),
-                    Some(rung) => match rung.predicate.decide(&input) {
-                        EgressDecision::Allow => (EmbedRoute::Remote, rung.lease_duration_ms),
-                        EgressDecision::Deny => {
-                            batch.egress_denied += 1;
-                            (EmbedRoute::Local, self.lease_duration_ms)
-                        }
-                        EgressDecision::NoVerdict => {
-                            batch.egress_no_verdict += 1;
-                            (EmbedRoute::Local, self.lease_duration_ms)
-                        }
-                    },
+                let Some((route, lease_duration_ms)) =
+                    self.rung_route(&input, device_local, &mut batch)
+                else {
+                    continue;
                 };
 
                 let expires_at_ms = now_ms.saturating_add(lease_duration_ms);

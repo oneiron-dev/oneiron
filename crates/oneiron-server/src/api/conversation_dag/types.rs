@@ -76,7 +76,14 @@ pub(crate) enum DagAddressMode {
 #[serde(deny_unknown_fields)]
 pub(crate) struct DagAppendRequest {
     pub parent: Option<String>,
+    /// The record answered: a TURN, or one MESSAGE of a TURN.
     pub reply_to: Option<String>,
+    /// The TURN the appended MESSAGE is part of (FIX 9771): set, the record
+    /// is a MESSAGE whose `body` names its author, type, content, optional
+    /// metadata, visibility and order, and it never enters HEAD; absent, a
+    /// TURN.
+    #[serde(default)]
+    pub containing_turn: Option<String>,
     /// Addressing is not access control. Omitted means broadcast.
     pub addr: Option<DagAddressMode>,
     /// PERSON ids named by direct addressing.
@@ -89,7 +96,8 @@ pub(crate) struct DagAppendRequest {
     pub learned_at: Option<u64>,
     pub session: Option<String>,
     pub actor: DagActor,
-    /// Quotes a span of one MESSAGE; the record then replies to its TURN.
+    /// Quotes a span of one MESSAGE; the record then answers that MESSAGE,
+    /// placed against its TURN.
     #[serde(default)]
     pub quote: Option<DagQuoteSpan>,
     /// A new thread root's audience seed (FIX 2951): room PERSON and
@@ -208,6 +216,15 @@ pub(crate) struct DagAppendResponse {
     pub entity: CoreEntityWriteResponse,
     pub head: Option<String>,
     pub parent: Option<String>,
+    /// The TURN a MESSAGE record is part of; absent for a TURN.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub containing_turn: Option<String>,
+    /// What the record answers, at the revision it answered: `kind` `turn`
+    /// or `message`, the record, its revision, and a MESSAGE's
+    /// `containing_turn`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
+    pub reply_target: Option<oneiron::conversation_dag::DagReplyTarget>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]

@@ -3,9 +3,10 @@
 //! reviewed row by the hash of its bytes. HTTP, MCP and the SDK reach the
 //! engine writer the owner's routes reach, which admits the caller's own
 //! owner proof or an agent's own Grant that names the verb, in the write
-//! itself. The scope is this server's own meter's, never a caller's. The
-//! answers derive from host rows, which are no entity's: the doors list
-//! none.
+//! itself. The scope is the vault this server's meter is bound to, never a
+//! caller's: every billing owner's rows in it, the vault owner's and each
+//! room-paid payer account's (FIX 7035). The answers derive from host rows,
+//! which are no entity's: the doors list none.
 
 use std::sync::Arc;
 

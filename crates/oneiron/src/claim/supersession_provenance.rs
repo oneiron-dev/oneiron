@@ -55,6 +55,32 @@ pub(super) fn envelope(body: &ClaimBody) -> Result<WriteEnvelope> {
         lineage,
     ))
 }
+/// The source claim's scope map for its companion (FIX 8663): every entry of
+/// `body.scope`, each facet or project selector set to the claim's stored
+/// stamp, so storing the companion cannot select another facet. A scope that
+/// is not a map holds no entry to copy.
+fn source_scope(body: &ClaimBody) -> Value {
+    let Some(Value::Map(mut entries)) = body.scope.clone() else {
+        return Value::Map(Vec::new());
+    };
+    for (key, value) in &mut entries {
+        let stamp = match key.as_str() {
+            Some("facet" | "facet_ref" | "facetRef") => body.scope_facet,
+            Some("scopeProjectId") => body.scope_project,
+            _ => continue,
+        };
+        let named = match &*value {
+            Value::Binary(raw) => <[u8; 16]>::try_from(raw.as_slice())
+                .ok()
+                .and_then(|bytes| EntityId::from_bytes(bytes).ok()),
+            other => other.as_str().and_then(|hex| EntityId::from_hex(hex).ok()),
+        };
+        if named != Some(stamp) {
+            *value = Value::Binary(stamp.as_bytes().to_vec());
+        }
+    }
+    Value::Map(entries)
+}
 fn companion_id(new: &EntityId, old: &EntityId, predicate: &str) -> Result<EntityId> {
     EntityId::derive(
         SUPERSESSION_COMPANION,
@@ -109,12 +135,14 @@ pub(super) fn write_companion(
                 Value::Binary(old.as_bytes().to_vec()),
             ]),
         )]))
-        .with_scope(Value::Map(vec![(
-            Value::from(super::CLAIM_SCOPE_EVIDENCE_TAINT_KEY),
-            Value::from(source.as_str()),
-        )]));
+        .with_scope(source_scope(body))
+        .with_scope_stamps(body.scope_facet, body.scope_project)
+        .with_evidence_taint(source)?;
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
+    }
+    if let Some(relationship) = body.rel {
+        candidate = candidate.with_relationship(relationship);
     }
     write(
         vault,

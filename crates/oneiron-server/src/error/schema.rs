@@ -141,9 +141,9 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             properties.insert("header".to_owned(), json!({ "type": "string" }));
         }
         ErrorCode::UnsupportedCapability => {
+            // `verb` is optional: connector-only discovery errors omit it.
             required.extend([
                 "connector",
-                "verb",
                 "connectorKnown",
                 "supportedConnectors",
                 "supportedVerbs",

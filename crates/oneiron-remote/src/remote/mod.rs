@@ -33,6 +33,8 @@ use crate::error::{bad_request, forbidden, transport_error};
 
 // OF-469: a pinned authority checkpoint, fetched for adoption.
 mod checkpoint;
+// FIX 3676: a kept whole-vault export, read and let go.
+mod export_transfer;
 mod origin;
 mod pairing;
 // FIX 3377: a paired owner device renews its own credential.

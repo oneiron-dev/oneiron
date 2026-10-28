@@ -18,6 +18,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{RemovalExportCopy, SignedSharedActOutcome};
 
+// The host's delivery of those archives to their removed holder, beside
+// these pull doors (FIX 3215, 3396).
+mod delivery;
+
 /// What rides beside a removed person's notices as the handoff to the root
 /// that signed them.
 enum HandoffEvidence {
@@ -258,6 +262,10 @@ impl Vault {
     /// The archives export-first removals delivered to the holder of `slip`
     /// (OF-150, FIX 1300), still within their term, under the same proof as
     /// [`Vault::removed_member_notices_signed`]; the nonce is spent once.
+    /// The removed Owner proving the mint's own key takes each as stored; a
+    /// holder the slip was transferred to takes each cut down to what its
+    /// caveats admit, and none they admit nothing of (FIX-LIST 8224), all
+    /// before the nonce commits.
     pub fn removed_owner_exports(
         &self,
         slip: &CapabilitySlip,
@@ -268,8 +276,14 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
-        let copies =
-            self.removal_exports_in_txn(&txn, person, self.store.clock.now_recorded_at())?;
+        let now = self.store.clock.now_recorded_at();
+        let copies = match slip.transferred_bounds() {
+            None => self.removal_exports_in_txn(&txn, person, now)?,
+            Some(bounds) => {
+                let admits = transferred_admission(bounds, now);
+                self.projected_removal_exports_in_txn(&txn, person, now, &admits)?
+            }
+        };
         txn.commit()?;
         Ok(copies)
     }
@@ -280,7 +294,9 @@ impl Vault {
     /// its term ([`crate::federation::REMOVAL_EXPORT_RETAIN_SECS`] from its
     /// latest delivery), `None` after it or when that removal delivered this
     /// person none. Only the removed person reaches it; the nonce is spent
-    /// once, and a malformed `receipt_id` is refused before it is.
+    /// once, and a malformed `receipt_id` is refused before it is. A holder
+    /// the slip was transferred to takes it cut down to what its caveats
+    /// admit, `None` when they admit nothing of it (FIX-LIST 8224).
     pub fn removed_owner_archive(
         &self,
         slip: &CapabilitySlip,
@@ -293,12 +309,14 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
-        let copy = self.removal_export_in_txn(
-            &txn,
-            person,
-            receipt_id,
-            self.store.clock.now_recorded_at(),
-        )?;
+        let now = self.store.clock.now_recorded_at();
+        let copy = match slip.transferred_bounds() {
+            None => self.removal_export_in_txn(&txn, person, receipt_id, now)?,
+            Some(bounds) => {
+                let admits = transferred_admission(bounds, now);
+                self.projected_removal_export_in_txn(&txn, person, receipt_id, now, &admits)?
+            }
+        };
         txn.commit()?;
         Ok(copy)
     }
@@ -329,5 +347,19 @@ impl Vault {
             request_now,
         )?;
         Ok(person)
+    }
+}
+
+/// Which archived records a transferred holder takes at `now`: those its
+/// authenticated caveat bounds admit. Caveats the meet refuses (a floor, a
+/// second pact) leave the holder nothing; they are its own bytes.
+fn transferred_admission(
+    bounds: Result<super::slip::TransferredBounds>,
+    now: u64,
+) -> impl Fn(EntityId, Option<&crate::federation::Scope>) -> bool {
+    move |id: EntityId, position: Option<&crate::federation::Scope>| {
+        bounds
+            .as_ref()
+            .is_ok_and(|bounds| bounds.admits(id, position, now))
     }
 }

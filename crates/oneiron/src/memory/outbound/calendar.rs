@@ -115,6 +115,7 @@ impl Memory<'_> {
         self.schedule_outbound_inner(
             &input.outbound_draft(),
             &OutboundScheduleContext::default(),
+            &crate::outbound::OutboundScheduleContinuation::default(),
             Some(&input.frozen_payload()),
             None,
         )

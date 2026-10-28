@@ -245,8 +245,16 @@ pub(super) fn reconcile_connector_task(
         else {
             return Ok(false);
         };
+        // A remote task's send is not known delivered, and it is never
+        // repeated (FIX 7960): its receipt says deferred, and its TASK
+        // completes rather than fails.
+        let deferred = resolution == IntentResolution::Deferred;
         let (receipt_outcome, task_outcome) = match resolution {
             IntentResolution::Pending { .. } => return Ok(false),
+            IntentResolution::Deferred => (
+                SendReceiptOutcome::Ambiguous,
+                ConnectorSendTaskOutcome::Ambiguous,
+            ),
             IntentResolution::Delivered => (
                 SendReceiptOutcome::Delivered,
                 ConnectorSendTaskOutcome::Delivered,
@@ -306,6 +314,7 @@ pub(super) fn reconcile_connector_task(
             )
         });
         receipt.outcome = match receipt_outcome {
+            _ if deferred => "deferred",
             SendReceiptOutcome::Delivered => "delivered_to_channel",
             SendReceiptOutcome::Failed => "failed",
             SendReceiptOutcome::Ambiguous => "ambiguous",
@@ -352,7 +361,7 @@ pub(super) fn reconcile_connector_task(
             },
             now,
         )?;
-        if !wrote || task_outcome == ConnectorSendTaskOutcome::Delivered {
+        if !wrote || task_outcome == ConnectorSendTaskOutcome::Delivered || deferred {
             queue.complete_in_txn(
                 wtxn,
                 CompleteAttempt {
@@ -381,4 +390,48 @@ pub(super) fn reconcile_connector_task(
             .map_err(|_| Error::InvariantViolation("outbound terminal resolution sync failed"))?;
     }
     Ok(terminal)
+}
+
+/// Completes a TASK whose interrupt the delivery window degraded and whose
+/// ambient alternative went (FIX 7962): the alternative carried its send
+/// out, under its own ledger row and receipt. The interrupt's receipt keeps
+/// its degraded outcome and names the alternative; the TASK is delivered and
+/// its queue row completes, in one writer. The interrupt itself was never
+/// admitted, so no ledger row of its own settles here.
+pub(super) fn complete_degraded_connector_task(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task: &super::connector_task::ConnectorSendTask,
+    mut receipt: crate::receipt::ReceiptRecord,
+    now: u64,
+) -> Result<(), Error> {
+    super::receipt_fields::append_connector_task_window_receipt(&mut receipt, task);
+    vault.with_write_txn_grouped(|wtxn| {
+        persist_admitted_send_receipt_in_txn(
+            vault,
+            wtxn,
+            task.task_ref,
+            receipt,
+            SendReceiptOutcome::Delivered,
+            false,
+            None,
+        )?;
+        project_connector_send_task_outcome_in_txn(
+            vault,
+            wtxn,
+            task.task_ref,
+            ConnectorSendTaskOutcome::Delivered,
+            now,
+        )?;
+        AttemptQueue::new(vault).complete_in_txn(
+            wtxn,
+            CompleteAttempt {
+                id: attempt.id,
+                lease_owner: CONNECTOR_TASK_EXECUTOR_LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                now,
+            },
+        )?;
+        Ok(())
+    })
 }
