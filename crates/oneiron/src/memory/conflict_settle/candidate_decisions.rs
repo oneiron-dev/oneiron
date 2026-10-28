@@ -10,6 +10,7 @@
 use serde::Serialize;
 
 use super::super::outbound::parse_job_ref;
+use super::super::support::hex_string;
 use super::super::{Memory, MemoryResult};
 use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
@@ -56,7 +57,7 @@ impl Memory<'_> {
                     .is_some()
             {
                 read.push(DreamerDecidedCandidateView {
-                    job_ref: crate::entity_id::bytes_to_hex_lower(attempt.as_bytes()),
+                    job_ref: hex_string(attempt.as_bytes()),
                     position,
                     subject: candidate.subject,
                     corrects: candidate.corrects,

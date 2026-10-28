@@ -65,7 +65,7 @@ impl GeneratedRung<'_> {
             .ok()
             .flatten()?;
         let per_million: f64 = row.catalog.cost.as_ref()?.input_per_million.parse().ok()?;
-        (per_million.is_finite() && per_million >= 0.0).then(|| per_million / 1_000.0)
+        (per_million.is_finite() && per_million >= 0.0).then_some(per_million / 1_000.0)
     }
 }
 
