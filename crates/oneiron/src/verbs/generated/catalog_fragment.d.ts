@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1216 code-mode rows (1176 host rows, 40 run rows), 4233 declarations.
-// Replies: 1096 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4235 declarations.
+// Replies: 1097 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: none.
 declare namespace Sdk {
@@ -1797,6 +1797,8 @@ declare namespace Sdk {
   type UsageRepairAuthority = { kind: "owner"; ref: string } | { kind: "grant"; ref: string };
   type UsageRepairSurface = { kind: "this_install" } | { kind: "linked_device"; machine: string } | { kind: "hosted_console" };
   type UsageRepairReceipt = { receiptId: string; owner: string; vaultId: string; rowRef: string; hash: string; byteLength: number; reason: UsageRepairReason; actorRef: string; actorClass: string; authority: UsageRepairAuthority; surface: UsageRepairSurface; recordedAt: number };
+  type UsageRepairReceiptsRequest = Record<string, never>;
+  type UsageRepairReceiptList = { receipts: UsageRepairReceipt[]; undecodable: number };
   type EntityMentionRequest = { candidates: EntityResolutionCandidate[]; high_collision_mention?: boolean };
   type LegalHoldTarget = { record: EntityId } | { gate_partition: EntityId | null };
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
@@ -7188,6 +7190,10 @@ declare const vault: Sdk.VaultHost & {
       remove_undecodable(input: Sdk.UsageRepairRemoveRequest): Promise<Sdk.UsageRepairReceipt | StoredResult>;
       /** Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb. */
       undecodable(input: Sdk.UsageRepairListRequest): Promise<Sdk.UndecodableUsageList | StoredResult>;
+    };
+    repair: {
+      /** Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted. */
+      receipts(input: Sdk.UsageRepairReceiptsRequest): Promise<Sdk.UsageRepairReceiptList | StoredResult>;
     };
   };
   vectors: {

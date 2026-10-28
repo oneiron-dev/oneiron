@@ -7187,6 +7187,21 @@
       "openapi": true
     },
     {
+      "name": "vault.usage.repair.receipts",
+      "description": "Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted.",
+      "input": "crate::memory::usage_repair::UsageRepairReceiptsRequest",
+      "output": "crate::memory::usage_repair::UsageRepairReceiptList",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.usage.repair.receipts\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.entities.mention",
       "description": "The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate.",
       "input": "crate::ingest::EntityMentionRequest",

@@ -1971,11 +1971,16 @@ class Oneiron:
     class _VaultUsageVerbs:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...
+        @property
+        def repair(self) -> "Oneiron._VaultUsageRepairVerbs": ...
     class _VaultUsageEventsVerbs:
         def undecodable(self, spec: Facade.UsageRepairListRequest) -> Facade.UndecodableUsageList:
             """Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."""
         def remove_undecodable(self, spec: Facade.UsageRepairRemoveRequest) -> Facade.UsageRepairReceipt:
             """Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."""
+    class _VaultUsageRepairVerbs:
+        def receipts(self, spec: Facade.UsageRepairReceiptsRequest) -> Facade.UsageRepairReceiptList:
+            """Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""

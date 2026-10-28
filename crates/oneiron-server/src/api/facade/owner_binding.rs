@@ -211,6 +211,11 @@ pub(super) fn caller_bound_admits(
             auth,
             oneiron::memory::usage_repair::UsageRepairVerb::Remove,
         ),
+        "vault.usage.repair.receipts" => super::usage_repair_doors::repair_admits(
+            server,
+            auth,
+            oneiron::memory::usage_repair::UsageRepairVerb::Receipts,
+        ),
         _ => return None,
     })
 }

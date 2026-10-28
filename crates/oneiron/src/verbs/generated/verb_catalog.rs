@@ -468,6 +468,7 @@ pub enum AgentVerb {
     VaultArchiveDeleteConfirm,
     VaultUsageEventsUndecodable,
     VaultUsageEventsRemoveUndecodable,
+    VaultUsageRepairReceipts,
     VaultEntitiesMention,
     VaultLegalHoldsPlace,
     VaultLegalHoldsWiden,
@@ -1658,6 +1659,7 @@ impl AgentVerb {
         Self::VaultArchiveDeleteConfirm,
         Self::VaultUsageEventsUndecodable,
         Self::VaultUsageEventsRemoveUndecodable,
+        Self::VaultUsageRepairReceipts,
         Self::VaultEntitiesMention,
         Self::VaultLegalHoldsPlace,
         Self::VaultLegalHoldsWiden,
@@ -2863,6 +2865,7 @@ impl AgentVerb {
             Self::VaultArchiveDeleteConfirm => "vault.archive.delete.confirm",
             Self::VaultUsageEventsUndecodable => "vault.usage.events.undecodable",
             Self::VaultUsageEventsRemoveUndecodable => "vault.usage.events.remove_undecodable",
+            Self::VaultUsageRepairReceipts => "vault.usage.repair.receipts",
             Self::VaultEntitiesMention => "vault.entities.mention",
             Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
             Self::VaultLegalHoldsWiden => "vault.legal_holds.widen",
@@ -4071,6 +4074,7 @@ impl AgentVerb {
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
+                | Self::VaultUsageRepairReceipts
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -5290,6 +5294,7 @@ impl AgentVerb {
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
+                | Self::VaultUsageRepairReceipts
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -6636,6 +6641,7 @@ impl AgentVerb {
                 | Self::VaultArchiveDeleteConfirm
                 | Self::VaultUsageEventsUndecodable
                 | Self::VaultUsageEventsRemoveUndecodable
+                | Self::VaultUsageRepairReceipts
                 | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
@@ -8512,6 +8518,7 @@ impl AgentVerb {
             Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
+            Self::VaultUsageRepairReceipts => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
@@ -9703,6 +9710,7 @@ impl AgentVerb {
             Self::VaultArchiveDeleteConfirm => &["spec"],
             Self::VaultUsageEventsUndecodable => &["spec"],
             Self::VaultUsageEventsRemoveUndecodable => &["spec"],
+            Self::VaultUsageRepairReceipts => &["spec"],
             Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
@@ -11800,6 +11808,9 @@ impl AgentVerb {
             }
             Self::VaultUsageEventsRemoveUndecodable => {
                 "Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."
+            }
+            Self::VaultUsageRepairReceipts => {
+                "Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted."
             }
             Self::VaultEntitiesMention => {
                 "The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."

@@ -4030,6 +4030,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_usage_repair_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.usage.repair.receipts", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_entities_mention(
         &self,
         input: serde_json::Value,

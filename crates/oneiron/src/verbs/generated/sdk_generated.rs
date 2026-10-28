@@ -2487,6 +2487,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.usage.repair.receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::usage_repair::UsageRepairReceiptsRequest,
+                >(),
+            ),
+            (
                 "vault.entities.mention",
                 crate::code_run::vault_read::request_schema::<crate::ingest::EntityMentionRequest>(
                 ),
@@ -7051,6 +7057,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.archive.delete.confirm",
     "vault.usage.events.undecodable",
     "vault.usage.events.remove_undecodable",
+    "vault.usage.repair.receipts",
     "vault.entities.mention",
     "vault.policy.owner.get",
     "vault.policy.owner.configure",
@@ -8542,6 +8549,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.usage.events.remove_undecodable" => crate::code_run::vault_read::request_schema::<
             crate::memory::usage_repair::UsageRepairReceipt,
+        >(),
+        "vault.usage.repair.receipts" => crate::code_run::vault_read::request_schema::<
+            crate::memory::usage_repair::UsageRepairReceiptList,
         >(),
         "vault.entities.mention" => crate::code_run::vault_read::request_schema::<
             crate::ingest::EntityResolutionWaterfallDecision,
@@ -13262,6 +13272,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.usage.events.remove_undecodable" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.usage.repair.receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19675,6 +19692,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::usage_repair::UsageRepairRemoveRequest =
                 decode(value.clone())?;
         }
+        "vault.usage.repair.receipts" => {
+            let _input: crate::memory::usage_repair::UsageRepairReceiptsRequest =
+                decode(value.clone())?;
+        }
         "vault.entities.mention" => {
             let _input: crate::ingest::EntityMentionRequest = decode(value.clone())?;
         }
@@ -23164,6 +23185,9 @@ pub fn invoke(
             memory,
             decode(value)?,
         )?),
+        "vault.usage.repair.receipts" => {
+            encode(vault_usage_repair_receipts(memory, decode(value)?)?)
+        }
         "vault.entities.mention" => encode(vault_entities_mention(memory, decode(value)?)?),
         "vault.legal_holds.place" => encode(vault_legal_holds_place(memory, decode(value)?)?),
         "vault.legal_holds.widen" => encode(vault_legal_holds_widen(memory, decode(value)?)?),
@@ -28560,6 +28584,12 @@ pub fn vault_usage_events_remove_undecodable(
     input: crate::memory::usage_repair::UsageRepairRemoveRequest,
 ) -> MemoryResult<crate::memory::usage_repair::UsageRepairReceipt> {
     crate::task_verb::sdk::host_only(memory, "vault.usage.events.remove_undecodable", &input)
+}
+pub fn vault_usage_repair_receipts(
+    memory: &Memory<'_>,
+    input: crate::memory::usage_repair::UsageRepairReceiptsRequest,
+) -> MemoryResult<crate::memory::usage_repair::UsageRepairReceiptList> {
+    crate::task_verb::sdk::host_only(memory, "vault.usage.repair.receipts", &input)
 }
 pub fn vault_entities_mention(
     memory: &Memory<'_>,
