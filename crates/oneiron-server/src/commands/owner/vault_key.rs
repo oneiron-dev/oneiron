@@ -44,7 +44,8 @@ use rand_core::RngCore as _;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::{base_vault_config, emit, open_stopped_vault, open_stopped_vault_with, raw_stdin};
+use super::secret_input::{TerminalRead, read_stdin_secret};
+use super::{base_vault_config, emit, open_stopped_vault, open_stopped_vault_with};
 use crate::cli::{
     SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand,
     VaultKeyNamedArgs, VaultKeyResealArgs,
@@ -464,7 +465,8 @@ pub(crate) fn read_secret_file(path: &Path, what: &str) -> anyhow::Result<Zeroiz
 }
 
 /// One secret, from the named owner-only file or else stdin, exactly as given
-/// but for one trailing line break.
+/// but for one trailing line break. A terminal is asked for one line, with
+/// its echo off ([`read_stdin_secret`]).
 pub(super) fn read_secret(
     source: &SecretSourceArgs,
     what: &str,
@@ -472,11 +474,10 @@ pub(super) fn read_secret(
     let mut value = Zeroizing::new(Vec::with_capacity(SECRET_LIMIT + 1));
     match &source.secret_file {
         Some(path) => read_owner_only(path, &mut value)?,
-        None => {
-            raw_stdin()?
-                .take(SECRET_LIMIT as u64 + 1)
-                .read_to_end(&mut value)?;
-        }
+        None => read_stdin_secret(what, TerminalRead::Line, |input| {
+            input.take(SECRET_LIMIT as u64 + 1).read_to_end(&mut value)?;
+            Ok(())
+        })?,
     }
     anyhow::ensure!(value.len() <= SECRET_LIMIT, "{what} is at most 4 KiB");
     strip_line_break(&mut value);
