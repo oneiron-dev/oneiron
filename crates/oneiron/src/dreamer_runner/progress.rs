@@ -438,7 +438,9 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// Returns the live ephemeral progress row when present, otherwise falls
-    /// back to the latest durable milestone claim.
+    /// back to the latest durable milestone claim: the local resume index
+    /// first, then a verified milestone replicated from the device that ran
+    /// the attempt, which has no local queue row to enter that index.
     #[cfg(feature = "sync")]
     pub fn progress_snapshot(
         &self,
@@ -453,8 +455,24 @@ impl DreamerRunnerStore<'_> {
             )));
         }
 
-        self.latest_durable_milestone(attempt_id)
-            .map(|milestone| milestone.map(DreamerAttemptProgressSnapshot::from_milestone))
+        if let Some(milestone) = self.latest_durable_milestone(attempt_id)? {
+            return Ok(Some(DreamerAttemptProgressSnapshot::from_milestone(
+                milestone,
+            )));
+        }
+        // A walk that does not read leaves the answer it had before (FIX
+        // 8715): no coarse progress, logged by kind, never a new failure.
+        match self.latest_verified_milestone(attempt_id) {
+            Ok(milestone) => Ok(milestone.map(DreamerAttemptProgressSnapshot::from_milestone)),
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    attempt_id = %crate::entity_id::bytes_to_hex_lower(attempt_id.as_bytes()),
+                    "a replicated milestone lookup did not read; no coarse progress"
+                );
+                Ok(None)
+            }
+        }
     }
 }
 
