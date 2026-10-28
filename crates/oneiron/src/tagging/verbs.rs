@@ -731,8 +731,8 @@ impl Memory<'_> {
     /// `vault.tagging.mentions`: the saved mentions naming one entity,
     /// each served only while its turn reads on the caller's lane; a hidden
     /// turn's mention is left out before the limit counts, and the receipt
-    /// counts it as the lane counts a withheld row, never naming it
-    /// (FIX 10170, 10707).
+    /// counts the hidden turn once, as the lane counts a withheld row, never
+    /// naming it (FIX 10170, 10707).
     pub fn tagging_mentions(
         &self,
         input: &TaggingMentionsRequest,
@@ -752,13 +752,16 @@ impl Memory<'_> {
         };
         let mut mentions = Vec::new();
         let mut withheld = 0;
+        let mut hidden = std::collections::BTreeSet::new();
         let mut current = std::collections::BTreeMap::new();
         for hit in self.vault().tagged_mentions(&entity)? {
             if mentions.len() == input.limit {
                 break;
             }
             if !lane.is_entity_readable(&hit.turn)? {
-                withheld += lane.suppression_of(&hit.turn)?;
+                if hidden.insert(hit.turn) {
+                    withheld += lane.suppression_of(&hit.turn)?;
+                }
                 continue;
             }
             let freshness = match current.get(&hit.turn) {
