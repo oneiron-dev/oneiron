@@ -12,8 +12,8 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::note::{
-    FilesWorld, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
-    ImportedFile, ImportedNote, ImportedNoteStanding,
+    FileOriginal, FilesWorld, FolderFile, FolderFileState, FolderRescan, FolderRescanReport,
+    FolderSource, ImportedFile, ImportedNote, ImportedNoteStanding,
 };
 use oneiron::task_verb::sdk::{
     self, FilesLimitCrossed, FilesRescanView, FilesSourceAttachAnswer, FilesWorldView,
@@ -22,7 +22,7 @@ use serde::Serialize;
 
 use super::ImportWarning;
 use super::reader::{
-    FILES_PART_MARK, NoteCounts, PART_MARK, TitleCounts, choose_title, crossed_rows,
+    FILES_PART_MARK, Note, NoteCounts, PART_MARK, TitleCounts, choose_title, crossed_rows,
     earlier_titles, file_of, read_folder, resolve_links,
 };
 
@@ -80,7 +80,9 @@ pub(crate) fn files_rescan(
                         limit: *limit,
                         observed: *observed,
                     }),
-                    ImportWarning::HardLinked { .. } => None,
+                    ImportWarning::HardLinked { .. } | ImportWarning::OriginalsUnkept { .. } => {
+                        None
+                    }
                 })
                 .collect();
             (Some(report.into()), crossed, None)
@@ -160,7 +162,7 @@ pub(crate) fn rescan(
             HashMap::new(),
         ),
     };
-    let warnings = crossed_rows(vault, &counts);
+    let mut warnings = crossed_rows(vault, &counts);
     // A part goes with its file.
     notes.retain(|note| included(&source.include, note.file()));
     name_only.retain(|file| included(&source.include, &file.path));
@@ -229,12 +231,14 @@ pub(crate) fn rescan(
             _ => source.kind.clone(),
         };
         let title = choose_title(vault, &namespace, note, &mut taken, &mut titles)?;
+        // The host keeps a rescan's originals itself, once its notes land.
         new.push(ImportedNote {
             path: note.path.clone(),
             kind,
             title,
             written_at: note.written_at,
             markdown,
+            original: None,
         });
     }
     let report = vault.rescan_folder_source(
@@ -250,7 +254,60 @@ pub(crate) fn rescan(
             facts,
         },
     )?;
+    warnings.extend(keep_originals(vault, owner, source, &namespace, &notes)?);
     Ok((report, warnings))
+}
+
+/// Keeps the original of each file the rescan read whose note the ledger
+/// now holds (FIX 7779), and names it on that file's ledger rows, its parts'
+/// included. A file whose row already names the same bytes keeps no second
+/// copy. A file whose original cannot be kept still has its text imported:
+/// its rows then name no original, and the warning counts it.
+fn keep_originals(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    source: &FolderSource,
+    namespace: &str,
+    notes: &[Note],
+) -> anyhow::Result<Option<ImportWarning>> {
+    let ledger = vault
+        .folder_source_files(&source.folder)?
+        .into_iter()
+        .map(|file| (file.path.clone(), file))
+        .collect::<HashMap<_, _>>();
+    let mut kept: HashMap<&str, Option<FileOriginal>> = HashMap::new();
+    let (mut unkept, mut first_error) = (0, None);
+    for note in notes {
+        let (Some(original), Some(row)) = (&note.original, ledger.get(&note.path)) else {
+            continue;
+        };
+        let hash = original.content_hash();
+        let same = row
+            .original
+            .as_ref()
+            .filter(|kept| kept.content_hash == hash);
+        let original = match same {
+            Some(same) => Some(same.clone()),
+            None => match vault.keep_folder_file_original(owner, namespace, &note.path, original) {
+                Ok(original) => Some(original),
+                Err(error) => {
+                    unkept += 1;
+                    first_error.get_or_insert_with(|| error.to_string());
+                    None
+                }
+            },
+        };
+        kept.insert(note.path.as_str(), original);
+    }
+    let originals = notes
+        .iter()
+        .filter_map(|note| Some((note.path.clone(), kept.get(note.file())?.clone())))
+        .collect::<HashMap<_, _>>();
+    vault.link_folder_file_originals(owner, &source.folder, &originals)?;
+    Ok(first_error.map(|first_error| ImportWarning::OriginalsUnkept {
+        files: unkept,
+        first_error,
+    }))
 }
 
 /// `path` as a source names it: canonical, a folder, UTF-8.

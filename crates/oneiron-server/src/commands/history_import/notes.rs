@@ -180,6 +180,9 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             title,
             written_at: note.written_at,
             markdown,
+            // The file's bytes ride in the batch, bound by its digest, and
+            // are kept as its original once the owner approves (FIX 7779).
+            original: note.original.take(),
         });
     }
     let earlier_titles = earlier_titles(&vault, &folder, &notes, &standings)?;
