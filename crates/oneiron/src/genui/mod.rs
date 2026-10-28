@@ -21,10 +21,11 @@ pub use self::consent_cards::{
 };
 pub use self::consent_eval::{
     CONSENT_ACTION_APPROVE_ONCE, CONSENT_ACTION_DECLINE, CONSENT_ACTION_ESCALATE_PREFIX,
-    CONSENT_BUNDLE_ACTION_DECLINE, CONSENT_BUNDLE_ACTION_ID_PREFIX, ConsentActionDecision,
-    ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest, ConsentActorIdentity,
-    ConsentConfirmOutcome, ConsentSurface, GrantMintIntent, GrantMintIntentScope,
-    calendar_grant_mint_intent, consent_action_id_offers_duration,
+    CONSENT_BUNDLE_ACTION_DECLINE, CONSENT_BUNDLE_ACTION_ID_PREFIX,
+    CONSENT_NOOP_NON_PRINCIPAL_REASON, ConsentActionDecision, ConsentActionEvaluation,
+    ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentConfirmOutcome,
+    ConsentSurface, GrantMintIntent, GrantMintIntentScope, calendar_grant_mint_intent,
+    consent_action_id_offers_duration,
 };
 use self::failure_card::parse_card_ref;
 pub use self::failure_card::{

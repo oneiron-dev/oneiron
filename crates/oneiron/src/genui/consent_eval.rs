@@ -366,24 +366,43 @@ pub(super) fn ensure_authenticated_actor(
     request: &ConsentActionRequest,
     authenticated_owner: &AuthenticatedOwner,
 ) -> Result<()> {
-    // A decline is the asked person's own refusal; every other action
-    // decides an act, so it takes the owner tier.
-    let authenticated = if matches!(request.action, ConsentActionKind::Decline) {
-        request
-            .actor
-            .authenticates_person(vault, principal_ref, authenticated_owner)?
-    } else {
-        request
-            .actor
-            .authenticates_owner(vault, principal_ref, authenticated_owner)?
-    };
-    if authenticated {
+    if actor_is_card_principal(vault, principal_ref, request, authenticated_owner)? {
         return Ok(());
     }
     Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
         "the action actor is not bound to the card's store-authenticated principal",
     )))
 }
+
+/// Whether the tapping actor is the card's principal, under a proof that
+/// revalidates on `vault` (FIX 9859). A decline is the asked person's own
+/// refusal; every other action decides an act, so it takes the owner tier.
+/// `false` is a valid tap by someone else, which a consent card answers
+/// with a receipted no-op.
+///
+/// # Errors
+/// The proof does not revalidate on `vault`, or a storage error.
+pub(super) fn actor_is_card_principal(
+    vault: &crate::Vault,
+    principal_ref: &str,
+    request: &ConsentActionRequest,
+    authenticated_owner: &AuthenticatedOwner,
+) -> Result<bool> {
+    if matches!(request.action, ConsentActionKind::Decline) {
+        request
+            .actor
+            .authenticates_person(vault, principal_ref, authenticated_owner)
+    } else {
+        request
+            .actor
+            .authenticates_owner(vault, principal_ref, authenticated_owner)
+    }
+}
+
+/// The reason a consent card's receipt names for a valid tap by someone
+/// other than its principal (FIX 9859): it decides nothing and mints no
+/// authority.
+pub const CONSENT_NOOP_NON_PRINCIPAL_REASON: &str = "consent_actor:non_principal";
 
 pub(super) fn noop_policy_rejection(
     component_kind: Of336ComponentKind,
