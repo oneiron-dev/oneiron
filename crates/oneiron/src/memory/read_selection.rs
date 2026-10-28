@@ -81,7 +81,9 @@ impl Memory<'_> {
             .iter()
             .map(|reference| self.resolve_ref(reference))
             .collect::<MemoryResult<Vec<_>>>()?;
-        Ok(CorpusScope::AnyOf(self.project_descendant_closure(selected)?))
+        Ok(CorpusScope::AnyOf(
+            self.project_descendant_closure(selected)?,
+        ))
     }
 
     /// `selected` and every PROJECT that belongs to one of them at any depth:

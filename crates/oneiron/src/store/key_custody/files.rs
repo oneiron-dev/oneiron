@@ -6,7 +6,9 @@
 //! `.<vault dir name>.key-custody/<namespace hex>.<vault hex>/<tag hex>.<item hex>/`
 //! holds a subject's `g<generation hex16>` entries, its
 //! `.retired-g<generation hex16>` markers and its
-//! `.g<generation hex16>-<random hex16>.pending` temporaries. Every directory
+//! `.g<generation hex16>-<random hex16>.pending` temporaries; a world pad's
+//! also holds the `.carried-<key id hex>` compartments a restore left
+//! unopened ([`super::carried_pads`], PAD-3). Every directory
 //! and file is opened without following a link. On Unix each is the
 //! effective uid's, owner-only (0700/0600), and an entry has exactly one
 //! link; on Windows the user's profile ACL, which custody's directories
@@ -313,7 +315,7 @@ impl LocalCustody<'_> {
     }
 
     /// `subject`'s directory; refused for another vault's subject.
-    fn subject_dir(&self, subject: &CustodySubject) -> Result<PathBuf> {
+    pub(super) fn subject_dir(&self, subject: &CustodySubject) -> Result<PathBuf> {
         if subject.vault() != self.binding.vault() {
             return Err(subject.kind().corrupt());
         }
@@ -545,7 +547,8 @@ impl LocalCustody<'_> {
     }
 
     /// Destroys precisely `id`: its marker is synced, then its entry is
-    /// unlinked and the directory synced. Neither an old snapshot nor a
+    /// unlinked and the directory synced, then a world pad's carried
+    /// compartments go too (PAD-3). Neither an old snapshot nor a
     /// delayed retirement can revive or destroy another generation. Ordering
     /// against readers and the durable intent is the caller's
     /// ([`crate::store::Store::finish_custody_retirements`]).
@@ -573,6 +576,6 @@ impl LocalCustody<'_> {
             Err(err) => return Err(err.into()),
         }
         platform::sync_held(&directory, &dir)?;
-        Ok(())
+        self.drop_carried(id.subject())
     }
 }

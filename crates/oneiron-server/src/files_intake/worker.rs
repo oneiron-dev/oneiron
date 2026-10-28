@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
-    CompleteAttempt, EnqueueAttempt, FailAttempt,
+    AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases, CompleteAttempt,
+    EnqueueAttempt, FailAttempt,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::note::FolderSource;

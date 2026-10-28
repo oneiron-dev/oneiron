@@ -228,7 +228,14 @@ pub(crate) fn walk(
         excluded: &nothing_excluded,
         unopened: &mut nothing_unopened,
     };
-    walk_below(dir.try_clone()?, shown, wanted, &mut skips, &mut left, visit)
+    walk_below(
+        dir.try_clone()?,
+        shown,
+        wanted,
+        &mut skips,
+        &mut left,
+        visit,
+    )
 }
 
 /// What a walk passes over before it opens it, and whom it names a file

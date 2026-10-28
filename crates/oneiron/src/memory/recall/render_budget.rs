@@ -7,11 +7,9 @@ use super::*;
 /// own `token_budget`; else the window budget of the reader whose memory
 /// profile the caller opted into; else [`RECALL_TOKEN_BUDGET`].
 pub(crate) fn render_token_budget(explicit: Option<u64>, reader: Option<u64>) -> usize {
-    explicit
-        .or(reader)
-        .map_or(RECALL_TOKEN_BUDGET, |budget| {
-            usize::try_from(budget).unwrap_or(usize::MAX)
-        })
+    explicit.or(reader).map_or(RECALL_TOKEN_BUDGET, |budget| {
+        usize::try_from(budget).unwrap_or(usize::MAX)
+    })
 }
 
 /// The budget an execution renders under: the one its door resolved, else

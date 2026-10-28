@@ -998,12 +998,7 @@ impl Memory<'_> {
             }
             let mut pack = scoped.value;
             let mut counted = Vec::new();
-            lane.attach_reactions_quoting(
-                &mut pack,
-                &status.cited_messages,
-                None,
-                &mut counted,
-            )?;
+            lane.attach_reactions_quoting(&mut pack, &status.cited_messages, None, &mut counted)?;
             // Each reaction claim a line counts is a producer of the pack.
             self.produced_from(counted);
 
@@ -1030,12 +1025,11 @@ impl Memory<'_> {
                 if let Some(fallback) = door_answered() {
                     return Ok(fallback.clone());
                 }
-                let mode = entity.source_revision_ref.map_or(
-                    crate::vault::ReadMode::Indexed,
-                    |revision| {
+                let mode = entity
+                    .source_revision_ref
+                    .map_or(crate::vault::ReadMode::Indexed, |revision| {
                         crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
-                    },
-                );
+                    });
                 let cited = status
                     .cited_messages
                     .get(&entity.id)
