@@ -34,6 +34,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
                 .put(replace_defaults)
                 .layer(DefaultBodyLimit::max(16 * 1024)),
         )
+        // FIX 8211: the kept proposals, and a holder's answer to one.
+        .route("/defaults/proposals", get(defaults_submit::list_proposals))
+        .route("/defaults/proposals/{proposal}", post(defaults_submit::rule_proposal))
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
 /// A refusal's wire code and its other wire field (empty for a code-only
