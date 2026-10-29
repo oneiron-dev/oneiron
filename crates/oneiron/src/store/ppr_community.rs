@@ -146,6 +146,18 @@ impl Store {
         Ok(())
     }
 
+    /// Clears the rebuildable community family in the caller's erase transaction.
+    pub(crate) fn clear_ppr_community_cache_in_txn(&self, txn: &mut RwTxn<'_>) -> Result<()> {
+        let mut suffixes = Vec::new();
+        for entry in CACHE.iter_from(self, &*txn, &[])? {
+            suffixes.push(entry?.0);
+        }
+        for suffix in suffixes {
+            CACHE.delete(self, txn, &suffix)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn ppr_community_live_entity_in_txn(
         &self,
         txn: &RoTxn<'_>,

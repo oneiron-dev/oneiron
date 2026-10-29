@@ -19,6 +19,16 @@ pub enum AnswerActor {
     Erased,
 }
 
+impl schemars::JsonSchema for AnswerActor {
+    fn schema_name() -> String {
+        "AnswerActor".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 impl AnswerActor {
     /// Whether this is `actor`.
     #[must_use]
