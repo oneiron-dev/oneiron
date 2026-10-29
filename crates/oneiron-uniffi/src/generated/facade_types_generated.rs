@@ -5148,10 +5148,10 @@ pub struct TaskAskClass {
     pub remind: Vec<u64>,
 }
 
-/// `oneiron::task_verb::ask_types::AskAuthorityScopeWire`.
+/// `oneiron::task_verb::ask_types::AskAuthorityScope`.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct AskAuthorityScopeWire {
+pub struct AskAuthorityScope {
     #[serde(rename = "class")]
     pub class: String,
     #[serde(rename = "selectors")]
@@ -5163,10 +5163,9 @@ pub struct AskAuthorityScopeWire {
     #[serde(rename = "receipt_required")]
     pub receipt_required: bool,
 }
-impl std::fmt::Debug for AskAuthorityScopeWire {
+impl std::fmt::Debug for AskAuthorityScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AskAuthorityScopeWire")
-            .finish_non_exhaustive()
+        f.debug_struct("AskAuthorityScope").finish_non_exhaustive()
     }
 }
 
@@ -5218,7 +5217,7 @@ pub struct TaskAskGuest {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TaskAskTarget {
     #[serde(rename = "authority")]
-    Authority(AskAuthorityScopeWire),
+    Authority(AskAuthorityScope),
     #[serde(rename = "responder")]
     Responder(TaskAssignee),
     #[serde(rename = "people")]
@@ -10961,11 +10960,11 @@ pub enum Sensitivity {
     Restricted,
 }
 
-/// `oneiron_authority::federation::scope::SensitivityCeilingWire`.
+/// `oneiron_authority::federation::scope::SensitivityCeiling`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "value")]
 #[serde(deny_unknown_fields)]
-pub enum SensitivityCeilingWire {
+pub enum SensitivityCeiling {
     #[serde(rename = "bottom")]
     Bottom,
     #[serde(rename = "all")]
@@ -10993,7 +10992,7 @@ pub struct Scope {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub sensitivity: Option<SensitivityCeilingWire>,
+    pub sensitivity: Option<SensitivityCeiling>,
 }
 
 /// `oneiron::memory::scoped_export::CredentialCeiling`.
