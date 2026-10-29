@@ -47,21 +47,17 @@ pub(super) fn record_tuning_config(
             blake3::hash(task.as_bytes()).to_hex()
         )))
         .collect();
+    // A sitting dial the host left unset is the vault's row, not this
+    // host's: it is absent here (FIX 8600).
     #[allow(clippy::cast_precision_loss, reason = "dials far below 2^52")]
-    let manifest_thresholds = BTreeMap::from([
-        (
-            "idle_floor_secs".to_owned(),
-            settings.idle_floor_secs as f64,
-        ),
-        (
-            "session_ceiling_secs".to_owned(),
-            settings.session_ceiling_secs as f64,
-        ),
-        (
-            "pass_budget_units".to_owned(),
-            settings.pass_budget_units as f64,
-        ),
-    ]);
+    let manifest_thresholds = [
+        ("idle_floor_secs", settings.idle_floor_secs),
+        ("session_ceiling_secs", settings.session_ceiling_secs),
+        ("pass_budget_units", Some(settings.pass_budget_units)),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| Some((name.to_owned(), value? as f64)))
+    .collect::<BTreeMap<_, _>>();
     vault.record_dreamer_tuning_config(
         &DreamerTuningConfig {
             backbone,

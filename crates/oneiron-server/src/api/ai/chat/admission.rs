@@ -349,7 +349,10 @@ pub(in crate::api::ai::chat) fn start_turn(
     // Nor its context's records (FIX 6921): a session-only turn keeps none.
     let context = context.filter(|_| generate_session.is_none() && witness_session.is_none());
     if signals {
-        server.ai.session_hint(session_key, SessionHint::AppOpen);
+        // A turn carries no deadline, so none bounds the hint's wait.
+        server
+            .ai
+            .session_hint(session_key, SessionHint::AppOpen, None);
     }
     let mut written = None;
     let user = crate::server::blocking(|| {

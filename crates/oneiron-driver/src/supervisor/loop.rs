@@ -1,25 +1,29 @@
-//! Biased-select supervisor loop with panic containment and backoff.
-use std::future::Future;
-use std::panic::AssertUnwindSafe;
-use std::pin::Pin;
+//! The supervisor loop: one arbiter over fresh ticks, owed retries and wave
+//! quanta (see `arbiter`), at most one pass in flight, panic containment and
+//! per-tick backoff (see `retry`).
 use std::sync::Arc;
-use std::task::{Context, Poll};
-use std::time::Duration;
 
-use crate::wave_dispatch::{WaveDispatchLimits, WaveDispatchPass, WaveDispatchPump};
-use oneiron::{
-    AttemptQueue, Vault, WakeCancellation, WakePassReport, WakePassStop, WavePlanner, WriteActor,
-};
+use crate::wave_dispatch::{WaveDispatchLimits, WaveDispatchPump};
+use oneiron::{AttemptQueue, Vault};
 use tokio::sync::{Semaphore, watch};
+use tokio::time::Instant;
 
+use super::arbiter::{
+    Lane, LaneRotation, SupervisorEventInputs, SupervisorWake, next_supervisor_event,
+};
 use super::budget_ids::{
     advance_past_occupied_pass_rows, durable_pass_budget_id, next_pass_budget_index,
 };
-use super::config::{NowSeconds, RestartBackoff, WakeSupervisorConfig, system_now_secs};
+use super::config::{NowSeconds, WakeSupervisorConfig, system_now_secs};
 use super::factory::PassExecutorFactory;
-use super::pass::{PassRunError, paused, run_one_pass};
+use super::pass::paused;
+use super::retry::{FreshTick, PassAccounting, RetryDebt, account_pass_outcome};
 use super::shutdown::{ShutdownHandle, ShutdownListener};
-use crate::tick::{Tick, TickSource};
+use super::supervised_pass::run_pass_supervised;
+use super::wave_lane::{
+    WaveQuantum, WaveQuantumError, report_wave_pass, resolved_wave_limits, run_wave_quantum,
+};
+use crate::tick::TickSource;
 
 /// Supervisor run tally.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -32,287 +36,6 @@ pub struct WakeSupervisorReport {
     /// ONE-1896: attempts that answered a stop by LANDING. Never folded into
     /// `attempts_completed` — a landing delivered no result.
     pub attempts_landed: u64,
-}
-
-pub(super) enum PassOutcome {
-    Completed(WakePassReport),
-    /// Pass ran (or at least crossed admission setup) and returned Err.
-    /// The consumed tick is re-driven after backoff (same family as
-    /// pre-admission failure / panic / zero-progress).
-    Failed(oneiron::Error),
-    /// Factory/`run_one_pass` setup failed before any attempt could be admitted.
-    /// Re-drives the consumed tick after backoff and **keeps** `pass_index`
-    /// (no durable budget row was written). Orthogonal to redrive: only this
-    /// arm preserves the index; Failed/Panicked/Completed still advance.
-    PreAdmissionFailed(oneiron::Error),
-    /// Panic anywhere in the pass (including factory). Re-drives after backoff.
-    Panicked,
-    /// The host's pause stopped the pass (FIX 6909). Counted as completed,
-    /// with no backoff; the consumed tick is re-driven once the pause lifts.
-    Paused(WakePassReport),
-}
-
-/// True when a completed pass made no durable progress and would otherwise
-/// hot-loop under HybridTick deadline redelivery (or leave PushTick work
-/// stranded after a consumed wake). Back off + redrive the consumed tick.
-fn zero_progress_should_backoff(pass: &WakePassReport) -> bool {
-    pass.admitted == 0
-        && matches!(
-            pass.stop,
-            WakePassStop::BudgetExhausted | WakePassStop::DeadlineHardCut
-        )
-}
-
-/// Resolve operational pump limits from a fresh vault policy snapshot. A
-/// host-supplied selector can NARROW, never widen, the vault-owned ceilings.
-fn resolved_wave_limits(
-    vault: &Vault,
-    holder: Option<WaveDispatchLimits>,
-) -> oneiron::Result<(WaveDispatchLimits, [u8; 32])> {
-    let policy = vault.wave_handoff_policy()?;
-    let selected = match holder {
-        Some(value) => {
-            value.validate()?;
-            let mut requested = policy;
-            requested.scan_limit = value.page_size;
-            requested.retry_floor_ms =
-                u64::try_from(value.retry_initial.as_millis()).map_err(|_| {
-                    oneiron::Error::InvalidConfig("wave retry floor exceeds u64".into())
-                })?;
-            requested.retry_cap_ms = u64::try_from(value.retry_max.as_millis())
-                .map_err(|_| oneiron::Error::InvalidConfig("wave retry cap exceeds u64".into()))?;
-            policy.with_holder(Some(requested))?;
-            value
-        }
-        None => WaveDispatchLimits {
-            page_size: policy.scan_limit,
-            retry_quantum: policy.scan_limit,
-            retry_initial: Duration::from_millis(policy.retry_floor_ms),
-            retry_max: Duration::from_millis(policy.retry_cap_ms),
-        },
-    };
-    selected.validate()?;
-    Ok((selected, policy.policy_frontier))
-}
-
-struct WaveQuantum<'a, F> {
-    vault: &'a Vault,
-    pump: &'a mut WaveDispatchPump,
-    factory: &'a mut F,
-    planner: &'a Arc<dyn WavePlanner + Send + Sync>,
-    actor: WriteActor,
-    lease_owner: &'a str,
-    now: u64,
-    holder: Option<WaveDispatchLimits>,
-    frontier: &'a mut Option<[u8; 32]>,
-}
-
-enum WaveQuantumError {
-    Policy(oneiron::Error),
-    Pump(oneiron::Error),
-}
-
-fn run_wave_quantum<F: PassExecutorFactory>(
-    input: WaveQuantum<'_, F>,
-) -> std::result::Result<WaveDispatchPass, WaveQuantumError> {
-    let WaveQuantum {
-        vault,
-        pump,
-        factory,
-        planner,
-        actor,
-        lease_owner,
-        now,
-        holder,
-        frontier,
-    } = input;
-    let (limits, resolved_frontier) =
-        resolved_wave_limits(vault, holder).map_err(WaveQuantumError::Policy)?;
-    if *frontier != Some(resolved_frontier) {
-        pump.set_limits(limits).map_err(WaveQuantumError::Policy)?;
-        *frontier = Some(resolved_frontier);
-    }
-    pump.work_one(vault, factory, planner, actor, lease_owner, now)
-        .map_err(WaveQuantumError::Pump)
-}
-
-/// One arbitration decision; each wave pass, notification and ordinary tick
-/// returns here rather than running another pre-select work loop.
-#[derive(Debug)]
-enum SupervisorWake {
-    Shutdown,
-    Wave,
-    Notify,
-    Due,
-    Tick(Option<Tick>),
-}
-
-struct SupervisorEventInputs<'a, T> {
-    shutdown: &'a mut ShutdownListener,
-    ticks: &'a mut T,
-    redrive_tick: Option<Tick>,
-    wave_events: &'a mut tokio::sync::broadcast::Receiver<()>,
-    wave_enabled: bool,
-    wave_ready: bool,
-    delay: Option<Duration>,
-    prefer_tick: bool,
-    ticks_exhausted: bool,
-}
-
-async fn next_supervisor_event<T: TickSource>(
-    input: SupervisorEventInputs<'_, T>,
-) -> SupervisorWake {
-    let SupervisorEventInputs {
-        shutdown,
-        ticks,
-        redrive_tick,
-        wave_events,
-        wave_enabled,
-        wave_ready,
-        delay,
-        prefer_tick,
-        ticks_exhausted,
-    } = input;
-    if prefer_tick {
-        tokio::select! {
-            biased;
-            () = shutdown.triggered() => SupervisorWake::Shutdown,
-            tick = async {
-                if let Some(tick) = redrive_tick { Some(tick) }
-                else { ticks.next_tick().await }
-            }, if !ticks_exhausted => SupervisorWake::Tick(tick),
-            () = std::future::ready(()), if wave_ready => SupervisorWake::Wave,
-            _ = wave_events.recv(), if wave_enabled => SupervisorWake::Notify,
-            () = async {
-                if let Some(delay) = delay { tokio::time::sleep(delay).await; }
-                else { std::future::pending::<()>().await; }
-            }, if delay.is_some() => SupervisorWake::Due,
-        }
-    } else {
-        tokio::select! {
-            biased;
-            () = shutdown.triggered() => SupervisorWake::Shutdown,
-            () = std::future::ready(()), if wave_ready => SupervisorWake::Wave,
-            tick = async {
-                if let Some(tick) = redrive_tick { Some(tick) }
-                else { ticks.next_tick().await }
-            }, if !ticks_exhausted => SupervisorWake::Tick(tick),
-            _ = wave_events.recv(), if wave_enabled => SupervisorWake::Notify,
-            () = async {
-                if let Some(delay) = delay { tokio::time::sleep(delay).await; }
-                else { std::future::pending::<()>().await; }
-            }, if delay.is_some() => SupervisorWake::Due,
-        }
-    }
-}
-
-struct PassAccounting<'a> {
-    report: &'a mut WakeSupervisorReport,
-    pass_index: &'a mut u64,
-    backoff: &'a mut RestartBackoff,
-    shutdown: &'a mut ShutdownListener,
-    redrive_tick: &'a mut Option<Tick>,
-}
-
-async fn account_pass_outcome(
-    outcome: PassOutcome,
-    tick: Tick,
-    accounting: PassAccounting<'_>,
-) -> bool {
-    let PassAccounting {
-        report,
-        pass_index,
-        backoff,
-        shutdown,
-        redrive_tick,
-    } = accounting;
-    // RULE: after ANY backoff-taking outcome, re-drive the consumed
-    // tick. Outcomes that take backoff: Failed, PreAdmissionFailed,
-    // Panicked, and zero-progress Completed (admitted == 0 +
-    // BudgetExhausted/DeadlineHardCut). Productive Completed consumes
-    // the tick normally (no backoff, no redrive). pass_index: only
-    // PreAdmissionFailed preserves it; all other arms advance.
-    // Permanent failure = capped-backoff retry forever (same contract
-    // as HybridTick redelivery); wait_backoff false → shutdown wins.
-    match outcome {
-        PassOutcome::Completed(pass) => {
-            count_completed(report, pass_index, &pass);
-            // Zero-progress BudgetExhausted / DeadlineHardCut
-            // (admitted == 0): HybridTick re-surfaces the same due
-            // deadline immediately; PushTick-only has already
-            // consumed the wake. Back off + redrive so we never
-            // hot-loop empty refusals and never strand due work.
-            // Productive BudgetExhausted (admitted > 0) resets
-            // backoff and lets the next source tick drain the rest.
-            if zero_progress_should_backoff(&pass) {
-                tracing::warn!(
-                    ?pass.stop,
-                    "wake pass stopped without admitting work; \
-                     backing off then re-driving tick"
-                );
-                if !wait_backoff(shutdown, backoff.advance()).await {
-                    return false;
-                }
-                *redrive_tick = Some(tick);
-            } else {
-                backoff.reset();
-            }
-        }
-        PassOutcome::Failed(error) => {
-            // In-pass failure may have admitted/parked some attempts;
-            // the same consumed wake can still represent remaining
-            // backlog → redrive after backoff (idempotent for Hybrid).
-            *pass_index = pass_index.saturating_add(1);
-            report.passes_failed += 1;
-            tracing::error!(kind = ?error.kind(), "wake pass failed; backing off then re-driving tick");
-            if !wait_backoff(shutdown, backoff.advance()).await {
-                return false;
-            }
-            *redrive_tick = Some(tick);
-        }
-        PassOutcome::PreAdmissionFailed(error) => {
-            // No attempt row mutated and no durable budget row written —
-            // keep pass_index; redrive after backoff.
-            report.passes_failed += 1;
-            tracing::error!(
-                kind = ?error.kind(),
-                "wake pass failed before admission; backing off then re-driving tick"
-            );
-            if !wait_backoff(shutdown, backoff.advance()).await {
-                return false;
-            }
-            *redrive_tick = Some(tick);
-        }
-        PassOutcome::Panicked => {
-            // Setup panic before admission (or any uncontained panic):
-            // redrive after backoff so a PushTick-only host keeps work.
-            *pass_index = pass_index.saturating_add(1);
-            report.passes_panicked += 1;
-            tracing::error!("wake pass panicked; backing off then re-driving tick");
-            if !wait_backoff(shutdown, backoff.advance()).await {
-                return false;
-            }
-            *redrive_tick = Some(tick);
-        }
-        PassOutcome::Paused(pass) => {
-            // What the pause left (a Paused park, queued work, the timer
-            // work after the wake) is the same tick's, driven again once
-            // the loop's wait for the pause is over.
-            count_completed(report, pass_index, &pass);
-            *redrive_tick = Some(tick);
-        }
-    }
-
-    true
-}
-
-/// Tallies a pass that ran to its end, paused or not.
-fn count_completed(report: &mut WakeSupervisorReport, pass_index: &mut u64, pass: &WakePassReport) {
-    *pass_index = pass_index.saturating_add(1);
-    report.passes_completed += 1;
-    report.attempts_completed += u64::from(pass.completed);
-    report.attempts_parked += u64::from(pass.parked);
-    report.attempts_landed += u64::from(pass.landed);
 }
 
 /// The in-process starter motor: waits on its [`TickSource`], runs at most
@@ -383,7 +106,8 @@ where
         self
     }
 
-    /// Runs the supervisor loop until shutdown or tick-source exhaustion.
+    /// Runs the supervisor loop until shutdown, or until the tick source runs
+    /// dry with no wave planner registered and no owed pass left.
     pub async fn run(self) -> WakeSupervisorReport {
         let Self {
             vault,
@@ -409,7 +133,6 @@ where
             tracing::error!(?error, "wake supervisor config invalid; refusing to run");
             return report;
         }
-        let mut backoff = RestartBackoff::new(config.backoff);
         // Resume the per-pass durable budget sequence after the highest
         // occupied `{base}:p{n}` row (dense scan + gallop past the bound).
         // One full probe at run start only — not progress, not a rescan
@@ -417,11 +140,13 @@ where
         // rows or advance into a later occupied suffix after filling an
         // earlier hole (empty passes leave no budget row).
         let mut pass_index = next_pass_budget_index(vault, &config.budget_id);
-        // PushTick drains a wake before the pass runs. Any backoff-taking
-        // outcome re-drives that same tick after wait_backoff so a
-        // push-only host does not lose remaining backlog (or the only wake).
-        // HybridTick deadline redelivery makes redrive idempotent there.
-        let mut redrive_tick: Option<Tick> = None;
+        // PushTick drains a wake before the pass runs. A tick a pass did not
+        // settle is owed here on its own backoff (FIX 8601), so a push-only
+        // host does not lose remaining backlog (or the only wake), and a
+        // failing tick never stops the source, the other owed ticks or the
+        // wave lane. HybridTick deadline redelivery makes the retry
+        // idempotent there.
+        let mut debt = RetryDebt::new(config.backoff);
         // Subscribe before the startup scan: a concurrent enqueue can neither
         // disappear between snapshot and receiver nor need a polling timer.
         let mut wave_events = AttemptQueue::new(vault).subscribe();
@@ -448,37 +173,55 @@ where
         } else {
             None
         };
-        let mut prefer_tick = false;
+        let mut rotation = LaneRotation::new();
         let mut ticks_exhausted = false;
+        // While the source keeps redelivering a tick whose owed retry is not
+        // yet due, its next read waits for that retry: reading it sooner
+        // only returns the same tick again.
+        let mut source_rests_until: Option<Instant> = None;
 
         loop {
             // While the host's pause holds (FIX 6909) the loop reads no
-            // tick, so no deadline arms and no pass starts; a held tick
+            // tick, so no deadline arms and no pass starts; an owed tick
             // waits for the pause to lift.
             if !wait_unpaused(&factory, &mut shutdown).await {
                 break;
             }
-            // A single arbiter for plans, bounded pages, retries, ordinary
-            // passes, notifications and shutdown. Alternate ready wave work
-            // and ready ticks; a hot notification stream cannot pin either.
+            // The source running dry ends the run only once nothing is owed
+            // and no wave planner can bring more work.
+            if ticks_exhausted && wave_planner.is_none() && debt.is_empty() {
+                break;
+            }
+            let now = Instant::now();
+            if source_rests_until.is_some_and(|until| until <= now) {
+                source_rests_until = None;
+            }
             let wave_ready = wave.as_ref().is_some_and(WaveDispatchPump::ready);
-            let delay = wave.as_ref().and_then(|pump| pump.next_delay(now_secs()));
+            let delay = [
+                wave.as_ref().and_then(|pump| pump.next_delay(now_secs())),
+                debt.next_due()
+                    .map(|due| due.saturating_duration_since(now)),
+                source_rests_until.map(|until| until.saturating_duration_since(now)),
+            ]
+            .into_iter()
+            .flatten()
+            .min();
             let wake = next_supervisor_event(SupervisorEventInputs {
                 shutdown: &mut shutdown,
                 ticks: &mut ticks,
-                redrive_tick,
                 wave_events: &mut wave_events,
                 wave_enabled: wave_planner.is_some(),
+                source_open: !ticks_exhausted && source_rests_until.is_none(),
+                retry_ready: debt.ready(now),
                 wave_ready,
                 delay,
-                prefer_tick,
-                ticks_exhausted,
+                rotation,
             })
             .await;
-            let tick = match wake {
+            let owed = match wake {
                 SupervisorWake::Shutdown => break,
                 SupervisorWake::Wave => {
-                    prefer_tick = true;
+                    rotation.served(Lane::Wave);
                     if let (Some(planner), Some(actor), Some(pump)) =
                         (wave_planner.as_ref(), factory.actor(), wave.as_mut())
                     {
@@ -493,25 +236,7 @@ where
                             holder: wave_limits,
                             frontier: &mut wave_policy_frontier,
                         }) {
-                            Ok(pass) => {
-                                tracing::trace!(progressed = pass.progressed,
-                                    cursor = ?pass.next_cursor, retry = ?pass.earliest_retry,
-                                    "wave dispatch pass");
-                                if let Some(statement) = &pass.statement {
-                                    tracing::info!(
-                                        tasks = statement.task_count,
-                                        agents = statement.agent_count,
-                                        consults = statement.consult_count,
-                                        over_available = statement.over_available,
-                                        ?statement,
-                                        "wave plan applied"
-                                    );
-                                }
-                                for failure in pass.item_failures {
-                                    tracing::warn!(task = ?failure.candidate.task,
-                                        reason = failure.reason, "wave handoff deferred");
-                                }
-                            }
+                            Ok(pass) => report_wave_pass(pass),
                             Err(WaveQuantumError::Policy(error)) => {
                                 tracing::error!(?error, "wave operational policy invalid");
                                 return report;
@@ -536,17 +261,26 @@ where
                     }
                     continue;
                 }
+                SupervisorWake::Retry => {
+                    rotation.served(Lane::Retry);
+                    let Some(owed) = debt.take_ready(Instant::now()) else {
+                        continue;
+                    };
+                    owed
+                }
                 SupervisorWake::Tick(None) => {
                     ticks_exhausted = true;
-                    if wave_planner.is_none() {
-                        break;
-                    }
                     continue;
                 }
                 SupervisorWake::Tick(Some(tick)) => {
-                    redrive_tick = None;
-                    prefer_tick = false;
-                    tick
+                    rotation.served(Lane::Source);
+                    match debt.fresh(tick, Instant::now()) {
+                        FreshTick::Run(owed) => owed,
+                        FreshTick::Owed(due) => {
+                            source_rests_until = Some(due);
+                            continue;
+                        }
+                    }
                 }
             };
 
@@ -560,10 +294,10 @@ where
                 },
             };
             // A pause that began while the tick or the permit was awaited
-            // holds the tick until it lifts (FIX 6909).
+            // holds the tick, owed, until it lifts (FIX 6909).
             if paused(factory.pass_pause().as_ref()) {
                 drop(permit);
-                redrive_tick = Some(tick);
+                debt.owe_now(owed);
                 continue;
             }
             // One point-read per pass: the startup probe is an optimization,
@@ -581,26 +315,23 @@ where
                 &now_secs,
                 &mut factory,
                 &mut shutdown,
-                &tick,
+                &owed.tick,
             )
             .await;
             drop(permit);
 
-            if !account_pass_outcome(
+            account_pass_outcome(
                 outcome,
-                tick,
+                owed,
                 PassAccounting {
                     report: &mut report,
                     pass_index: &mut pass_index,
-                    backoff: &mut backoff,
-                    shutdown: &mut shutdown,
-                    redrive_tick: &mut redrive_tick,
+                    debt: &mut debt,
                 },
-            )
-            .await
-            {
-                break;
-            }
+            );
+            // The debt changed: the source reads again, and a tick it still
+            // redelivers rests behind its owed retry once more.
+            source_rests_until = None;
 
             if shutdown.requested() {
                 break;
@@ -608,82 +339,6 @@ where
         }
 
         report
-    }
-}
-
-/// Runs one pass panic-caught and cooperatively cancellable: a shutdown
-/// arriving mid-pass raises the pass's [`WakeCancellation`] flag and keeps
-/// awaiting — the pass future is NEVER dropped mid-await (H-S5/R2), so a
-/// gated write or off-record close in progress always runs to its boundary.
-///
-/// Factory/`Result` failures before `run_wake_pass` surface as
-/// [`PassOutcome::PreAdmissionFailed`] so the supervisor can re-drive the
-/// tick; panics anywhere in the pass still map to [`PassOutcome::Panicked`].
-pub(super) async fn run_pass_supervised<F: PassExecutorFactory>(
-    vault: &Vault,
-    config: &WakeSupervisorConfig,
-    pass_budget_id: &str,
-    now_secs: &NowSeconds,
-    factory: &mut F,
-    shutdown: &mut ShutdownListener,
-    tick: &Tick,
-) -> PassOutcome {
-    let cancel = WakeCancellation::new();
-    // The host's pause for this pass (FIX 6909), taken before the pass
-    // borrows the factory.
-    let mut pause = factory.pass_pause();
-    let mut pass = CatchUnwind::new(run_one_pass(
-        vault,
-        config,
-        pass_budget_id,
-        now_secs,
-        factory,
-        tick,
-        &cancel,
-    ));
-    loop {
-        tokio::select! {
-            biased;
-            () = shutdown.triggered(), if !cancel.is_cancelled() => {
-                // Cooperative preemption: flag only. The loop continues and
-                // the next iteration awaits the pass to completion (this
-                // branch disables itself once the flag is up).
-                cancel.cancel();
-            }
-            // The host's pause flags the pass the same way, and the pass is
-            // still awaited to its boundary: what it admitted parks Paused,
-            // resumed once the pause lifts.
-            () = pause_requested(&mut pause), if !cancel.is_cancelled() => {
-                cancel.pause();
-            }
-            result = &mut pass => {
-                return match result {
-                    // A pause that came while the pass ran its timer work,
-                    // where no arm above can see it, stopped that work too.
-                    Ok(Ok(pass_report)) if cancel.is_paused() || paused(pause.as_ref()) => {
-                        PassOutcome::Paused(pass_report)
-                    }
-                    Ok(Ok(pass_report)) => PassOutcome::Completed(pass_report),
-                    Ok(Err(PassRunError::PreAdmission(error))) => {
-                        PassOutcome::PreAdmissionFailed(error)
-                    }
-                    Ok(Err(PassRunError::Failed(error))) => PassOutcome::Failed(error),
-                    Err(_panic) => PassOutcome::Panicked,
-                };
-            }
-        }
-    }
-}
-
-/// Resolves once the host's pause asks the pass to stop; pends with no pause,
-/// and when its epoch closes without asking.
-async fn pause_requested(pause: &mut Option<watch::Receiver<bool>>) {
-    let asked = match pause {
-        Some(pause) => pause.wait_for(|asked| *asked).await.is_ok(),
-        None => false,
-    };
-    if !asked {
-        std::future::pending::<()>().await;
     }
 }
 
@@ -705,46 +360,6 @@ async fn wait_unpaused<F: PassExecutorFactory>(
             biased;
             () = shutdown.triggered() => return false,
             _ = pause.wait_for(|held| !*held) => {}
-        }
-    }
-}
-
-/// One-shot restart delay. NOT a heartbeat: it defers consuming the next
-/// already-signalled tick after a failed pass; it never generates a wakeup
-/// of its own. Returns false when shutdown fires during the wait.
-async fn wait_backoff(shutdown: &mut ShutdownListener, delay: Duration) -> bool {
-    tokio::select! {
-        biased;
-        () = shutdown.triggered() => false,
-        () = tokio::time::sleep(delay) => true,
-    }
-}
-
-/// Converts a panicking poll into a value so one exploding pass cannot take
-/// the supervisor down. Boxes the inner future — no unsafe pin projection.
-struct CatchUnwind<Fut> {
-    inner: Pin<Box<Fut>>,
-}
-
-impl<Fut> CatchUnwind<Fut> {
-    fn new(inner: Fut) -> Self {
-        Self {
-            inner: Box::pin(inner),
-        }
-    }
-}
-
-impl<Fut: Future> Future for CatchUnwind<Fut> {
-    type Output = std::thread::Result<Fut::Output>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // `Pin<Box<Fut>>` is Unpin, so plain mutable access is sound.
-        let this = self.get_mut();
-        let inner = this.inner.as_mut();
-        match std::panic::catch_unwind(AssertUnwindSafe(|| inner.poll(cx))) {
-            Ok(Poll::Ready(output)) => Poll::Ready(Ok(output)),
-            Ok(Poll::Pending) => Poll::Pending,
-            Err(panic) => Poll::Ready(Err(panic)),
         }
     }
 }
