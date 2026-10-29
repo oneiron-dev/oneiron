@@ -123,7 +123,7 @@ pub enum InboxExceptionClass {
 }
 
 /// B2 RS6 bulk verbs over one dreamer-run group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxBulkVerb {
     AcceptAll,
@@ -341,7 +341,7 @@ pub struct InboxCheckInException {
 }
 
 /// Outcome of one bulk verb over a group.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxBundleResolution {
     pub group_key: String,
     pub verb: InboxBulkVerb,
