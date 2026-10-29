@@ -95,7 +95,10 @@ impl GeneratedUiEnvelopeHead {
                     "generated-ui {kind} of unsupported wire version {protocol_version} must carry its whole-card fallbackText"
                 ))
             })?;
-        validate_required_lens_text("generated-ui unsupported-version fallbackText", &fallback_text)?;
+        validate_required_lens_text(
+            "generated-ui unsupported-version fallbackText",
+            &fallback_text,
+        )?;
         Ok(Some(GeneratedUiFallback {
             protocol_version,
             fallback_text,

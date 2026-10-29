@@ -89,7 +89,11 @@ async fn read_body(headers: &HeaderMap, body: Body) -> Result<AnchorSign, ApiErr
         let frame = frame.map_err(|_| invalid())?;
         let received = held.len() + frame.len();
         if received > ANCHOR_SIGN_BODY_BYTES {
-            return Err(ApiError::payload_too_large("body", ANCHOR_SIGN_BODY_BYTES, received));
+            return Err(ApiError::payload_too_large(
+                "body",
+                ANCHOR_SIGN_BODY_BYTES,
+                received,
+            ));
         }
         held.extend_from_slice(&frame);
     }
@@ -134,7 +138,10 @@ async fn anchor_sign(
     let signed = blocking(move || -> OwnerResult<AnchorSigned> {
         let recipients = std::mem::take(&mut request.recipients);
         let recipients = secrets::custody_plan(None, recipients)?.recipients;
-        let kit = Kit::parse(std::mem::take(&mut request.pieces), request.passphrase.take())?;
+        let kit = Kit::parse(
+            std::mem::take(&mut request.pieces),
+            request.passphrase.take(),
+        )?;
         let seed = kit.seed(&vault)?;
         secrets::sign_with_anchor(&vault, &owner, &seed, &request.name, &recipients)
     })

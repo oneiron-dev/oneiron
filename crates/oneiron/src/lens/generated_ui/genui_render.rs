@@ -358,13 +358,10 @@ pub struct GeneratedUiNode {
 
 /// The root node's `fallbackText`: the whole card as text.
 fn root_fallback_text(nodes: &[GeneratedUiNode], root: &LensAtomId) -> LensText {
-    nodes
-        .iter()
-        .find(|node| &node.id == root)
-        .map_or_else(
-            || LensText::new("generated ui").expect("static fallback is valid"),
-            |node| node.fallback_text.clone(),
-        )
+    nodes.iter().find(|node| &node.id == root).map_or_else(
+        || LensText::new("generated ui").expect("static fallback is valid"),
+        |node| node.fallback_text.clone(),
+    )
 }
 
 impl GeneratedUiNode {

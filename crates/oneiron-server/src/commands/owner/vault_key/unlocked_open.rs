@@ -215,7 +215,10 @@ pub(in crate::commands::owner) fn open_with_unlock(
     }
     let unlock = HostUnlock::read_for_vault(request, || Ok(vault.vault_key_vault_id()))?;
     let unlocked = unlock.unlock_live(&vault).map_err(|error| {
-        anyhow::anyhow!("the vault key did not unlock with {}: {error}", unlock.name())
+        anyhow::anyhow!(
+            "the vault key did not unlock with {}: {error}",
+            unlock.name()
+        )
     });
     name_released(&unlock);
     unlocked?;

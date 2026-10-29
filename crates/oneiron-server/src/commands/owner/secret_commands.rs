@@ -33,9 +33,8 @@ const SECRET_VALUE_LIMIT: usize = 1 << 20;
 pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
     // Only a door that takes a value reads stdin; revoke and reveal read
     // nothing. A terminal is asked for it with its echo off (FIX 1490).
-    let value = |what: &str| {
-        read_stdin_secret(what, TerminalRead::ToEnd, |input| read_secret_value(input))
-    };
+    let value =
+        |what: &str| read_stdin_secret(what, TerminalRead::ToEnd, |input| read_secret_value(input));
     match command {
         SecretsCommand::Register(args) => {
             emit(&register_secret(*args, &value("the secret value")?)?)

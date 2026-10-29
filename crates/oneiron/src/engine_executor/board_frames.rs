@@ -26,7 +26,11 @@ pub(super) fn record_step_board_frames(
     bridge_start: usize,
 ) {
     if let Err(error) = keep_step_board_frames(storage, record, seq, bridge_start) {
-        tracing::warn!(?error, step = seq, "a step's board frames were not kept for its view");
+        tracing::warn!(
+            ?error,
+            step = seq,
+            "a step's board frames were not kept for its view"
+        );
     }
 }
 
@@ -87,13 +91,18 @@ impl EngineNativeExecutor<'_> {
         let Some(output) = record.outputs.iter().find(|output| output.path == path) else {
             return Ok(None);
         };
-        let head = format!(
-            "Board frames delivered beside step {seq}'s verb answers, not program output"
-        );
+        let head =
+            format!("Board frames delivered beside step {seq}'s verb answers, not program output");
         let text = if clean_for_context(&self.storage, Some(record.run_id), output)? {
-            format!("{head}:\n{}", load_utf8_output(&self.storage, record, &path)?)
+            format!(
+                "{head}:\n{}",
+                load_utf8_output(&self.storage, record, &path)?
+            )
         } else {
-            format!("{head}: {}", crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD)
+            format!(
+                "{head}: {}",
+                crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+            )
         };
         Ok(Some(LlmMessage {
             role: LlmMessageRole::User,
