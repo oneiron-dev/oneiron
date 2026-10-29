@@ -20,7 +20,14 @@
 //!
 //! When no handoff arrives, or one is incomplete, none of this runs, and the
 //! new home opens its cycles as before.
+//!
+//! FIX 8875 stage 2: each family travels as its content-free facts and each
+//! actor's partition apart (`actor_content`), the partitions sealed under
+//! their actors' erasable keys. Adoption rejoins them scrubbed-first: a row
+//! whose subject's content did not open here, or whose subject is erased
+//! here, is history that lands nothing and conflicts with nothing.
 
+mod actor_content;
 mod cycle_rows;
 mod item_rows;
 
@@ -29,10 +36,15 @@ use std::collections::BTreeSet;
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
+use self::actor_content::{
+    FreeTimeActorPartition, FreeTimeActorPiece, FreeTimeAdoptRow, FreeTimePartitioned,
+    FreeTimeSlot, Joined, Pieces, PolicyFacts, partition_policy, rejoin_policy,
+};
 use super::erase::erased_in_txn;
 use super::free_time_item_waits_unstarted;
 use super::policy::FreeTimePolicyRecord;
-use super::{CLOCK, CYCLE, FreeTimeClock, FreeTimeItemReceipt, POLICY, RECEIPT};
+use super::receipt::FreeTimeItemOutcome;
+use super::{CLOCK, CYCLE, FreeTimeClock, FreeTimeItemReceipt, FreeTimeKind, POLICY, RECEIPT};
 use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::AttemptQueue;
 use crate::authority::{GrantStanding, OwnerActKind, grant_standing_in_txn};
@@ -99,47 +111,78 @@ fn set_once<T: PartialEq>(local: Option<&T>, carried: Option<&T>) -> bool {
 }
 
 /// Every agent's policy row a home move carries, a cleared policy's witness
-/// included.
+/// included: each row's facts, its subject, setter and linked machines apart.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct FreeTimePolicyRows {
-    rows: Vec<PolicyRow>,
+    rows: Vec<PolicyFacts>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct PolicyRow {
-    agent: EntityId,
-    record: FreeTimePolicyRecord,
+impl FreeTimePolicyRows {
+    /// `rows`, each agent's policy row here, partitioned.
+    fn partition(rows: Vec<(EntityId, FreeTimePolicyRecord)>) -> Result<FreeTimePartitioned<Self>> {
+        let mut pieces = Pieces::new(FreeTimeSlot::Policy);
+        let mut facts = Vec::with_capacity(rows.len());
+        for (index, (agent, record)) in rows.iter().enumerate() {
+            let row = pieces.row(index)?;
+            facts.push(partition_policy(&mut pieces, row, *agent, record));
+        }
+        Ok(pieces.partitioned(Self { rows: facts }))
+    }
+
+    /// Each carried row rejoined with the pieces that opened here,
+    /// scrubbed-first (FIX 10764).
+    fn rejoin_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        rows: FreeTimePartitioned<Self>,
+    ) -> Result<Vec<FreeTimeAdoptRow<(EntityId, FreeTimePolicyRecord), PolicyFacts>>> {
+        let joined = Joined::in_txn(vault, txn, FreeTimeSlot::Policy, rows.actors)?;
+        Ok((0u32..)
+            .zip(rows.facts.rows)
+            .map(|(row, facts)| rejoin_policy(&joined, row, facts))
+            .collect())
+    }
 }
 
 impl HomeTable for FreeTimePolicyRows {
     type Rows = Self;
+    type Actor = FreeTimeActorPartition;
     const TABLE: &'static SideTableDecl = &side_table::DREAMER_FREE_TIME_POLICY;
-    const SCHEMA_VERSION: u16 = 1;
+    const SCHEMA_VERSION: u16 = 2;
 
     /// An owner's set or clear is one writer of its own: none is in flight.
     fn quiescent(_vault: &Vault, _txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
         Ok(true)
     }
 
-    fn export(vault: &Vault, txn: &RoTxn<'_>, _fence: &HomeFence) -> Result<Self> {
+    fn export(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        _fence: &HomeFence,
+    ) -> Result<FreeTimePartitioned<Self>> {
         let rows = POLICY
             .iter_from(&vault.store, txn, &[])?
-            .map(|row| row.map(|(agent, record)| PolicyRow { agent, record }))
             .collect::<Result<_>>()?;
-        Ok(Self { rows })
+        Self::partition(rows)
     }
 
     /// The witnesses decide: a carried row whose acts extend this node's
     /// lands; a row here whose acts extend the carried ones is the owner's
     /// later say-so here and stays; any other difference is a Conflict. Rows
-    /// only this node holds stay: each is the owner's own act.
+    /// only this node holds stay: each is the owner's own act. A row whose
+    /// subject did not open here lands nothing; one whose setter or linked
+    /// machine did not lands without that attribution.
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
         _fence: &HomeFence,
-        rows: Self,
+        rows: FreeTimePartitioned<Self>,
     ) -> Result<TableAdopt> {
-        for PolicyRow { agent, record } in rows.rows {
+        for row in Self::rejoin_in_txn(vault, txn, rows)? {
+            let (agent, record) = match row {
+                FreeTimeAdoptRow::Live(live) => live,
+                FreeTimeAdoptRow::Scrubbed(_) => continue,
+            };
             if erased_in_txn(vault, txn, &agent)? {
                 continue;
             }
@@ -179,16 +222,40 @@ impl HomeTable for FreeTimePolicyRows {
     }
 }
 
-/// Every agent's clock a home move carries.
+/// Every agent's clock a home move carries: each clock, its agent apart.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct FreeTimeClockRows {
-    rows: Vec<ClockRow>,
+    rows: Vec<FreeTimeClock>,
 }
 
-#[derive(Serialize, Deserialize)]
-struct ClockRow {
-    agent: EntityId,
-    clock: FreeTimeClock,
+impl FreeTimeClockRows {
+    /// `rows`, each agent's clock here, partitioned.
+    fn partition(rows: Vec<(EntityId, FreeTimeClock)>) -> Result<FreeTimePartitioned<Self>> {
+        let mut pieces = Pieces::new(FreeTimeSlot::Clock);
+        let mut clocks = Vec::with_capacity(rows.len());
+        for (index, (agent, clock)) in rows.into_iter().enumerate() {
+            let row = pieces.row(index)?;
+            pieces.push(agent, FreeTimeActorPiece::Subject { row });
+            clocks.push(clock);
+        }
+        Ok(pieces.partitioned(Self { rows: clocks }))
+    }
+
+    /// Each carried clock rejoined with its agent, scrubbed-first.
+    fn rejoin_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        rows: FreeTimePartitioned<Self>,
+    ) -> Result<Vec<FreeTimeAdoptRow<(EntityId, FreeTimeClock), FreeTimeClock>>> {
+        let joined = Joined::in_txn(vault, txn, FreeTimeSlot::Clock, rows.actors)?;
+        Ok((0u32..)
+            .zip(rows.facts.rows)
+            .map(|(row, clock)| match joined.subject(row) {
+                Some(agent) => FreeTimeAdoptRow::Live((agent, clock)),
+                None => FreeTimeAdoptRow::Scrubbed(clock),
+            })
+            .collect())
+    }
 }
 
 /// Whether the carried clock follows `local`: a later boundary, or the same
@@ -200,8 +267,9 @@ fn clock_follows(local: &FreeTimeClock, carried: &FreeTimeClock) -> bool {
 
 impl HomeTable for FreeTimeClockRows {
     type Rows = Self;
+    type Actor = FreeTimeActorPartition;
     const TABLE: &'static SideTableDecl = &side_table::DREAMER_FREE_TIME_CLOCK;
-    const SCHEMA_VERSION: u16 = 1;
+    const SCHEMA_VERSION: u16 = 2;
 
     /// A clock moves only where a cycle opens or ends: on the home, at its
     /// boundary, or with its items' receipts (settled with the cycles).
@@ -209,25 +277,38 @@ impl HomeTable for FreeTimeClockRows {
         Ok(true)
     }
 
-    fn export(vault: &Vault, txn: &RoTxn<'_>, _fence: &HomeFence) -> Result<Self> {
+    fn export(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        _fence: &HomeFence,
+    ) -> Result<FreeTimePartitioned<Self>> {
         let rows = CLOCK
             .iter_from(&vault.store, txn, &[])?
-            .map(|row| row.map(|(agent, clock)| ClockRow { agent, clock }))
             .collect::<Result<_>>()?;
-        Ok(Self { rows })
+        Self::partition(rows)
     }
 
     /// A carried clock is the due floor here once it lands, so no boundary
     /// it passed opens again. On a node that froze its rows, a clock the
-    /// successor no longer holds went with its policy's clear.
+    /// successor no longer holds went with its policy's clear; while any
+    /// carried clock's agent did not open here, no clock here can be told
+    /// apart from it, so every one stays.
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
         _fence: &HomeFence,
-        rows: Self,
+        rows: FreeTimePartitioned<Self>,
     ) -> Result<TableAdopt> {
         let mut carried = BTreeSet::new();
-        for ClockRow { agent, clock } in rows.rows {
+        let mut scrubbed = false;
+        for row in Self::rejoin_in_txn(vault, txn, rows)? {
+            let (agent, clock) = match row {
+                FreeTimeAdoptRow::Live(live) => live,
+                FreeTimeAdoptRow::Scrubbed(_) => {
+                    scrubbed = true;
+                    continue;
+                }
+            };
             carried.insert(agent);
             if erased_in_txn(vault, txn, &agent)? {
                 continue;
@@ -240,7 +321,7 @@ impl HomeTable for FreeTimeClockRows {
                 _ => CLOCK.put(&vault.store, txn, &agent, &clock)?,
             }
         }
-        if froze_home_state_in_txn(vault, txn)? {
+        if !scrubbed && froze_home_state_in_txn(vault, txn)? {
             for agent in CLOCK.scan_keys(&vault.store, txn, &[])? {
                 if !carried.contains(&agent) {
                     CLOCK.delete(&vault.store, txn, &agent)?;
@@ -255,45 +336,147 @@ impl HomeTable for FreeTimeClockRows {
     }
 }
 
-/// Every item receipt a home move carries.
+/// Every item receipt a home move carries: each receipt's facts, its agent
+/// and its detail apart.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct FreeTimeReceiptRows {
-    receipts: Vec<FreeTimeItemReceipt>,
+    receipts: Vec<ReceiptFacts>,
+}
+
+/// One receipt without its agent, its proposal or its context-read code:
+/// what ended, how and when, and whether a proposal landed.
+#[derive(Serialize, Deserialize)]
+struct ReceiptFacts {
+    cycle: EntityId,
+    item: EntityId,
+    kind: FreeTimeKind,
+    policy_revision: u64,
+    outcome: FreeTimeItemOutcome,
+    attempt: Option<[u8; 16]>,
+    proposal_landed: bool,
+    at: u64,
+}
+
+impl FreeTimeReceiptRows {
+    /// `receipts`, every receipt here, partitioned: each one's agent and
+    /// detail in its agent's partition.
+    fn partition(receipts: Vec<FreeTimeItemReceipt>) -> Result<FreeTimePartitioned<Self>> {
+        let mut pieces = Pieces::new(FreeTimeSlot::Receipt);
+        let mut facts = Vec::with_capacity(receipts.len());
+        for (index, receipt) in receipts.into_iter().enumerate() {
+            let row = pieces.row(index)?;
+            pieces.push(receipt.agent, FreeTimeActorPiece::Subject { row });
+            if receipt.proposal.is_some() || receipt.context_unread.is_some() {
+                pieces.push(
+                    receipt.agent,
+                    FreeTimeActorPiece::ReceiptDetail {
+                        row,
+                        proposal: receipt.proposal,
+                        context_unread: receipt.context_unread,
+                    },
+                );
+            }
+            facts.push(ReceiptFacts {
+                cycle: receipt.cycle,
+                item: receipt.item,
+                kind: receipt.kind,
+                policy_revision: receipt.policy_revision,
+                outcome: receipt.outcome,
+                attempt: receipt.attempt,
+                proposal_landed: receipt.proposal.is_some(),
+                at: receipt.at,
+            });
+        }
+        Ok(pieces.partitioned(Self { receipts: facts }))
+    }
+
+    /// Each carried receipt rejoined with its agent and detail,
+    /// scrubbed-first.
+    fn rejoin_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        rows: FreeTimePartitioned<Self>,
+    ) -> Result<Vec<FreeTimeAdoptRow<FreeTimeItemReceipt, ReceiptFacts>>> {
+        let joined = Joined::in_txn(vault, txn, FreeTimeSlot::Receipt, rows.actors)?;
+        Ok((0u32..)
+            .zip(rows.facts.receipts)
+            .map(|(row, facts)| {
+                let Some(agent) = joined.subject(row) else {
+                    return FreeTimeAdoptRow::Scrubbed(facts);
+                };
+                let detail = joined.find(row, |piece| match piece {
+                    FreeTimeActorPiece::ReceiptDetail {
+                        proposal,
+                        context_unread,
+                        ..
+                    } => Some((*proposal, context_unread.clone())),
+                    _ => None,
+                });
+                let (proposal, context_unread) = detail.map_or((None, None), |(_, found)| found);
+                FreeTimeAdoptRow::Live(FreeTimeItemReceipt {
+                    agent,
+                    cycle: facts.cycle,
+                    item: facts.item,
+                    kind: facts.kind,
+                    policy_revision: facts.policy_revision,
+                    outcome: facts.outcome,
+                    attempt: facts.attempt,
+                    proposal,
+                    context_unread,
+                    at: facts.at,
+                })
+            })
+            .collect())
+    }
 }
 
 impl HomeTable for FreeTimeReceiptRows {
     type Rows = Self;
+    type Actor = FreeTimeActorPartition;
     const TABLE: &'static SideTableDecl = &side_table::DREAMER_FREE_TIME_RECEIPT;
-    const SCHEMA_VERSION: u16 = 1;
+    const SCHEMA_VERSION: u16 = 2;
 
     fn quiescent(vault: &Vault, txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
         settled_in_txn(vault, txn)
     }
 
-    fn export(vault: &Vault, txn: &RoTxn<'_>, _fence: &HomeFence) -> Result<Self> {
+    fn export(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        _fence: &HomeFence,
+    ) -> Result<FreeTimePartitioned<Self>> {
         let receipts = RECEIPT
             .iter_from(&vault.store, txn, &[])?
             .map(|row| row.map(|(_, receipt)| receipt))
             .collect::<Result<_>>()?;
-        Ok(Self { receipts })
+        Self::partition(receipts)
     }
 
     /// A receipt never changes once recorded: a carried one lands where
     /// there is none, and a different one here is a Conflict. On a node that
-    /// froze its rows, a receipt the successor lacks was recorded after.
+    /// froze its rows, a receipt the successor lacks was recorded after. A
+    /// receipt whose agent did not open here lands nothing and is carried
+    /// all the same, by its cycle and item.
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
         _fence: &HomeFence,
-        rows: Self,
+        rows: FreeTimePartitioned<Self>,
     ) -> Result<TableAdopt> {
         let mut carried = BTreeSet::new();
-        for receipt in rows.receipts {
-            let key = (receipt.agent, receipt.cycle, receipt.item);
-            carried.insert(key);
+        for row in Self::rejoin_in_txn(vault, txn, rows)? {
+            let receipt = match row {
+                FreeTimeAdoptRow::Live(receipt) => receipt,
+                FreeTimeAdoptRow::Scrubbed(facts) => {
+                    carried.insert((facts.cycle, facts.item));
+                    continue;
+                }
+            };
+            carried.insert((receipt.cycle, receipt.item));
             if erased_in_txn(vault, txn, &receipt.agent)? {
                 continue;
             }
+            let key = (receipt.agent, receipt.cycle, receipt.item);
             match RECEIPT.get(&vault.store, txn, &key)? {
                 None => RECEIPT.put(&vault.store, txn, &key, &receipt)?,
                 Some(local) if local == receipt => {}
@@ -304,7 +487,7 @@ impl HomeTable for FreeTimeReceiptRows {
             && RECEIPT
                 .scan_keys(&vault.store, txn, &[])?
                 .iter()
-                .any(|key| !carried.contains(key))
+                .any(|(_, cycle, item)| !carried.contains(&(*cycle, *item)))
         {
             return Ok(TableAdopt::Conflict);
         }
