@@ -25,7 +25,8 @@ use crate::outbound_chokepoint::{
 };
 use crate::outbound_consent::{OutboundBindingAuthority, OutboundResultSender};
 use crate::outbound_intent_ledger::{
-    BudgetClass, FrozenOutboundCall, IntentLedgerError, OutboundSendOutcome, RemoteTaskHandle,
+    BudgetClass, FrozenOutboundCall, IntentLedgerError, OutboundSendOutcome, ProviderWait,
+    RemoteTaskHandle,
 };
 
 /// What one run of the outward leg did.
@@ -279,7 +280,8 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
 }
 
 /// The host's result sender as the chokepoint's transport. The leg keeps no
-/// result body, so only the send's outcome and its remote task pass through.
+/// result body, so only the send's outcome, its remote task, and its
+/// provider wait pass through.
 struct SenderTransport<'a, S>(&'a mut S);
 
 impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
@@ -289,6 +291,10 @@ impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
 
     fn remote_task(&self) -> Option<RemoteTaskHandle> {
         self.0.remote_task()
+    }
+
+    fn provider_wait(&self) -> Option<ProviderWait> {
+        self.0.provider_wait()
     }
 }
 
