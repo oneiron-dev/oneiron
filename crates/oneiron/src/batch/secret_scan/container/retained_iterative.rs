@@ -26,7 +26,7 @@
 //! 2b-ii), over this one traversal and these readers.
 
 use super::{
-    Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, writes_handles,
+    Budget, Kind, Stop, Walked, archive, classify, gzip, over_budget, pdf, tar, writes_handles, xz,
 };
 use crate::error::Error;
 use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, filled, filled_with};
@@ -332,6 +332,9 @@ impl Open {
         let copy = match self.container {
             Kind::Zip => archive::rebuilt(&self.copy, budget, &mut each),
             Kind::Gzip => gzip::rebuilt(&self.copy, budget, &mut each),
+            // FIX 2471: a tar or xz container is rebuilt around its masked members.
+            Kind::Tar => tar::rebuilt(&self.copy, budget, &mut each),
+            Kind::Xz => xz::rebuilt(&self.copy, budget, &mut each),
             Kind::Pdf => pdf::rebuilt(&self.copy, budget, &mut each),
         }?;
         if built.next().is_some() {
@@ -356,6 +359,9 @@ fn members(
     match container {
         Kind::Zip => archive::members(bytes, budget, each),
         Kind::Gzip => gzip::members(bytes, budget, each),
+        // FIX 2471: a tar's files and an xz payload are members.
+        Kind::Tar => tar::members(bytes, budget, each),
+        Kind::Xz => xz::members(bytes, budget, each),
         Kind::Pdf => pdf::members(bytes, budget, each),
     }
 }

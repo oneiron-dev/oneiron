@@ -464,6 +464,11 @@ fn steps_value(member: &[MemberStep]) -> Value {
                     Value::Array(vec![Value::from("zip"), Value::from(entry)])
                 }
                 MemberStep::Gzip => Value::Array(vec![Value::from("gzip")]),
+                // FIX 2471: a tar entry and an xz payload.
+                MemberStep::Tar { entry } => {
+                    Value::Array(vec![Value::from("tar"), Value::from(entry)])
+                }
+                MemberStep::Xz => Value::Array(vec![Value::from("xz")]),
                 MemberStep::PdfStream { object, generation } => Value::Array(vec![
                     Value::from("pdf_stream"),
                     Value::from(object),

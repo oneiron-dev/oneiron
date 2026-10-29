@@ -503,6 +503,12 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&entry.to_be_bytes());
         }
         MemberStep::Gzip => out.push(1),
+        // FIX 2471: a tar entry and an xz payload.
+        MemberStep::Tar { entry } => {
+            out.push(4);
+            out.extend_from_slice(&entry.to_be_bytes());
+        }
+        MemberStep::Xz => out.push(5),
         MemberStep::PdfStream { object, generation } => {
             out.push(2);
             out.extend_from_slice(&object.to_be_bytes());
@@ -557,6 +563,9 @@ impl<'b> Spooled<'b> {
         Ok(match self.byte()? {
             0 => MemberStep::Zip { entry: self.u32()? },
             1 => MemberStep::Gzip,
+            // FIX 2471: a tar entry and an xz payload.
+            4 => MemberStep::Tar { entry: self.u32()? },
+            5 => MemberStep::Xz,
             2 => MemberStep::PdfStream {
                 object: self.u32()?,
                 generation: self.u16()?,
