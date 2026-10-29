@@ -71,6 +71,13 @@ async fn ws_upgrade_handler(
     // owner his supervisor attested. There each call it carries is admitted
     // under the reap freeze as one `POST /mcp` is (FIX 5128).
     if super::mcp_socket::requested(&ws) {
+        // A stale owner sign-in, whose per-request booking doors serve him,
+        // holds a socket that books and nothing more (FIX 5935).
+        if let Some(holder) =
+            super::mcp_socket::stale_booking_holder(&headers, &extensions, &server)
+        {
+            return super::mcp_socket::booking_upgrade(ws, &headers, &extensions, server, holder);
+        }
         return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
     }
     let auth = match CoreAuth::for_attested_request(&headers, &extensions, "/ws", &server) {
