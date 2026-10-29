@@ -148,8 +148,13 @@ impl SystemOneSeat {
         self.transport.preflight()
     }
 
-    /// The exact request `request` is sent as.
-    fn build(&self, request: &SeatRequest, time_left: Duration) -> LlmResult<SystemOneHttpRequest> {
+    /// The exact request `request` is sent as. Each image is decoded and resized on a
+    /// blocking thread, off the caller's runtime.
+    async fn build(
+        &self,
+        request: &SeatRequest,
+        time_left: Duration,
+    ) -> LlmResult<SystemOneHttpRequest> {
         let model = format!("{}-{}", self.pin.model, self.pin.version);
         let (kind, criteria) = match &request.question.contract {
             // The question's criteria triple, as what a yes and a no mean.
@@ -177,7 +182,7 @@ impl SystemOneSeat {
         let mut state = request.state.clone();
         let mut assets = serde_json::Map::new();
         for (index, image) in request.images.iter().enumerate() {
-            let fitted = image.fitted(MAX_IMAGE_EDGE)?;
+            let fitted = image.fitted_async(MAX_IMAGE_EDGE).await?;
             let reference = format!("oneiron-image-{index}-{}", image.name);
             state[image.name.as_str()] = json!(reference);
             assets.insert(
@@ -225,7 +230,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
     ) -> SeatFuture<'a> {
         Box::pin(async move {
             request.validate_remote()?;
-            let sent = self.build(&request, time_left)?;
+            let sent = self.build(&request, time_left).await?;
             let model = sent.model.clone();
             let response = self.transport.send(sent, lease).await?;
             if !(200..300).contains(&response.status) {

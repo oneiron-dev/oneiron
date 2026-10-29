@@ -106,6 +106,16 @@ impl DecisionImage {
         })
     }
 
+    /// [`Self::fitted`] on a blocking thread, for a seat answering on an async runtime:
+    /// the decode and resize run off the runtime's workers. What it sends and the errors
+    /// it returns are [`Self::fitted`]'s.
+    pub async fn fitted_async(&self, max_edge: u32) -> LlmResult<ImageBytes> {
+        let image = self.clone();
+        tokio::task::spawn_blocking(move || image.fitted(max_edge))
+            .await
+            .map_err(|_| FatalLlmError::InvalidRequest)?
+    }
+
     /// Standard padded base64 of `image`, with no `data:` prefix.
     pub fn base64(image: &ImageBytes) -> String {
         base64::engine::general_purpose::STANDARD.encode(&image.bytes)
