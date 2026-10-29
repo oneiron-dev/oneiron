@@ -164,6 +164,28 @@ fn decode(codec: Codec, raw: &[u8], cap: usize) -> Result<Vec<u8>, ApiError> {
     Ok(decoded)
 }
 
+/// A copy of `raw` decoded as [`decode_request`] would decode it, for a door
+/// that classifies the body before this layer runs (FIX 11520): the same
+/// coding and the same cap, but the request keeps its raw bytes for this
+/// layer to decode. `Some` only when a coding was decoded; a body with no
+/// coding, an unknown or stacked coding, one that does not decode, or one
+/// that decodes past the route's cap comes back as `None`, so the door
+/// classifies the arrival and the route refuses it as it always did.
+pub(crate) fn decode_copy(headers: &HeaderMap, path: &str, raw: &[u8]) -> Option<Vec<u8>> {
+    let cap = decoded_body_cap(path)?;
+    let mut encodings = headers.get_all(header::CONTENT_ENCODING).into_iter();
+    let encoding = encodings.next()?;
+    let named = encoding.to_str().unwrap_or("").trim().to_ascii_lowercase();
+    // One coding or none, as the request decoder reads it.
+    let codec = match (named.as_str(), encodings.next()) {
+        ("identity", None) => return None,
+        ("zstd", None) => Codec::Zstd,
+        ("gzip" | "x-gzip", None) => Codec::Gzip,
+        _ => return None,
+    };
+    decode(codec, raw, cap).ok()
+}
+
 fn too_large(cap: usize) -> ApiError {
     ApiError::payload_too_large("request body", cap, cap.saturating_add(1))
 }
