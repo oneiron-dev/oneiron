@@ -366,6 +366,14 @@ class HostRootOpened(TypedDict):
     memory: "Oneiron"
     host_root: HostRootProfile
 
+class ExportReceipt(TypedDict):
+    # The archive manifest's format: "archive" or "okf".
+    format: str
+    # The archive's length in bytes.
+    bytes: int
+    # BLAKE3 of the archive, lowercase hex.
+    digest: str
+
 class OneironError(RuntimeError):
     code: str
     message: str
@@ -423,6 +431,10 @@ class Oneiron:
         """Sends one event on a lens card the connected server rendered; embedded raises BAD_REQUEST."""
     def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
         """Closes a lens card the connected server rendered and frees its frame."""
+    def export_to(
+        self, path: str | os.PathLike[str], format: str | None = None
+    ) -> ExportReceipt:
+        """Exports the whole vault into the file at ``path``; answers its receipt."""
 # BEGIN GENERATED FACADE VERBS
     @property
     def vault(self) -> "Oneiron._VaultVerbs": ...

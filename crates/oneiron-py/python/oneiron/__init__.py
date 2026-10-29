@@ -367,6 +367,21 @@ class Oneiron:
         """
         return json.loads(_translate(lambda: self._client.close_lens_frame(card_id)))
 
+    def export_to(
+        self, path: str | os.PathLike[str], format: str | None = None
+    ) -> dict[str, Any]:
+        """Exports the whole vault into the file at ``path``, owner only.
+
+        As ``vault.export`` does: ``format`` is ``"archive"`` (the default)
+        or ``"okf"``. The file is created or truncated; the answer is the
+        archive's receipt, ``{"format", "bytes", "digest"}``. Over a server
+        the archive streams through a kept transfer, so no ceiling on a
+        reply applies to it. A path whose file cannot be created raises
+        ``BAD_REQUEST``.
+        """
+        resolved = os.fspath(path)
+        return json.loads(_translate(lambda: self._client.export_to(resolved, format)))
+
     # BEGIN GENERATED FACADE VERBS
     @property
     def vault(self) -> "Oneiron._VaultVerbs":

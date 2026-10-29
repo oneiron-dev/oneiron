@@ -274,6 +274,73 @@ pub struct SkillOptimizeGoalBindRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillOptimizeGoalRevision {
     pub goal_revision: String,
+    /// The tradeoff capacity crossings the goal's rules stand over now, if
+    /// any; set only by the preference write, never by the goal bind.
+    pub tradeoff_capacity_advisory: Option<Vec<TradeoffCapacityAdvisory>>,
+}
+
+/// One policy limit a goal's tradeoff rules have crossed (FIX 9123): the
+/// capacity advisory the gate logs, carried on the preference write
+/// response and the ask view. Advisory only: nothing was refused, and
+/// every pending decision keeps its durable ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TradeoffCapacityAdvisory {
+    /// More authored rules than `max_authored_rules`.
+    AuthoredRules { held: u64, limit: u64 },
+    /// More learned picks than a finite `max_learned_rules`.
+    LearnedRules { held: u64, limit: u64 },
+}
+
+impl TradeoffCapacityAdvisory {
+    /// The reason code the gate logs for this crossing.
+    #[must_use]
+    pub const fn reason_code(self) -> &'static str {
+        match self {
+            Self::AuthoredRules { .. } => "gate.tradeoff_authored_rules_over_policy",
+            Self::LearnedRules { .. } => "gate.tradeoff_learned_rules_over_policy",
+        }
+    }
+}
+
+/// The capacity crossings `preferences` stands over now, against its
+/// holder's resolved limits: the advisory the gate logs, recomputed here
+/// for the DTO without touching the gate. Empty when the rules fit, and
+/// when the policy cannot be read: an unreadable policy skips the
+/// advisory, never the read or write it rides on.
+fn tradeoff_capacity_advisory(
+    vault: &Vault,
+    preferences: &optimize::SkillTradeoffPreferences,
+) -> Vec<TradeoffCapacityAdvisory> {
+    let txn = match vault.store.env.read_txn() {
+        Ok(txn) => txn,
+        Err(_) => return Vec::new(),
+    };
+    let limits = match crate::gate::skill_tradeoff_limits_in_txn(
+        &vault.store,
+        &txn,
+        &preferences.responsible,
+    ) {
+        Ok(limits) => limits,
+        Err(_) => return Vec::new(),
+    };
+    let count = |rules: &[optimize::TradeoffRule]| u64::try_from(rules.len()).unwrap_or(u64::MAX);
+    let mut crossings = Vec::new();
+    if count(&preferences.rules) > limits.max_authored_rules {
+        crossings.push(TradeoffCapacityAdvisory::AuthoredRules {
+            held: count(&preferences.rules),
+            limit: limits.max_authored_rules,
+        });
+    }
+    if let Some(limit) = limits.max_learned_rules
+        && count(&preferences.learned) > limit
+    {
+        crossings.push(TradeoffCapacityAdvisory::LearnedRules {
+            held: count(&preferences.learned),
+            limit,
+        });
+    }
+    crossings
 }
 
 pub fn skill_optimize_goal_bind_as_owner(
@@ -283,6 +350,7 @@ pub fn skill_optimize_goal_bind_as_owner(
 ) -> MemoryResult<SkillOptimizeGoalRevision> {
     Ok(SkillOptimizeGoalRevision {
         goal_revision: optimize::set_skill_goal_project(vault, owner, &input.skill, input.project)?,
+        tradeoff_capacity_advisory: None,
     })
 }
 
@@ -308,14 +376,21 @@ pub fn skill_optimize_preferences_set_as_owner(
     owner: &AuthenticatedOwner,
     input: &SkillOptimizePreferencesSetRequest,
 ) -> MemoryResult<SkillOptimizeGoalRevision> {
+    let goal_revision = optimize::set_skill_tradeoff_preferences(
+        vault,
+        owner,
+        &input.skill,
+        input.rules.clone(),
+        input.jev_band,
+    )?;
+    let tradeoff_capacity_advisory = optimize::skill_tradeoff_preferences(vault, &input.skill)
+        .ok()
+        .flatten()
+        .map(|preferences| tradeoff_capacity_advisory(vault, &preferences))
+        .filter(|crossings| !crossings.is_empty());
     Ok(SkillOptimizeGoalRevision {
-        goal_revision: optimize::set_skill_tradeoff_preferences(
-            vault,
-            owner,
-            &input.skill,
-            input.rules.clone(),
-            input.jev_band,
-        )?,
+        goal_revision,
+        tradeoff_capacity_advisory,
     })
 }
 
@@ -324,6 +399,35 @@ pub struct SkillOptimizeTradeoffAskView {
     /// The engine-computed digest the pick must echo; no client codec is needed.
     pub question_digest: String,
     pub ask: optimize::SkillTradeoffAsk,
+    /// The tradeoff capacity crossings the ask's goal rules stand over now,
+    /// if any; an advisory, never a refusal.
+    pub tradeoff_capacity_advisory: Option<Vec<TradeoffCapacityAdvisory>>,
+}
+
+/// One ask with its question digest and its goal's capacity advisory. The
+/// advisory reads the goal's preferences now, through the standing verdict
+/// on the ask's proposal; an ask no verdict or preference row answers
+/// carries none.
+fn tradeoff_ask_view(
+    vault: &Vault,
+    ask: optimize::SkillTradeoffAsk,
+) -> MemoryResult<SkillOptimizeTradeoffAskView> {
+    let question_digest = ask.question.digest()?;
+    let tradeoff_capacity_advisory = optimize::skill_edit_verdict(vault, &ask.question.proposal)
+        .ok()
+        .flatten()
+        .and_then(|verdict| {
+            optimize::skill_tradeoff_preferences(vault, &verdict.skill)
+                .ok()
+                .flatten()
+        })
+        .map(|preferences| tradeoff_capacity_advisory(vault, &preferences))
+        .filter(|crossings| !crossings.is_empty());
+    Ok(SkillOptimizeTradeoffAskView {
+        question_digest,
+        ask,
+        tradeoff_capacity_advisory,
+    })
 }
 
 pub fn skill_optimize_tradeoff_asks_as_owner(
@@ -333,12 +437,7 @@ pub fn skill_optimize_tradeoff_asks_as_owner(
     let actor = owner.actor_for_read(vault)?;
     optimize::skill_tradeoff_asks_for(vault, &actor)?
         .into_iter()
-        .map(|ask| {
-            Ok(SkillOptimizeTradeoffAskView {
-                question_digest: ask.question.digest()?,
-                ask,
-            })
-        })
+        .map(|ask| tradeoff_ask_view(vault, ask))
         .collect()
 }
 
@@ -352,12 +451,7 @@ pub fn skill_optimize_tradeoff_asks_for(
 ) -> MemoryResult<Vec<SkillOptimizeTradeoffAskView>> {
     optimize::skill_tradeoff_asks_for(vault, actor)?
         .into_iter()
-        .map(|ask| {
-            Ok(SkillOptimizeTradeoffAskView {
-                question_digest: ask.question.digest()?,
-                ask,
-            })
-        })
+        .map(|ask| tradeoff_ask_view(vault, ask))
         .collect()
 }
 

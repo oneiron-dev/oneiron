@@ -1227,6 +1227,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
+  exportTo(path: string, format: string | undefined): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

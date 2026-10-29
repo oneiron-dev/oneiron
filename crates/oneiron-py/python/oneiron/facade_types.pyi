@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1182 facade rows, 4279 declarations.
+Census: 1182 facade rows, 4281 declarations.
 Inputs: 1113 of 1182 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1032 of 1182 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 116; unread shapes: 0.
@@ -5365,8 +5365,20 @@ class SkillOptimizeGoalView(TypedDict):
 class SkillOptimizeGoalBindRequest(TypedDict):
     skill: EntityId
     project: NotRequired[EntityId | None]
+class TradeoffCapacityAdvisoryAuthoredRulesBody(TypedDict):
+    held: int
+    limit: int
+class TradeoffCapacityAdvisoryAuthoredRules(TypedDict):
+    authored_rules: TradeoffCapacityAdvisoryAuthoredRulesBody
+class TradeoffCapacityAdvisoryLearnedRulesBody(TypedDict):
+    held: int
+    limit: int
+class TradeoffCapacityAdvisoryLearnedRules(TypedDict):
+    learned_rules: TradeoffCapacityAdvisoryLearnedRulesBody
+TradeoffCapacityAdvisory = TradeoffCapacityAdvisoryAuthoredRules | TradeoffCapacityAdvisoryLearnedRules
 class SkillOptimizeGoalRevision(TypedDict):
     goal_revision: str
+    tradeoff_capacity_advisory: NotRequired[list[TradeoffCapacityAdvisory] | None]
 TradeoffChoice = Literal["approve", "reject"]
 class TradeoffRule(TypedDict):
     gains: list[str]
@@ -5425,6 +5437,7 @@ class SkillTradeoffAsk(TypedDict):
 class SkillOptimizeTradeoffAskView(TypedDict):
     question_digest: str
     ask: SkillTradeoffAsk
+    tradeoff_capacity_advisory: NotRequired[list[TradeoffCapacityAdvisory] | None]
 class SkillOptimizeTradeoffPickRequest(TypedDict):
     proposal: EntityId
     question_digest: str
@@ -19332,10 +19345,15 @@ class ConsolidationWakeStatusRequest(TypedDict):
     wake_ref: NotRequired[str | None]
     limit: NotRequired[int | None]
     cursor: NotRequired[str | None]
+class DreamerWakeClaimAuthoringFallbackViewAmbiguousCampaignsBody(TypedDict):
+    roots: list[str]
+class DreamerWakeClaimAuthoringFallbackView(TypedDict):
+    ambiguous_campaigns: DreamerWakeClaimAuthoringFallbackViewAmbiguousCampaignsBody
 class DreamerWakeEndView(TypedDict):
     unix_ms: int
     elapsed_ms: int
     stop: NotRequired[str | None]
+    claim_authoring_fallback: NotRequired[DreamerWakeClaimAuthoringFallbackView | None]
 class DreamerWakeHeaderView(TypedDict):
     trigger: str
     scope: str
