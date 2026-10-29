@@ -4141,7 +4141,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/blend.rs` | src | m | 10 crate-vis | — | — |
 | `src/pipeline/budget.rs` | src | m | 13 crate-vis | — | — |
 | `src/pipeline/budget/selection.rs` | src | s | 5 crate-vis | — | Critical-first selection of a pack run's scored rows under its existing budgets (FIX 9760): every cut is… |
-| `src/pipeline/builder/mod.rs` | src | L | 1 struct · 43 fn · 16 crate-vis | PipelineBuilder | — |
+| `src/pipeline/builder/mod.rs` | src | L | 1 struct · 43 fn · 17 crate-vis | PipelineBuilder | — |
 | `src/pipeline/builder/terminal.rs` | src | s | 5 fn | — | — |
 | `src/pipeline/builder_capture.rs` | src | s | 7 fn · 8 crate-vis | — | Retrieval telemetry capture and turn context options on the pipeline builder |
 | `src/pipeline/builder_effort.rs` | src | s | 2 fn · 4 crate-vis | — | Shared five-level stage selection for the raw pipeline and memory facade |
@@ -4156,6 +4156,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/execution/channels/mod.rs` | src | L | 1 crate-vis | — | Channel fan-out for the retrieval transaction: authority, world, and corpus setup plus the vector, HyDE… |
 | `src/pipeline/execution/channels/post_blend.rs` | src | s | 3 crate-vis | — | Post-blend filters: scope and authority, the rerank shadow ladder, contiguity, facet, world, corpus, and… |
 | `src/pipeline/execution/channels/ppr_expand.rs` | src | s | 4 crate-vis | — | The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying… |
+| `src/pipeline/execution/channels/ppr_visibility.rs` | src | s | 2 crate-vis | — | Caller-visible PPR walks for narrowed retrieval attempts |
+| `src/pipeline/execution/channels/ppr_work.rs` | src | s | 1 crate-vis | — | One fair task-work admission for PPR's snapshot |
 | `src/pipeline/execution/channels/rerank.rs` | src | m | 3 crate-vis | — | RET-010 rerank hook: the post-sort score-ladder reassignment over the top-N block |
 | `src/pipeline/execution/channels/rerank/tests.rs` | test | s | — | — | Done-means (the Engine lane's ruling on Sol round 6, R6-1): a block row whose words no revision pins (a… |
 | `src/pipeline/execution/channels/residence_page.rs` | src | s | 2 crate-vis | — | The residence page mode (FIX 8865): a home's paged residence search ranks its text channel as deep as the… |
@@ -4311,11 +4313,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/window_rows.rs` | src | s | 5 crate-vis | — | The window deletion-row port: the rows a deletion leaves under a window address |
 | `src/posterior.rs` | src | s | 1 re-export · 1 crate-vis | — | Shared Beta posterior bandit seam |
 | `src/ppr/cache_evict.rs` | src | s | 2 crate-vis | — | Bounded, resumable eviction of the PPR cache for a serving host |
-| `src/ppr/cache_store.rs` | src | m | 29 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |
+| `src/ppr/cache_store.rs` | src | m | 30 crate-vis | — | PPR cache constants, TTL policy, cache IO, and binary codec |
+| `src/ppr/cache_store/purge.rs` | src | s | 1 crate-vis | — | Destructive PPR-cache purge for hard erase |
 | `src/ppr/community.rs` | src | s | 6 crate-vis | — | Community-boost bridge adapter over ppr_community |
 | `src/ppr/mod.rs` | src | s | 8 crate-vis | — | — |
-| `src/ppr/policy.rs` | src | s | 10 crate-vis | — | PPR alphas, seed weighting, specificity counts, and recency policy |
-| `src/ppr/query.rs` | src | m | 1 fn · 12 crate-vis | — | PPR query dispatch: cache-read context, deferred writes, and VAD evidence scope |
+| `src/ppr/policy.rs` | src | s | 9 crate-vis | — | PPR alphas, seed weighting, specificity counts, and recency policy |
+| `src/ppr/query.rs` | src | m | 1 fn · 13 crate-vis | — | PPR query dispatch: cache-read context, deferred writes, and VAD evidence scope |
 | `src/ppr/tests.rs` | test | XL | — | — | — |
 | `src/ppr/tests/specificity_visibility.rs` | test | s | — | — | — |
 | `src/ppr/walk.rs` | src | m | 14 crate-vis | — | PPR walk math: frontier rounds, visibility gating, and edge gates |
@@ -5296,7 +5299,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/pending_gate_consent/run_groups.rs` | src | s | 1 fn · 1 crate-vis | — | Each waiting run with every proposal it holds, read in one snapshot (FIX 9524) |
 | `src/store/pending_gate_consent/sequence_sweep.rs` | src | s | 9 crate-vis | — | Monotonic sequence allocator, high-water read, and sweep-state cursors for expiry/list sweeps |
 | `src/store/pending_gate_consent/tray.rs` | src | m | 2 fn · 14 crate-vis | — | Pending gate-consent tray lifecycle: put/get/delete, resolution into the decision ledger, and ordered reads |
-| `src/store/ppr_community.rs` | src | s | 10 crate-vis | — | Bounded, local community snapshots in the existing `vault_meta` database |
+| `src/store/ppr_community.rs` | src | s | 11 crate-vis | — | Bounded, local community snapshots in the existing `vault_meta` database |
 | `src/store/ppr_community_indexed.rs` | src | s | 2 crate-vis | — | Indexed query validation is deliberately not whole-family validation |
 | `src/store/replay_only_commits.rs` | src | s | 3 crate-vis | — | The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the… |
 | `src/store/retrieval_telemetry/blend_tuning.rs` | src | m | 8 fn · 4 crate-vis | — | Reward-weighted retrieval-blend tuning: weight-table methods, codecs, validators, and gradient math |
