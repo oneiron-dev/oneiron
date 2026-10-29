@@ -31,7 +31,13 @@ use crate::api::owner_routes::schema::{
 
 /// Binds each route's REST shapes.
 pub(super) fn merge(spec: &mut Value) {
-    super::bind_answer(spec, "/v1/owner/backups", "post", backup_outcome_schema(), &[]);
+    super::bind_answer(
+        spec,
+        "/v1/owner/backups",
+        "post",
+        backup_outcome_schema(),
+        &[],
+    );
     super::bind_image_answer(
         spec,
         "/v1/owner/browsers/screen",

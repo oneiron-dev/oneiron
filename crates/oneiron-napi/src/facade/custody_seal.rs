@@ -36,11 +36,19 @@ pub fn seal_custody_submit(
     let change = CustodyChange::from_name(&change)
         .filter(|change| matches!(change, CustodyChange::Register | CustodyChange::Rotate))
         .ok_or_else(|| {
-            facade_error(MemoryError::bad_request("change must be register or rotate"))
+            facade_error(MemoryError::bad_request(
+                "change must be register or rotate",
+            ))
         })?;
-    let sealed =
-        engine_seal(&view, change, holder.as_deref(), &recipients, None, body.as_ref())
-            .map_err(facade_error)?;
+    let sealed = engine_seal(
+        &view,
+        change,
+        holder.as_deref(),
+        &recipients,
+        None,
+        body.as_ref(),
+    )
+    .map_err(facade_error)?;
     serde_json::to_value(sealed)
         .map_err(|error| boundary_error(format!("could not serialize the sealed input: {error}")))
 }
