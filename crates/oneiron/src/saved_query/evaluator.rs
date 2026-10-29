@@ -7,8 +7,8 @@ use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::claim::{
-    ClaimBody, ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey, claim_surfaceable,
-    decode_claim_body,
+    Admitted, ClaimBody, ClaimReadStatus, PointRead, ScopedRead, ScopedReadActorKey,
+    claim_surfaceable, decode_claim_body,
 };
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
@@ -484,7 +484,7 @@ impl SavedQueryEvaluator<'_> {
         let edge_targets =
             self.relevant_edge_targets(lane, entity_ref, &deps.edge_kinds, &mut hidden)?;
         // Stage 0 admitted the candidate, so its own vector is the owner's to
-        // read; an exemplar's only once the lane admits it.
+        // read; an exemplar's only through the lane's vector door.
         let subject_vector = if deps.semantic_exemplars.is_empty() {
             None
         } else {
@@ -497,12 +497,15 @@ impl SavedQueryEvaluator<'_> {
         rows.extend(edge_targets.iter().map(|(_, target)| *target));
         rows.extend(scope_membership.worlds.iter().copied());
         for exemplar in &deps.semantic_exemplars {
-            let against = if lane.is_ref_readable(exemplar)? {
-                rows.push(*exemplar);
-                self.vault.get_vector(exemplar)?
-            } else {
-                hidden.exemplars = true;
-                None
+            let against = match lane.admitted_vector(exemplar)? {
+                Admitted::Admitted(vector) => {
+                    rows.push(*exemplar);
+                    vector
+                }
+                Admitted::Withheld => {
+                    hidden.exemplars = true;
+                    None
+                }
             };
             semantic_inputs.push((
                 *exemplar,
@@ -702,13 +705,15 @@ impl SavedQueryEvaluator<'_> {
                     .map(|edge| (name.clone(), edge.target)),
             );
         }
-        if edge_kinds.iter().any(|kind| kind == "task_owner")
-            && let Some(owner) = self.vault.indexed_task_owner(entity_ref)?
-        {
-            if lane.is_ref_readable(&owner)? {
-                targets.push(("task_owner".to_owned(), owner));
-            } else {
-                hidden.edge_kinds.insert("task_owner".to_owned());
+        if edge_kinds.iter().any(|kind| kind == "task_owner") {
+            match lane.admitted_task_owner(entity_ref)? {
+                Admitted::Admitted(Some(owner)) => {
+                    targets.push(("task_owner".to_owned(), owner));
+                }
+                Admitted::Admitted(None) => {}
+                Admitted::Withheld => {
+                    hidden.edge_kinds.insert("task_owner".to_owned());
+                }
             }
         }
         targets.sort_unstable();
