@@ -34,7 +34,7 @@ impl LiveQueries {
         // views re-derive as soon as a committed put or mark signals (FIX
         // 3084), and on the same cadence for a writer that commits one in a
         // raw transaction of its own and sends no signal.
-        let notified = self.notifications_signalled()?;
+        let notified = self.notifications_signalled();
         let poll = {
             let mut last = self
                 .last_owner_feed_poll
@@ -79,15 +79,18 @@ impl LiveQueries {
     /// session last looked. The look marks it seen before the views
     /// re-derive, so a commit during the derive signals the next refresh: a
     /// burst coalesces into re-reads that end on the committed rows.
-    fn notifications_signalled(&self) -> Result<bool, AppError> {
-        let mut wake = self.notification_wake.lock().map_err(|_| state_error())?;
-        Ok(wake.as_mut().is_some_and(|wake| {
+    fn notifications_signalled(&self) -> bool {
+        let mut wake = self
+            .notification_wake
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        wake.as_mut().is_some_and(|wake| {
             let changed = wake.has_changed().unwrap_or(false);
             if changed {
                 wake.mark_unchanged();
             }
             changed
-        }))
+        })
     }
 
     fn require_resync_scoped(&self, paths: &BTreeSet<String>) {
