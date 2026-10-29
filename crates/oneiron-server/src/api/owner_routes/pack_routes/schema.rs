@@ -12,10 +12,10 @@
 use oneiron::skill_hub::pack_catalog::{PackInstallReceipt, PackOrganBuild};
 
 use super::{
-    ActivationAskView, ActivationRequest, AgentWorld, BindHooks, ConsentRow, HookQualification,
-    ImportSkill, InstallFromHub, PackPut, PackSetupAnswerRequest, PackSetupKey, PackSetupReply,
-    PackSetupVerifyRequest, PutOrganBuild, PutPack, QualifyHooks, RefSyncView, RestoreSkill,
-    SetRefSync, SkillRow, SlackInstallRequest, SyncPack,
+    ActivationAskView, ActivationRequest, AgentWorld, BindHooks, ConsentRow, HookEnabled,
+    HookQualification, ImportSkill, InstallFromHub, PackPut, PackSetupAnswerRequest, PackSetupKey,
+    PackSetupReply, PackSetupVerifyRequest, PutOrganBuild, PutPack, QualifyHooks, RefSyncView,
+    RestoreSkill, SetRefSync, SkillRow, SkillSync, SlackInstallRequest, SyncPack,
 };
 use crate::builtin_host::SlackInstallLink;
 
@@ -180,4 +180,27 @@ pub(crate) fn slack_install_link_schema() -> serde_json::Value {
 /// [`SyncPack`].
 pub(crate) fn sync_pack_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<SyncPack>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/hooks/enabled`'s body (FIX 11611):
+/// [`HookEnabled`]. Its answer is `null`.
+pub(crate) fn hook_enabled_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HookEnabled>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/hooks/enabled`'s answer (FIX 11611): `null`.
+pub(crate) fn hook_enabled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<()>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/skills/restore-defaults`'s answer
+/// (FIX 11611): one [`SkillRow`] per restored skill.
+pub(crate) fn skill_rows_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Vec<SkillRow>>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/skills/{entity}/sync`'s answer
+/// (FIX 11611): [`SkillSync`].
+pub(crate) fn skill_sync_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SkillSync>()
 }

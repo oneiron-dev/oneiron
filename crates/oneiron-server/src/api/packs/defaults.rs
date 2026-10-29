@@ -48,6 +48,12 @@ pub(crate) fn hub_import_receipt_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<HubImportReceipt>()
 }
 
+/// The OpenAPI schema of `POST /v1/owner/packs/defaults/restore`'s answer (FIX 11611):
+/// one [`HubImportReceipt`] per restored default.
+pub(crate) fn hub_import_receipts_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Vec<HubImportReceipt>>()
+}
+
 async fn restore_defaults(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
