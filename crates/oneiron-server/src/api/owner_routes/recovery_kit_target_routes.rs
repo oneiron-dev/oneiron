@@ -1,5 +1,5 @@
-//! The target install's own kit calls (FIX 4736, 4530, 4564): the material
-//! a root change or a late joiner's pad access needs, supplied by the owner
+//! The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the
+//! material a root change or a late joiner's pad access needs, supplied by the owner
 //! on whichever authenticated surface reaches this install, for this one
 //! call alone. Never stored, logged or put in a receipt, and never relayed:
 //! a coordinating install records the request ids-only
@@ -14,9 +14,15 @@
 //!   bound root's kit. The answer is the target's report and its words
 //!   (`RootWorkDone::text`), to this caller alone.
 //! - `POST /recovery-kit/pad-access`: the owner's kit grants a machine every
-//!   pad object the home keeps (`SyncClient::grant_sealed_bundle_pad_access_with_kit`,
-//!   through this install's own home connection): what was offered, what is
-//!   usable here, and what stays pending with the home.
+//!   pad object the home keeps, through this install's own home connection,
+//!   or on this install when it is the home (`pad_access`): what was offered,
+//!   what is usable here, and what stays pending with the home.
+//!   `GET /recovery-kit/upkeep` reads the last relay and grant this process
+//!   saw.
+//! - `POST /roots/anchor`, `/roots/restore`, `/roots/issue`, `/roots/confirm`:
+//!   the root ceremonies made here directly, on the running server, as the
+//!   stopped vault's commands make them (`root_doors`). A pin and the roots
+//!   this install sees need no kit (`root_routes`).
 //!
 //! A kit is always its pieces (recovery codes) and the passphrase where one
 //! point is the passphrase: the engine rebuilds the seed and checks it, and
@@ -33,8 +39,8 @@
 //!
 //! The console never receives the recovery seed (DEC-0005, FIX 6028): while
 //! [`OWNER_DEVICE_ONLY_KIT_TARGETS`] holds, a hosted or managed install takes
-//! no kit material at all. Both calls refuse there with
-//! `kit_requires_owner_device` before their body is read ([`OwnerDevice`]);
+//! no kit material at all. Every kit call refuses there with
+//! `kit_requires_owner_device` before its body is read ([`OwnerDevice`]);
 //! the owner still says so from any surface and the work runs on his own
 //! device.
 
@@ -53,10 +59,9 @@ use oneiron::recovery::{
     restore_kit,
 };
 use oneiron::settings::{ReadDestination, RecipientLimit, RecipientWhy};
-use oneiron::sync::residence::sealed_generation_hex;
 use oneiron::world_keys::{
-    PadAdmissionTarget, RecoveryRootSeed, RepinReport, RootMaterial, RootRestore, RootSecret,
-    RootWorkDone, SealedBundleGeneration, Withheld, WorldKeyId,
+    RecoveryRootSeed, RepinReport, RootMaterial, RootRestore, RootSecret, RootWorkDone, Withheld,
+    WorldKeyId,
 };
 use oneiron::{EntityId, HostingPrivacyPosture, Vault};
 use serde::{Deserialize, Serialize};
@@ -73,10 +78,14 @@ use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+mod pad_access;
+mod root_doors;
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/roots/requests/run", post(run))
-        .route("/recovery-kit/pad-access", post(pad_access))
+        .merge(pad_access::routes())
+        .merge(root_doors::routes())
 }
 
 /// The material for one pending root request, as the target's caller
@@ -108,7 +117,7 @@ enum Material {
     },
     /// An anchoring: the bound root's kit, the machine's enrolment request
     /// (as `POST /v1/pairing/redeem` takes it), and the code that machine
-    /// shows when it is not this one, 32 hex.
+    /// shows when it is not this one, its 26 base32 symbols.
     Anchor {
         pieces: Vec<String>,
         #[serde(default)]
@@ -129,25 +138,14 @@ struct RunRootRequest {
     material: Material,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PadAccess {
-    /// The install this call's kit is for, 32 hex: this one.
-    target: String,
-    /// The kit's pieces, as recovery codes.
-    pieces: Vec<String>,
-    #[serde(default)]
-    passphrase: Option<String>,
-    /// The machine to grant, 32 hex; none grants this install.
-    #[serde(default)]
-    machine: Option<String>,
-}
-
 /// The named refusals of the recipient rule ([`kit_target`]).
 const KIT_TARGET_ELSEWHERE: &str = "kit_target_elsewhere";
 const KIT_TARGET_UNPROVED: &str = "kit_target_unproved";
 const KIT_TARGET_NOT_ALLOWED: &str = "kit_target_not_allowed";
 const KIT_REQUIRES_OWNER_DEVICE: &str = "kit_requires_owner_device";
+/// The named refusals of a kit this install cannot verify ([`kit_root_refusal`]).
+const KIT_UNVERIFIED: &str = "kit_unverified";
+const KIT_CONFIRMATION_STALE: &str = "kit_confirmation_stale";
 
 /// Canon (DEC-0005, FIX 6028): the console never receives the recovery seed.
 /// While this holds, a hosted or managed install is no kit target: both
@@ -198,6 +196,40 @@ fn kit_target_refused(state: &str, message: &str, suggestion: &str) -> ApiError 
         },
         [suggestion],
     )
+}
+
+/// A kit seed refused for want of a confirmation, answered with the root its
+/// pieces rebuild, a public id (FIX 4533, 4955), as the stopped vault's
+/// commands word it: the owner checks it on one of his machines and gives it
+/// back as `fingerprint`, or goes ahead with `confirm_root`, which holds for
+/// that root alone. `None` for any other error.
+pub(super) fn kit_root_refusal(error: &oneiron::Error) -> Option<ApiError> {
+    use oneiron::error::SecretError;
+    match error {
+        oneiron::Error::Secret(SecretError::UnverifiedKitRestore { root, .. }) => {
+            let root = hex(root);
+            Some(kit_target_refused(
+                KIT_UNVERIFIED,
+                &format!("{error}: these pieces rebuild root {root}"),
+                &format!(
+                    "Give `fingerprint` with the root one of your machines pins, or go ahead \
+                     with `confirm_root` {root}."
+                ),
+            ))
+        }
+        oneiron::Error::Secret(SecretError::KitConfirmationStale { root, confirmed }) => {
+            let (root, confirmed) = (hex(root), hex(confirmed));
+            Some(kit_target_refused(
+                KIT_CONFIRMATION_STALE,
+                &format!(
+                    "`confirm_root` {confirmed} is not this kit's root: these pieces rebuild \
+                     root {root}"
+                ),
+                &format!("To go ahead with this kit, send `confirm_root` {root}."),
+            ))
+        }
+        _ => None,
+    }
 }
 
 /// The recipient rule for kit material (CALLS "owneract kit transport"):
@@ -333,22 +365,21 @@ fn vault_id(vault: &Vault) -> OwnerResult<[u8; 32]> {
         .ok_or_else(|| OwnerError::Refused("the vault has no authority genesis yet".to_owned()))
 }
 
-/// A machine's request code, as 32 lower-case hex (its 16 bytes).
+/// A machine's request code as it shows it: 26 base32 symbols
+/// (`RequestCode::from_text`, FIX 4956).
 fn request_code(text: &str) -> OwnerResult<RequestCode> {
-    let refused = || OwnerError::Invalid("code must be 32 lower-case hex".to_owned());
-    if text.len() != 32
-        || !text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-    {
-        return Err(refused());
+    RequestCode::from_text(text).map_err(|why| OwnerError::Invalid(format!("code: {why}")))
+}
+
+/// The homes a kit is issued over: a `this_machine` home waits for
+/// device-piece custody.
+fn issue_homes(homes: &[PieceHome; 3]) -> OwnerResult<()> {
+    if homes.contains(&PieceHome::ThisMachine) {
+        return Err(OwnerError::Invalid(
+            "a this_machine home waits for device-piece custody; pick another home".to_owned(),
+        ));
     }
-    let mut code = [0; 16];
-    for (slot, pair) in code.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-        let pair = std::str::from_utf8(pair).map_err(|_| refused())?;
-        *slot = u8::from_str_radix(pair, 16).map_err(|_| refused())?;
-    }
-    Ok(RequestCode(code))
+    Ok(())
 }
 
 /// `POST /v1/owner/roots/requests/run`: runs the root request pending on
@@ -387,12 +418,7 @@ fn run_material(
 ) -> OwnerResult<RootWorkDone> {
     let done = match material {
         Material::IssueKit { homes, passphrase } => {
-            if homes.contains(&PieceHome::ThisMachine) {
-                return Err(OwnerError::Invalid(
-                    "a this_machine home waits for device-piece custody; pick another home"
-                        .to_owned(),
-                ));
-            }
+            issue_homes(&homes)?;
             let passphrase = Zeroizing::new(passphrase);
             let passphrase = passphrase.as_deref().map(passphrase_of).transpose()?;
             let issue = KitIssue {
@@ -500,7 +526,7 @@ fn withheld(list: &[(WorldKeyId, Withheld)]) -> Vec<WithheldView> {
 
 /// What a re-pin did with each key.
 #[derive(Debug, Serialize)]
-struct RepinView {
+pub(super) struct RepinView {
     rewrapped: Vec<KeyView>,
     withheld: Vec<WithheldView>,
     /// Worlds whose settings read differently under the root.
@@ -676,82 +702,4 @@ impl RootWorkAnswer {
         };
         Self { report, text }
     }
-}
-
-/// What a kit grant of pad access did, by kept generation (hex).
-#[derive(Debug, Serialize)]
-struct PadAccessAnswer {
-    /// The machine granted, 32 hex.
-    machine: String,
-    /// Generations whose grant the home took.
-    offered: Vec<String>,
-    /// Of those, the ones this install opened its pad object with: only
-    /// when the machine granted is this one. An offered grant is not yet
-    /// access.
-    usable: Vec<String>,
-    /// Generations the kit did not open, or whose offer the home refused:
-    /// pending with the home for an old reader.
-    pending: Vec<String>,
-    /// How many are pending.
-    pending_count: usize,
-}
-
-/// `POST /v1/owner/recovery-kit/pad-access`: the owner's kit grants a
-/// machine (this install when none is named) access to every pad object the
-/// home keeps, over this install's own connection to its home. The machine
-/// must stand as the owner's here; the engine checks it, the owner and the
-/// kit's root again for every grant.
-async fn pad_access(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    _: OwnerDevice,
-    payload: OwnerJsonBody<PadAccess>,
-) -> OwnerReply<PadAccessAnswer> {
-    let owner = owner(&auth, &server)?;
-    let body = payload.read(&server).await?;
-    kit_target(&server, &body.target)?;
-    let vault = Arc::clone(&server.vault);
-    let (seed, recipient, me) = blocking(
-        move || -> OwnerResult<(RecoveryRootSeed, PadAdmissionTarget, EntityId)> {
-            let kit = Kit::parse(body.pieces, body.passphrase)?;
-            let me = vault
-                .local_machine()?
-                .ok_or_else(|| OwnerError::Refused("this install is no machine yet".to_owned()))?
-                .id;
-            let machine = match body.machine.as_deref() {
-                Some(machine) => entity_id("machine", machine)?,
-                None => me,
-            };
-            let fold = vault.authority_fold()?;
-            let trusted = fold.trusted_machine(machine).ok_or_else(|| {
-                OwnerError::Refused("the machine does not stand as the owner's here".to_owned())
-            })?;
-            let recipient = PadAdmissionTarget::of(machine, &trusted.profile.encryption_key);
-            Ok((kit.seed(&vault)?, recipient, me))
-        },
-    )
-    .await?;
-    let connection = crate::residence_machines::connection(&me).ok_or_else(|| {
-        super::owner_error(OwnerError::Refused(
-            "this install runs no connection to a home: grant from a machine that syncs with \
-             the home"
-                .to_owned(),
-        ))
-    })?;
-    let report = connection
-        .grant_sealed_bundle_pad_access_with_kit(&owner, &seed, recipient)
-        .await
-        .map_err(|error| super::owner_error(OwnerError::Refused(error.to_string())))?;
-    Ok(Json(PadAccessAnswer {
-        machine: recipient.machine.to_hex(),
-        offered: generations(&report.offered),
-        usable: generations(&report.usable),
-        pending_count: report.pending.len(),
-        pending: generations(&report.pending),
-    }))
-}
-
-/// Kept generations as hex.
-fn generations(list: &[SealedBundleGeneration]) -> Vec<String> {
-    list.iter().map(sealed_generation_hex).collect()
 }

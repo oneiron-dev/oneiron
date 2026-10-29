@@ -389,7 +389,8 @@ impl SyncConnection {
                             }
                             // The vault's sealed bundle: erase's rewrite of every
                             // kept pad, then the slot's take and upload (FIX 922).
-                            match crate::sync::client::relay_sealed_bundle(&manager, &config).await {
+                            // Its result is noted for the owner as it passes (FIX 4953).
+                            match crate::sync::client::observe_sealed_bundle_relay(manager.vault(), crate::sync::client::relay_sealed_bundle(&manager, &config).await) {
                                 Ok(_) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
                                 Err(error) => {
                                     let _ = events.send(SyncEvent::Error(format!(
