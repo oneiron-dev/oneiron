@@ -25,6 +25,30 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/history/erase/execute", post(execute))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/history/erase`'s body (FIX 11611):
+/// [`EraseHistory`].
+pub(crate) fn erase_history_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<EraseHistory>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/history/erase`'s answer (FIX 11611):
+/// [`EraseOutcome`].
+pub(crate) fn erase_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<EraseOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/history/erase/execute`'s body
+/// (FIX 11611): [`ExecuteErase`].
+pub(crate) fn execute_erase_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ExecuteErase>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/history/erase/execute`'s answer
+/// (FIX 11611): [`Erased`].
+pub(crate) fn erased_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Erased>()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HistoryQuery {

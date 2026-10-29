@@ -48,7 +48,7 @@ mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
 mod commitment_routes;
-mod concern_routes;
+pub(super) mod concern_routes;
 pub(super) mod conflict_routes;
 pub(crate) mod connector_admission_routes;
 pub(super) mod connector_consent_routes;
@@ -56,7 +56,7 @@ pub(crate) mod connector_slate_routes;
 pub(super) mod connector_subscription_routes;
 pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
-mod craft_candidate_routes;
+pub(super) mod craft_candidate_routes;
 mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
 pub(super) mod diary_routes;
@@ -65,12 +65,12 @@ pub(super) mod dreamer_maintenance_routes;
 pub(super) mod dreamer_routes;
 pub(super) mod embedding_space_routes;
 mod export_audit_routes;
-mod federation_connect_routes;
+pub(super) mod federation_connect_routes;
 mod feedback_triage_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
-mod history_routes;
+pub(super) mod history_routes;
 mod house_routes;
 mod inbox_routes;
 pub(super) mod intent_routes;
@@ -84,7 +84,7 @@ mod pack_preview_routes;
 mod pack_routes;
 mod pad_routes;
 pub(super) mod peer_confidence_routes;
-mod proactivity_routes;
+pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 mod recovery_kit_target_routes;
 mod room_thread_setting_routes;
@@ -661,7 +661,7 @@ async fn preview_import(
     Ok(Json(preview))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideImport {
     batch: imports::ImportBatch,

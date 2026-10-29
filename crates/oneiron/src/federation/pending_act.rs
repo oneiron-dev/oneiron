@@ -240,11 +240,12 @@ impl SharedActPolicy {
 }
 /// The decision is returned as a typed act with its opaque host payload. The host
 /// must route irreversible effects through this door rather than bypassing it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PendingAuthorityAct {
     pub id: String,
     #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub vault_id: u64,
     pub act: String,
     pub payload: Vec<u8>,
@@ -264,7 +265,7 @@ pub struct PendingAuthorityAct {
 }
 /// The request that carried a completed act's effect, claimed in that effect's
 /// own linearizing write, and its receipt once the effect wrote one.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ActExecution {
     pub request: String,

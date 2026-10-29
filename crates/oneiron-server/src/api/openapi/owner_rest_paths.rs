@@ -16,6 +16,11 @@ use crate::api::owner_routes::browser_takeover_routes::{
 use crate::api::owner_routes::checkpoint_policy_routes::{
     clear_policy_body_schema, policy_view_schema, select_policy_body_schema,
 };
+use crate::api::owner_routes::concern_routes::{
+    concern_apply_body_schema, concern_apply_outcome_schema, concern_card_summary_schema,
+    concern_move_body_schema, concern_move_outcome_schema, concern_outcome_body_schema,
+    concern_prompt_inject_body_schema, concern_prompt_inject_outcome_schema,
+};
 use crate::api::owner_routes::conflict_routes::{
     conflict_settled_schema, revert_settlement_body_schema, review_held_schema,
     review_resumed_schema, review_scope_body_schema, settle_conflict_body_schema,
@@ -36,6 +41,13 @@ use crate::api::owner_routes::connector_subscription_routes::{
 use crate::api::owner_routes::conversation_learning_routes::{
     learning_reply_schema, own_reply_schema, set_learning_body_schema, set_own_body_schema,
 };
+use crate::api::owner_routes::craft_candidate_routes::{
+    craft_answer_body_schema, craft_verdict_schema,
+};
+use crate::api::owner_routes::courtesy_delete_routes::{
+    courtesy_answer_body_schema, courtesy_incoming_schema, courtesy_send_body_schema,
+    courtesy_sent_schema,
+};
 use crate::api::owner_routes::desktop_takeover_routes::{
     desktop_input_body_schema, desktop_input_reply_schema, desktop_return_reply_schema,
     desktop_run_request_body_schema, desktop_takeover_schema,
@@ -55,6 +67,13 @@ use crate::api::owner_routes::dreamer_routes::{
 use crate::api::owner_routes::embedding_space_routes::{
     clear_refused_body_schema, embedding_spaces_view_schema,
 };
+use crate::api::owner_routes::federation_connect_routes::{
+    accept_connect_body_schema, connect_accepted_schema, connect_grant_schema,
+    connect_offer_schema, mint_grant_body_schema, offer_connect_body_schema,
+};
+use crate::api::owner_routes::history_routes::{
+    erase_history_body_schema, erase_outcome_schema, erased_schema, execute_erase_body_schema,
+};
 use crate::api::owner_routes::intent_routes::{intent_stated_schema, state_intent_body_schema};
 use crate::api::owner_routes::model_setting_routes::model_settings_schema;
 use crate::api::owner_routes::owner_work_routes::{
@@ -64,13 +83,18 @@ use crate::api::owner_routes::peer_confidence_routes::{
     grant_travel_schema, peer_scale_schema, set_grant_travel_body_schema,
     set_peer_scale_body_schema,
 };
+use crate::api::owner_routes::proactivity_routes::schema::{
+    answer_identity_ask_body_schema, identity_settled_schema,
+};
 use crate::api::owner_routes::recovery_kit_routes::{
     anchor_advance_body_schema, anchor_advance_schema,
 };
 use crate::api::owner_routes::schema::{
     cleanup_accepted_schema, cleanup_review_schema, cleanup_settings_body_schema,
-    decide_cleanup_body_schema, rehearsal_schema, rehearse_request_body_schema,
-    restore_archived_body_schema, revert_cleanup_run_body_schema, run_reverted_schema,
+    decide_cleanup_body_schema, decide_import_body_schema, import_approved_schema,
+    import_declined_schema, import_preview_schema, preview_import_body_schema, rehearsal_schema,
+    rehearse_request_body_schema, restore_archived_body_schema, revert_cleanup_run_body_schema,
+    run_reverted_schema,
 };
 use crate::api::owner_routes::shared_training_setup_routes::{
     answer_setup_body_schema, setup_reply_schema,
@@ -470,6 +494,134 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
         "post",
         set_peer_scale_body_schema(),
         peer_scale_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/courtesy-delete/send",
+        "post",
+        courtesy_send_body_schema(),
+        courtesy_sent_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/courtesy-delete/answer",
+        "post",
+        courtesy_answer_body_schema(),
+        courtesy_incoming_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/craft-candidates/answer",
+        "post",
+        craft_answer_body_schema(),
+        craft_verdict_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/federation/connect/grants",
+        "post",
+        mint_grant_body_schema(),
+        connect_grant_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/federation/connect/offer",
+        "post",
+        offer_connect_body_schema(),
+        connect_offer_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/federation/connect/accept",
+        "post",
+        accept_connect_body_schema(),
+        connect_accepted_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/history/erase",
+        "post",
+        erase_history_body_schema(),
+        erase_outcome_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/history/erase/execute",
+        "post",
+        execute_erase_body_schema(),
+        erased_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/identity/asks/answer",
+        "post",
+        answer_identity_ask_body_schema(),
+        identity_settled_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/imports/preview",
+        "post",
+        preview_import_body_schema(),
+        import_preview_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/imports/approve",
+        "post",
+        decide_import_body_schema(),
+        import_approved_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/imports/decline",
+        "post",
+        decide_import_body_schema(),
+        import_declined_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/inbox/concern/outcome",
+        "post",
+        concern_outcome_body_schema(),
+        concern_card_summary_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/inbox/concern/move",
+        "post",
+        concern_move_body_schema(),
+        concern_move_outcome_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/inbox/concern/apply",
+        "post",
+        concern_apply_body_schema(),
+        concern_apply_outcome_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/inbox/concern/apply-prompt-inject",
+        "post",
+        concern_prompt_inject_body_schema(),
+        concern_prompt_inject_outcome_schema(),
         &[],
     );
 }
