@@ -3969,6 +3969,7 @@
      "path": "src/authority/left_notices/delivery.rs",
      "purpose": "The host's delivery of an export-first removal's archive to its removed holder (FIX 3215, 3396), beside the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -9911,7 +9912,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 5,
       "fn": 6,
       "re-export": 5,
@@ -10015,7 +10016,7 @@
      "path": "src/browser_library/records.rs",
      "purpose": "The browser library's records (moved out of `browser_library` whole): its programs' and retires' rows…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -17324,7 +17325,7 @@
      "purpose": "Proxy receipts use the existing owner-local gate ledger",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -30007,7 +30008,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/escalation/policy.rs",
@@ -39424,7 +39425,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/learning/scope_erase.rs",
-     "purpose": "A project's learning scope goes with the project (FIX 6038)",
+     "purpose": "An erased scope's learning goes with it (FIX 6038, FIX 11533)",
      "surface": {
       "crate-vis": 2
      }
@@ -39488,7 +39489,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/learning_setting/scope_erase.rs",
-     "purpose": "A project's owner rows and fits go with the project (FIX 6038): its erase deletes every seed and pin laid…",
+     "purpose": "An erased scope's owner rows and fits go with it (FIX 6038, FIX 11533): its erase deletes every seed and pin…",
      "surface": {
       "crate-vis": 2
      }
@@ -66273,7 +66274,7 @@
      "path": "src/store/key_custody/home.rs",
      "purpose": "The residence home's side of the residence target (KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -68153,7 +68154,7 @@
      "purpose": "Client-side sync over WebSocket",
      "surface": {
       "crate-vis": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -68337,7 +68338,8 @@
      "path": "src/sync/client/residence/custody.rs",
      "purpose": "This machine's key custody to its residence home (KS-4A2, FIX 5685): the residence member of the required…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -69858,7 +69860,7 @@
      "path": "src/sync/residence/custody.rs",
      "purpose": "The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -71774,7 +71776,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 14,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -86863,7 +86865,7 @@
      "purpose": "`demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs…",
      "surface": {
       "crate-vis": 11,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -108713,7 +108715,7 @@
      "path": "src/handler/documents.rs",
      "purpose": "Per-entity selector admission and scope-filtered document delivery on the sync socket",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -108873,7 +108875,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/handler/socket_stop.rs",
-     "purpose": "An upgraded socket's transport under its embedded engine's stop (OF-237)",
+     "purpose": "An upgraded socket's transport under its server's stop (OF-237)",
      "surface": {
       "crate-vis": 5
      }

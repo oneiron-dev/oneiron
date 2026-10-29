@@ -1022,7 +1022,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/conn_state.rs` | src | s | 11 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
 | `src/handler/connection.rs` | src | m | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
 | `src/handler/connection/run.rs` | src | m | 1 crate-vis | — | The single-owner connection event loop: one socket's protocol hello, its root snapshot, then every frame it… |
-| `src/handler/documents.rs` | src | m | 4 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
+| `src/handler/documents.rs` | src | m | 6 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 5 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
 | `src/handler/ephemeral/message_scope.rs` | src | s | 3 crate-vis | — | Where a message's live partials go (FIX 9537) |
 | `src/handler/federation.rs` | src | s | 2 crate-vis | — | Authenticated selector fetches with durable defer and current-grant replay |
@@ -1039,7 +1039,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
 | `src/handler/protocol_close.rs` | src | s | 9 crate-vis | — | A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would… |
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
-| `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its embedded engine's stop (OF-237) |
+| `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its server's stop (OF-237) |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 15 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
 | `src/handler/window_copy.rs` | src | s | 1 crate-vis | — | The masked repo copy generation each socket was last sent of a window (FIX 7608 slice 4, C3 of the s4… |

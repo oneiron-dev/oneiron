@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_browser::SecretArg;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -215,9 +216,10 @@ pub struct BriefContext {
 }
 
 /// A TASK's binding of one filed library program (CUA E4; DESIGN-2 §2):
-/// `workflow:<record id>` and the string arguments its slots take. The TASK
-/// refers to the program and never copies its steps; each try pins the
-/// record its first lease resolved the handle to.
+/// `workflow:<record id>` and the string arguments its slots take, with
+/// secret slots' arguments in typed form beside them. The TASK refers to
+/// the program and never copies its steps; each try pins the record its
+/// first lease resolved the handle to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowBinding {
@@ -225,6 +227,10 @@ pub struct WorkflowBinding {
     pub handle: String,
     #[serde(default)]
     pub args: BTreeMap<String, String>,
+    /// Secret slots' arguments in typed form: a name here takes the place
+    /// of the same name in `args` when the try runs the program.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_args: BTreeMap<String, SecretArg>,
 }
 
 impl WorkflowBinding {
