@@ -17239,6 +17239,11 @@ pub enum HookReplayOutcome {
         #[serde(rename = "reads_live")]
         reads_live: bool,
     },
+    #[serde(rename = "withheld")]
+    Withheld {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
     #[serde(rename = "missing_history")]
     MissingHistory {
         #[serde(rename = "reason")]
@@ -35089,6 +35094,12 @@ pub struct HookGoldenDiff {
     pub cases: u64,
     #[serde(rename = "changed")]
     pub changed: Vec<String>,
+    #[serde(rename = "execution_failed")]
+    pub execution_failed: Vec<String>,
+    #[serde(rename = "withheld")]
+    pub withheld: Vec<String>,
+    #[serde(rename = "missing_history")]
+    pub missing_history: Vec<String>,
 }
 
 /// `oneiron::runtime_hooks::regen::HookRegenFailurePhase`.
