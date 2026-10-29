@@ -181,6 +181,7 @@ impl MediaRuntime {
             model: job.model.to_string(),
             operation,
         };
+        let mut kept = self.store.is_some();
         if let (Some(store), Some(request)) = (&self.store, sent)
             && let Err(error) = store.put(
                 &id,
@@ -199,8 +200,12 @@ impl MediaRuntime {
             )
         {
             tracing::error!(%error, ticket = %id, "a media job was not kept: it runs held here");
+            kept = false;
         }
-        self.submitted_on(&id, line);
+        // A job whose row was not kept still answers its own run.
+        if !kept {
+            self.submitted_on(&id, line);
+        }
         self.lock_jobs()
             .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
         Ok(ticket)

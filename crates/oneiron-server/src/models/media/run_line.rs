@@ -29,7 +29,8 @@ pub(super) struct JobLine {
 #[derive(Default)]
 pub(super) struct ProgramLine {
     meter: OnceLock<BudgetGuard>,
-    /// By ticket, so a job whose row was not kept still answers its run.
+    /// The line of each program job whose row was not kept, by ticket, so
+    /// the job still answers its run.
     submitted: Mutex<BTreeMap<String, JobLine>>,
 }
 
@@ -67,7 +68,8 @@ impl MediaRuntime {
         }
     }
 
-    /// Notes that job `ticket` was submitted on `line`.
+    /// Notes that job `ticket`, whose row was not kept, was submitted on
+    /// `line`.
     pub(super) fn submitted_on(&self, ticket: &str, line: JobLine) {
         self.lock_submitted().insert(ticket.to_owned(), line);
     }
