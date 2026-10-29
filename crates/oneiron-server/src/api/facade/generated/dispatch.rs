@@ -28812,8 +28812,8 @@ async fn vault_questions_create(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.create")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.create", &value)?;
@@ -28843,8 +28843,8 @@ async fn vault_questions_edit(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.edit")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.edit", &value)?;
@@ -28874,8 +28874,8 @@ async fn vault_questions_pause(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.pause")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.pause", &value)?;
@@ -28940,7 +28940,7 @@ async fn vault_questions_read(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.read")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.read", &value)?;
@@ -29006,7 +29006,7 @@ async fn vault_questions_answers(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.answers")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.answers", &value)?;
@@ -29143,7 +29143,7 @@ async fn vault_questions_schedule(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.schedule")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.schedule", &value)?;

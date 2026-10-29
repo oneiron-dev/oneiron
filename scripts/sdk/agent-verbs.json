@@ -14342,7 +14342,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14355,7 +14356,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14368,7 +14370,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14394,7 +14397,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false
     },
@@ -14422,7 +14425,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_result": "crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(output)?",
       "mcp_page": true,
@@ -14482,7 +14485,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false,
       "openapi": true
