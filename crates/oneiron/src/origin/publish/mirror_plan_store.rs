@@ -110,6 +110,24 @@ impl Vault {
         }
     }
 
+    /// One review page of a plan; `None` past its last.
+    pub(super) fn mirror_plan_page_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        plan: &MirrorPushPlan,
+        page: u64,
+    ) -> Result<Option<OriginPublishReviewPage>> {
+        match WORK.get(
+            &self.store,
+            txn,
+            &page_key(plan.repo_id, plan.plan_id, page),
+        )? {
+            Some(MirrorWorkRow::Page(page)) => Ok(Some(page)),
+            Some(_) => Err(Error::CorruptedIndex("origin mirror plan review page")),
+            None => Ok(None),
+        }
+    }
+
     /// Every batch of a plan, in order. A batch the plan names that is
     /// missing is an error: no push stands on part of a plan.
     pub(super) fn mirror_batches_in_txn(

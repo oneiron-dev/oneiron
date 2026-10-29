@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1202 facade rows, 4344 declarations.
-Inputs: 1130 of 1202 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1041 of 1202 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1203 facade rows, 4352 declarations.
+Inputs: 1131 of 1203 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1042 of 1203 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -12422,6 +12422,97 @@ class OriginMirrorTarget(TypedDict):
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
+class OriginMirrorPlanRequest(TypedDict):
+    repo: str
+    plan_id: NotRequired[EntityId | None]
+    page: NotRequired[int]
+class OriginPublishDestination(TypedDict):
+    url: str
+    user: str
+    secret_ref: str
+    target_generation: NotRequired[EntityId | None]
+    audience: RepoDestinationAudience
+class MirrorObservedTipAbsent(TypedDict):
+    state: Literal["absent"]
+class MirrorObservedTipAt(TypedDict):
+    state: Literal["at"]
+    oid: str
+class MirrorObservedTipUnknown(TypedDict):
+    state: Literal["unknown"]
+    cause: str
+MirrorObservedTip = MirrorObservedTipAbsent | MirrorObservedTipAt | MirrorObservedTipUnknown
+OriginPublishLfsBytes = Literal["not_sent"]
+class OriginPublishReview(TypedDict):
+    digest: str
+    subtracted: NotRequired[str | None]
+    commits: int
+    entries: int
+    paths: int
+    pages: int
+    lfs_bytes: OriginPublishLfsBytes
+MirrorRefOutcome = Literal["pending", "dispatched", "applied", "observed_applied", "rejected", "unknown", "refused", "remote_moved", "paused", "covered", "held"]
+class OriginMirrorPlanRefView(TypedDict):
+    ref_name: str
+    new: NotRequired[str | None]
+    observed: MirrorObservedTip
+    review: NotRequired[OriginPublishReview | None]
+    first_page: int
+    batch: NotRequired[int | None]
+    outcome: MirrorRefOutcome
+class MirrorBatchClaimPending(TypedDict):
+    state: Literal["pending"]
+class MirrorBatchClaimClaimed(TypedDict):
+    state: Literal["claimed"]
+    at: int
+class MirrorBatchClaimSent(TypedDict):
+    state: Literal["sent"]
+    at: int
+class MirrorBatchClaimPaused(TypedDict):
+    state: Literal["paused"]
+MirrorBatchClaim = MirrorBatchClaimPending | MirrorBatchClaimClaimed | MirrorBatchClaimSent | MirrorBatchClaimPaused
+class OriginMirrorPlanBatchView(TypedDict):
+    claim: MirrorBatchClaim
+    refs: list[int]
+    detail: NotRequired[str | None]
+class OriginPublishReviewItemCommit(TypedDict):
+    kind: Literal["commit"]
+    commit: str
+    parents: list[str]
+class OriginPublishReviewItemPath(TypedDict):
+    kind: Literal["path"]
+    status: str
+    mode: str
+    object: NotRequired[str | None]
+    path: str
+class OriginPublishReviewItemObject(TypedDict):
+    kind: Literal["object"]
+    object_type: str
+    object: str
+    target: NotRequired[str | None]
+    name: NotRequired[str | None]
+    size: NotRequired[int | None]
+OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath | OriginPublishReviewItemObject
+class OriginMirrorPlanRecord(TypedDict):
+    plan_id: EntityId
+    destination: OriginPublishDestination
+    strategy: OriginMirrorSyncStrategy
+    strategy_revision: int
+    requested_by: NotRequired[EntityId | None]
+    digest: str
+    vector: str
+    created_at: int
+    settled: bool
+    refs: list[OriginMirrorPlanRefView]
+    batches: list[OriginMirrorPlanBatchView]
+    pending_checks: list[OriginMirrorPendingCheck]
+    page: int
+    pages: int
+    items: list[OriginPublishReviewItem]
+class OriginMirrorPlanView(TypedDict):
+    repo: str
+    open: NotRequired[EntityId | None]
+    kept: list[EntityId]
+    plan: NotRequired[OriginMirrorPlanRecord | None]
 class OriginMirrorSetRequest(TypedDict):
     repo: str
     url: str
@@ -12445,27 +12536,12 @@ class OriginPublishRequestInput(TypedDict):
     idempotency_key: NotRequired[str | None]
     expires_at: NotRequired[int | None]
     code_repo: NotRequired[EntityId | None]
-class OriginPublishDestination(TypedDict):
-    url: str
-    user: str
-    secret_ref: str
-    target_generation: NotRequired[EntityId | None]
-    audience: RepoDestinationAudience
 class OriginPublishRemoteAbsent(TypedDict):
     state: Literal["absent"]
 class OriginPublishRemoteAt(TypedDict):
     state: Literal["at"]
     commit: str
 OriginPublishRemote = OriginPublishRemoteAbsent | OriginPublishRemoteAt
-OriginPublishLfsBytes = Literal["not_sent"]
-class OriginPublishReview(TypedDict):
-    digest: str
-    subtracted: NotRequired[str | None]
-    commits: int
-    entries: int
-    paths: int
-    pages: int
-    lfs_bytes: OriginPublishLfsBytes
 OriginPublishState = Literal["pending", "approved", "dispatching", "published", "observed_published", "refused", "cancelled", "expired"]
 OriginPublishActorClass = Literal["human", "agent", "system"]
 class OriginPublishAuthorityOwner(TypedDict):
@@ -12506,24 +12582,6 @@ class OriginPublishReviewRequest(TypedDict):
     request_id: EntityId
     page: int
     code_repo: NotRequired[EntityId | None]
-class OriginPublishReviewItemCommit(TypedDict):
-    kind: Literal["commit"]
-    commit: str
-    parents: list[str]
-class OriginPublishReviewItemPath(TypedDict):
-    kind: Literal["path"]
-    status: str
-    mode: str
-    object: NotRequired[str | None]
-    path: str
-class OriginPublishReviewItemObject(TypedDict):
-    kind: Literal["object"]
-    object_type: str
-    object: str
-    target: NotRequired[str | None]
-    name: NotRequired[str | None]
-    size: NotRequired[int | None]
-OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath | OriginPublishReviewItemObject
 class OriginPublishReviewView(TypedDict):
     request_id: EntityId
     digest: str

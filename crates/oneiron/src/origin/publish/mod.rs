@@ -26,7 +26,8 @@
 //! batches (`mirror_plan_dispatch`) and reconciles before any resend
 //! (`mirror_plan_reconcile`), in the LIVE store `ORIGIN_MIRROR_WORK`
 //! (`mirror_plan_store`); an open plan keeps what it sends pinned
-//! (`mirror_plan_pins`).
+//! (`mirror_plan_pins`), and any plan the mirror keeps is read with
+//! `vault.code.origin.mirror.plan` (`mirror_plan_view`).
 
 mod approval;
 mod authority;
@@ -41,6 +42,7 @@ mod mirror_plan_remote;
 mod mirror_plan_run;
 mod mirror_plan_store;
 mod mirror_plan_types;
+mod mirror_plan_view;
 mod mirror_review;
 mod reconcile;
 mod review;
@@ -62,6 +64,11 @@ pub use mirror_plan_reconcile::{
 };
 pub(crate) use mirror_plan_run::MirrorPlanSummary;
 pub(crate) use mirror_plan_store::erase_mirror_work_actor_in_txn;
+pub use mirror_plan_types::{MirrorBatchClaim, MirrorObservedTip, MirrorRefOutcome};
+pub use mirror_plan_view::{
+    OriginMirrorPlanBatchView, OriginMirrorPlanRecord, OriginMirrorPlanRefView,
+    OriginMirrorPlanRequest, OriginMirrorPlanView,
+};
 pub use review::ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS;
 pub(crate) use store::erase_publish_request_actor_in_txn;
 pub use types::*;

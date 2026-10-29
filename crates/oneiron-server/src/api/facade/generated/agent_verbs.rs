@@ -736,6 +736,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.ingress.get", post(facade_route))
         .route("/vault.code.origin.register", post(facade_route))
         .route("/vault.code.origin.mirror.get", post(facade_route))
+        .route("/vault.code.origin.mirror.plan", post(facade_route))
         .route("/vault.code.origin.mirror.set", post(facade_route))
         .route("/vault.code.origin.mirror.strategy", post(facade_route))
         .route("/vault.code.origin.mirror.clear", post(facade_route))
