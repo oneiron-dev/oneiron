@@ -62,9 +62,10 @@ impl RecordingJsHost<'_, '_> {
     /// other run's result they read (FIX 5460), or none known when one kept
     /// no set.
     pub(in crate::engine_executor) fn result_rows(&self) -> Option<Vec<EntityId>> {
+        let (skills, read) = &self.callable_rows;
         self.verb_rows()
-            .zip(self.callable_rows.rows())
-            .map(|(verbs, callable)| [verbs, callable].concat())
+            .zip(read.as_deref())
+            .map(|(verbs, read)| [verbs.as_slice(), read, skills.as_slice()].concat())
     }
 
     /// The rows the run's recorded and this step's verb answers were served
@@ -281,8 +282,8 @@ impl RecordingJsHost<'_, '_> {
             // Another run's result reaches this one (FIX 6130).
             let cause = crate::code_run::ReadWorldUnknown::RetainedResult;
             self.gated_write.read_worlds_unknown(self.run_id, cause);
-            let held = self.callable_rows.read.take();
-            self.callable_rows.read = held
+            let held = self.callable_rows.1.take();
+            self.callable_rows.1 = held
                 .zip(extra.clone())
                 .map(|(held, extra)| [held, extra].concat());
         }
