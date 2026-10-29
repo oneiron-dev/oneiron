@@ -474,14 +474,15 @@ pub(super) fn source_actor_key(
         .ok_or(Error::InvariantViolation("question actor key"))
 }
 
-/// Lands one answer as a proposed claim private to `principal`. An answer
+/// Lands one answer to `record`'s version as a proposed claim, stamped for
+/// the audience the version names (FIX 1825). An answer
 /// resting on a graph context's `rows` reads no wider than any of them, as a
 /// one-off graph ask's does; a lone unit bounds it by its own claim terms.
 fn land(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: WriteActor,
-    principal: EntityId,
+    record: &QuestionRecord,
     answer: &AnswerRecord,
     raw: &[u8],
     rows: Option<&[super::standing::Source]>,
@@ -496,7 +497,7 @@ fn land(
     );
     let mut taint = ClaimSource::Imported;
     if let Some(rows) = rows {
-        taint = super::standing::constrain_sources(&mut candidate, rows, principal)?;
+        taint = super::standing::constrain_sources(&mut candidate, rows, record.principal)?;
     } else if answer.source_kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         taint = body.source.unwrap_or(ClaimSource::Imported);
@@ -512,9 +513,7 @@ fn land(
             candidate = candidate.with_world(world);
         }
     }
-    candidate = candidate
-        .with_evidence_taint(taint)?
-        .with_private_reader(principal)?
+    candidate = super::answer_landing::stamp_answer(candidate.with_evidence_taint(taint)?, record)?
         .with_evidence(rmpv::Value::Array(
             answer
                 .decision

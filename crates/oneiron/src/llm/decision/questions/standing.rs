@@ -698,12 +698,12 @@ fn backfill_answer(
                 refs.push(*id);
             }
         }
-        candidate = candidate
-            .with_evidence_taint(taint)?
-            .with_private_reader(principal)?
-            .with_evidence(Value::Array(
-                refs.iter().map(|id| Value::from(id.to_hex())).collect(),
-            ));
+        // The version's own landing stamp (FIX 1825).
+        candidate =
+            super::answer_landing::stamp_answer(candidate.with_evidence_taint(taint)?, &record)?
+                .with_evidence(Value::Array(
+                    refs.iter().map(|id| Value::from(id.to_hex())).collect(),
+                ));
         let source = crate::dreamer_consolidation::source_meet(ClaimSource::Generated, taint);
         let envelope = WriteEnvelope::new(
             actor,

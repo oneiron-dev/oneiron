@@ -270,7 +270,7 @@ pub(super) fn refresh_with(
                     .map(|context| context.omitted.clone())
                     .unwrap_or_default(),
             };
-            land(vault, txn, actor, principal, &answer, &raw, rows.as_deref())?;
+            land(vault, txn, actor, &record, &answer, &raw, rows.as_deref())?;
             arrival::watch_sources(
                 &vault.store,
                 txn,
