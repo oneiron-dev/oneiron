@@ -9,6 +9,10 @@ side_tables! {
     /// epoch. Key: id16 + id16 + u64be. Encoded as hand-rolled CANONICAL JSON (sorted object keys),
     /// not a plain derive, so the codec is `Raw` rather than `LegacyJson`.
     SAVED_QUERY_MEMBERSHIP_EVENT: VaultMeta b"saved_query.event.v1:" Raw;
+    /// One swept saved query's health as its last wake left it (FIX 11250): when and by which pass
+    /// it was woken, what that came to, its failures in a row and its lag behind the change it
+    /// answered. Key: id16.
+    SAVED_QUERY_HEALTH: VaultMeta b"saved_query.health.v1:" Named;
     /// Cached match-evaluator verdict for one (query, entity, evidence) triple. Key: id16 + id16 +
     /// hash32. Encoded as hand-rolled CANONICAL JSON (sorted object keys), not a plain derive, so
     /// the codec is `Raw` rather than `LegacyJson`.

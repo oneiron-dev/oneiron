@@ -165,6 +165,7 @@ fn admission_wire(admission: &RestoreAdmission) -> RestoreAdmissionWire {
             created_at: source.created_at,
             signer_install: source.signer_install,
             pin_set_digest: source.pin_set_digest,
+            mode_root_policy_digest: source.policy_digest,
             registry_bound: source.registry_bound,
         },
         custody: CustodyAdmissionWire {

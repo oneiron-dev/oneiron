@@ -606,13 +606,14 @@ impl<'a> DreamerRunnerStore<'a> {
         admitted: &super::DreamerAdmittedAttempt,
         budget: super::SettleDreamerBudget,
         retry_at: u64,
+        step_hashes: &[[u8; 32]],
     ) -> Result<()> {
         let source = &admitted.status.attempt;
         if budget.child_attempt != source.id || retry_at <= budget.now {
             return Err(invalid_dreamer_runner("invalid selection retry"));
         }
         self.vault.with_write_txn_grouped(|txn| {
-            self.settle_budget_in_txn(txn, budget.clone())?;
+            self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), step_hashes)?;
             let crate::attempt_queue::RetryOutcome::Retried(record) = self.attempts.retry_in_txn(
                 txn,
                 crate::attempt_queue::RetryAttempt {
@@ -1011,6 +1012,7 @@ impl<'a> DreamerRunnerStore<'a> {
             reason: input.reason,
             cause: input.cause,
             park_owner: input.park_owner,
+            carried_spend: input.carried_spend,
             parked_at: input.now,
         };
         let existing = PARKED.get(&self.vault.store, &*wtxn, &record.attempt_id)?;

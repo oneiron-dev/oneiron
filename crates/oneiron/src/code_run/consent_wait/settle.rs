@@ -391,7 +391,8 @@ pub(crate) fn code_consent_admission_in_txn(
 }
 
 /// Settles wait `wait_id` as refused for `reasons`, in the caller's writer:
-/// its held connector row and the wait both, so nothing runs under it.
+/// its held connector row and the wait both, so nothing runs under it. A
+/// held browser act has no row of its own: its wait settles refused alone.
 pub(crate) fn refuse_code_consent_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -401,16 +402,14 @@ pub(crate) fn refuse_code_consent_wait_in_txn(
     let Some(row) = read_code_consent_wait_in_txn(vault, txn, wait_id)? else {
         return Ok(());
     };
+    let Some(call) = row.binding.pending.connector_call() else {
+        return super::browser::refuse_browser_wait_in_txn(vault, txn, row, reasons).map(drop);
+    };
     let outcome = ConnectorCallOutcome::Refused {
         decision_ref: None,
         reasons: reasons.iter().map(|reason| (*reason).to_owned()).collect(),
     };
-    crate::outbound_consent::settle_code_owned_call_in_txn(
-        vault,
-        txn,
-        &row.binding.pending.connector_call().call_ref,
-        &outcome,
-    )?;
+    crate::outbound_consent::settle_code_owned_call_in_txn(vault, txn, &call.call_ref, &outcome)?;
     settle_code_consent_wait_in_txn(vault, txn, wait_id, &outcome)?;
     Ok(())
 }
@@ -443,7 +442,7 @@ pub(crate) fn settle_code_consent_wait_listing_in_txn(
     outcome: &ConnectorCallOutcome,
     rows: Option<&[EntityId]>,
 ) -> Result<bool> {
-    let Some(mut row) = read_code_consent_wait_in_txn(vault, txn, wait_id)? else {
+    let Some(row) = read_code_consent_wait_in_txn(vault, txn, wait_id)? else {
         return Ok(false);
     };
     if row.settlement.is_some() {
@@ -452,15 +451,38 @@ pub(crate) fn settle_code_consent_wait_listing_in_txn(
     let Some((settled, reasons)) = settled_outcome(outcome) else {
         return Ok(false);
     };
-    let call = row.binding.pending.connector_call();
+    let call = row
+        .binding
+        .pending
+        .connector_call()
+        .ok_or(Error::InvariantViolation(
+            "a connector outcome settles only a held connector call",
+        ))?;
     let reply = serde_json::to_value(ConnectorCallReply::project(
         &call.name,
         &call.tool,
         outcome.clone(),
     ))
     .map_err(|_| Error::InvalidConfig("a code consent reply is not JSON".to_owned()))?;
+    settle_with_reply_in_txn(vault, txn, row, settled, reasons, &reply, rows)
+}
+
+/// Settles `row`'s open wait as `settled` for `reasons`, with `reply`, the
+/// reply its parked run is delivered beside `rows`, in the caller's writer:
+/// the settlement, its receipt in the consent Gate family, and the delivery
+/// that wakes the run, in one commit. Every held effect kind settles here.
+pub(super) fn settle_with_reply_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    mut row: CodeConsentWaitRow,
+    settled: CodeConsentSettleOutcome,
+    reasons: Vec<String>,
+    reply: &serde_json::Value,
+    rows: Option<&[EntityId]>,
+) -> Result<bool> {
+    let wait_id = row.binding.wait_id;
     let now = now_ms();
-    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, &reply, rows, now)?;
+    crate::code_run::deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now)?;
     let delivered = crate::code_run::settled_wait_reply_in_txn(vault, txn, wait_id)?.ok_or(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
@@ -579,8 +601,9 @@ fn view_of(
         run_id: row.binding.run_id,
         state: row.state(),
         verb: row.binding.verb_row.clone(),
-        connector: call.name.clone(),
-        tool: call.tool.clone(),
+        connector: call.map(|call| call.name.clone()).unwrap_or_default(),
+        tool: call.map(|call| call.tool.clone()).unwrap_or_default(),
+        browser: row.binding.pending.browser_action().cloned(),
         effect_digest: row.binding.effect_digest,
         hold_reasons: row.binding.hold_reasons.clone(),
         ask: row.ask,

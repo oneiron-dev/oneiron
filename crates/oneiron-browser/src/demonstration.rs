@@ -27,7 +27,7 @@ use crate::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A demonstration's id within its session: `dm1`, `dm2`, ...
 pub type DemonstrationId = String;
@@ -248,10 +248,12 @@ pub(crate) struct KeyFacts {
 }
 
 /// One thing the recorder saw, in its pages' order, in tab `tab` on top
-/// page `url`.
+/// page `url` as the browser holds it, which the recording shows as
+/// `shown` (masked as an observation's URL is, FIX 10331).
 pub(crate) struct Seen {
     pub(crate) tab: String,
     pub(crate) url: Option<String>,
+    pub(crate) shown: Option<String>,
     pub(crate) saw: Saw,
 }
 
@@ -333,11 +335,18 @@ pub(crate) struct Recording {
     pending: Option<Pending>,
     /// An Enter in a form field of this tab, waiting for its submit.
     awaiting_submit: Option<(String, Option<String>)>,
-    /// Each tab's top page, as last seen.
+    /// Each tab's top page, as last seen, as the browser holds its URL: the
+    /// recorder's lookups read it.
     pages: BTreeMap<String, String>,
+    /// The same pages as the recording shows them (FIX 10331).
+    shown_pages: BTreeMap<String, String>,
     /// Whether an act was recorded since the last page loaded (FIX 9413);
     /// the page the recording began on counts as acted on.
     acted: bool,
+    /// The tabs whose run's own act loaded a page whose document had sent
+    /// nothing by that act's drain: the tab's next document is the act's
+    /// own (FIX 10429).
+    awaited: BTreeSet<String>,
 }
 
 impl Recording {
@@ -360,7 +369,9 @@ impl Recording {
             pending: None,
             awaiting_submit: None,
             pages: BTreeMap::new(),
+            shown_pages: BTreeMap::new(),
             acted: true,
+            awaited: BTreeSet::new(),
         }
     }
 
@@ -396,12 +407,23 @@ impl Recording {
     /// of the form's submitter; a navigation is the context of the steps
     /// around it, never an `open` (only the run's own open is one).
     pub(crate) fn demonstration_coalesce_policy(&mut self, seen: Seen) {
-        let Seen { tab, url, saw } = seen;
-        if let Some(url) = &url {
-            self.pages.insert(tab.clone(), url.clone());
+        let Seen {
+            tab,
+            url,
+            shown,
+            saw,
+        } = seen;
+        if let Some(url) = url {
+            self.pages.insert(tab.clone(), url);
         }
+        if let Some(shown) = &shown {
+            self.shown_pages.insert(tab.clone(), shown.clone());
+        }
+        // Each step names its page as the recording shows it.
+        let url = shown;
         if !matches!(saw, Saw::Document | Saw::Gap(_)) {
             self.acted = true;
+            self.awaited.remove(&tab);
         }
         // A form field's change, and the submit, follow its Enter.
         if !matches!(saw, Saw::Submit(_) | Saw::Commit { .. }) {
@@ -440,8 +462,9 @@ impl Recording {
             }
             Saw::Document => {
                 self.flush();
-                // A page no recorded act led to (FIX 9413).
-                if !std::mem::take(&mut self.acted) {
+                // A page no recorded act led to (FIX 9413); the late
+                // document of the run's own act is that act's (FIX 10429).
+                if !self.awaited.remove(&tab) && !std::mem::take(&mut self.acted) {
                     let gap = RecordingGapKind::UnrecordedNavigation;
                     self.gap(None, Some(tab.clone()), gap);
                 }
@@ -517,8 +540,17 @@ impl Recording {
         }
         if let (Some(tab), Some(url)) = (&step.result_tab, &step.result_url) {
             self.pages.insert(tab.clone(), url.clone());
+            self.shown_pages.insert(tab.clone(), url.clone());
         }
         self.push(step);
+    }
+
+    /// The run's own act in tab `tab` loaded a page whose document had sent
+    /// nothing by that act's drain (FIX 10429): the tab's next document is
+    /// that act's own, and a script's redirect after it still follows an
+    /// act.
+    pub(crate) fn awaits_document(&mut self, tab: String) {
+        self.awaited.insert(tab);
     }
 
     /// Ends the span: the open edit becomes its step, an Enter that
@@ -530,7 +562,11 @@ impl Recording {
         for step in &mut self.steps {
             if step.result_url.is_none() {
                 let tab = step.tab.as_deref().unwrap_or_default();
-                step.result_url = self.pages.get(tab).cloned().or(step.source_url.clone());
+                step.result_url = self
+                    .shown_pages
+                    .get(tab)
+                    .cloned()
+                    .or(step.source_url.clone());
             }
         }
     }
@@ -600,7 +636,7 @@ impl Recording {
             verb: verb.to_owned(),
             tab: Some(tab.to_owned()),
             result_tab: Some(tab.to_owned()),
-            source_url: url.or_else(|| self.pages.get(tab).cloned()),
+            source_url: url.or_else(|| self.shown_pages.get(tab).cloned()),
             result_url: None,
             target_name: None,
             effect_class: None,

@@ -599,6 +599,45 @@ impl<'v> ScopedRead<'v> {
     }
 }
 
+/// What an admission-checked point read found: the raw read's value when
+/// the lane admitted the entity, or that it withheld the entity and read
+/// nothing. The caller keeps its own path for a withheld entity, as the
+/// `is_ref_readable` guard it replaces did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Admitted<T> {
+    /// The lane admitted the entity; the raw read's value.
+    Admitted(T),
+    /// The lane withheld the entity; nothing was read.
+    Withheld,
+}
+
+impl ScopedRead<'_> {
+    /// The point vector the lane admits for `id`: exactly what
+    /// [`Self::is_ref_readable`] admits, then the same raw
+    /// `Vault::get_vector` read. An admitted entity with no stored vector
+    /// is `Admitted(None)`, distinct from a withheld one.
+    pub(crate) fn admitted_vector(&self, id: &EntityId) -> Result<Admitted<Option<Vec<f32>>>> {
+        if !self.is_ref_readable(id)? {
+            return Ok(Admitted::Withheld);
+        }
+        Ok(Admitted::Admitted(self.vault.get_vector(id)?))
+    }
+
+    /// The task owner the lane admits for `task`: the same raw
+    /// `Vault::indexed_task_owner` read, whose owner is admitted exactly
+    /// when [`Self::is_ref_readable`] admits it. A task with no owner is
+    /// `Admitted(None)`, distinct from a withheld owner.
+    pub(crate) fn admitted_task_owner(&self, task: EntityId) -> Result<Admitted<Option<EntityId>>> {
+        let Some(owner) = self.vault.indexed_task_owner(task)? else {
+            return Ok(Admitted::Admitted(None));
+        };
+        if !self.is_ref_readable(&owner)? {
+            return Ok(Admitted::Withheld);
+        }
+        Ok(Admitted::Admitted(Some(owner)))
+    }
+}
+
 /// ONE-1608 / ARCH-0050 R6 L2: the L2 pull ranks over an ACTOR-SCOPED walk,
 /// so `crate::ppr` asks this lane whether a node may carry PPR mass at all.
 ///

@@ -4,7 +4,8 @@
 
 use super::{
     AskTo, DecisionLadder, DecisionPack, HumanDecisionRequest, OpenPack, Read, Readings, Route,
-    abstained, ask, asks_person, millis, step_cause, take, takes, validate_pin, validate_state,
+    abstained, ask, asks_person, millis, price_answers, step_cause, take, takes, validate_pin,
+    validate_state,
 };
 use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility};
 use crate::llm::decision::types::invalid;
@@ -586,6 +587,7 @@ impl DecisionLadder<'_> {
                     .rule
                     .filter(|_| answered == Some(DecisionRung::Rule)),
                 asked,
+                state_cut: None,
             },
         })
     }
@@ -618,13 +620,18 @@ impl DecisionLadder<'_> {
                 .map(|_| Read::NotStarted)
                 .collect());
         }
-        let reads = take(&pin, pack, ask(provider, pack, person), readings)?;
+        // A choice wider than the provider's option bound is read in chunks (FIX 11235).
+        let reads = if pack
+            .questions
+            .iter()
+            .all(|question| provider.capability().takes(question))
+        {
+            take(&pin, pack, ask(provider, pack, person), readings)?
+        } else {
+            super::tournament::read_pack(provider, &pin, pack, person, readings)?
+        };
         // Each answer's receipt carries what its provider knows it costs.
-        for (read, readings) in reads.iter().zip(readings.iter_mut()) {
-            if matches!(read, Read::Answer(_)) {
-                readings.cost = provider.cost_per_thousand();
-            }
-        }
+        price_answers(&reads, readings, provider.cost_per_thousand());
         // A rule row that answered is named on its question's receipt.
         if rung == DecisionRung::Rule {
             for (index, (read, readings)) in reads.iter().zip(readings.iter_mut()).enumerate() {

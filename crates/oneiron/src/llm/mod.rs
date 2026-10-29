@@ -13,6 +13,10 @@ mod autocheck;
 mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
+pub use defaults::{
+    PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission,
+    PurposeDefaultSubmitter, purpose_default_grant_target,
+};
 mod inference_admission;
 pub use inference_admission::admitted_as;
 mod role_defaults;
@@ -148,7 +152,7 @@ pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
-    terminal_step_identity,
+    settled_step_usage_in_txn, terminal_step_identity,
 };
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;

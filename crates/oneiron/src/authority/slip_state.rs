@@ -100,6 +100,29 @@ impl SlipAuthorityState {
             }
         }
     }
+    /// FIX-LIST 1978: every mint whose signed `grant_ref` names a guest
+    /// Grant `withdrawn` says this vault withdrew joins `revoked`, as a
+    /// `SlipRevoke` would, so a guest slip minted on another replica and
+    /// merged after the withdrawal confers nothing, its subtree and past
+    /// acts included. No signed revoke is logged for it, so it stays out of
+    /// `explicit_revoked` and an explicit revoke still logs one.
+    pub(super) fn tombstone_withdrawn_grants(&mut self, withdrawn: impl Fn(&str) -> bool) {
+        let dead: Vec<[u8; 32]> = self
+            .mints
+            .iter()
+            .filter(|(id, mint)| {
+                !self.revoked.contains(*id)
+                    && mint
+                        .action
+                        .claims
+                        .grant_ref
+                        .as_deref()
+                        .is_some_and(&withdrawn)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        self.revoked.extend(dead);
+    }
     fn ancestry_live(&self, id: &[u8; 32]) -> bool {
         self.ancestors(id).is_some()
     }

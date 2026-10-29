@@ -25,6 +25,7 @@ use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
 use crate::{EdgeActorClass, Vault, WriteActor};
 
+pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
 
 pub(crate) const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";
@@ -543,4 +544,20 @@ fn llm_class(error: &LlmError) -> ModelStepFailureClass {
         LlmError::Fatal(_) => ModelStepFailureClass::Fatal,
         LlmError::BudgetDenied(_) => ModelStepFailureClass::BudgetDenied,
     }
+}
+
+/// The terminal claim `attempt_id`'s step `step_hash` answers with: the paid
+/// generation behind its answer. A re-ask after the step's memo is forgotten
+/// answers with a new claim, so a caller tells a paid re-ask from a memo
+/// replay by it (FIX 7489).
+///
+/// # Errors
+///
+/// Returns an error when the step index cannot be read.
+pub(crate) fn step_terminal_claim(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<Option<EntityId>> {
+    step_index_lookup(vault, attempt_id, step_hash)
 }

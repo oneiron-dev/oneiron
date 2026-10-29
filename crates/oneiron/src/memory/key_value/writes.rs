@@ -55,7 +55,7 @@ impl Memory<'_> {
             if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &id)? {
                 return Err(super::super::support::hard_deleted_refusal(&id));
             }
-            let mut rows = self.key_value_rows(content.read())?;
+            let mut rows = self.key_value_rows(content.read(), None)?;
             let prior = rows.remove(&address);
             if let Some((prior_id, _)) = &prior {
                 content.require_claim(*prior_id)?;
@@ -133,7 +133,7 @@ impl Memory<'_> {
     ) -> MemoryResult<KeyValueDeleteReceipt> {
         check_address(address)?;
         self.with_actor_content_write_txn(|content| {
-            let Some((id, _)) = self.key_value_rows(content.read())?.remove(address) else {
+            let Some((id, _)) = self.key_value_rows(content.read(), None)?.remove(address) else {
                 return Ok(KeyValueDeleteReceipt {
                     existed: false,
                     receipt_refs: Vec::new(),

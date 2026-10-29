@@ -130,6 +130,7 @@ impl MediaEmbedRefusal {
                 | Self::Malformed
                 | Self::Call(LlmError::Fatal(
                     FatalLlmError::InvalidRequest
+                        | FatalLlmError::InvalidRequestDetail { .. }
                         | FatalLlmError::ContentFiltered
                         | FatalLlmError::EmptyResponse
                 ))
@@ -566,7 +567,8 @@ impl RuntimeMediaEmbedder {
             .ai
             .model_runtime()
             .media()
-            .run(request, self.payer.clone())
+            // The rows the part was read from are not known here whole.
+            .run(request, self.payer.clone(), None)
             .await
             .map_err(MediaEmbedRefusal::Call)?;
         let mark = self.answer_mark(&response.usage.raw_provider);
@@ -611,25 +613,27 @@ impl RuntimeMediaEmbedder {
             .then_some(MediaEgress)
     }
 
-    /// The call as `/v1/ai/embed` admits it: the vault's inference policy
-    /// for this rung, and no world the call vouches for. `name_width` asks
-    /// for the space's width as the call's `dimensions`.
+    /// The call as `/v1/ai/embed` admits it, through the same admission
+    /// (FIX 2964): the vault's inference policy for this rung, at the
+    /// locality of the offer the space pinned, and no world the call vouches
+    /// for. `name_width` asks for the space's width as the call's
+    /// `dimensions`.
     fn admit(&self, part: MediaPart, name_width: bool) -> Result<MediaRequest, MediaEmbedRefusal> {
-        let mut request = self.request(vec![part], name_width);
-        let context = oneiron::llm::HostInferenceContext {
-            binding: oneiron::llm::HostInferenceBinding::Advertised {
-                model: self.model.clone(),
-                locality: self.locality,
-            },
-            extraction_egress: self.egress.as_deref(),
-        };
-        let authorized = self
-            .vault
-            .authorize_raw_inference(request.admission_request(), &context)
-            .map_err(MediaEmbedRefusal::Denied)?;
-        request.envelope = authorized.into_request().envelope;
-        request.envelope.scope.world = None;
-        Ok(request)
+        let request = self.request(vec![part], name_width);
+        super::media_door::admit_media_at(
+            &self.vault,
+            self.locality,
+            self.egress.as_deref(),
+            request,
+        )
+        .map_err(|refused| match refused {
+            super::MediaRefusal::Denied(error) => MediaEmbedRefusal::Denied(error),
+            // The embedder builds its call itself: it names no selector of
+            // its own and its rung by the id the seat lists.
+            super::MediaRefusal::UnknownModel | super::MediaRefusal::SelectorOverride(_) => {
+                MediaEmbedRefusal::Call(oneiron::FatalLlmError::InvalidRequest.into())
+            }
+        })
     }
 
     /// The `ai.embed` call of `parts` on this rung, before the vault's

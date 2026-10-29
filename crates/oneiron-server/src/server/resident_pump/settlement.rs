@@ -70,6 +70,7 @@ pub(super) fn settle(
                 reason: OUTAGE_PARK_REASON.to_owned(),
                 cause: DreamerParkCause::ProviderUnavailable,
                 park_owner: LEASE_OWNER.to_owned(),
+                carried_spend: None,
                 now,
             })?;
             // FIX 2146: the outage counts once for the run's agent, here,
@@ -87,7 +88,7 @@ pub(super) fn settle(
         // neither fails nor spends a try, and goes on once they say yes.
         Err(EngineRunError::Payer(fault @ PayerFault::Needed { .. })) => {
             tracing::info!(%fault, attempt = ?attempt.id, "an agent run parks on its payer");
-            park_for_payer(vault, attempt.id, LEASE_OWNER, &fault, now)?;
+            park_for_payer(vault, attempt.id, LEASE_OWNER, &fault, None, now)?;
             return Ok(());
         }
         Err(error) => {
@@ -388,6 +389,7 @@ fn park_on_wait(
             reason: WAITING_PARK_REASON.to_owned(),
             cause: DreamerParkCause::Signal,
             park_owner: trap_park_owner(&trap.trap_claim_id),
+            carried_spend: None,
             now,
         },
         &parked.key,

@@ -42,7 +42,7 @@ pub(crate) async fn resolve_mcp_caller(
 ) -> Result<McpCallContext, McpGatewayError> {
     let attested = crate::auth::attested_owner(connection, server);
     let Some(owner) = attested.or_else(|| session_owner(connection, server)) else {
-        return resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
+        return resolve_mcp_gateway_actor(mode, request_id, headers, connection, locality, server)
             .await
             .map(|context| with_admitted_proof(context, connection));
     };
@@ -61,9 +61,10 @@ pub(crate) async fn resolve_mcp_caller(
         };
         return managed_owner_context(mode, request_id, headers, owner, auth, server);
     }
-    let context = resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
-        .await
-        .map(|context| with_admitted_proof(context, connection))?;
+    let context =
+        resolve_mcp_gateway_actor(mode, request_id, headers, connection, locality, server)
+            .await
+            .map(|context| with_admitted_proof(context, connection))?;
     let principal = context
         .actor
         .auth
@@ -226,6 +227,7 @@ fn owner_context_at(
         room_turn,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 
@@ -287,7 +289,7 @@ pub(super) fn invocation_owner(
 /// An attested owner's STREAM connection: one per person, derived from him
 /// alone under its own prefix, so it never names a connector registration
 /// or another person's stream, and does not spell the person's id.
-fn owner_stream_connection(owner: oneiron::EntityId) -> StreamConnectionId {
+pub(super) fn owner_stream_connection(owner: oneiron::EntityId) -> StreamConnectionId {
     let key = blake3::derive_key(MCP_OWNER_STREAM_CONTEXT, owner.as_bytes());
     StreamConnectionId(format!("mcp-owner:{}", blake3::Hash::from(key).to_hex()))
 }

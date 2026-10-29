@@ -5,15 +5,29 @@
 use super::McpGatewayError;
 use super::tasks_response::{MCP_HOST_ACTION_REFUSED, MCP_OWNER_BINDING_REQUIRED, mcp_hook_stop};
 
-/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
-pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary,
+/// its reason codes kept whatever its kind (FIX 7398).
+pub(crate) fn mcp_facade_error(mut error: oneiron::MemoryError) -> McpGatewayError {
+    let reason_codes = std::mem::take(&mut error.reason_codes);
+    McpGatewayError {
+        reason_codes,
+        ..mcp_facade_refusal(error)
+    }
+}
+
+fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
+    // FIX 11199: when the refused call's source said to send again (FIX 8190),
+    // every refusal states it, whatever its kind: the proxy's codes are not
+    // named below, and they time out all the same.
+    let retry_after = error.retry_after;
+    let resets_at = std::mem::take(&mut error.resets_at);
     if let Some(stop) = error.hook {
-        return mcp_hook_stop(*stop);
+        return with_refusal_timing(mcp_hook_stop(*stop), retry_after, resets_at);
     }
     if let Some(correction) = error.wrong_root {
         let mut refusal = McpGatewayError::new(-32601, "wrong_root", error.message);
         refusal.wrong_root = Some(correction);
-        return refusal;
+        return with_refusal_timing(refusal, retry_after, resets_at);
     }
     let code = match error.code.as_str() {
         oneiron::MEMORY_CODE_NOT_FOUND => -32004,
@@ -73,30 +87,52 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
     if let Some(kind) = kind {
         // A model that did not answer says when to call again (FIX 3194),
         // and so does a render that can be asked again (FIX 8242).
-        return McpGatewayError {
-            retry_after: error.retry_after,
-            ..McpGatewayError::new(code, kind, error.message)
-        };
+        return with_refusal_timing(
+            McpGatewayError::new(code, kind, error.message),
+            retry_after,
+            resets_at,
+        );
     }
     // A facade refusal carrying a successor keeps the same stable kind and
     // typed data the engine-error path emits (ONE-1936) — one vocabulary for
     // one condition, whichever door reported it.
-    match error.successor_short_id {
-        Some(successor_short_id) => {
-            McpGatewayError::new(code, "write_verb_target_stale", error.message)
-                .with_successor_short_id(successor_short_id)
-        }
-        None => McpGatewayError::new(code, "facade_error", error.message),
+    with_refusal_timing(
+        match error.successor_short_id {
+            Some(successor_short_id) => {
+                McpGatewayError::new(code, "write_verb_target_stale", error.message)
+                    .with_successor_short_id(successor_short_id)
+            }
+            None => McpGatewayError::new(code, "facade_error", error.message),
+        },
+        retry_after,
+        resets_at,
+    )
+}
+
+/// The gateway refusal with the timing its engine error stated: when to send
+/// again and each reset time ride every kind, not only the ones
+/// `refusal_kind` names (FIX 11199).
+fn with_refusal_timing(
+    mut refusal: McpGatewayError,
+    retry_after: Option<u64>,
+    resets_at: Vec<u64>,
+) -> McpGatewayError {
+    refusal.retry_after = refusal.retry_after.or(retry_after);
+    if !resets_at.is_empty() {
+        refusal.resets_at = Some(Box::new(resets_at));
     }
+    refusal
 }
 
 /// The stable kind of a typed refusal whose code the gateway names in its
 /// own spelling, each a -32020 refusal: the owner's world read setting
-/// (FIX 7562), a hosted vault paused for its reap (FIX 5325), and a deck
-/// render past its deadline or at a machine floor (FIX 8242). `None` for
-/// any other code.
+/// (FIX 7562), a hosted vault paused for its reap (FIX 5325), a deck render
+/// past its deadline or at a machine floor (FIX 8242), and a damaged
+/// authority clock floor, which the owner's repair answers (FIX 11190).
+/// `None` for any other code.
 fn refusal_kind(code: &str) -> Option<&'static str> {
     Some(match code {
+        oneiron_contracts::memory::MEMORY_CODE_AUTHORITY_CLOCK_CORRUPT => "authority_clock_corrupt",
         oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT => "world_recipient_limit",
         oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
             "world_placement_unverifiable"

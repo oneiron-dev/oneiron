@@ -218,6 +218,8 @@ impl Vault {
     }
 
     /// Human removal of an untrusted narrowing, pinned to these exact bytes.
+    /// Once it commits, the custody floor rebinds and the manifest watch
+    /// reads it, as every manifest commit does (FIX 11527).
     pub fn quarantine_manifest_contribution(
         &self,
         owner: &AuthenticatedOwner,
@@ -234,6 +236,21 @@ impl Vault {
         }
         let hash = blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]);
         QUARANTINED.put(&self.store, &mut txn, &HexId(id), hash.as_bytes())?;
+        txn.commit()?;
+        self.apply_pending_rebinds_after_commit();
+        Ok(())
+    }
+
+    /// Lifts the quarantine marker on a manifest id, so bytes declared
+    /// under it count again as any declaration does. An id with no marker is
+    /// left as it is. An install never lifts it by itself.
+    pub fn lift_manifest_quarantine(&self, owner: &AuthenticatedOwner, id: EntityId) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        if QUARANTINED.get(&self.store, &txn, &HexId(id))?.is_none() {
+            return Ok(());
+        }
+        QUARANTINED.delete(&self.store, &mut txn, &HexId(id))?;
         txn.commit()?;
         Ok(())
     }

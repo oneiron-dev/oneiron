@@ -25,11 +25,12 @@ mod question_answers;
 pub(crate) use self::question_answers::vault_questions_answers;
 
 use oneiron::llm::decision::questions::{
-    AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionRecord,
-    QuestionScheduleHead, ScheduledBackfill, calibration_pairs, create_question, edit_question,
-    outcome_labels, pause_question, project_bound_outcomes, question_call_budget, read_question,
-    read_question_schedule, refresh_artifact_question_now, refresh_standing_question_with,
-    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type, standing_ask_route,
+    AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext,
+    OutcomeWindowClose, QuestionRecord, QuestionScheduleHead, ScheduledBackfill, calibration_pairs,
+    closed_outcome_windows, create_question, edit_question, outcome_labels, pause_question,
+    project_bound_outcomes, question_call_budget, read_question, read_question_schedule,
+    refresh_artifact_question_now, refresh_standing_question_with, run_graph_ask_receipted,
+    schedule_backfill, select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
@@ -37,9 +38,10 @@ use oneiron::llm::decision::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
     GraphAdmitRequest, GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionBackfillRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
-    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    QuestionScheduleRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -379,6 +381,35 @@ async fn vault_questions_read_answer(
     .map_err(|_| internal(VERB))?
 }
 
+/// `vault.questions.outcome_windows`: the caller's standing question's closed
+/// outcome windows, across its versions; none when the question is not theirs.
+/// Beside it, no row: the windows live in a side table.
+pub(crate) async fn vault_questions_outcome_windows(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomeWindowsRequest,
+) -> Listed<Vec<OutcomeWindowClose>> {
+    naming(
+        vault_questions_outcome_windows_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
+async fn vault_questions_outcome_windows_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomeWindowsRequest,
+) -> MemoryResult<Vec<OutcomeWindowClose>> {
+    const VERB: &str = "vault.questions.outcome_windows";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<OutcomeWindowClose>> {
+        Ok(closed_outcome_windows(server.vault(), principal, input.id)?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
 /// `vault.questions.refresh`: refreshes the caller's standing question by
 /// hand, now, over every unit its current version covers. The answerer is
 /// the resident pump's: the host's ladder under the question's own dial,
@@ -710,16 +741,19 @@ fn asker_lane<'a>(
 }
 
 /// A standing question's dial, checked inside the host's own: the dial the
-/// host's other decisions take, from its first filled rung up to `big`
-/// (`DecisionHost::dial`). A dial that starts below that rung, climbs past
-/// `big` or sets a band that is not a valid band inside the host's is
-/// refused, never stored.
+/// host's other decisions take, from its first filled rung up to the
+/// question's own ceiling past `big` (`DecisionHost::dial`), so a `human`
+/// ceiling stays human and asks the next authorised role (FIX 11232). A dial
+/// that starts below that rung or sets a band that is not a valid band
+/// inside the host's is refused, never stored.
 fn inside_host_dial(
     server: &SyncServer,
     dial: DecisionDial,
     verb: &str,
 ) -> MemoryResult<DecisionDial> {
-    let host = server.decision_host().dial(DecisionRung::Big);
+    let host = server
+        .decision_host()
+        .dial(dial.ceiling.max(DecisionRung::Big));
     host.narrow(dial).map_err(|_| {
         let first = serde_json::to_value(host.first)
             .ok()
@@ -727,11 +761,11 @@ fn inside_host_dial(
             .unwrap_or_default();
         MemoryError::bad_request_with(
             format!(
-                "{verb}'s dial widens the host's: start at or above {first}, end at big or below, \
+                "{verb}'s dial widens the host's: start at or above {first}, end at human or below, \
                  and set a band with low below high inside {}..{}",
                 host.band.low, host.band.high
             ),
-            &["Start the dial at or above the host's first rung, end it at big or below, and keep its band inside the host's."],
+            &["Start the dial at or above the host's first rung, end it at human or below, and keep its band inside the host's."],
         )
     })
 }

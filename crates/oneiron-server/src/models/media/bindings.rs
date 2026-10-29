@@ -90,16 +90,47 @@ impl MediaRuntime {
         self.cloners.get(target).cloned()
     }
 
+    /// Each hosted render target that clones, by name, at the locality its
+    /// clone wire states (FIX 1567).
+    #[must_use]
+    pub fn clone_targets(&self) -> Vec<(String, oneiron::ModelLocality)> {
+        self.cloners
+            .iter()
+            .map(|(target, cloner)| (target.clone(), cloner.locality()))
+            .collect()
+    }
+
     /// A run of its own on the media meter for a voice clone's calls (FIX
-    /// 3009): the clone wire admits and settles each one on it.
-    pub fn clone_run(&self) -> LlmResult<RunAdmission> {
+    /// 3009): the clone wire admits and settles each one on it. Its permits
+    /// carry `sources`, the rows the calls are read from (FIX 11311), `None`
+    /// when not known whole.
+    pub fn clone_run(&self, sources: Option<Vec<oneiron::EntityId>>) -> LlmResult<RunAdmission> {
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
         Ok(undeclared_run(
             MEDIA_RUN,
             meter,
             self.host.clone(),
             Arc::clone(&self.receipts),
-        ))
+        )
+        .sourced(sources))
+    }
+
+    /// A run of its own on the media meter for one realtime voice session
+    /// (FIX 462): a voice loop, not an `ai.*` call, each response of it
+    /// admitted and settled on it. Its permits carry `sources`, the rows the
+    /// session reads, `None` when not known whole.
+    pub fn voice_loop_run(
+        &self,
+        sources: Option<Vec<oneiron::EntityId>>,
+    ) -> LlmResult<RunAdmission> {
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        Ok(undeclared_run(
+            crate::models::VOICE_LOOP_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        )
+        .sourced(sources))
     }
 
     /// [`Self::clone_run`], billed to `payer` when an acting payer's own
@@ -108,10 +139,14 @@ impl MediaRuntime {
     /// `None` is [`Self::clone_run`] itself, the vault's run as before; the
     /// creator stays the run's initiator either way, never its payer by
     /// having made the voice.
-    pub fn clone_run_funded(&self, payer: Option<PayerPerson>) -> LlmResult<RunAdmission> {
+    pub fn clone_run_funded(
+        &self,
+        payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
+    ) -> LlmResult<RunAdmission> {
         match payer {
-            None => self.clone_run(),
-            Some(payer) => self.media_run(Some(payer)),
+            None => self.clone_run(sources),
+            Some(payer) => self.media_run(Some(payer), sources),
         }
     }
 
@@ -120,6 +155,22 @@ impl MediaRuntime {
     #[must_use]
     pub fn renders_from_refs(&self, target: &str) -> bool {
         self.reference_targets.contains(target)
+    }
+
+    /// Where reference target `target` runs (FIX 4394): the locality its
+    /// provider states on the media rows of this host's seats that name it.
+    /// `None` when it is no reference target, or no seat's row names it, so
+    /// no call reaches it here.
+    #[must_use]
+    pub fn reference_target_locality(&self, target: &str) -> Option<oneiron::llm::ModelLocality> {
+        if !self.renders_from_refs(target) {
+            return None;
+        }
+        self.seats
+            .values()
+            .flat_map(|seat| &seat.rows)
+            .find(|row| row.provider == target)
+            .map(|row| row.locality)
     }
 }
 

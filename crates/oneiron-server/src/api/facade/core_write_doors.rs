@@ -16,6 +16,7 @@ use oneiron::core_write::{
 use oneiron::dreamer_wake::WakeTurnSubject;
 use oneiron::memory::{MemoryResult, ProducerRows};
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, hex_rows, internal, naming, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -47,7 +48,7 @@ pub(crate) async fn write_core_turn(
     let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
-    let receipt = tokio::task::spawn_blocking(move || {
+    let receipt = clock_ingress::run_blocking(move || {
         let writer = match crate::api::scoped_read_for_core_auth(&vault, &auth) {
             Ok(writer) => writer,
             Err(refused) => {
@@ -170,7 +171,7 @@ pub(crate) async fn write_core_batch(
     let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let lane = core_write_lane(&vault, &auth)
             .map_err(|refused| super::FacadeApiError::from(refused).into_memory_error())?;
         vault.write_core_batch_in_lane(&input, commit, announcement, &lane)

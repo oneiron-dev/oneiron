@@ -12,7 +12,7 @@ use crate::claim::{
 };
 use crate::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
+    DecisionRung, EvidenceVersion, HostRuleRef, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
     PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::receipt::{PixelPull, ServedForm};
@@ -58,6 +58,9 @@ pub struct GraphPrediction {
     pub cost_per_thousand: f64,
     /// The paired reading from the same measurement, when the provider takes one.
     pub paired: Option<PairedAnswer>,
+    /// The host rule row the prediction was read from, as id@revision (FIX 2974); none
+    /// when no rule row answered.
+    pub rule: Option<HostRuleRef>,
 }
 
 /// What an answerer returns for one unit: a bare prediction the engine wraps
@@ -474,6 +477,16 @@ fn answer_unit(
             validate_decision(question, principal, &decision)?;
             let decision = decided(&context, &images, &audio, *decision);
             if decision.answer == DecisionAnswer::Abstain {
+                // The person ask it went up as is kept on the unit (FIX 11231).
+                let source = &context.sources[0];
+                super::role_asks::keep_question_unit_ask(
+                    vault,
+                    unit,
+                    source.hash,
+                    source.entity_type,
+                    None,
+                    &decision,
+                );
                 return Ok(UnitOutcome::Declined(Box::new(decision)));
             }
             decision
@@ -738,6 +751,7 @@ fn predicted(
             person_row: None,
             rule: None,
             asked: None,
+            state_cut: None,
         },
         human_ask: None,
     }
@@ -865,7 +879,8 @@ pub(super) fn unit_audio(
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
 /// well formed. An abstention that asked the next authorised role (OF-506)
-/// ends on the person queue's pin: the ask is pending, never an answer.
+/// ends on the person queue's pin: the ask is pending, never an answer; its
+/// holder's answer lands on the unit once settled (`role_asks`, FIX 11231).
 pub fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,

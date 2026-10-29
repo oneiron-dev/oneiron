@@ -29,7 +29,7 @@ use oneiron_crypto::backup::{
 
 use super::super::CheckpointSigner;
 use super::reason::{Rejected, RestoreAdmissionError, RestoreAdmissionReason as R, RestorePhase};
-use super::{SourceExpectation, VerifiedSource};
+use super::{SignerTrust, SourceExpectation, VerifiedSource};
 use crate::world_keys::refused;
 use crate::{Error, Result};
 
@@ -53,11 +53,15 @@ fn crypto_reason(error: &oneiron_crypto::Error) -> R {
 }
 
 /// Checks 1 to 5's signed part on the artifact at `path`, read once from
-/// the file returned for the restore to open.
+/// the file returned for the restore to open. Its signer is admitted by the
+/// plan's pins or, beside them, as one of `delegated`, the signers the
+/// vault's mode roots delegated (FIX 968); either way both its signatures
+/// are checked the one shared way, against that signer.
 pub(super) fn inspect(
     path: &Path,
     expected: &SourceExpectation,
-) -> std::result::Result<(File, BackupEvidence), RestoreAdmissionError> {
+    delegated: &[CheckpointSigner],
+) -> std::result::Result<(File, BackupEvidence, SignerTrust), RestoreAdmissionError> {
     let file = File::open(path).map_err(|error| check(R::StorageIo, error.into()))?;
     let evidence = inspect_backup(BufReader::new(&file)).map_err(|error| {
         let reason = crypto_reason(&error);
@@ -91,7 +95,13 @@ pub(super) fn inspect(
             refused("the checkpoint is not the artifact the plan names"),
         ));
     }
-    verify_with_pins(&evidence, &expected.signer_pins).map_err(|error| {
+    let signer = &evidence.commitment.signer;
+    let (pins, trust) = if !expected.signer_pins.contains(signer) && delegated.contains(signer) {
+        (std::slice::from_ref(signer), SignerTrust::ModeRootDelegated)
+    } else {
+        (expected.signer_pins.as_slice(), SignerTrust::Pinned)
+    };
+    verify_with_pins(&evidence, pins).map_err(|error| {
         let reason = crypto_reason(&error);
         let error = match reason {
             R::SignerUntrusted => refused("the checkpoint's signer is not trusted here"),
@@ -100,7 +110,7 @@ pub(super) fn inspect(
         };
         check(reason, error)
     })?;
-    Ok((file, evidence))
+    Ok((file, evidence, trust))
 }
 
 /// Check 6, once the artifact opened whole.
@@ -137,12 +147,15 @@ fn pin_set_digest(pins: &[CheckpointSigner]) -> Result<[u8; 32]> {
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// What the checks verified, apart from what the plan expected.
+/// What the checks verified, apart from what the plan expected: with what
+/// admitted the signer, and the mode-root policy's digest where that was
+/// its delegation.
 pub(super) fn verified(
     evidence: &BackupEvidence,
     expected: &SourceExpectation,
     checkpoint_id: [u8; 32],
     registry_bound: bool,
+    (signer_trust, policy_digest): (SignerTrust, Option<[u8; 32]>),
 ) -> std::result::Result<VerifiedSource, RestoreAdmissionError> {
     let commitment = &evidence.commitment;
     Ok(VerifiedSource {
@@ -161,6 +174,8 @@ pub(super) fn verified(
         signer_install: commitment.signer.install,
         pin_set_digest: pin_set_digest(&expected.signer_pins)
             .map_err(|error| check(R::CodecInvalid, error))?,
+        signer_trust,
+        policy_digest: policy_digest.filter(|_| signer_trust == SignerTrust::ModeRootDelegated),
         registry_bound,
     })
 }

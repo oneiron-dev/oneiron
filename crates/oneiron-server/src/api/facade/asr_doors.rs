@@ -3,11 +3,12 @@
 //! Signature changes, fire counts and warm reuse remain OF-108 decisions.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::speculative::{
     SpeculativeFinal, SpeculativeFireDecision, SpeculativeSession, SpeculativeSessionConfig,
+    SpeculativeThreads,
 };
 use oneiron::task_verb::sdk::*;
 use oneiron::{EdgeActorClass, EntityId};
@@ -17,19 +18,52 @@ use super::host_doors::support::{Listed, credential_listing, hex_rows, internal,
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-#[derive(Default)]
+/// How long an utterance without a request lives: an entry idle past this
+/// goes, its threads joined as a close joins them.
+const ASR_UTTERANCE_IDLE_EXPIRY: Duration = Duration::from_secs(30 * 60);
+
 pub(crate) struct AsrSessions {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
+    /// Expired handles, each with when it expired and whose it was.
+    tombstones: Mutex<HashMap<String, (Instant, CoreAuth)>>,
+    idle_expiry: Duration,
+}
+
+impl Default for AsrSessions {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::default(),
+            tombstones: Mutex::default(),
+            idle_expiry: idle_expiry_from_env(),
+        }
+    }
+}
+
+/// The idle expiry `AsrSessions` starts with: `ONEIRON_ASR_UTTERANCE_IDLE_EXPIRY_SECS`
+/// when it names seconds, else [`ASR_UTTERANCE_IDLE_EXPIRY`].
+fn idle_expiry_from_env() -> Duration {
+    std::env::var("ONEIRON_ASR_UTTERANCE_IDLE_EXPIRY_SECS")
+        .ok()
+        .and_then(|secs| secs.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(ASR_UTTERANCE_IDLE_EXPIRY)
 }
 
 struct Entry {
     auth: CoreAuth,
     state: Mutex<Utterance>,
+    /// When a request last reached the entry, through open or `get`.
+    last_used: Mutex<Instant>,
 }
 
 struct Utterance {
     opened: AsrSession,
     core: Option<SpeculativeSession>,
+    /// The utterance's passes that missed their deadline and run on: joined
+    /// when it is finalized or closed, so none outlives the utterance whose
+    /// requests fired it (FIX 11316).
+    threads: SpeculativeThreads,
     revision: Option<u64>,
     last_fire_receipt: Option<String>,
 }
@@ -38,15 +72,42 @@ fn missing() -> MemoryError {
     MemoryError::not_found("no ASR utterance belongs to this credential")
 }
 
+fn expired() -> MemoryError {
+    MemoryError::new(
+        "asr_utterance_expired",
+        "the ASR utterance expired after its idle time",
+        &["Open a new utterance and send its audio again."],
+    )
+}
+
 impl AsrSessions {
     fn get(&self, auth: &CoreAuth, handle: &str) -> MemoryResult<Arc<Entry>> {
-        self.entries
+        self.sweep_expired();
+        let entry = self
+            .entries
             .lock()
             .map_err(|_| internal("ai.voice.asr"))?
             .get(handle)
             .filter(|entry| entry.auth.same_authority(auth))
-            .cloned()
-            .ok_or_else(missing)
+            .cloned();
+        if let Some(entry) = entry {
+            if let Ok(mut at) = entry.last_used.lock() {
+                *at = Instant::now();
+            }
+            return Ok(entry);
+        }
+        if self
+            .tombstones
+            .lock()
+            .map(|held| {
+                held.get(handle)
+                    .is_some_and(|(_, owner)| owner.same_authority(auth))
+            })
+            .unwrap_or(false)
+        {
+            return Err(expired());
+        }
+        Err(missing())
     }
 
     fn remove(&self, handle: &str) -> MemoryResult<()> {
@@ -55,6 +116,49 @@ impl AsrSessions {
             .map_err(|_| internal("ai.voice.asr"))?
             .remove(handle);
         Ok(())
+    }
+
+    /// Removes every entry idle past its [`Self::idle_expiry`], keeping a
+    /// tombstone for each, and drops tombstones a further expiry old, joining
+    /// each entry's threads as a close does. A lock that will not open leaves
+    /// its entries for the next open or `get`.
+    fn sweep_expired(&self) {
+        let expired = {
+            let Ok(mut entries) = self.entries.lock() else {
+                return;
+            };
+            let mut idle = Vec::new();
+            for (handle, entry) in entries.iter() {
+                let past = entry
+                    .last_used
+                    .lock()
+                    .ok()
+                    .is_some_and(|at| at.elapsed() >= self.idle_expiry);
+                if past {
+                    idle.push(handle.clone());
+                }
+            }
+            let Ok(mut tombstones) = self.tombstones.lock() else {
+                return;
+            };
+            let now = Instant::now();
+            for handle in &idle {
+                if let Some(entry) = entries.get(handle) {
+                    tombstones.insert(handle.clone(), (now, entry.auth.clone()));
+                }
+            }
+            tombstones.retain(|_, (at, _)| at.elapsed() < self.idle_expiry);
+            idle.into_iter()
+                .filter_map(|handle| entries.remove(&handle).map(|entry| (handle, entry)))
+                .collect::<Vec<_>>()
+        };
+        for (_, entry) in expired {
+            let Ok(mut state) = entry.state.lock() else {
+                continue;
+            };
+            state.core.take();
+            state.threads.join();
+        }
     }
 }
 
@@ -105,6 +209,7 @@ pub(crate) async fn ai_voice_asr_open(
             .deadline_ms
             .map(Duration::from_millis)
             .unwrap_or_else(|| server.vault().call_mode_deadline());
+        let threads = SpeculativeThreads::default();
         let core = memory.speculative_session(
             Arc::clone(&server.vault),
             SpeculativeSessionConfig {
@@ -112,7 +217,7 @@ pub(crate) async fn ai_voice_asr_open(
                 fire_limit,
                 final_limit,
                 deadline: Some(deadline),
-                threads: None,
+                threads: Some(threads.clone()),
             },
             &input.scope,
         )?;
@@ -127,6 +232,7 @@ pub(crate) async fn ai_voice_asr_open(
             deadline_ms: u64::try_from(deadline.as_millis()).map_err(|_| internal(verb))?,
             narrowing: core.scoped_read_receipt()?,
         };
+        server.asr_sessions.sweep_expired();
         server
             .asr_sessions
             .entries
@@ -139,9 +245,11 @@ pub(crate) async fn ai_voice_asr_open(
                     state: Mutex::new(Utterance {
                         opened: opened.clone(),
                         core: Some(core),
+                        threads,
                         revision: None,
                         last_fire_receipt: None,
                     }),
+                    last_used: Mutex::new(Instant::now()),
                 }),
             );
         Ok(opened)
@@ -241,7 +349,10 @@ pub(crate) async fn ai_voice_asr_finalize(
             let fires_used = core.fires_used();
             // OF-108 consumes the session even if its final retrieval fails.
             server.asr_sessions.remove(&input.handle)?;
-            let (finished, narrowing) = core.finalize_scoped(input.partial())?;
+            let finished = core.finalize_scoped(input.partial());
+            // Its late passes, the finalize pass's too, end before it answers.
+            state.threads.join();
+            let (finished, narrowing) = finished?;
             let (decision, scores, run_id, warm_appended, partial, reused_fire_receipt) =
                 match finished {
                     SpeculativeFinal::Promoted {
@@ -309,6 +420,7 @@ pub(crate) async fn ai_voice_asr_close(
         let mut state = entry.state.lock().map_err(|_| internal(verb))?;
         state.core.take().ok_or_else(missing)?;
         server.asr_sessions.remove(&input.handle)?;
+        state.threads.join();
         Ok(AsrClosed {
             handle: input.handle,
         })

@@ -39,11 +39,23 @@ pub(crate) fn admit_media(
     vault: &Vault,
     media: &MediaRuntime,
     extraction_egress: Option<&dyn ExtractionEgressPredicate>,
-    mut request: MediaRequest,
+    request: MediaRequest,
 ) -> Result<MediaRequest, MediaRefusal> {
     let locality = media
         .locality(request.operation, &request.model)
         .ok_or(MediaRefusal::UnknownModel)?;
+    admit_media_at(vault, locality, extraction_egress, request)
+}
+
+/// [`admit_media`] for a call whose caller already holds the locality of
+/// the one row it names: a media embedder pinned to one provider's offer
+/// (FIX 2964), whose id alone may name more than one.
+pub(crate) fn admit_media_at(
+    vault: &Vault,
+    locality: oneiron::ModelLocality,
+    extraction_egress: Option<&dyn ExtractionEgressPredicate>,
+    mut request: MediaRequest,
+) -> Result<MediaRequest, MediaRefusal> {
     request.envelope.locality = locality;
     if let Some(key) = request.admission_request().route_selector_override() {
         return Err(MediaRefusal::SelectorOverride(key));
@@ -130,7 +142,11 @@ impl AiMediaDoor for MediaDoor {
     fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
             let request = self.admit(request)?;
-            self.runtime.media().run(request, self.payer.clone()).await
+            // The engine's door names no rows its request was read from.
+            self.runtime
+                .media()
+                .run(request, self.payer.clone(), None)
+                .await
         })
     }
 }
@@ -145,7 +161,7 @@ impl VoiceStreamDoor for MediaDoor {
             let request = self.admit(request)?;
             self.runtime
                 .media()
-                .open_stream(request, bound_ms, self.payer.clone())
+                .open_stream(request, bound_ms, self.payer.clone(), None)
         })
     }
 }

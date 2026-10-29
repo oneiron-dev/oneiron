@@ -23,7 +23,7 @@ use super::supervised_pass::run_pass_supervised;
 use super::wave_lane::{
     WaveQuantum, WaveQuantumError, report_wave_pass, resolved_wave_limits, run_wave_quantum,
 };
-use crate::tick::TickSource;
+use crate::tick::{Tick, TickSource};
 
 /// Supervisor run tally.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -175,9 +175,11 @@ where
         };
         let mut rotation = LaneRotation::new();
         let mut ticks_exhausted = false;
-        // While the source keeps redelivering a tick whose owed retry is not
-        // yet due, its next read waits for that retry: reading it sooner
-        // only returns the same tick again.
+        // While the source keeps redelivering a deadline whose owed retry is
+        // not yet due, its deadline lane rests until that retry and its
+        // pushes keep flowing (FIX 11403): reading the deadline sooner only
+        // returns it again. A source that cannot rest that lane alone rests
+        // whole here instead.
         let mut source_rests_until: Option<Instant> = None;
 
         loop {
@@ -276,8 +278,14 @@ where
                     rotation.served(Lane::Source);
                     match debt.fresh(tick, Instant::now()) {
                         FreshTick::Run(owed) => owed,
+                        // The owed pass covers this tick. A push was consumed
+                        // by its read and rests nothing; a deadline comes back
+                        // on every read, so its lane rests until the retry.
                         FreshTick::Owed(due) => {
-                            source_rests_until = Some(due);
+                            if matches!(tick, Tick::Deadline(_)) && !ticks.rest_deadlines(Some(due))
+                            {
+                                source_rests_until = Some(due);
+                            }
                             continue;
                         }
                     }
@@ -329,9 +337,10 @@ where
                     debt: &mut debt,
                 },
             );
-            // The debt changed: the source reads again, and a tick it still
-            // redelivers rests behind its owed retry once more.
+            // The debt changed: the source reads again, and a deadline it
+            // still redelivers rests behind its owed retry once more.
             source_rests_until = None;
+            ticks.rest_deadlines(None);
 
             if shutdown.requested() {
                 break;

@@ -13,7 +13,11 @@
 //! The ask carries what the ladder hands the queue and nothing more; the host renders its
 //! own text from the question's.
 
+mod grant_draft;
+mod queue;
 mod signal;
+
+pub use grant_draft::AskGrantDraft;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::ops::Bound;
@@ -22,8 +26,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::ladder::{
-    AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
-    PairedAnswer, ProviderDecision, ResolvedRole, RoleHolder, RoleRank,
+    AskAct, AskConsent, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue,
+    HumanDecisionRequest, PairedAnswer, ProviderDecision, ResolvedRole, RoleHolder, RoleRank,
 };
 use super::rules::rule_reason;
 use super::types::invalid;
@@ -90,6 +94,12 @@ pub struct DecisionAsk {
     /// model read. `None` when the caller handed the queue none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_state: Option<serde_json::Value>,
+    /// The consent effect the ask is about and the bound an owner's reason drafts a
+    /// standing grant of (FIX 2975), as its caller bound it; none for an ask about none.
+    pub consent: Option<AskConsent>,
+    /// The owner's nearest reason on record for that effect, read when the ask was queued:
+    /// the card's reason, pre-filled. None when no reason on record is near it.
+    pub prefilled_reason: Option<String>,
 }
 
 /// The answer the ladder held when it asked, and the provider that read it.
@@ -126,6 +136,9 @@ pub struct AskAnswer {
     /// it wrote none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<HostRuleRef>,
+    /// The standing grant that reason drafted from the ask's consent effect (FIX 2975),
+    /// Proposed until the owner confirms it; none when it drafted none.
+    pub grant: Option<AskGrantDraft>,
 }
 
 impl DecisionAsk {
@@ -188,59 +201,7 @@ impl Vault {
         request: &HumanDecisionRequest,
         state: Option<&serde_json::Value>,
     ) -> Result<u64> {
-        request.question.validate()?;
-        request.to.validate()?;
-        let prior = match (&request.prior, &request.prior_provider) {
-            (None, _) => None,
-            (Some(prior), Some(provider)) => Some(AskPrior {
-                answer: prior.answer.clone(),
-                probability: prior.probability,
-                provider: provider.clone(),
-                paired: prior.paired.map(|reading| reading.bind(provider.clone())),
-                person: prior.person.map(|reading| reading.bind(provider.clone())),
-            }),
-            (Some(_), None) => return Err(invalid("a prior without its provider")),
-        };
-        let asked_at = self.store.clock.now_recorded_at();
-        self.with_write_txn_grouped(|txn| {
-            let mut last = None;
-            for row in ASKS
-                .iter_rev_from(&self.store, txn, &[])?
-                .take(SAME_ASK_SCAN)
-            {
-                let (seq, ask) = row?;
-                last.get_or_insert(seq);
-                if ask.is_open_for(request) {
-                    return Ok(seq);
-                }
-            }
-            let seq = match last {
-                None => 1,
-                Some(seq) => seq
-                    .checked_add(1)
-                    .ok_or(Error::IndexOverflow("decision ask sequence"))?,
-            };
-            let role = self.next_ask_role_in_txn(txn, &request.to, None)?;
-            let ask = DecisionAsk {
-                seq,
-                id: EntityId::now(),
-                asked_at,
-                question: request.question.clone(),
-                principal: AnswerActor::Actor(request.principal),
-                evidence: request.evidence.clone(),
-                reason: request.reason,
-                prior,
-                queue_pin: request.queue_pin.clone(),
-                to: request.to.clone(),
-                correlation: request.correlation,
-                role,
-                answer: None,
-                withdrawn_at: None,
-                pack_state: state.cloned(),
-            };
-            ASKS.put(&self.store, txn, &seq, &ask)?;
-            Ok(seq)
-        })
+        self.with_write_txn_grouped(|txn| self.queue_decision_ask_in_txn(txn, request, state))
     }
 
     /// Up to `limit` asks after arrival number `after` (from the first when `None`), oldest
@@ -504,6 +465,7 @@ impl Vault {
                 }
                 _ => None,
             };
+            let grant = grant_draft::drafted(&held, reason, &role);
             held.answer = Some(AskAnswer {
                 answer,
                 answered_at,
@@ -513,12 +475,15 @@ impl Vault {
                 changed: changed.is_some(),
                 reason: reason.map(str::to_owned),
                 rule,
+                grant,
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
             Ok(held)
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).
         self.signal_decision_answer(seq);
+        // A graph unit's ask lands its answer on the unit (FIX 11231).
+        self.land_question_unit_answer(seq);
         Ok(answered)
     }
 
@@ -549,6 +514,7 @@ impl Vault {
             changed: false,
             reason: None,
             rule: None,
+            grant: None,
         });
         ASKS.put(&self.store, txn, &seq, &ask)?;
         Ok(Some(seq))
@@ -937,6 +903,17 @@ impl HumanDecisionQueue for DecisionAsks {
     ) -> Result<Option<u64>> {
         self.vault
             .queue_decision_ask_with_state(&request, Some(state))
+            .map(Some)
+    }
+
+    fn queue_with_consent(
+        &self,
+        request: HumanDecisionRequest,
+        state: Option<&serde_json::Value>,
+        consent: &AskConsent,
+    ) -> Result<Option<u64>> {
+        self.vault
+            .queue_decision_ask_with_consent(&request, state, consent)
             .map(Some)
     }
 }

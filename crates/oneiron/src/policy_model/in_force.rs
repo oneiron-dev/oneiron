@@ -132,14 +132,6 @@ impl Vault {
         ))
     }
 
-    /// Whether the owner plane is on in the policy in force (FIX 7805): a
-    /// clean allow it gives examined the content and is receipted; an off
-    /// plane's inert allow examined nothing and leaves no row.
-    pub(super) fn owner_plane_examines(&self) -> Result<bool> {
-        let rtxn = self.store.env.read_txn()?;
-        Ok(gate::resolve_policy_manifest(&self.store, &rtxn)?.owner_policy_enabled())
-    }
-
     pub(super) fn policy_model_verdict_is_stale_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,

@@ -10,6 +10,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_TOPOLOGY_SEQ, CONTENT),
     (&t::IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
+    // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
+    // image holds it, as the wakes its landing did record do.
+    (&t::MEMORY_TURN_WAKE_UNPERSISTED, CONTENT),
     (&t::MERGE_QUEUE_BATCH, CONTENT),
     // A restore never revives a revoked approval: the live one stands.
     (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
@@ -126,6 +129,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_PACK_SOURCE_ALIAS, CONTENT),
     (&t::PACK_BYTE_MAP_LOCAL_HEAD, CONTENT),
     (&t::PEOPLE_ABOUT, CONTENT),
+    // A restore never revives a withdrawn filing: the PERSON's live one stands.
+    (&t::PERSON_BILLING_ACCOUNT, LIVE),
     (&t::PERSONA_SNAPSHOT_COPY, CONTENT),
     (&t::POLICY_HOLD_QUEUE, CONTENT),
     (&t::PORTS_CHANGE, CONTENT),

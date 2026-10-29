@@ -67,6 +67,7 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.launch`
 - `self.budget`
 - `self.budget.land`
+- `self.billing.account.file`
 - `vault.budgets.lease.open`
 - `vault.budgets.lease`
 - `vault.budgets.lease.top_up`
@@ -80,6 +81,8 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.rsi.top_up`
 - `vault.budgets.rsi.hold`
 - `vault.budgets.rsi.hold.resume`
+- `vault.budgets.resident_shares`
+- `vault.budgets.resident_shares.set`
 - `vault.runners.seats.quotas`
 - `vault.runners.seats.top_up`
 - `vault.fanout.resume`
@@ -334,6 +337,7 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.propose`
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
+- `vault.shared.policy.changes`
 - `vault.federation.coreference.link`
 - `vault.federation.coreference.confirm`
 - `vault.federation.coreference.share_consent`
@@ -393,6 +397,10 @@ both bindings and their export-census tests in one change.
 - `vault.off_record.notes.create`
 - `vault.off_record.claims.upsert`
 - `self.off_record.execute`
+- `self.off_record.results.list`
+- `self.off_record.results.read`
+- `self.off_record.waits.get`
+- `self.off_record.waits.answer`
 - `vault.off_record.rooms.status`
 - `vault.off_record.rooms.start`
 - `vault.off_record.rooms.witness`
@@ -459,6 +467,9 @@ both bindings and their export-census tests in one change.
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.roots.requests.cancel`
+- `vault.roots.requests.create`
+- `vault.roots.requests.list`
+- `vault.owner_work.get`
 - `vault.cleanup.run`
 - `vault.cleanup.review`
 - `vault.cleanup.decide`
@@ -466,6 +477,7 @@ both bindings and their export-census tests in one change.
 - `vault.archive.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
+- `vault.usage.repair.receipts`
 - `vault.entities.mention`
 - `vault.legal_holds.place`
 - `vault.legal_holds.widen`
@@ -533,6 +545,11 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
 - `vault.secrets.lift_history`
+- `vault.secrets.register`
+- `vault.secrets.rotate`
+- `vault.secrets.rewrap`
+- `vault.secrets.custody.get`
+- `vault.secrets.custody.submit`
 - `vault.widen_proposals`
 - `vault.widen_proposals.approve`
 - `vault.widen_proposals.decline`
@@ -547,6 +564,7 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`
+- `vault.lenses.export_pack`
 - `vault.lenses.select`
 - `vault.lenses.resolve`
 - `vault.lenses.result_set.action`
@@ -734,6 +752,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.spawn.get`
 - `vault.agents.spawn`
 - `vault.tasks.cancel.force`
+- `vault.tasks.comm_widen.revoke`
 - `vault.runs.branches.get`
 - `vault.runs.pause`
 - `vault.runs.resume`
@@ -806,6 +825,7 @@ both bindings and their export-census tests in one change.
 - `vault.projects.route_tradeoff`
 - `vault.conversations.turn.continue`
 - `vault.conversations.turn.retry`
+- `vault.conversations.turn.rebind`
 - `vault.messages.react`
 - `vault.rooms.host`
 - `vault.rooms.host.pin`
@@ -868,6 +888,7 @@ both bindings and their export-census tests in one change.
 - `vault.models.trials.get`
 - `vault.models.trials.approve`
 - `vault.models.trials.run`
+- `vault.models.trials.resend_arm`
 - `vault.models.trials.complete`
 - `vault.models.bindings.propose`
 - `vault.models.bindings.get`
@@ -888,6 +909,7 @@ both bindings and their export-census tests in one change.
 - `ai.video`
 - `ai.video.poll`
 - `ai.video.cancel`
+- `ai.ask_image`
 - `ai.verdict`
 - `vault.graph.ask`
 - `vault.graph.admit`
@@ -896,6 +918,7 @@ both bindings and their export-census tests in one change.
 - `vault.questions.pause`
 - `vault.questions.backfill`
 - `vault.questions.read`
+- `vault.questions.outcome_windows`
 - `vault.questions.answers`
 - `vault.questions.refresh`
 - `vault.questions.outcomes`
@@ -906,6 +929,7 @@ both bindings and their export-census tests in one change.
 - `vault.decisions.bands.enforce`
 - `vault.decisions.asks.answer`
 - `vault.decisions.asks.climb`
+- `vault.decisions.asks.confirm_grant`
 - `self.decisions.asks`
 - `connector.list`
 - `connector.status`
@@ -1049,6 +1073,7 @@ both bindings and their export-census tests in one change.
 - `vault.sieve.lease.refill`
 - `vault.free_time.policy.get`
 - `vault.free_time.policy.set`
+- `vault.free_time.policy.set_as`
 - `vault.free_time.cycles`
 - `vault.free_time.cycle`
 - `vault.claims.vet`

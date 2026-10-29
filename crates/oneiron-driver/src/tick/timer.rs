@@ -27,10 +27,11 @@ use super::{CommitmentDeadline, DeadlineSource, IdleSample, NowMillis, system_no
 /// the vault's stable client identity (`load_or_mint_client_id` via
 /// [`DreamerRunnerStore::local_home_node_candidate`]) and the elected home
 /// designation. Surfacing a due macro when either check would refuse leaves
-/// the queued row unmutated and — deadlines having priority over pushes —
-/// busy-spins the supervisor on the same overdue deadline, starving push
-/// lanes. Both checks are re-read every cycle; an unreadable vault identity
-/// is treated as not-admissible (macro suppressed, other lanes still flow).
+/// the queued row unmutated and — a due deadline taking every other turn
+/// from the pushes — busy-spins the supervisor on the same overdue deadline,
+/// crowding the push lanes. Both checks are re-read every cycle; an
+/// unreadable vault identity is treated as not-admissible (macro suppressed,
+/// other lanes still flow).
 /// For the same reason an attempt an operator placed on another worker is
 /// never this node's deadline: the claim refuses it.
 pub struct AttemptQueueDeadlines<'v> {

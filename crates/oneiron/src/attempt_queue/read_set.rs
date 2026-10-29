@@ -49,8 +49,16 @@ impl ReadSetProducer {
 
     /// A Dreamer consolidation branch's extraction: each slice's TURNs,
     /// conversations, projected MESSAGEs and the listed rows its page
-    /// shows (FIX 7019).
+    /// shows, and every row its branch pinned (FIX 7019).
     pub const DREAMER_EXTRACTION: Self = Self("dreamer.extraction");
+
+    /// The Coach's eval-authoring pass: the inventory it read and the
+    /// authoring skill's body (FIX 7019).
+    pub const COACH_EVAL_AUTHORING: Self = Self("coach.eval_authoring");
+
+    /// A workflow model step's input: its agent definition row, the memory
+    /// and chat rows its context render read and its planner craft (FIX 6934).
+    pub const WORKFLOW_STEP_INPUT: Self = Self("workflow.step_input");
 
     /// The key the record keeps.
     #[must_use]
@@ -176,6 +184,50 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             AttemptQueue::new(self).declare_attempt_read_producers_in_txn(txn, attempt, producers)
         })
+    }
+
+    /// [`Self::declare_attempt_read_producers`] inside a writer's `txn`, best
+    /// effort (FIX 7119): it writes in a savepoint of `txn`, as FIX 6667's
+    /// step masking does, so the carrying write is never failed or rolled
+    /// back by the declaration. An error aborts only the savepoint. A failed
+    /// declare stays safe: a producer that reports without a declaration
+    /// marks the set unknown, as an empty declaration does. It logs one WARN
+    /// and returns `false`; `false` too when no live attempt is `attempt`.
+    pub fn declare_attempt_read_producers_best_effort_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        producers: &[ReadSetProducer],
+    ) -> bool {
+        match self.declare_attempt_read_producers_in_savepoint(txn, attempt, producers) {
+            Ok(declared) => declared,
+            Err(error) => {
+                tracing::warn!(
+                    attempt = ?attempt,
+                    kind = ?error.kind(),
+                    %error,
+                    "an attempt's read producers could not be declared; the set stays unknown"
+                );
+                false
+            }
+        }
+    }
+
+    /// One declare in a savepoint of `txn` that commits only when it lands.
+    fn declare_attempt_read_producers_in_savepoint(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        producers: &[ReadSetProducer],
+    ) -> Result<bool> {
+        let mut savepoint = self.store.env.nested_write_txn(txn)?;
+        let declared = AttemptQueue::new(self).declare_attempt_read_producers_in_txn(
+            &mut savepoint,
+            attempt,
+            producers,
+        )?;
+        savepoint.commit()?;
+        Ok(declared)
     }
 
     /// Records the rows `producer` read attempt `attempt`'s inputs from

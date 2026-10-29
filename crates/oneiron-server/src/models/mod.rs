@@ -45,6 +45,7 @@ mod driven;
 mod fallback_tests;
 mod family;
 mod forward;
+mod gemini_chat;
 mod gemini_media;
 mod host_budgets;
 mod hosted_speech;
@@ -62,6 +63,8 @@ mod openai;
 pub(crate) mod outbound_wait;
 mod output_cap;
 mod raw;
+// FIX 462: realtime voice sessions on a voice-loop run.
+mod realtime_voice;
 mod receipts;
 mod rerank;
 mod responses_socket;
@@ -92,13 +95,14 @@ pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
 pub(crate) use host_budgets::ModelHostBudgets;
-pub use hosted_speech::HostedCloner;
+pub use hosted_speech::{HostedCloner, VendorVoice};
 pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
+pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{rerank_request, rerank_scores};
@@ -246,12 +250,23 @@ fn build_provider(
                 .transpose()?;
             // Only an own server reads the host's solo marker (INF 1).
             let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
+            let engine_models: BTreeMap<String, ModelId> = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             let config = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
             let transport = openai::OpenAiHttp {
                 http,
                 cap: output_cap(provider),
                 response_format: provider.response_format,
                 identities: Arc::clone(identities),
+                engine_models,
             };
             // A provider a managed EXL3 worker of this process is bound to
             // calls that worker over its native socket (DESIGN-V2 §8); every
@@ -292,6 +307,9 @@ fn build_provider(
                 },
             ))
         }
+        // A gemini provider's chat rungs send the Gemini API's own wire
+        // (FIX 1816); one that serves media seats only gets none.
+        ProviderKind::Gemini => return gemini_chat::chat_backend(provider, catalog),
         // The tagger slot's worker is the consumer of this kind; it never
         // answers generate calls, so no LLM backend is built for it. A
         // media-only provider's only client is its media rung's.
@@ -299,7 +317,6 @@ fn build_provider(
         | ProviderKind::Cartesia
         | ProviderKind::Elevenlabs
         | ProviderKind::Voxcpm2
-        | ProviderKind::Gemini
         | ProviderKind::Soniox => {
             return Ok(None);
         }

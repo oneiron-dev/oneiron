@@ -568,6 +568,16 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("retry_after".to_owned(), json!(retry_after));
     }
+    if let Some(resets_at) = error.resets_at
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("resets_at".to_owned(), json!(*resets_at));
+    }
+    if !error.reason_codes.is_empty()
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("reason_codes".to_owned(), json!(error.reason_codes));
+    }
     if let Some(steps) = error.program_steps
         && let Some(object) = data.as_object_mut()
     {
@@ -720,7 +730,9 @@ use super::{board_setup, skill_execution, verb_hooks};
 #[path = "generated/agent_verb_dispatch.rs"]
 mod agent_verb_dispatch;
 use agent_verb_dispatch::execute_mcp_agent_verb;
-pub(crate) use agent_verb_dispatch::{execute_agent_verb_input, mcp_agent_verb_arguments};
+pub(crate) use agent_verb_dispatch::{
+    execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
+};
 
 #[cfg(test)]
 mod tests {

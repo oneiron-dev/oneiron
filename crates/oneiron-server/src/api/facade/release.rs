@@ -71,7 +71,14 @@ pub(super) fn released_reply(
         released_feedback(server.vault(), &destination, rows, value.clone(), feedback)
     });
     let (sent, withheld) = match released {
-        _ if held => (details_on_device(), Some(value)),
+        _ if held => {
+            // A transfer-delivered export no caller learns of leaves no
+            // spool behind (FIX 11178).
+            if verb == "vault.export" {
+                server.export_transfers.drop_withheld(&value);
+            }
+            (details_on_device(), Some(value))
+        }
         Some(sent) => (sent, Some(value)),
         None => (value, None),
     };
@@ -81,6 +88,20 @@ pub(super) fn released_reply(
         withheld,
     };
     (axum::Extension(kept), Json(sent))
+}
+
+/// The reply of a call no credential binds, whose answer derives from no row
+/// (the owner's clock repair judged in its own writer, FIX 11190): it goes
+/// out as it is.
+pub(super) fn unbound_reply(
+    value: serde_json::Value,
+) -> (axum::Extension<FacadeReleased>, Json<serde_json::Value>) {
+    let kept = FacadeReleased {
+        peer: PeerMachine::Unknown,
+        rows: Some(Vec::new()),
+        withheld: None,
+    };
+    (axum::Extension(kept), Json(value))
 }
 
 /// The answer a request that waited on another's run of the same call gets

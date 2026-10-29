@@ -82,11 +82,11 @@ const PROVIDER_ACTOR_BODY_KEY: &str = "provider_key";
 /// ERROR, never a silent neutral: `1.0` is a load-bearing trust multiplier, so
 /// "this vault holds a prior we cannot read" must not be reported as "this
 /// provider is fully trusted".
-pub(super) fn active_provider_prior_in_txn(
+pub(super) fn provider_prior_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     provider: &str,
-) -> Result<Option<f32>> {
+) -> Result<ProviderPrior> {
     validate_provider_key(provider)?;
     let digest = provider_key_hash(provider);
     // A malformed-length row is STALE, not corruption: these bytes are a
@@ -107,7 +107,7 @@ pub(super) fn active_provider_prior_in_txn(
         if cached_head != Some(claim_id) {
             PROVIDER_PRIOR_HEAD_INDEX.put(&vault.store, wtxn, &digest, &claim_id)?;
         }
-        return Ok(Some(value));
+        return Ok(ProviderPrior::Active(value));
     }
 
     // ---- scope 2: stale or missing — truth decides and repairs ----
@@ -138,17 +138,45 @@ pub(super) fn active_provider_prior_in_txn(
     match best {
         Some((_, claim_id, value)) => {
             PROVIDER_PRIOR_HEAD_INDEX.put(&vault.store, wtxn, &digest, &claim_id)?;
-            Ok(Some(value))
+            Ok(ProviderPrior::Active(value))
         }
         // Only unresolved split priors: never neutral, never guessed onto a
-        // head. This raises, as every split prior did before (FIX 10053).
-        None if !unresolved.is_empty() => Err(unresolved_by_split()),
+        // head, and typed for the reader (FIX 10053, 10530).
+        None if !unresolved.is_empty() => Ok(ProviderPrior::UnresolvedBySplit),
         None => {
             if cached_head_present {
                 PROVIDER_PRIOR_HEAD_INDEX.delete(&vault.store, wtxn, &digest)?;
             }
-            Ok(None)
+            Ok(ProviderPrior::Neutral)
         }
+    }
+}
+
+/// What a provider's active priors come to (FIX 10530).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum ProviderPrior {
+    /// The newest active prior's value.
+    Active(f32),
+    /// No active prior: the neutral prior `1.0`.
+    Neutral,
+    /// Only priors a split left unresolved: never neutral, never guessed
+    /// onto a head.
+    UnresolvedBySplit,
+}
+
+/// [`provider_prior_in_txn`] as a prior value: `None` for neutral, and an
+/// unresolved split prior raises, as every split prior did before (FIX
+/// 10053). The tests read priors through it.
+#[cfg(test)]
+pub(super) fn active_provider_prior_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    provider: &str,
+) -> Result<Option<f32>> {
+    match provider_prior_in_txn(vault, wtxn, provider)? {
+        ProviderPrior::Active(value) => Ok(Some(value)),
+        ProviderPrior::Neutral => Ok(None),
+        ProviderPrior::UnresolvedBySplit => Err(unresolved_by_split()),
     }
 }
 
@@ -277,7 +305,7 @@ fn projected_prior_claim_owner_in_txn(
 }
 
 /// A split left a prior unresolved and nothing else resolves.
-fn unresolved_by_split() -> Error {
+pub(super) fn unresolved_by_split() -> Error {
     Error::InvalidClaimBody("provider confidence prior left unresolved by a split")
 }
 
@@ -408,7 +436,7 @@ fn provider_actors_for_key_in_txn(
 /// `(valid_from, claim_id, value)`.
 ///
 /// Structurally invalid matching CLAIMs raise instead of being skipped — see
-/// [`active_provider_prior_in_txn`] on why a broken prior may not read neutral.
+/// [`provider_prior_in_txn`] on why a broken prior may not read neutral.
 fn active_priors_for_actor_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,

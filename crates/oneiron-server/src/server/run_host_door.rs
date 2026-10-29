@@ -21,11 +21,17 @@
 //! provider recovers. Its `ai.options` lists the speech rows that call could
 //! take. Any other `ai.*` media call and a hook replay are the owner's, and
 //! refused, except to an owner's own program (`owner_program_rows`, FIX
-//! 5911). A browser or desktop row drives the run's own guest under the
-//! browser pack, its checked connection and the vault's standing grants. The
-//! board rows, `self.focus.*` and a keyed `describe`, run the engine's board
-//! dispatcher over the agent's own board on the run's own STREAM connection,
-//! which goes when the door does. Each row's verb hooks fire once around it.
+//! 5911), whose media calls, video jobs included, spend on the run's line
+//! and whose `ai.options` lists them all (FIX 6083). A browser or desktop
+//! row drives the run's own guest under the browser pack, its checked
+//! connection and the vault's standing grants. The board rows,
+//! `self.focus.*` and a keyed `describe`, run the engine's board dispatcher
+//! over the agent's own board on the run's own STREAM connection, which goes
+//! when the door does. Its `describe(self)` reads the run's own self brief,
+//! and its `vault.weave.lens` renders the agent's own lens on the run's
+//! line, its card held for the run (FIX 2086). A successful answer the run
+//! reads as it stands carries the frame that connection queued, beside its
+//! output (FIX 2135). Each row's verb hooks fire once around it.
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -38,8 +44,8 @@ use oneiron::code_run::{
 use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
-    create_question, edit_question, pause_question, question_answers, read_question,
-    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
+    closed_outcome_windows, create_question, edit_question, pause_question, question_answers,
+    read_question, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::media::{AiOperation, Modality};
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
@@ -49,8 +55,8 @@ use oneiron::memory::{
 };
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionBackfillRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::skill_attribution::{RunWriteToken, with_run_write_token};
@@ -72,7 +78,9 @@ use crate::decision_graph::LadderGraphAnswerer;
 use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdict};
 use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
+mod board_carrier;
 mod host_rows;
+mod resident_rows;
 
 use self::host_rows::host_row;
 
@@ -97,6 +105,8 @@ pub(crate) struct RunHostDoor {
     guests: RunGuests,
     /// The run's own board STREAM connection, dropped with the door.
     board: StreamConnectionId,
+    /// The run's id, which its live lens cards are held for.
+    run_id: EntityId,
     /// The run's name on its model lines.
     run: String,
     /// The line the run's entry in flight spends on, which its `ai.speech`
@@ -120,6 +130,7 @@ impl RunHostDoor {
             guests: RunGuests::new(server, run_id),
             board: StreamConnectionId(format!("run:{}", run_id.to_hex())),
             run: format!("agent-run:{}", run_id.to_hex()),
+            run_id,
             line: Mutex::new(None),
             server: Arc::clone(server),
             actor,
@@ -201,20 +212,24 @@ impl AgentVerbDoor for RunHostDoor {
             // The run's thread holds the call while its guest acts; its step
             // verdicts spend on the run's line (FIX 3574).
             let memory = agent_memory(&self.server, self.actor, origin, invocation);
-            return self.guests.call(
-                &self.server,
-                &self.runtime,
-                call,
-                origin,
-                &memory,
-                VerdictAsker::Agent(self.actor, line),
-                self.actor.entity_ref(),
+            return self.observed(
+                call.verb,
+                self.guests.call(
+                    &self.server,
+                    &self.runtime,
+                    call,
+                    origin,
+                    &memory,
+                    VerdictAsker::Agent(self.actor, line),
+                    self.actor.entity_ref(),
+                ),
             );
         }
         let held = matches!(call.verb, AgentVerb::AiVerdict)
             .then(|| self.guests.held_image(&call.input))
             .flatten();
-        let board = is_board_row(call.verb, &call.input).then(|| self.board.clone());
+        let resident = resident_row(call.verb, &call.input);
+        let (board, run_id) = (self.board.clone(), self.run_id);
         // The run's thread drives its own reactor; the row runs on the
         // server's runtime, which its model rungs block on, and the run's
         // thread waits for it.
@@ -227,53 +242,79 @@ impl AgentVerbDoor for RunHostDoor {
         // FIX 3103: the row writes for the run whose lease the origin seals.
         let run_writes = RunWriteToken::of_origin(&origin);
         self.runtime.spawn_blocking(move || {
-            let _ = sender.send(with_run_write_token(run_writes.as_ref(), || match board {
-                Some(board) => {
-                    board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
-                        .map(|(output, rows)| (output, Some(rows)))
-                }
-                // An owner's own program takes the owner's rows (FIX 5911).
-                None if super::owner_program_rows::is_owner_row(verb) => {
-                    super::owner_program_rows::answer(
+            let _ = sender.send(with_run_write_token(
+                run_writes.as_ref(),
+                || match resident {
+                    Some(ResidentRow::Board) => {
+                        board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
+                            .map(|(output, rows)| (output, Some(rows)))
+                    }
+                    Some(ResidentRow::SelfBrief) => resident_rows::self_brief_as_agent(
+                        &server,
+                        actor,
+                        &origin,
+                        invocation,
+                        &board,
+                        line.as_ref(),
+                        input,
+                    )
+                    .map(|(output, rows)| (output, Some(rows))),
+                    Some(ResidentRow::WeaveLens) => resident_rows::weave_lens_as_agent(
+                        &server,
+                        actor,
+                        run_id,
+                        &origin,
+                        invocation,
+                        line.as_ref(),
+                        input,
+                    )
+                    .map(|(output, rows)| (output, Some(rows))),
+                    // An owner's own program takes the owner's rows (FIX 5911).
+                    None if super::owner_program_rows::is_owner_row(verb) => {
+                        super::owner_program_rows::answer(
+                            &server,
+                            actor,
+                            &origin,
+                            invocation,
+                            verb,
+                            input,
+                            line.as_ref(),
+                        )
+                    }
+                    None => answer_as_agent(
                         &server,
                         actor,
                         &origin,
                         invocation,
                         verb,
                         input,
+                        held,
                         line.as_ref(),
-                    )
-                }
-                None => answer_as_agent(
-                    &server,
-                    actor,
-                    &origin,
-                    invocation,
-                    verb,
-                    input,
-                    held,
-                    line.as_ref(),
-                ),
-            }));
+                    ),
+                },
+            ));
         });
         let Ok(answered) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
         };
-        match answered {
-            Ok((output, rows)) => Ok(Ok(AgentVerbAnswer { output, rows })),
-            // A verb hook's stop goes back to the run as the typed stop, and
-            // a model call no provider answered as the typed outage, which
-            // the run parks on (FIX 3194).
-            Err(error) => match (error.hook, error.retry_after) {
-                (Some(stop), _) => Err(oneiron::Error::from(*stop)),
-                (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
-                    Err(oneiron::Error::ProviderUnavailable { retry_after })
-                }
-                (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+        self.observed(
+            verb,
+            match answered {
+                Ok((output, rows)) => Ok(Ok(AgentVerbAnswer::new(output, rows))),
+                // A verb hook's stop goes back to the run as the typed stop, and
+                // a model call no provider answered as the typed outage, which
+                // the run parks on (FIX 3194).
+                Err(error) => match (error.hook, error.retry_after) {
+                    (Some(stop), _) => Err(oneiron::Error::from(*stop)),
+                    (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
+                        Err(oneiron::Error::ProviderUnavailable { retry_after })
+                    }
+                    (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+                },
             },
-        }
+        )
     }
 
     /// The run's own calls keep the run's own admission. A consult landing
@@ -345,10 +386,7 @@ impl AgentVerbDoor for RunHostDoor {
         Ok(match receiver.recv() {
             // An answer serves no vault rows: the connector's reply is
             // foreign data.
-            Ok(Ok(output)) => Ok(AgentVerbAnswer {
-                output,
-                rows: Some(Vec::new()),
-            }),
+            Ok(Ok(output)) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
             Ok(Err(error)) => Err(AgentVerbRefusal { code: error.code }),
             Err(_) => Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
@@ -366,8 +404,31 @@ impl Drop for RunHostDoor {
     }
 }
 
+/// Which of the run's own seats answers a row: its board, its self brief or
+/// its agent's weave lens (FIX 2086). `None` for every other row.
+#[derive(Clone, Copy)]
+enum ResidentRow {
+    Board,
+    SelfBrief,
+    WeaveLens,
+}
+
+/// The seat of the run's own that answers `verb` with `input`, if any.
+fn resident_row(verb: AgentVerb, input: &Value) -> Option<ResidentRow> {
+    if is_board_row(verb, input) {
+        return Some(ResidentRow::Board);
+    }
+    match verb {
+        AgentVerb::Describe if input.get("self").and_then(Value::as_bool) == Some(true) => {
+            Some(ResidentRow::SelfBrief)
+        }
+        AgentVerb::VaultWeaveLens => Some(ResidentRow::WeaveLens),
+        _ => None,
+    }
+}
+
 /// Whether a call is a board row: `self.focus.*`, or a `describe` of one
-/// board key. `describe(self)` is not: it reads a credential's self brief.
+/// board key. `describe(self)` is not: it reads the run's own self brief.
 fn is_board_row(verb: AgentVerb, input: &Value) -> bool {
     match verb {
         AgentVerb::SelfFocusRefresh
@@ -535,6 +596,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsPause
             | AgentVerb::VaultQuestionsBackfill
             | AgentVerb::VaultQuestionsRead
+            | AgentVerb::VaultQuestionsOutcomeWindows
             | AgentVerb::VaultQuestionsAnswers
             | AgentVerb::TasksWave
             | AgentVerb::ConnectorCall
@@ -554,7 +616,7 @@ fn agent_lane(server: &SyncServer, actor: WriteActor) -> MemoryResult<ScopedRead
 }
 
 /// A standing question's dial, checked inside the host's own, as the
-/// credential door checks it.
+/// credential door checks it: a `human` ceiling stays human (FIX 11232).
 fn inside_host_dial(
     server: &SyncServer,
     dial: oneiron::llm::decision::DecisionDial,
@@ -562,11 +624,11 @@ fn inside_host_dial(
 ) -> MemoryResult<oneiron::llm::decision::DecisionDial> {
     server
         .decision_host()
-        .dial(DecisionRung::Big)
+        .dial(dial.ceiling.max(DecisionRung::Big))
         .narrow(dial)
         .map_err(|_| {
             MemoryError::bad_request(format!(
-                "{}'s dial widens the host's: start at or above its first rung, end at big or \
+                "{}'s dial widens the host's: start at or above its first rung, end at human or \
                  below, and keep a valid band inside its band",
                 verb.as_str()
             ))

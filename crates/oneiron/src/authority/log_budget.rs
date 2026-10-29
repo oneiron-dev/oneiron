@@ -526,6 +526,8 @@ fn carries_own_will(
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::ExportAct(_)
         | AuthorityOp::FrontierJoin(_) => true,
         AuthorityOp::MachineProfile(profile) => profile.act.is_some(),
         _ => false,

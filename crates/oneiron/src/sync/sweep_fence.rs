@@ -29,6 +29,11 @@ impl SweepFence {
         self.closed().contains(key)
     }
 
+    /// The windows held closed now.
+    pub(super) fn keys(&self) -> Vec<WindowKey> {
+        self.closed().iter().cloned().collect()
+    }
+
     /// Waits until no sweep holds `key` closed.
     pub(super) fn wait_until_open(&self, key: &WindowKey) {
         let closed = self.closed();

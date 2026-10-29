@@ -37,6 +37,11 @@ pub struct PendingGateConsentRecord {
     pub reason_codes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dreamer_run_id: Option<String>,
+    /// The predicate of the claim the row parks, stamped when the row is
+    /// written, so a reader whose claim body is gone still names it. `None`
+    /// where the writer had no claim body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predicate: Option<String>,
 }
 
 /// Internal RCPT-1 deletion state for one run-scoped pending-consent row.

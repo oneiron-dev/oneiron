@@ -16,6 +16,7 @@ use super::{
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionQuestion, EvidenceVersion, TypedDecision};
 use oneiron_docedit::retained_opc::Limits;
 use oneiron_docedit::xlsx_body::{XlsxChange, XlsxValue, project_xlsx, read_xlsx_cells};
@@ -305,6 +306,8 @@ impl Vault {
             };
             let value = answer_cell(&decision.answer)?;
             if value.is_none() {
+                // A unit asked of its role holder keeps its ask (FIX 11231).
+                keep_artifact_unit_ask(self, &sources[0], &unit, &decision);
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision.clone()),

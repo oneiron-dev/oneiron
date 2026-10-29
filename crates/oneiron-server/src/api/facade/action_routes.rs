@@ -41,12 +41,14 @@ use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use oneiron::authority::ActSurface;
-use oneiron::code_run::SelfDispatchOutcome;
 use oneiron::code_run::actions::{ActionArgument, ActionDispatch, ActionJson, AgentActionCall};
 use oneiron::code_run::live_run::{LiveRunCredential, is_live_run_verb};
+use oneiron::code_run::{SelfDispatchOutcome, SelfFailedResult};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::lens::{GeneratedUiValidatedAction, SelfUiActionId};
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MemoryError};
+use oneiron::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError,
+};
 use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::Deserialize;
@@ -55,7 +57,7 @@ use self::execution::{execute, execute_stamped, run_bound, run_bound_stamped};
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
 use crate::api::call_receipt::CallStamp;
-use crate::api::owner_routes::machine_routes::act_surface;
+use crate::api::owner_routes::machine_routes::act_surface_admitted;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::{LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer};
 
@@ -170,7 +172,7 @@ async fn invoke_action_stamped(
     verb: String,
     request: ActionRequest,
 ) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
-    let (bound, call) = match admit_action(server, auth, &headers, verb, request) {
+    let (bound, call) = match admit_action(server, auth, &headers, &extensions, verb, request) {
         Ok(admitted) => admitted,
         Err(refused) => return (Err(refused), CallStamp::Unrecorded),
     };
@@ -183,6 +185,7 @@ fn admit_action(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     headers: &HeaderMap,
+    extensions: &Extensions,
     verb: String,
     request: ActionRequest,
 ) -> Result<(ActionBound, AgentActionCall), FacadeApiError> {
@@ -199,7 +202,7 @@ fn admit_action(
     facade_actor(server, auth)?;
     // Where the owner spoke from: a linked machine this request's own
     // headers prove, else the header-less rule (FIX 4625).
-    let surface = act_surface(server, auth, headers);
+    let surface = act_surface_admitted(server, auth, headers, extensions);
     let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
@@ -343,13 +346,19 @@ pub(crate) fn rest_action_bound<T: serde::Serialize>(
     server: &SyncServer,
     auth: &CoreAuth,
     headers: &HeaderMap,
+    extensions: &Extensions,
     input: &T,
 ) -> Result<Option<ActionBound>, FacadeApiError> {
     crate::api::host_action::facade_host_action(server, auth)?;
     if headers.contains_key(super::ROOM_TURN_HEADER) {
         return Ok(None);
     }
-    let Some(bound) = action_bound(server, auth, act_surface(server, auth, headers))? else {
+    let Some(bound) = action_bound(
+        server,
+        auth,
+        act_surface_admitted(server, auth, headers, extensions),
+    )?
+    else {
         return Ok(None);
     };
     Ok(action_json(input)?.map(|_| bound))
@@ -566,15 +575,31 @@ pub(crate) async fn execute_facade_row<T: serde::Serialize>(
         SelfDispatchOutcome::Denied(denied) => Err(match dispatch.refusal {
             Some(row) => {
                 let suggestions: Vec<&str> = row.suggestions.iter().map(String::as_str).collect();
-                MemoryError::new(&row.code, row.message, &suggestions)
+                let mut refusal = MemoryError::new(&row.code, row.message, &suggestions);
+                refusal.reason_codes = row.reason_codes;
+                refusal
             }
             None => MemoryError::new(&denied.outcome, "the action was refused", &[]),
         }
         .into()),
-        SelfDispatchOutcome::Failed(failed) => {
-            Err(MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[]).into())
-        }
+        SelfDispatchOutcome::Failed(failed) => Err(failed_outcome(row.as_str(), failed).into()),
         _ => Err(internal()),
+    }
+}
+
+/// The error an action of `verb` answers for its `Failed` outcome (FIX
+/// 5351). A live-run row fails on its run's own state (a team, a workflow, a
+/// planner, a fold the run stands in), so its call answers `INVALID_STATE`
+/// (409) with the run's words; any other row's failure stays `INTERNAL`.
+pub(super) fn failed_outcome(verb: &str, failed: SelfFailedResult) -> MemoryError {
+    if is_live_run_verb(verb) {
+        MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            failed.error,
+            &["Read the run's state, then call again once it allows the act."],
+        )
+    } else {
+        MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[])
     }
 }
 

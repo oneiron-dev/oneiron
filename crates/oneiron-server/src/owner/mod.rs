@@ -9,11 +9,6 @@
 pub(crate) mod backup;
 pub(crate) mod cleanup;
 pub(crate) mod courtesy_delete;
-#[allow(
-    unused_imports,
-    reason = "the old module name, for branches cut before the rename"
-)]
-pub(crate) use self::courtesy_delete as cooperative_deletion;
 pub(crate) mod embedder;
 pub(crate) mod federation_connect;
 pub(crate) mod feedback;
@@ -28,10 +23,12 @@ pub(crate) mod note_imports;
 pub(crate) mod note_tombstones;
 pub(crate) mod off_record;
 pub(crate) mod pack_drift;
+pub(crate) mod pending_custody;
 pub(crate) mod persona;
 pub(crate) mod recovery_kit;
 pub(crate) mod runs;
 pub(crate) mod schedule;
+pub(crate) mod secret_bindings;
 pub(crate) mod secrets;
 pub(crate) mod stamp;
 pub(crate) mod vault_key;
@@ -184,12 +181,22 @@ fn hook_json(verb: &str, value: &impl serde::Serialize) -> OwnerResult<serde_jso
 }
 
 /// A row's refusal, a verb hook's stop or its ask, as the owner's: the
-/// engine's message names the hook and any ask a retry waits on.
+/// engine's message names the hook and any ask a retry waits on. A shared
+/// row's absence is not found and its authority refusal rides the carried
+/// owner refusal, so the owner plane answers 404 and 403 as the facade
+/// does, never 409 (FIX 11476).
 pub(crate) fn memory_refusal(error: oneiron::memory::MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
         oneiron::memory::MEMORY_CODE_INTERNAL => {
             OwnerError::Host(anyhow::anyhow!("{}", error.message))
+        }
+        oneiron::memory::MEMORY_CODE_NOT_FOUND => OwnerError::NotFound("row", error.message),
+        oneiron::memory::MEMORY_CODE_FORBIDDEN
+        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            OwnerError::Engine(Box::new(oneiron::Error::Claim(
+                oneiron::error::ClaimError::ScopedReadOwnerNotLive(Box::new(error)),
+            )))
         }
         _ => OwnerError::Refused(error.message),
     }

@@ -9,6 +9,7 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SAVED_QUERY_WATERMARK, CONTENT),
     (&t::SAVED_QUERY_MEMBERSHIP_EVENT, CONTENT),
+    (&t::SAVED_QUERY_HEALTH, CONTENT),
     (&t::SAVED_QUERY_MEMO, CONTENT),
     (&t::SAVED_QUERY_PACK_MIGRATION_MAP, CONTENT),
     (&t::SAVED_QUERY_REPAIR, CONTENT),
@@ -303,6 +304,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TYPED_QUESTION_RESTS_ON, CONTENT),
     (&t::TYPED_QUESTION_ROOT_SOURCES, CONTENT),
     (&t::TYPED_QUESTION_UNIT_WATCH, CONTENT),
+    (&t::TYPED_QUESTION_UNIT_ASK, CONTENT),
     (&t::TYPED_QUESTION, CONTENT),
     (&t::TYPED_QUESTION_WATCH, CONTENT),
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),
@@ -323,6 +325,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::VAULT_KEY_STATE, LIVE),
     (&t::VAULT_KEY_WRAP, LIVE),
     (&t::VAULT_SHAPE_APPLY, CONTENT),
+    (&t::VAULT_SHAPE_WIRE, CONTENT),
     (&t::VOICE_OWNER_REF, LIVE),
     (&t::VOICE_OWNER_REF_OWNER_INDEX, LIVE),
     (&t::VOICE_REF_IDENTITY, LIVE),

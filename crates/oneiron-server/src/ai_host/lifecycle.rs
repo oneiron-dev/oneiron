@@ -74,8 +74,11 @@ impl AiHost {
         // D4), settled whether or not the code sandbox binds.
         let shared =
             compaction::CodeModeCompaction::bind_shared(&server, &host.handle.runtime, models);
-        if let Some((compaction, _)) = &shared {
+        if let Some((compaction, guard)) = &shared {
             let _ = host.handle.writer_compaction.set(compaction.clone());
+            // A program's media jobs live on code mode's meter, its run's
+            // line (FIX 780, 6083): a restart takes them up there again.
+            host.handle.runtime.bind_program_media_line(guard.clone());
         }
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server = code_mode::bind(
@@ -191,8 +194,9 @@ impl AiHost {
     ) -> Self {
         let device = attached.as_ref().is_some_and(|attached| attached.device);
         recover_dead_leases(&vault);
-        let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
         let budgets = budgets.unwrap_or_else(crate::models::ModelHostBudgets::unhosted);
+        // Its ladders read chat replies on the vault's line (FIX 10626).
+        let rests = OfferCooldowns::in_vault_with(Arc::clone(&vault), budgets.clone());
         let mut runtime = ModelRuntime::build_hosted_on(models, broker, rests, &budgets)
             .with_receipts(receipts)
             .with_media_vault(Arc::clone(&vault));
@@ -201,6 +205,15 @@ impl AiHost {
         }
         runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
+        // Its reads outside a ladder serve this vault too: the decision reader's
+        // catalog price and tokenizer replies, and the token ratios' counts (FIX
+        // 11408, FIX 11412).
+        if let Some(door) = runtime.decision_read() {
+            door.bind_host(&vault, &budgets);
+        }
+        if let Some(ratios) = runtime.token_ratios() {
+            ratios.read_on(&budgets);
+        }
         // Launch statements price in dollars at the generative seat's model;
         // a unit other than tokens reads the runtime's offers, held weakly.
         if let Some(seat) = runtime.seat(CHAT_ROLE) {
@@ -213,6 +226,9 @@ impl AiHost {
         }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         handle.device = device;
+        handle.dreamer_control = attached
+            .as_ref()
+            .and_then(|attached| attached.control.clone());
         let mut host = Self {
             handle: handle.clone(),
             dreamer: None,

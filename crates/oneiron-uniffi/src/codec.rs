@@ -24,14 +24,15 @@ use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
     ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
     DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput,
-    LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp,
-    MentionProvenance, NeighborHit, NeighborHits, NeighborOpts, OutboundDraftInput,
-    OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt, ReadScope,
-    RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope,
-    RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
-    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson,
-    WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt, ForgetSelector,
+    HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
+    MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
+    ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
+    RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
+    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput,
+    TemporalHint, TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -58,6 +59,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         pending: None,
         retry_after: None,
         resets_at: Vec::new(),
+        reason_codes: Vec::new(),
     }
 }
 
@@ -320,13 +322,18 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
                     .collect::<Result<std::collections::BTreeSet<_>, OneironError>>()
             })
             .transpose()?;
+        // The generated record shares the engine's wire shape.
+        let assertions: Option<engine::WitnessAssertions> = self
+            .assertions
+            .map(|assertions| lower_record("vault.witness", assertions))
+            .transpose()?;
         Ok(engine::WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             thread_audience,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
-            assertions: Default::default(),
+            assertions: assertions.unwrap_or_default(),
         })
     }
 }
@@ -353,6 +360,31 @@ impl Lift<engine::WitnessReceipt> for WitnessReceipt {
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
+            wake_outcome: value
+                .wake_outcome
+                .map(TurnProgramWakeOutcome::lift)
+                .transpose()?,
+        })
+    }
+}
+
+impl Lift<engine::TurnProgramWakeOutcome> for TurnProgramWakeOutcome {
+    fn lift(value: engine::TurnProgramWakeOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::TurnProgramWakeOutcome::NotArmed => Self::NotArmed,
+            engine::TurnProgramWakeOutcome::Evaluated { newly_recorded } => {
+                Self::Evaluated { newly_recorded }
+            }
+            engine::TurnProgramWakeOutcome::Unpersisted { reason } => Self::Unpersisted {
+                reason: match reason {
+                    engine::UnpersistedWakeReason::NoAuthority => {
+                        UnpersistedWakeReason::NoAuthority
+                    }
+                    engine::UnpersistedWakeReason::StorageFailure => {
+                        UnpersistedWakeReason::StorageFailure
+                    }
+                },
+            },
         })
     }
 }
@@ -1179,6 +1211,16 @@ impl Lift<engine::RecallResidence> for RecallResidence {
                     window: hit.window,
                 })
                 .collect(),
+        })
+    }
+}
+
+impl Lift<engine::MemoryExportReceipt> for ExportReceipt {
+    fn lift(receipt: engine::MemoryExportReceipt) -> Result<Self, OneironError> {
+        Ok(Self {
+            format: receipt.format,
+            bytes: receipt.bytes,
+            digest: receipt.digest,
         })
     }
 }

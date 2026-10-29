@@ -4,6 +4,7 @@
 //! handshake proved.
 use super::managed_request::{AdmittedCaller, caller_binding_refused, caller_binding_replayed};
 use super::{BindingProof, CoreAuth, bearer_token};
+use crate::api::clock_ingress::{self, ClockIngress};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::extract::{Request, State};
@@ -96,22 +97,37 @@ pub(crate) async fn admit_http_binding(
     {
         return refusal;
     }
-    let mut request = request;
+    // A facade or MCP call over a damaged authority clock floor (FIX 11190,
+    // FIX 11201): the owner's repair spends no proof here, since its own
+    // writer judges its caller and spends the nonce; an owner's erase or
+    // revoke is judged on the restriction-only clock, here and downstream.
+    let (mut request, clock) = match clock_ingress::classify_request(&server, request).await {
+        Ok(classified) => classified,
+        Err(refusal) => return refusal,
+    };
+    let restriction_only = clock == Some(ClockIngress::RestrictionOnly);
     // A request the owner's reserve admitted (FIX 8274) carries that
     // admission here, used once: no second nonce is spent.
     let early = request.extensions_mut().remove::<AdmittedBinding>();
     let AdmittedBinding { machine, admitted } = match early {
         Some(binding) => binding,
-        None => match admit_binding(&server, request.uri().path(), request.headers()) {
-            Ok(binding) => binding,
-            Err(error) => {
-                // Keep the /v1 envelope when the transport door refuses first.
-                if request.uri().path().starts_with("/v1/") {
-                    return crate::error::EnvelopedApiError::from(error).into_response();
-                }
-                return error.into_response();
-            }
+        None if clock == Some(ClockIngress::Repair) => AdmittedBinding {
+            machine: PeerMachine::Unknown,
+            admitted: None,
         },
+        None => {
+            let _clock = restriction_only.then(oneiron::authority::restriction_only_clock);
+            match admit_binding(&server, request.uri().path(), request.headers()) {
+                Ok(binding) => binding,
+                Err(error) => {
+                    // Keep the /v1 envelope when the transport door refuses first.
+                    if request.uri().path().starts_with("/v1/") {
+                        return crate::error::EnvelopedApiError::from(error).into_response();
+                    }
+                    return error.into_response();
+                }
+            }
+        }
     };
     // A mesh stream's handshake proved its MACHINE: an HTTP proof of another
     // machine refuses (FIX 997). A request with no proof stays Unknown, as on
@@ -133,7 +149,10 @@ pub(crate) async fn admit_http_binding(
     if let Some(admitted) = admitted {
         request.extensions_mut().insert(admitted);
     }
-    next.run(request).await
+    if let Some(clock) = clock {
+        request.extensions_mut().insert(clock);
+    }
+    clock_ingress::scoped(restriction_only, next.run(request)).await
 }
 
 /// One request's admission at this door: the machine it proved, or
@@ -187,6 +206,16 @@ fn admit_binding(
     if let Some(token) = mcp_credential.or_else(|| bearer_token(headers).ok().flatten())
         && token.starts_with("v2.slip.")
     {
+        // The operator's own credential (FIX 1814) at a self-hosted vault's
+        // operator door: its proof spent here once, as any slip's. It names
+        // no caller, so nothing rides on to a door but the machine it shows.
+        if let Some(spent) =
+            super::operator_credential::bind_operator_once(server, path, token, headers)
+        {
+            let proof = spent?;
+            machine = super::machine_proof::peer_machine(headers, token, &proof, server.vault());
+            return Ok(AdmittedBinding { machine, admitted });
+        }
         let accepted = BindingProof::from_headers(headers).and_then(|proof| {
             CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
                 .map(|auth| (auth, proof))

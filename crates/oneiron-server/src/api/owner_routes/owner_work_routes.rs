@@ -20,7 +20,7 @@
 //! polled here at `GET /v1/owner/owner-work/{request}` by its `request`:
 //! "recorded, awaiting a holder" until the publishing install's result
 //! arrives, or why nothing was recorded. Where he spoke from is the request's
-//! own (`machine_routes::act_surface`): audit only.
+//! own (`machine_routes::act_surface_admitted`): audit only.
 //!
 //! `/v1/owner/owner-work/{request}/diagnostics` reads what blocks a pending
 //! request as its executor observes it (FIX 4686, 4784, 4785, 4787): ids and
@@ -31,8 +31,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{Path, Query, State};
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use oneiron::secret_custody::CustodyManifestCheck;
 use oneiron::world_keys::{
@@ -41,7 +41,7 @@ use oneiron::world_keys::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::machine_routes::{act_surface, parse_revision};
+use super::machine_routes::{act_surface_admitted, parse_revision};
 use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -254,11 +254,12 @@ async fn status(
 async fn publish_bundle(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<BundlePublicationRequest>,
 ) -> OwnerReply<OwnerWorkView> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let view = blocking(move || -> OwnerResult<OwnerWorkView> {
         let home = entity_id("home", &body.home)?;

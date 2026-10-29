@@ -349,10 +349,13 @@ pub(super) fn run_gap_scan(
         Ok((delta, texts)) => {
             intent::ask_stated_intents(vault, &delta.escalations, &texts);
             intent::land_answered_intents(vault);
-            Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 })
+            Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            })
         }
         Err(error) if super::residency::waits_on_residency(&error) => {
-            Ok(super::residency::residency_deferral(now_ms, 0))
+            Ok(super::residency::residency_deferral(now_ms, 0, Vec::new()))
         }
         Err(error) => Err(error),
     }
@@ -424,7 +427,10 @@ pub(super) fn upsert_branch_gap_queue(
 
 /// `recheck` runs first in the write transaction; an error writes nothing.
 /// The decay pass reads only the rows of `table` whose key starts with
-/// `decays`: the whole table for an empty prefix.
+/// `decays`: the whole table for an empty prefix. Its stale list is computed
+/// in a read transaction first, so the writer is never held across the decay
+/// scan; the short write rechecks each key and skips a row that changed,
+/// which the next pass decays.
 fn upsert_gap_projection<K: SideKey>(
     vault: &Vault,
     gaps: Vec<ReflectionGap>,
@@ -435,13 +441,31 @@ fn upsert_gap_projection<K: SideKey>(
     key_of: impl Fn(&ReflectionGap) -> K,
 ) -> Result<GapQueueDelta> {
     let mut delta = GapQueueDelta::default();
-    let mut observed: BTreeSet<Vec<u8>> = BTreeSet::new();
+    let observed: BTreeSet<Vec<u8>> = gaps
+        .iter()
+        .map(|gap| table.key_bytes(&key_of(gap)))
+        .collect();
+
+    // Decay candidates over this scope's stored gaps NOT re-observed this
+    // round, read without the writer.
+    let stale: Vec<(K, ReflectionGap)> = {
+        let rtxn = vault.store.env.read_txn()?;
+        table
+            .scan_from(&vault.store, &rtxn, decays)?
+            .into_iter()
+            .filter(|(key, stored)| {
+                !observed.contains(&table.key_bytes(key))
+                    && !stored.decayed
+                    && now.saturating_sub(stored.last_seen) >= DREAMER_GAP_DECAY_MS
+            })
+            .collect()
+    };
+
     let mut wtxn = vault.store.env.write_txn()?;
     recheck(&mut wtxn)?;
 
     for gap in gaps {
         let key = key_of(&gap);
-        observed.insert(table.key_bytes(&key));
         match table.get(&vault.store, &wtxn, &key)? {
             Some(mut stored) => {
                 if stored.decayed {
@@ -470,17 +494,17 @@ fn upsert_gap_projection<K: SideKey>(
         }
     }
 
-    // Decay pass over this scope's stored gaps NOT re-observed this round.
-    let stale: Vec<(K, ReflectionGap)> = table
-        .scan_from(&vault.store, &wtxn, decays)?
-        .into_iter()
-        .filter(|(key, stored)| {
-            !observed.contains(&table.key_bytes(key))
-                && !stored.decayed
-                && now.saturating_sub(stored.last_seen) >= DREAMER_GAP_DECAY_MS
-        })
-        .collect();
-    for (key, mut stored) in stale {
+    for (key, read) in stale {
+        // A row another write touched since the read is skipped: refreshed
+        // rows must not decay, and the next pass decays the rest.
+        let unchanged = matches!(
+            table.get(&vault.store, &wtxn, &key)?,
+            Some(stored) if stored.last_seen == read.last_seen && stored.decayed == read.decayed
+        );
+        if !unchanged {
+            continue;
+        }
+        let mut stored = read;
         stored.decayed = true;
         table.put(&vault.store, &mut wtxn, &key, &stored)?;
         delta.decayed += 1;

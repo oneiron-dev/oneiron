@@ -17,6 +17,7 @@ use oneiron::task_verb::sdk::{
     LegalHoldPlaceRequest, LegalHoldWidenRequest,
 };
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -41,7 +42,7 @@ pub(super) async fn as_owner<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let owner = owner_proof(server, auth, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&*server, &owner))
+    clock_ingress::run_blocking(move || act(&*server, &owner))
         .await
         .map_err(|_| internal(verb))?
 }
@@ -169,7 +170,8 @@ pub(crate) async fn vault_legal_holds_log(
 /// erase?" confirm. It erases; the engine takes the owner's proof, the
 /// targets and the state the confirm showed, and checks that state itself
 /// (FIX 1462). Nothing here adds a token or prepares a state of its own. It
-/// lists the records its receipt names.
+/// lists the records its receipt names, and, on a stale confirm, the shown
+/// state it answers with (FIX 10399).
 pub(crate) async fn vault_legal_holds_lift_and_erase(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -180,7 +182,18 @@ pub(crate) async fn vault_legal_holds_lift_and_erase(
         auth,
         "vault.legal_holds.lift_and_erase",
         move |server, owner| sdk::lift_legal_hold_and_erase_as(server.vault(), owner, input),
-        |erased| erased.records.iter().map(|erased| erased.record).collect(),
+        |erased| {
+            let mut rows: Vec<EntityId> =
+                erased.records.iter().map(|erased| erased.record).collect();
+            if let Some(changed) = erased.changed.as_ref() {
+                rows.extend(changed.records.iter().copied());
+                for hold in &changed.holds {
+                    rows.push(hold.hold_id);
+                    rows.extend(hold_targets(&hold.targets));
+                }
+            }
+            rows
+        },
     )
     .await
 }

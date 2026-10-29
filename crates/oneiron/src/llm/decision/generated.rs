@@ -8,7 +8,8 @@
 use serde_json::{Map, Value, json};
 
 use super::ladder::{
-    OpenPack, PairedAnswer, ProviderDecision, Read, asked, joined, take, validate_pin,
+    OpenPack, PairedAnswer, ProviderDecision, Read, asked, joined, price_answers, take,
+    validate_pin,
 };
 use super::types::invalid;
 use super::{
@@ -30,6 +31,10 @@ pub use wire::DecisionWireLabels;
 /// A noul's labels as the generation answers them, yes first.
 const NOUL_LABELS: [&str; 2] = ["yes", "no"];
 
+/// The invariant an admitted read's settlement breaks when the guard cannot settle the lease
+/// it issued: the reply came back, and the read returns this as its error.
+pub const GENERATED_SETTLEMENT_INVARIANT: &str = "generated read budget settlement";
+
 /// The rung whose read is one generation: its backend, how each request goes out, and the
 /// request it goes out as.
 pub struct GeneratedRung<'a> {
@@ -47,6 +52,25 @@ pub struct GeneratedRung<'a> {
     /// route that will serve it, read from host config, never from caller JSON: an
     /// on-device locality is unmetered at admission.
     pub seal: &'a (dyn Fn(LlmRequest) -> Result<LlmRequest> + Sync),
+}
+
+impl GeneratedRung<'_> {
+    /// What the rung's model costs per thousand units it reads, from its model registry
+    /// row's input price per million (FIX 11305): the vault a durable step runs in holds the
+    /// row. None for a raw read, which names no vault, and for a model with no registered
+    /// price.
+    fn registered_cost_per_thousand(&self) -> Option<f64> {
+        let GeneratedStep::Durable { step, .. } = &self.step else {
+            return None;
+        };
+        let row = step
+            .vault
+            .model_registry_row(&self.request.model)
+            .ok()
+            .flatten()?;
+        let per_million: f64 = row.catalog.cost.as_ref()?.input_per_million.parse().ok()?;
+        (per_million.is_finite() && per_million >= 0.0).then_some(per_million / 1_000.0)
+    }
 }
 
 /// How each of the read's requests goes out.
@@ -208,11 +232,10 @@ impl DecisionLadder<'_> {
                 Reply::Trapped => return Ok(GeneratedDecisions::Trapped),
                 Reply::Unread(miss) => return Ok(GeneratedDecisions::Unread(miss)),
             };
-            first.extend(
-                take(&rung.pin, &call, answers, readings)?
-                    .into_iter()
-                    .map(Some),
-            );
+            let reads = take(&rung.pin, &call, answers, readings)?;
+            // Each answer's receipt carries its model's registered price (FIX 11305).
+            price_answers(&reads, readings, rung.registered_cost_per_thousand());
+            first.extend(reads.into_iter().map(Some));
         }
         // The escalation past the first read asks the host's synchronous seats,
         // which block on the host's runtime; a thread driving this future (the
@@ -316,7 +339,7 @@ async fn admitted(
         Ok(reply) => guard.settle_per_call(&lease.lease, &reply.usage),
         Err(_) => guard.settle_reserved(&lease.lease),
     }
-    .map_err(|_| Error::InvariantViolation("generated read budget settlement"))?;
+    .map_err(|_| Error::InvariantViolation(GENERATED_SETTLEMENT_INVARIANT))?;
     Ok(response.map_err(GeneratedMiss::Backend))
 }
 

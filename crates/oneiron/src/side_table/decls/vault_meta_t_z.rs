@@ -197,6 +197,10 @@ side_tables! {
     TYPED_QUESTION_ROOT_SOURCES: VaultMeta b"typed_question:root_sources:v1:" Named;
     /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
     TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
+    /// FIX 11231: one graph unit's person ask, kept while it waits and once its holder's
+    /// answer landed on the unit: the question, principal and unit it decides, the declined
+    /// decision it went up from, and the answer claim that landed. Key: u64be(ask sequence).
+    TYPED_QUESTION_UNIT_ASK: VaultMeta b"typed_question:unit_ask:v1:" Named;
     TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
     /// Reverse watch index from an outcome predicate to the questions learning from it. Key:
     /// string(predicate) "\x00" id16(question).
@@ -262,6 +266,9 @@ side_tables! {
     /// One vault shape apply's journal (ARCH-0070): its plan items and how each landed, so a torn
     /// apply resumes. Key: string (the plan's frontier, hex).
     VAULT_SHAPE_APPLY: VaultMeta b"vault_shape:apply:v1:" Named;
+    /// One entity kind's wire declaration as a vault shape apply landed it (ARCH-0070, FIX 2300):
+    /// whether the kind is declared on the wire, by whom and when. Key: string (the kind's name).
+    VAULT_SHAPE_WIRE: VaultMeta b"vault_shape:wire:v1:" Named;
     /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named;
     /// Per-owner index over voice reference bank rows. Key: id16 (owner) + the indexed row's full

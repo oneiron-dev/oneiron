@@ -186,6 +186,16 @@ export type WitnessTurn = {
   occurredAt?: number
   /** A new project room thread root's audience seed (32-hex ids); edited later through vault.rooms.thread_audience. */
   threadAudience?: string[]
+  /** The records this reply names as cited or created, judged by the engine under the writer's own read; omitted means it asserts nothing. */
+  assertions?: WitnessAssertions
+}
+
+/** The records one witnessed reply names. A supplied assertion is the engine's input, never proof of creation: a `created` record whose birth does not prove the writer made it is recorded `creation_not_proven`. */
+export type WitnessAssertions = {
+  /** Records the reply cites. */
+  cited: RecordRef[]
+  /** Records the reply reports it created. */
+  created: RecordRef[]
 }
 
 /** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
@@ -204,6 +214,17 @@ export type WitnessReceipt = {
   messageShortIds: string[]
   /** Facade write marker; always begins `witness:`. */
   receiptRef: string
+  /** What the wake this turn owes its actor's armed programs came to; absent when it owes none. */
+  wakeOutcome?: TurnProgramWakeOutcome
+}
+
+/** What a landed turn's program wake came to. The turn is accepted either way. */
+export type TurnProgramWakeOutcome = {
+  outcome: "not_armed" | "evaluated" | "unpersisted"
+  /** Wakes this landing recorded, when `evaluated`; zero is no failure. */
+  newlyRecorded?: number
+  /** Why no wake was recorded, when `unpersisted`. */
+  reason?: "no_authority" | "storage_failure"
 }
 
 /** One claim to commit. `approval` is deliberately not settable by callers. */
@@ -410,6 +431,8 @@ export type RetrievalMeta = {
 /** A full-vault render in one of the five pack serialization formats. */
 /** The whole-vault archive (OF-222): a ZIP, standard base64 in `archive`. */
 export type MemoryExport = { format: string; archive: string; digest: string }
+/** One whole-vault export written to the caller's file (FIX 11177): its format, length and BLAKE3. The archive is the caller's file. */
+export type ExportReceipt = { format: string; bytes: number; digest: string }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {

@@ -17,8 +17,8 @@ use std::sync::Arc;
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionModel, DecisionRung, ProviderCapability,
-    ProviderDecision, ProviderPin,
+    AnswerContract, DecisionAnswer, DecisionCall, DecisionModel, DecisionQuestion, DecisionRung,
+    ProviderCapability, ProviderDecision, ProviderPin,
 };
 use oneiron::llm::manifest::ModelRole;
 use oneiron::{
@@ -31,7 +31,10 @@ use serde_json::{Value, json};
 use crate::config::models::{BigReply, BigSettings};
 use crate::models::{CallDeadline, ModelRuntime};
 
+mod joint;
+mod note;
 mod route;
+use joint::JointRead;
 use route::{DecisionSendConstraint, ResolvedDecisionRoute};
 
 /// The purpose a Big-rung call stamps, and the tier it asks for by default.
@@ -71,6 +74,10 @@ pub(crate) struct BigModel {
     trial_usage: Option<Arc<std::sync::Mutex<Vec<oneiron::LlmUsage>>>>,
     /// Where its calls may send unit text (FIX 9525).
     send: DecisionSendConstraint,
+    /// The host's paired question ("does this need more thinking?"), read
+    /// jointly with a question on a route that reports token scores (FIX
+    /// 1557); none when the host binds none.
+    paired: Option<DecisionQuestion>,
 }
 
 impl BigModel {
@@ -106,6 +113,7 @@ impl BigModel {
             runtime,
             pin,
             send: DecisionSendConstraint::Any,
+            paired: None,
         })
     }
 
@@ -136,6 +144,7 @@ impl BigModel {
                 version: self.pin.version.clone(),
             },
             send: DecisionSendConstraint::Any,
+            paired: self.paired.clone(),
         })
     }
 
@@ -162,6 +171,7 @@ impl BigModel {
                 version: self.pin.version.clone(),
             },
             send: DecisionSendConstraint::Any,
+            paired: self.paired.clone(),
         })
     }
 
@@ -186,6 +196,13 @@ impl BigModel {
         exact.pin.version = backend.model.revision().to_owned();
         exact.trial_usage = Some(usage);
         Ok(exact)
+    }
+
+    /// This rung reading `paired` jointly with each question a route that
+    /// reports token scores takes (FIX 1557).
+    pub(crate) fn with_paired(mut self, paired: Option<DecisionQuestion>) -> Self {
+        self.paired = paired;
+        self
     }
 
     pub(crate) fn pin(&self) -> ProviderPin {
@@ -219,10 +236,13 @@ impl BigModel {
     }
 
     /// The call as the route it takes names it: its model, where that runs.
+    /// A `joint` read asks for its joint label and the reply token's scores
+    /// in place of the written reply.
     fn request(
         &self,
         call: &DecisionCall<'_>,
         route: &ResolvedDecisionRoute,
+        joint: Option<&JointRead<'_>>,
     ) -> oneiron::Result<LlmRequest> {
         let (model, locality) = (route.model.clone(), route.locality);
         let purpose = CallPurpose::Other {
@@ -242,16 +262,20 @@ impl BigModel {
             });
         }
         let state = serde_json::to_string(&state).map_err(failed)?;
-        // A yes/no question's criteria triple, as the rubric it is judged by.
-        let rubric = QuestionCriteria::for_call(call)
-            .map(|criteria| format!("{}\n", criteria.rubric()))
+        // The question's criteria triple, as the rubric its contract is
+        // judged by (FIX 2181).
+        let rubric = QuestionCriteria::rubric_in(call.state, &call.question.contract)
+            .map(|rubric| format!("{rubric}\n"))
             .unwrap_or_default();
+        let reply = match joint {
+            Some(joint) => joint.instructions(),
+            None => self.reply.instructions().to_owned(),
+        };
         content.push(ContentPart::Text {
             text: format!(
-                "Question: {}\n{}\n{rubric}State (JSON): {state}\n{}",
+                "Question: {}\n{}\n{rubric}State (JSON): {state}\n{reply}",
                 call.question.text,
                 contract_line(&call.question.contract),
-                self.reply.instructions(),
             ),
         });
         Ok(LlmRequest {
@@ -273,7 +297,7 @@ impl BigModel {
                 },
             ],
             tools: Vec::new(),
-            params: BTreeMap::new(),
+            params: joint.map_or_else(BTreeMap::new, |_| JointRead::params()),
             provider_options: BTreeMap::new(),
             host_segments: None,
         })
@@ -414,7 +438,8 @@ impl DecisionModel for BigModel {
             return Ok(abstained());
         }
         let route = self.resolve_decision_route()?;
-        let request = self.request(call, &route)?;
+        let joint = self.joint_read(call, &route);
+        let request = self.request(call, &route, joint.as_ref())?;
         // A route the vault narrowed past what this server serves, or one
         // with no offer the call may go to, ends the call here, before
         // anything leaves.
@@ -476,6 +501,14 @@ impl DecisionModel for BigModel {
                 _ => None,
             })
             .collect();
+        // A joint read's answer is its reply token's scores; a reply with none
+        // is no reading (FIX 1557).
+        if let Some(joint) = &joint {
+            let decision = joint
+                .decision(&call.question.contract, response.token_scores.as_ref())
+                .unwrap_or_else(abstained);
+            return Ok(ProviderDecision { served, ..decision });
+        }
         let Some((answer, probability)) = self.reply.read(&text) else {
             return Ok(ProviderDecision {
                 served,

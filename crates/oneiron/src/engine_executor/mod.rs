@@ -7,6 +7,7 @@
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
 mod attempt_cancels;
+mod board_frames;
 mod cancel;
 mod capture;
 pub mod checkpoint_read;
@@ -39,11 +40,12 @@ pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, Win
 pub use self::driver::EngineNativeExecutor;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
 pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
+pub(crate) use self::record::parked_wait_now;
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
-pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::shadow_readable_outputs;
+pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
     RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, holds_reply_content,

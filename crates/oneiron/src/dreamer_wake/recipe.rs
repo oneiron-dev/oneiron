@@ -288,7 +288,10 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         {
             let txn = vault.store.env.read_txn()?;
             if cached_result(vault, &txn, attempt, &pin, actor, &id)? {
-                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
             }
         }
         let stored = vault.get_skill_record(&pin.skill)?.ok_or_else(invalid)?;
@@ -386,7 +389,10 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
                 },
             },
         )?;
-        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+        Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        })
     }
 }
 

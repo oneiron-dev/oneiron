@@ -25,6 +25,7 @@
 //! their results: a rung without them refuses a request that carries tools,
 //! and a step that ran before must still run.
 
+use oneiron::actor_claims::craft_message_entries;
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError};
@@ -125,9 +126,10 @@ impl<'a> StepSecretUse<'a> {
     }
 
     /// Asks `ladder` on `run` until an answer calls no tool, answering each
-    /// tool call in between; that answer and the rung that gave it. Each
-    /// round is the step's model call again: its permit, its gate, its
-    /// meter bounded by `lease`'s live room, and the same errors end it.
+    /// tool call in between; that answer, the rung that gave it and whether
+    /// any tool round ran. Each round is the step's model call again: its
+    /// permit, its gate, its meter bounded by `lease`'s live room, and the
+    /// same errors end it.
     pub(super) fn converse(
         &self,
         runtime: &tokio::runtime::Runtime,
@@ -135,7 +137,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
-    ) -> LlmResult<(LlmResponse, ModelId)> {
+    ) -> LlmResult<(LlmResponse, ModelId, bool)> {
         // A rung that cannot read reasoning back is never sent it.
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
         let may_send = || {
@@ -143,7 +145,12 @@ impl<'a> StepSecretUse<'a> {
             true
         };
         let mut uses = 0_u64;
+        let mut rounds = false;
         loop {
+            // The step's requester craft is read again before each round
+            // (FIX 11395): a note erased between rounds is not sent again.
+            // The planner craft stays as built at the start.
+            self.refresh_requester_craft(&mut request);
             let (response, served) = runtime.block_on(ladder.generate_served_while(
                 run,
                 request.clone(),
@@ -164,8 +171,9 @@ impl<'a> StepSecretUse<'a> {
                 })
                 .collect();
             if calls.is_empty() {
-                return Ok((response, served));
+                return Ok((response, served, rounds));
             }
+            rounds = true;
             // The round's spend goes on the lease before its tools run, so
             // siblings see it meanwhile (FIX 1819).
             lease.book_and_revise();
@@ -198,6 +206,36 @@ impl<'a> StepSecretUse<'a> {
                     }],
                 });
             }
+        }
+    }
+
+    /// Re-reads the step's requester craft for the round going out (FIX
+    /// 11395): the fresh message takes the old requester craft's slot, a
+    /// round that now has craft the start did not gains it after the
+    /// instructions, and one that now has none loses it. The planner craft
+    /// is the start's, untouched.
+    fn refresh_requester_craft(&self, request: &mut LlmRequest) {
+        let at = super::super::unix_now();
+        let fresh = super::super::resident_craft::queue_craft(
+            self.vault,
+            self.attempt.id,
+            &self.actor.entity_ref(),
+            at,
+        );
+        let slot = request.messages.iter().position(|message| {
+            message.role == LlmMessageRole::System
+                && craft_message_entries(&super::super::resident_craft::message_text(message), at)
+                    .is_some()
+        });
+        match (fresh, slot) {
+            (Some((craft, _)), Some(slot)) => request.messages[slot] = craft,
+            (Some((craft, _)), None) => {
+                super::super::resident_craft::join_craft(&mut request.messages, craft);
+            }
+            (None, Some(slot)) => {
+                request.messages.remove(slot);
+            }
+            (None, None) => {}
         }
     }
 

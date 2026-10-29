@@ -8,7 +8,7 @@
 //! act's audit surface) is the request's own too: the HTTP route reads the
 //! verified machine proof its headers carry (FIX 4625), never an input field.
 
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{Extensions, HeaderMap, StatusCode};
 use oneiron::EntityId;
 use oneiron::authority::ActSurface;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, ProducerRows};
@@ -119,9 +119,14 @@ impl<'a> FacadeCall<'a> {
     /// A request on the HTTP facade: its credential, the room turn,
     /// invocation and session its headers name, and the surface its owner
     /// act records: a linked machine its headers' machine proof verifies
-    /// on this very request (`owner_routes::machine_routes::act_surface`,
-    /// FIX 4625).
-    pub(super) fn http(server: &SyncServer, auth: &'a CoreAuth, headers: &'a HeaderMap) -> Self {
+    /// on this very request, or the caller the binding door admitted
+    /// (`owner_routes::machine_routes::act_surface_admitted`, FIX 4625).
+    pub(super) fn http(
+        server: &SyncServer,
+        auth: &'a CoreAuth,
+        headers: &'a HeaderMap,
+        extensions: &Extensions,
+    ) -> Self {
         Self {
             auth,
             room_turn: Carried::spelled(header(headers, ROOM_TURN_HEADER), |room| {
@@ -140,9 +145,11 @@ impl<'a> FacadeCall<'a> {
             drain: None,
             creator_run: None,
             subscription: None,
-            surface: crate::api::owner_routes::machine_routes::act_surface(server, auth, headers),
+            surface: crate::api::owner_routes::machine_routes::act_surface_admitted(
+                server, auth, headers, extensions,
+            ),
             forwarded: (!auth.is_owner_grade())
-                .then(|| auth.forwarded_caller_proof(headers))
+                .then(|| auth.forwarded_caller_proof_admitted(headers, extensions))
                 .flatten(),
         }
     }

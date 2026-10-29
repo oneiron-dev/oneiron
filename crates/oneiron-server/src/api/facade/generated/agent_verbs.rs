@@ -66,6 +66,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.fanout.launch", post(facade_route))
         .route("/self.budget", post(facade_route))
         .route("/self.budget.land", post(facade_route))
+        .route("/self.billing.account.file", post(facade_route))
         .route("/vault.budgets.lease.open", post(facade_route))
         .route("/vault.budgets.lease", post(facade_route))
         .route("/vault.budgets.lease.top_up", post(facade_route))
@@ -79,6 +80,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.budgets.rsi.top_up", post(facade_route))
         .route("/vault.budgets.rsi.hold", post(facade_route))
         .route("/vault.budgets.rsi.hold.resume", post(facade_route))
+        .route("/vault.budgets.resident_shares", post(facade_route))
+        .route("/vault.budgets.resident_shares.set", post(facade_route))
         .route("/vault.runners.seats.quotas", post(facade_route))
         .route("/vault.runners.seats.top_up", post(facade_route))
         .route("/vault.fanout.resume", post(facade_route))
@@ -348,6 +351,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.policy.propose", post(facade_route))
         .route("/vault.shared.policy.answer", post(facade_route))
         .route("/vault.shared.policy.change", post(facade_route))
+        .route("/vault.shared.policy.changes", post(facade_route))
         .route("/vault.federation.coreference.link", post(facade_route))
         .route("/vault.federation.coreference.confirm", post(facade_route))
         .route(
@@ -425,6 +429,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.off_record.notes.create", post(facade_route))
         .route("/vault.off_record.claims.upsert", post(facade_route))
         .route("/self.off_record.execute", post(facade_route))
+        .route("/self.off_record.results.list", post(facade_route))
+        .route("/self.off_record.results.read", post(facade_route))
+        .route("/self.off_record.waits.get", post(facade_route))
+        .route("/self.off_record.waits.answer", post(facade_route))
         .route("/vault.off_record.rooms.status", post(facade_route))
         .route("/vault.off_record.rooms.start", post(facade_route))
         .route("/vault.off_record.rooms.witness", post(facade_route))
@@ -512,6 +520,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.roots.requests.cancel", post(facade_route))
+        .route("/vault.roots.requests.create", post(facade_route))
+        .route("/vault.roots.requests.list", post(facade_route))
+        .route("/vault.owner_work.get", post(facade_route))
         .route("/vault.cleanup.run", post(facade_route))
         .route("/vault.cleanup.review", post(facade_route))
         .route("/vault.cleanup.decide", post(facade_route))
@@ -519,6 +530,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.archive.delete.confirm", post(facade_route))
         .route("/vault.usage.events.undecodable", post(facade_route))
         .route("/vault.usage.events.remove_undecodable", post(facade_route))
+        .route("/vault.usage.repair.receipts", post(facade_route))
         .route("/vault.entities.mention", post(facade_route))
         .route("/vault.legal_holds.place", post(facade_route))
         .route("/vault.legal_holds.widen", post(facade_route))
@@ -592,6 +604,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.settings.learning.put", post(facade_route))
         .route("/vault.settings.learning.clear", post(facade_route))
         .route("/vault.secrets.lift_history", post(facade_route))
+        .route("/vault.secrets.register", post(facade_route))
+        .route("/vault.secrets.rotate", post(facade_route))
+        .route("/vault.secrets.rewrap", post(facade_route))
+        .route("/vault.secrets.custody.get", post(facade_route))
+        .route("/vault.secrets.custody.submit", post(facade_route))
         .route("/vault.widen_proposals", post(facade_route))
         .route("/vault.widen_proposals.approve", post(facade_route))
         .route("/vault.widen_proposals.decline", post(facade_route))
@@ -609,6 +626,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.lenses.activate", post(facade_route))
         .route("/vault.lenses.deactivate", post(facade_route))
         .route("/vault.lenses.list", post(facade_route))
+        .route("/vault.lenses.export_pack", post(facade_route))
         .route("/vault.lenses.select", post(facade_route))
         .route("/vault.lenses.resolve", post(facade_route))
         .route("/vault.lenses.result_set.action", post(facade_route))
@@ -811,6 +829,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.agents.spawn.get", post(facade_route))
         .route("/vault.agents.spawn", post(facade_route))
         .route("/vault.tasks.cancel.force", post(facade_route))
+        .route("/vault.tasks.comm_widen.revoke", post(facade_route))
         .route("/vault.runs.branches.get", post(facade_route))
         .route("/vault.runs.pause", post(facade_route))
         .route("/vault.runs.resume", post(facade_route))
@@ -886,6 +905,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.projects.route_tradeoff", post(facade_route))
         .route("/vault.conversations.turn.continue", post(facade_route))
         .route("/vault.conversations.turn.retry", post(facade_route))
+        .route("/vault.conversations.turn.rebind", post(facade_route))
         .route("/vault.messages.react", post(facade_route))
         .route("/vault.rooms.host", post(facade_route))
         .route("/vault.rooms.host.pin", post(facade_route))
@@ -953,6 +973,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.models.trials.get", post(facade_route))
         .route("/vault.models.trials.approve", post(facade_route))
         .route("/vault.models.trials.run", post(facade_route))
+        .route("/vault.models.trials.resend_arm", post(facade_route))
         .route("/vault.models.trials.complete", post(facade_route))
         .route("/vault.models.bindings.propose", post(facade_route))
         .route("/vault.models.bindings.get", post(facade_route))
@@ -973,6 +994,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.video", post(facade_route))
         .route("/ai.video.poll", post(facade_route))
         .route("/ai.video.cancel", post(facade_route))
+        .route("/ai.ask_image", post(facade_route))
         .route("/ai.verdict", post(facade_route))
         .route("/vault.graph.ask", post(facade_route))
         .route("/vault.graph.admit", post(facade_route))
@@ -981,6 +1003,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.questions.pause", post(facade_route))
         .route("/vault.questions.backfill", post(facade_route))
         .route("/vault.questions.read", post(facade_route))
+        .route("/vault.questions.outcome_windows", post(facade_route))
         .route("/vault.questions.answers", post(facade_route))
         .route("/vault.questions.refresh", post(facade_route))
         .route("/vault.questions.outcomes", post(facade_route))
@@ -991,6 +1014,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.decisions.bands.enforce", post(facade_route))
         .route("/vault.decisions.asks.answer", post(facade_route))
         .route("/vault.decisions.asks.climb", post(facade_route))
+        .route("/vault.decisions.asks.confirm_grant", post(facade_route))
         .route("/self.decisions.asks", post(facade_route))
         .route("/connector.list", post(facade_route))
         .route("/connector.status", post(facade_route))
@@ -1134,6 +1158,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.sieve.lease.refill", post(facade_route))
         .route("/vault.free_time.policy.get", post(facade_route))
         .route("/vault.free_time.policy.set", post(facade_route))
+        .route("/vault.free_time.policy.set_as", post(facade_route))
         .route("/vault.free_time.cycles", post(facade_route))
         .route("/vault.free_time.cycle", post(facade_route))
         .route("/vault.claims.vet", post(facade_route))
@@ -1270,13 +1295,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.focus.unsubscribe", post(facade_route))
 }
 async fn vault_off_record_rooms_export_attachment(
-    auth: CoreAuth,
+    caller: super::clock_ingress::FacadeCaller,
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
+    extensions: axum::http::Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
-    let mut answer = facade_route(auth, State(server), uri, headers, payload).await;
+    let mut answer = facade_route(caller, State(server), uri, headers, extensions, payload).await;
     if answer.extensions().get::<FacadeApiError>().is_none() {
         answer.headers_mut().insert(
             axum::http::header::CONTENT_DISPOSITION,

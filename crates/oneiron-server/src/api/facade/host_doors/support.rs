@@ -4,17 +4,18 @@
 
 use std::sync::Arc;
 
-use oneiron::llm::media::{AiOperation, MediaRequest};
+use oneiron::llm::media::{AiOperation, MediaReplayKey, MediaRequest};
 use oneiron::llm::run_admission::RunAdmission;
+use oneiron::memory::foreign_code::ForeignCodeFailure;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
     ProducerRows,
 };
-use oneiron::memory::foreign_code::ForeignCodeFailure;
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
+use crate::api::clock_ingress;
 use crate::api::facade::{FacadeApiError, facade_actor};
 use crate::api::type_feedback_release::{FeedbackScan, release_step_feedback};
 use crate::auth::CoreAuth;
@@ -54,23 +55,31 @@ pub(super) fn artifact_asker(
 
 /// One media call's answer, from its seat's ladder: on `run` when its caller
 /// admitted it on a line of its own, which bills that run's payer, else on
-/// the media meter as the owner's call ([`answered`]). A banked voice
+/// the media meter as the owner's call ([`answered`]), sourced from
+/// `sources`, the rows the call is read from (FIX 11311). A banked voice
 /// withdrawn or re-recorded while it rendered, on the rung that answered, is
 /// not handed back; nor is a call that found the voice withdrawn everywhere
-/// while it waited (FIX 1746).
+/// while it waited (FIX 1746). An owner's call known by `replay` answers a
+/// repeat from its first answer, unpaid (FIX 2962); a run's call, on its
+/// own line, is never replayed.
 pub(super) async fn rendered(
     server: &SyncServer,
     operation: AiOperation,
     request: MediaRequest,
     voices: Option<RungVoices>,
     run: Option<&RunAdmission>,
+    sources: Option<Vec<EntityId>>,
+    replay: Option<MediaReplayKey>,
 ) -> MemoryResult<AiAnswer> {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
-    let answer = match (run, &voices) {
-        (Some(run), voices) => media.run_admitted(run, request, voices.as_ref()).await,
-        (None, Some(voices)) => media.run_voiced(request, voices, None).await,
-        (None, None) => media.run(request, None).await,
+    let answer = match run {
+        Some(run) => media.run_admitted(run, request, voices.as_ref()).await,
+        None => {
+            media
+                .run_replayed(request, voices.as_ref(), None, sources, None, replay)
+                .await
+        }
     };
     let withdrawn = || {
         MemoryError::new(
@@ -253,7 +262,7 @@ pub(in crate::api::facade) async fn off_runtime_listing<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&ProducerRows) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let producers = ProducerRows::default();
         let answer = act(&producers);
         (answer, producers.take())

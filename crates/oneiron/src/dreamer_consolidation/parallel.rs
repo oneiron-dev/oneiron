@@ -33,6 +33,13 @@ impl ConsolidationExecutor<'_> {
         run_id: Option<String>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
+        // A drain's pause parks the attempt before its preparation burns
+        // more of the pass: its checkpoint exit resumes it. Only the pause
+        // parks here: an expired deadline still runs its memoized steps
+        // below, so a finished partition can land in its grace (FIX 11570).
+        if ctx.cancel_requested() {
+            return Ok(PartitionRun::Checkpoint);
+        }
         let branch = decode_partition_payload(payload_input)?;
         let turn_ids = branch.turn_ids();
         let axes = branch.axes();
@@ -50,11 +57,13 @@ impl ConsolidationExecutor<'_> {
         let config = ctx.vault.consolidation_selection()?;
         let (slices, low_trust) =
             resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
-        // The attempt's read set: every row its slices' calls read, which
-        // every later read of this branch reads within (FIX 7019).
+        // The attempt's read set: every row its slices' calls read and
+        // every row its branch pinned, which every later read of this branch
+        // reads within (FIX 7019).
         let read = slices
             .iter()
             .flat_map(|slice| slice.sources.iter().copied())
+            .chain(resources.pinned_source_ids())
             .collect();
         super::declare_attempt_reads(
             ctx.vault,
@@ -193,7 +202,7 @@ impl ConsolidationExecutor<'_> {
         if trapped {
             return Ok(PartitionRun::Trapped);
         }
-        if checkpoint || ctx.deadline.expired() {
+        if checkpoint || ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
         }
         if let Some(reason) = refused {
@@ -245,11 +254,12 @@ impl ConsolidationExecutor<'_> {
                     call,
                     people: &people,
                 },
+                &slice.sources,
             )?;
             parsed.extend(taken);
             skipped += missed;
             resources.require_output(resources.scope())?;
-            if ctx.deadline.expired() {
+            if ctx.deadline.expired() || ctx.cancel_requested() {
                 return Ok(PartitionRun::Checkpoint);
             }
             #[cfg(test)]
@@ -267,7 +277,7 @@ impl ConsolidationExecutor<'_> {
                 Some(ctx.deadline),
                 Some(&resources.write_fence()),
             ) {
-                if ctx.deadline.expired() {
+                if ctx.deadline.expired() || ctx.cancel_requested() {
                     return Ok(PartitionRun::Checkpoint);
                 }
                 return Err(error.into());
@@ -300,7 +310,7 @@ impl ConsolidationExecutor<'_> {
                 });
             }
         };
-        if ctx.deadline.expired() {
+        if ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
         }
         let (candidates, waiting) = Self::build_candidates(

@@ -19,18 +19,41 @@ use crate::entity_id::EntityId;
 use crate::llm::{BudgetGuard, BudgetLease, BudgetLeaseState};
 
 /// The wake passes running on one open vault, by wake ref (DOOR-144).
-#[derive(Default)]
 pub(crate) struct ActiveWakes {
     wakes: Mutex<BTreeMap<WakeRef, Weak<ActiveWake>>>,
+    /// Sixteen random bytes minted once with the vault handle: the boot an
+    /// owed wake call names, so a reconcile tells a live call of this process
+    /// from what a dead boot left (FIX 11450).
+    boot: [u8; 16],
+    /// The read phases' fallback tally and deferred triggers (FIX 11568).
+    pub(crate) read_phases: crate::dreamer_wake::read_phase::ReadPhases,
+}
+
+impl Default for ActiveWakes {
+    fn default() -> Self {
+        let mut boot = [0u8; 16];
+        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut boot);
+        Self {
+            wakes: Mutex::default(),
+            boot,
+            read_phases: Default::default(),
+        }
+    }
 }
 
 impl ActiveWakes {
+    /// This handle's boot nonce.
+    pub(crate) fn boot(&self) -> [u8; 16] {
+        self.boot
+    }
+
     /// Registers one pass before its header is visible, and returns the hold
     /// its deadline carries. Passes no root holds any more leave here.
     pub(super) fn register(&self, wake: WakeRef, deadline: &WakePassDeadline) -> WakeBinding {
         let live = Arc::new(ActiveWake {
             clock: deadline.unbound(),
             calls: Mutex::default(),
+            attempt_lines: Mutex::default(),
         });
         let mut wakes = self.wakes.lock().unwrap_or_else(PoisonError::into_inner);
         wakes.retain(|_, pass| pass.strong_count() > 0);
@@ -47,15 +70,43 @@ impl ActiveWakes {
             .get(&wake)
             .and_then(Weak::upgrade)
     }
+
+    /// Records the runner line `attempt` reserved on in `wake`: the line an
+    /// owed wake call of that attempt charges (FIX 11450). Nothing when the
+    /// pass no longer runs.
+    pub(crate) fn record_attempt_line(&self, wake: WakeRef, attempt: AttemptId, line: &str) {
+        if let Some(live) = self.get(wake) {
+            live.record_attempt_line(attempt, line);
+        }
+    }
 }
 
 /// One running pass: the clock it runs on, and its admitted calls.
 pub(crate) struct ActiveWake {
     clock: WakePassDeadline,
     calls: Mutex<BTreeMap<EntityId, Weak<ActiveCall>>>,
+    attempt_lines: Mutex<BTreeMap<AttemptId, String>>,
 }
 
 impl ActiveWake {
+    /// Records the runner line `attempt` reserved on: the line an owed wake
+    /// call of that attempt charges (FIX 11450).
+    pub(crate) fn record_attempt_line(&self, attempt: AttemptId, line: &str) {
+        self.attempt_lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(attempt, line.to_owned());
+    }
+
+    /// The runner line `attempt` reserved on, while this pass runs it.
+    pub(crate) fn attempt_line(&self, attempt: AttemptId) -> Option<String> {
+        self.attempt_lines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&attempt)
+            .cloned()
+    }
+
     /// Registers one admitted call before its row is visible. Calls no
     /// observer holds any more leave here.
     fn register_call(
@@ -146,6 +197,7 @@ impl<'a> StepCalls<'a> {
         ObservedCall {
             vault: self.vault,
             bound: self.bind(guard, lease, ordinal),
+            stated_reset: None,
         }
     }
 
@@ -176,10 +228,35 @@ impl<'a> StepCalls<'a> {
             lease_id: lease.id().to_owned(),
             admitted_elapsed_ms,
         };
-        match self
-            .vault
-            .with_write_txn_grouped(|wtxn| bind_call_in_txn(self.vault, wtxn, &admitted))
-        {
+        match self.vault.with_write_txn_grouped(|wtxn| {
+            let bound = bind_call_in_txn(self.vault, wtxn, &admitted)?;
+            // The owed row for this send, beside its call row (FIX 11450): a
+            // crash before the attempt settles still charges it. None when the
+            // attempt reserved on no recorded line.
+            if let Some(line) = binding.live.attempt_line(self.attempt_id) {
+                let reserved_units = match guard.lease_observation(lease.id()) {
+                    Some(BudgetLeaseState::Open { reserve_units, .. }) => reserve_units,
+                    Some(BudgetLeaseState::Settled { .. })
+                    | Some(BudgetLeaseState::Aborted)
+                    | None => 0,
+                };
+                let owed = crate::dreamer_wake::owed::WakeOwedCall {
+                    boot: self.vault.active_wakes.boot(),
+                    line,
+                    lease: lease.id().to_owned(),
+                    reserved_units,
+                    at: crate::unix_seconds_now(),
+                };
+                crate::dreamer_wake::owed::put_owed_call_in_txn(
+                    self.vault,
+                    wtxn,
+                    self.attempt_id,
+                    &self.step_hash,
+                    &owed,
+                )?;
+            }
+            Ok(bound)
+        }) {
             Ok(true) => Some(BoundCall {
                 key,
                 live,
@@ -198,6 +275,8 @@ impl<'a> StepCalls<'a> {
 pub(crate) struct ObservedCall<'a> {
     vault: &'a Vault,
     bound: Option<BoundCall>,
+    /// The reset the provider limit that refused the call stated.
+    stated_reset: Option<u64>,
 }
 
 struct BoundCall {
@@ -212,6 +291,13 @@ impl ObservedCall<'_> {
         StepTerminal::Fresh {
             bound: self.bound.is_some(),
         }
+    }
+
+    /// A provider limit refused the call and stated it resets at `at`, in
+    /// Unix seconds: its end row keeps it, so a Retry park its try makes is
+    /// due then (FIX 11226).
+    pub(crate) fn refused_until(&mut self, at: u64) {
+        self.stated_reset = Some(at);
     }
 
     /// The step's terminal claim recorded this call's end in its own write:
@@ -245,6 +331,7 @@ impl Drop for ObservedCall<'_> {
             at_unix_ms: crate::unix_millis_now(),
             used_units,
             claim: None,
+            stated_reset: self.stated_reset,
         };
         record_call_closed(self.vault, bound.key, end);
     }

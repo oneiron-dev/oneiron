@@ -77,6 +77,31 @@ impl DreamerRunnerStore<'_> {
         })
     }
 
+    /// Charges `units` a thing child settled before its count closed but its
+    /// parent never collected (FIX 11449): a session dropped without its
+    /// close hands what it held to the attempt's own line at once. Like
+    /// [`Self::charge_late_usage`] but it clears no owed call: the dropped
+    /// units are settled spend, never a call still in flight. Onto the
+    /// child's reservation while one is held, else onto the line itself,
+    /// past what remains if need be (FIX 8702).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a line with no counter row.
+    pub fn charge_dropped_usage(
+        &self,
+        budget_id: &str,
+        child_attempt: AttemptId,
+        units: u64,
+    ) -> Result<()> {
+        validate_budget_id(budget_id)?;
+        let now = self.vault.now_recorded_at();
+        self.vault.with_write_txn(|wtxn| {
+            let mut budget = self.owing_budget_in_txn(wtxn, budget_id)?;
+            self.owe_usage_in_txn(wtxn, &mut budget, child_attempt, units, now)
+        })
+    }
+
     /// Keeps a measured charge whose settlement failed owed on its child's
     /// reservation (FIX 8728), never refunded: the reservation's next
     /// settlement or abort charges it.
@@ -95,7 +120,7 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// The counter row owed spend lands on.
-    fn owing_budget_in_txn(
+    pub(crate) fn owing_budget_in_txn(
         &self,
         wtxn: &heed::RwTxn<'_>,
         budget_id: &str,
@@ -113,7 +138,7 @@ impl DreamerRunnerStore<'_> {
 
     /// `units` owed by `child_attempt`, on its reservation when one is held,
     /// else charged to `budget` at once; `budget` is written either way.
-    fn owe_usage_in_txn(
+    pub(crate) fn owe_usage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         budget: &mut DreamerBudgetRecord,

@@ -79,7 +79,17 @@ const PUBLISH_BUNDLE_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "home"];
 
 /// What kind of work a request asks for: the `kind` of its `work` map.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerWorkKind {
