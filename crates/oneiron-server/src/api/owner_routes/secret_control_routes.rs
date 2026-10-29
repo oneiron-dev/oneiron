@@ -297,6 +297,50 @@ struct SealedHead {
     manifest_ref: Option<String>,
 }
 
+/// The wire shape of [`SealedHead`] plus its required `input_base64` member,
+/// for the OpenAPI schema only (FIX 11656): `POST /v1/owner/secrets/custody`'s
+/// body. Never read at runtime; `sealed_spool` parses the body.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the sealed change's wire shape")]
+struct SealedChangeBody {
+    /// `register` or `rotate`.
+    change: String,
+    secret_id: String,
+    generation: u32,
+    /// The custody revision the surface read, as 64 hex.
+    seen: String,
+    holder: String,
+    recipients: Vec<SealedPermitBody>,
+    /// For a register, the `manifest_ref` its sealed record names: this
+    /// install attaches the manifest it resolves for it. Absent, it attaches
+    /// the vault's one current approved manifest, or records that the
+    /// register carries none and the reply says so.
+    #[serde(default)]
+    manifest_ref: Option<String>,
+    /// The input sealed to the holder's key, as standard base64: one
+    /// envelope, or the frame of numbered envelopes a body past one
+    /// envelope's plaintext bound needs.
+    input_base64: String,
+}
+
+/// The wire shape of [`PermitBody`], for the OpenAPI schema only (FIX 11656):
+/// one exact permit a sealed input binds.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the sealed permit's wire shape")]
+struct SealedPermitBody {
+    machine: String,
+    profile: String,
+    encryption_key_digest: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/custody`'s body (FIX 11656):
+/// [`SealedChangeBody`].
+pub(crate) fn sealed_change_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SealedChangeBody>()
+}
+
 /// `POST /v1/owner/secrets/custody`: records a register or rotate whose
 /// protected input the surface sealed to the holder under the binding `GET
 /// /secrets/custody` gave it. This install sees only ciphertext. The body is
