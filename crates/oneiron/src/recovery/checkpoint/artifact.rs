@@ -117,6 +117,9 @@ pub struct CheckpointKey {
     /// The family a host's worker opened from the artifact's host-private
     /// member, for a cold restore (`with_artifact_host_holds`, FIX 6817).
     pub(super) artifact_host_holds: Option<Box<super::ArtifactHostOrderHolds>>,
+    /// The signers the vault's mode roots delegated, trusted beside `trust`
+    /// (`trusting_mode_roots`, FIX 968).
+    pub(super) delegated: Option<Box<super::signer_delegation::DelegatedSigners>>,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -173,6 +176,7 @@ impl CheckpointKey {
             expected: None,
             wake_floor: None,
             artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -211,6 +215,7 @@ impl CheckpointKey {
             expected: Some(Box::new(expected.clone())),
             wake_floor: None,
             artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -299,6 +304,7 @@ impl Vault {
             expected: None,
             wake_floor: None,
             artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -320,6 +326,7 @@ impl Vault {
                 expected: None,
                 wake_floor: None,
                 artifact_host_holds: None,
+                delegated: None,
             },
         ))
     }
@@ -482,6 +489,7 @@ pub(super) fn open_artifact_file(
     let commitment_bytes = read_at(&mut file, signed_at + 4, commitment_len)?;
     let commitment = commitment::verify(
         &key.trust,
+        key.delegated_signers(),
         &key.vault_id,
         &commitment_bytes,
         &read_at(&mut file, record_at + 4, record_len)?,

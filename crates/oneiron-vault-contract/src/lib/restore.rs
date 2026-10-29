@@ -58,7 +58,7 @@ pub use self::host_holds::{
     HostOrderHoldsNotProven, ManagedRestoreHostHolds, RestoreHostHoldsStatus,
 };
 pub use self::plan::{
-    EscrowRole, FreshRecipient, ManagedRestoreInput, ManagedRestorePlan,
+    BackupModeRootsBytes, EscrowRole, FreshRecipient, ManagedRestoreInput, ManagedRestorePlan,
     RESTORE_INPUT_SCHEMA_VERSION, ReleasedRecipient, RestorePlan,
 };
 

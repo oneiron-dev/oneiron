@@ -42,6 +42,7 @@ mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod backup_signer_delegation;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -221,6 +222,10 @@ pub use checkpoint_adopt::{
 pub use checkpoint_attest::*;
 pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
+pub use backup_signer_delegation::{
+    BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots,
+    BackupSignerDelegation, BackupSignerStatement,
+};
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use checkpoint_root_attest::{
