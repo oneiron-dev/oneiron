@@ -1877,7 +1877,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def settle(self, spec):
-            """The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."""
+            """The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer."""
             return json.loads(_translate(lambda: self._client.vault_skills_attribution_settle(json.dumps(spec))))
         def read(self, spec):
             """The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."""

@@ -12827,7 +12827,7 @@ impl AgentVerb {
                 "Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt."
             }
             Self::VaultSkillsAttributionSettle => {
-                "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."
+                "The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer."
             }
             Self::VaultSkillsAttributionRead => {
                 "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."

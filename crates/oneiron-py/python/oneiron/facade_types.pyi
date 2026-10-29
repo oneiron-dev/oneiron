@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4199 declarations.
+Census: 1162 facade rows, 4201 declarations.
 Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -10198,6 +10198,14 @@ class LearningChoiceValuePattern(TypedDict):
 class LearningChoiceValueBudget(TypedDict):
     budget: int
 LearningChoiceValue = LearningChoiceValueModel | LearningChoiceValueWidth | LearningChoiceValuePattern | LearningChoiceValueBudget
+class LearnedChoiceValueView(TypedDict):
+    choice: LearningChoiceValue
+    runs: float
+    share: float
+class LearnedChoiceView(TypedDict):
+    values: list[LearnedChoiceValueView]
+    own_runs: float
+    origin: PriorOrigin
 class LearningSettingRowView(TypedDict):
     key: str
     mode: LearningSettingMode
@@ -10211,6 +10219,7 @@ class LearningSettingRowView(TypedDict):
     by: str
     at: int
     why: str
+    learned: NotRequired[LearnedChoiceView | None]
 class LearningSettingsView(TypedDict):
     catalog: list[LearningSettingSpecView]
     rows: list[LearningSettingRowView]
@@ -15284,7 +15293,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
-    source_turn_ref: NotRequired[EntityId | None]
+    artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
     followed_skill: NotRequired[bool | None]
@@ -15313,13 +15322,14 @@ class AmendmentJudgmentView(TypedDict):
     scope: str
     evidence_receipts: list[str]
     d_norm: float
+    engine_ver: str
     at: int
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
-    artifact_ref: EntityId
+    artifact_ref: NotRequired[EntityId | None]
     proposed_text: str
     final_text: str
-    delta: AmendmentDeltaView
+    delta: NotRequired[AmendmentDeltaView | None]
     hunks: list[SettledHunkView]
     judgment: NotRequired[AmendmentJudgmentView | None]
     edit_cost_claims: list[EntityId]
@@ -15331,14 +15341,14 @@ class ProposalDeltaReadRequest(TypedDict):
 class ProposalOpSpanView(TypedDict):
     actor: NotRequired[EntityId | None]
     trust: str
-    before_text: str
-    after_text: str
+    before_text: NotRequired[str | None]
+    after_text: NotRequired[str | None]
     lamport: int
     timestamp: int
 class ProposalArtifactView(TypedDict):
     artifact_ref: EntityId
-    proposed_text: str
-    final_text: str
+    proposed_text: NotRequired[str | None]
+    final_text: NotRequired[str | None]
     source_turn_ref: NotRequired[EntityId | None]
     spans: list[ProposalOpSpanView]
 class AmendmentEvidenceView(TypedDict):

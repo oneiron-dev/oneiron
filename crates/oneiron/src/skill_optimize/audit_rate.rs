@@ -56,6 +56,8 @@ pub(crate) fn audit_rate_check(
     });
     Ok(Some(SettingCheck {
         subject: global_setting_subject(AUDIT_RATE.key)?,
+        // Intentionally global: the honesty floor is the vault's (FIX 6038).
+        project: None,
         key: AUDIT_RATE.key.to_owned(),
         // The vault-wide fit, whichever tree version the work was typed in.
         type_ref: TypeRef::root(0),
