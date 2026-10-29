@@ -428,6 +428,16 @@ impl Memory<'_> {
                 &["Ask the person to answer through their own client."],
             ));
         }
+        if let Some(answer) = self.vault().verb_hook_state.session.answer_ask(
+            self.vault(),
+            handle.group_ref,
+            self.actor(),
+            self.actor_class(),
+            word,
+            self.vault().store.clock.now_recorded_at(),
+        ) {
+            return answer;
+        }
         // The owner proof the host bound for a direct request. An attendee
         // ask admits a word, and cuts on it, only under that proof; every
         // other ask ignores it.
