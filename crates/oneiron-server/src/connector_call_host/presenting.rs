@@ -109,16 +109,23 @@ impl Presenting {
             Ok(())
         };
         let effector = self.effector.as_str();
+        // A grant refusal at the send answers as its typed refusal (FIX 6673).
+        let mut grant_refused = false;
         let door = match door {
             Door::Grant {
                 grant,
                 target,
                 custody,
-            } => vault
-                .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                .map(|redeemed| {
-                    custody.map(|custody| SentPresentation::cleared(custody, redeemed.generation))
-                }),
+            } => {
+                match vault.redeem_secret_grant_at_door(&grant, &target, &mut present) {
+                    Ok(redeemed) => Ok(custody
+                        .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
+                    Err(error) => {
+                        grant_refused = matches!(error, oneiron::Error::Secret(_));
+                        Ok(None)
+                    }
+                }
+            }
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
@@ -132,7 +139,14 @@ impl Presenting {
         *presented = door.ok().flatten();
         // Once the exchange ran, what the connector said is the delivery
         // fact, whatever the door reports after it.
-        sent.unwrap_or_else(|| Sent::not_sent(OutboundFailureKind::TransportNotStarted, None))
+        sent.unwrap_or_else(|| {
+            if grant_refused {
+                // A stale grant and its siblings refuse, they do not fail delivery (FIX 6673).
+                Sent::not_sent(OutboundFailureKind::Rejected, None)
+            } else {
+                Sent::not_sent(OutboundFailureKind::TransportNotStarted, None)
+            }
+        })
     }
 }
 

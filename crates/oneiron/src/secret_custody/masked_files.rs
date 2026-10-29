@@ -81,6 +81,10 @@ pub(crate) enum MemberStep {
     Zip { entry: u32 },
     /// A gzip file's payload: every member it chains, read as one.
     Gzip,
+    /// A tar entry, by its place in archive order (FIX 2471).
+    Tar { entry: u32 },
+    /// An xz file's decompressed payload (FIX 2471).
+    Xz,
     /// A PDF stream, by its object's id.
     PdfStream { object: u32, generation: u16 },
     /// A PDF object's text strings, each decoded, in the object's order
@@ -305,10 +309,15 @@ pub(crate) fn sighted_bytes_in_txn(
         // A container stored with the scan off, or one no mark covers, may
         // hold keys in its members or in bytes no reader shows (FIX 2470):
         // it is read whole before it is served.
-        if secret_scan::is_container(&bytes)
-            && let Some(reason) = secret_scan::write_tree_hit(&bytes)
-        {
-            return Err(masked_copy_withheld(reason));
+        if secret_scan::is_container(&bytes) && secret_scan::write_tree_hit(&bytes).is_some() {
+            // A hidden-only key is served the rebuilt copy, hidden bytes
+            // dropped (FIX 11553).
+            let copy =
+                secret_scan::served_masked_copy(&bytes, &KeyPlaces::new(), &PlaceHandles::new())?;
+            if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+                return Err(masked_copy_withheld(reason));
+            }
+            return Ok(copy);
         }
         return Ok(bytes);
     };

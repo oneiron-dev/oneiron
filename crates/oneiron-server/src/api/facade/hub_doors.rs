@@ -8,6 +8,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{self, *};
 
+use super::clock_ingress;
 use super::host_doors::no_hook_sandbox;
 use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
@@ -26,7 +27,7 @@ pub(super) async fn owner_call<T: Send + 'static>(
         Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || match act(&server, &owner) {
+    clock_ingress::run_blocking(move || match act(&server, &owner) {
         Ok((answer, rows)) => (Ok(answer), rows),
         Err(error) => refused(error),
     })
@@ -374,7 +375,7 @@ pub(crate) async fn vault_packs_hooks_qualify(
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         // The one sandbox, taken here when no runner took it: `--no-hooks`
         // stops the runner, not an explicit qualification (FIX 1122).
         let runtime = match crate::commands::hook_sandbox(&server) {

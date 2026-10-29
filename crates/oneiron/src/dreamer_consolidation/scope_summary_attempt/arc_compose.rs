@@ -15,7 +15,7 @@
 //! parts ([`super::arc_children`]), never written smaller. A sitting's owed
 //! summary or a TURN that does not open leaves it owed, typed on its row.
 
-use super::super::residency::{residency_deferral, waits_on_residency};
+use super::super::residency::{residency_deferral, spent_or_deferred, waits_on_residency};
 use super::super::step_charge::StepChargeTally;
 use super::super::support::invalid_consolidation;
 use super::arc_evidence::ArcView;
@@ -119,23 +119,49 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let mut opened = view.opened.clone();
         let mut words = String::new();
         let lines = loop {
-            let user = arc_input(plan, view, &words)?;
-            if let Some(window) = self.session_window(ctx.vault)
-                && framed_tokens(instruction, &user, &schema)? > window
-            {
-                return self
-                    .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, charges))
-                    .await;
+            let user = match arc_input(plan, view, &words) {
+                Ok(user) => user,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            if let Some(window) = self.session_window(ctx.vault) {
+                let framed = match framed_tokens(instruction, &user, &schema) {
+                    Ok(framed) => framed,
+                    Err(error) => return spent_or_deferred(error, ctx, &charges),
+                };
+                if framed > window {
+                    return self
+                        .compose_arc_work(
+                            attempt,
+                            ctx,
+                            plan,
+                            evidence,
+                            instruction,
+                            (window, charges),
+                        )
+                        .await;
+                }
             }
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
             }
-            let mut request =
-                self.summary_request(ctx.vault, evidence, schema.clone(), instruction, user)?;
+            let mut request = match self.summary_request(
+                ctx.vault,
+                evidence,
+                schema.clone(),
+                instruction,
+                user,
+            ) {
+                Ok(request) => request,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
             view.labels.bind_request(&mut request, None);
-            let step_hash = request
-                .canonical_hash()
-                .map_err(|_| invalid_consolidation("summary request did not hash"))?;
+            let Ok(step_hash) = request.canonical_hash() else {
+                return spent_or_deferred(
+                    invalid_consolidation("summary request did not hash"),
+                    ctx,
+                    &charges,
+                );
+            };
             let check_labels = view.labels.clone();
             let check_opened = opened.clone();
             let check_inherited = view.inherited.clone();
@@ -251,6 +277,22 @@ impl<E> ScopeSummaryExecutor<'_, E> {
 /// The Arc stays owed for `cause`, on its row, retried at the next
 /// backstop: its attempt ends having written nothing.
 pub(super) fn owe(
+    ctx: &WakeAttemptContext<'_>,
+    plan: &ScopeSummaryPlan,
+    cause: ArcPendingCause,
+    charges: &StepChargeTally,
+) -> Result<DreamerAttemptExecution> {
+    match owe_bare(ctx, plan, cause, charges) {
+        Ok(owed) => Ok(owed),
+        Err(error) => spent_or_deferred(error, ctx, charges),
+    }
+}
+
+/// [`owe`] without the spend handover, for the errors an outer wrap
+/// already hands over: [`super::arc_children`] hands its whole run over
+/// where its child returns, so a handover here would charge the same
+/// spend twice (FIX 11560).
+pub(super) fn owe_bare(
     ctx: &WakeAttemptContext<'_>,
     plan: &ScopeSummaryPlan,
     cause: ArcPendingCause,

@@ -124,6 +124,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_WAKE_RECIPE_INPUT, CONTENT),
     (&t::DREAMER_WAKE_STATE, CONTENT),
     (&t::DREAMER_WAKE_PROJECTION, CONTENT),
+    // FIX 11450: a paid wake call not yet settled works on the wake budget
+    // ledger, which stands as the live vault holds it; so does what it still owes.
+    (&t::DREAMER_WAKE_OWED_CALL, LIVE),
     (&t::DREAMER_WATERMARK, CONTENT),
     (&t::DREAMER_WEAVE_RECIPE_RESULT, CONTENT),
     (&t::EDIT_DISTANCE_ACTING_REVISION, CONTENT),
