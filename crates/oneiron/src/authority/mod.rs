@@ -38,6 +38,7 @@ mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
 mod agent_grant_act;
+mod ai_grant;
 mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;

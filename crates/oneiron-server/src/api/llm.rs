@@ -161,19 +161,24 @@ async fn replace_defaults(
     defaults_submit::submit(&server, &auth, &headers, table.table())
 }
 
-/// Admits a raw call: the owner, then the vault's inference policy for the
-/// model the request names. The call itself is admitted rung by rung under a
-/// run on the raw routes' meter, as it goes out.
+/// Admits a raw call: the owner, or an agent whose live Grant the owner
+/// minted names `ai.text` (FIX 3208), whose call is then his; then the
+/// vault's inference policy for the model the request names. The call itself
+/// is admitted rung by rung under a run on the raw routes' meter, as it goes
+/// out.
 pub(super) fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
     request: &mut LlmRequest,
 ) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
     if !auth.is_owner_grade() {
-        return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
-    }
-    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
-    if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        if !crate::api::ai::granted_operations(server, auth)
+            .contains(&oneiron::llm::media::AiOperation::Text)
+        {
+            return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
+        }
+    } else if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        // FIX 2222: an owner act; a hosted operator's root is refused, typed.
         return Err(Box::new(error.into_response()));
     }
     admit_owner(server, request)
