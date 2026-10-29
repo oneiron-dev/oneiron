@@ -59,9 +59,11 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::temporal::TimeRange;
 
+#[cfg(test)]
+use indexes::active_provider_prior_in_txn;
 use indexes::{
-    PROVIDER_PRIOR_HEAD_INDEX, active_provider_prior_in_txn, prior_claims_for_actor_in_txn,
-    provider_key_hash, resolve_or_create_provider_actor_in_txn, resolve_provider_actor_in_txn,
+    PROVIDER_PRIOR_HEAD_INDEX, ProviderPrior, prior_claims_for_actor_in_txn, provider_key_hash,
+    provider_prior_in_txn, resolve_or_create_provider_actor_in_txn, resolve_provider_actor_in_txn,
 };
 #[cfg(feature = "test-support")]
 #[doc(hidden)]
@@ -345,13 +347,15 @@ pub fn write_enrichment_claim(vault: &Vault, provider: &str, confidence: f32) ->
 /// Composition form is an engine default chosen under ratified-doc latitude (doc 13 §7 leaves f abstract): read-time confidence = stored claim confidence × the claim provider's active actor.confidence_prior. Read-time only — never mutates the stored confidence. The product form is closed on `[0,1]` and swappable to another monotone-both-axes composition without any storage migration.
 ///
 /// A provider with no active prior uses the neutral prior `1.0`, so the
-/// effective confidence is identical to the stored confidence.
+/// effective confidence is identical to the stored confidence. A provider
+/// whose only active priors a split left unresolved reads
+/// [`EffectiveConfidence::UnresolvedPrior`] (FIX 10530), never a number.
 ///
 /// Opens ONE write transaction because a read may REPAIR a stale shortcut (see
 /// the module docs' index model). NO NESTING: `with_write_txn` takes the LMDB
 /// writer mutex first, so callers already holding a transaction must reach
 /// `effective_confidence_in_txn` instead of this door.
-pub fn effective_confidence(vault: &Vault, claim_ref: &EntityId) -> Result<f32> {
+pub fn effective_confidence(vault: &Vault, claim_ref: &EntityId) -> Result<EffectiveConfidence> {
     vault.with_write_txn_grouped(|wtxn| {
         let mut prior_memo = ProviderPriorMemo::default();
         effective_confidence_in_txn(vault, wtxn, claim_ref, &mut prior_memo)
@@ -374,7 +378,7 @@ pub(crate) fn effective_confidence_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     claim_ref: &EntityId,
     prior_memo: &mut ProviderPriorMemo,
-) -> Result<f32> {
+) -> Result<EffectiveConfidence> {
     let body = vault
         .get_claim_in_txn(&*wtxn, claim_ref)?
         .ok_or(Error::EntityNotFound)?;
@@ -388,12 +392,45 @@ pub(crate) fn effective_confidence_in_txn(
         return Err(Error::EntityNotFound);
     }
     let provider = provider_from_claim_body(&body)?;
-    let prior = prior_memo
-        .resolve(provider, || {
-            active_provider_prior_in_txn(vault, wtxn, provider)
-        })?
-        .unwrap_or(1.0);
-    Ok(body.confidence * prior)
+    let prior = prior_memo.resolve(provider, || provider_prior_in_txn(vault, wtxn, provider))?;
+    Ok(match prior {
+        ProviderPrior::Active(prior) => EffectiveConfidence::Resolved(body.confidence * prior),
+        ProviderPrior::Neutral => EffectiveConfidence::Resolved(body.confidence),
+        ProviderPrior::UnresolvedBySplit => EffectiveConfidence::UnresolvedPrior {
+            stored: body.confidence,
+        },
+    })
+}
+
+/// A claim's read-time confidence (FIX 10530).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EffectiveConfidence {
+    /// The stored confidence times its provider's active prior, or the
+    /// stored confidence itself under the neutral prior.
+    Resolved(f32),
+    /// The provider's only active priors are ones a split left unresolved
+    /// (its ambiguous residue, or a head that no longer carries the key): no
+    /// prior is guessed onto them, so the claim has no read-time confidence.
+    /// `stored` is the claim's own stored confidence.
+    UnresolvedPrior { stored: f32 },
+}
+
+impl EffectiveConfidence {
+    /// The resolved confidence; `None` while the provider's prior is
+    /// unresolved.
+    #[must_use]
+    pub const fn resolved(self) -> Option<f32> {
+        match self {
+            Self::Resolved(confidence) => Some(confidence),
+            Self::UnresolvedPrior { .. } => None,
+        }
+    }
+
+    /// The resolved confidence, or the typed error an unresolved prior
+    /// raised before it was a status (FIX 10053).
+    pub fn resolved_or_error(self) -> Result<f32> {
+        self.resolved().ok_or_else(indexes::unresolved_by_split)
+    }
 }
 
 /// The prior [`effective_confidence`] multiplies `provider`'s claims by.
