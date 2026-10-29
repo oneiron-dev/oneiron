@@ -590,7 +590,6 @@ fn check_claim_policy_for_write_with_record_inner(
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
         let created_at = mutation_recorded_at;
-
         let mut decision_record = GateDecisionRecord {
             version: 0,
             decision_id,
@@ -709,6 +708,7 @@ fn check_claim_policy_for_write_with_record_inner(
                     pending_decision.reason_codes
                 },
                 dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
+                predicate: Some(body.predicate.clone()),
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
             // A fresh local confirm on this revision is the item the claim's

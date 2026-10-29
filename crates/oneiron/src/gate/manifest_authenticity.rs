@@ -218,6 +218,8 @@ impl Vault {
     }
 
     /// Human removal of an untrusted narrowing, pinned to these exact bytes.
+    /// Once it commits, the custody floor rebinds and the manifest watch
+    /// reads it, as every manifest commit does (FIX 11527).
     pub fn quarantine_manifest_contribution(
         &self,
         owner: &AuthenticatedOwner,
@@ -235,6 +237,7 @@ impl Vault {
         let hash = blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]);
         QUARANTINED.put(&self.store, &mut txn, &HexId(id), hash.as_bytes())?;
         txn.commit()?;
+        self.apply_pending_rebinds_after_commit();
         Ok(())
     }
 

@@ -1412,8 +1412,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 "a resident's attempt ended unserved: the host lends no resident instruction"
             );
         }
+        let one_writer_reads = ctx.vault.dreamer_one_writer_reads();
         self.status.update(|status| {
             status.dreamer.state = WorkState::Waiting;
+            status.dreamer_one_writer_reads = one_writer_reads;
             match &outcome {
                 Ok(DreamerAttemptExecution::Completed { .. }) => match unserved {
                     Some(kind) => {
