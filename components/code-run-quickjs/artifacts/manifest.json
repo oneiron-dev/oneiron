@@ -19,7 +19,7 @@
     "bootstrap.js": "e4360d957284f4d81dcbb1a5980cabf6a6c8e29696b082ca605fdef588905071",
     "reader_forks.js": "8418c12bf23be76f4a4b00682a3fa524acf7b601bf373cfc3328cd2c6b3d1b6a",
     "diff.js": "928816d75a92bb0e98c21216c2728044c9095d2c6bc75cd38aee2c08981fcf1f",
-    "hook_guest.c": "7e65ba8fce7db9d63991003b9430f3bd451669ab10daaf07788a797ac74d3816",
+    "hook_guest.c": "16546a88af133b79f9789c515fc4da8470bae0585ddc438bb3e14fc9184021ab",
     "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
     "generate_bridge.py": "5bd6af632512ba4814536b3e994b249916b27d6de28d10d534db512f74a48370",
     "build.py": "9a91f060f757413cdf44e9450aa5fa037579a0bfb6cdefde9d37c3761cc7dc56"
@@ -37,8 +37,8 @@
     },
     "hook": {
       "file": "quickjs-hook.wasm",
-      "sha256": "b331bdbb5af39a26b53e08cd75a0ba867c1810a08b12d011ba36036c605fdaea",
-      "bytes": 1019685,
+      "sha256": "bbf7bd531a3260eb564655b99d2dd126995bfc92a78b214f935dc5819a6f2457",
+      "bytes": 1023202,
       "world": "oneiron:hook/hook@1.0.0",
       "wit_sha256": "005f59f2f15c3df106341b1e069e42dc2a395f6da5fae91366b7ee2cb5f0d109"
     }

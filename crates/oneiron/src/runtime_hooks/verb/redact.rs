@@ -2,14 +2,11 @@
 //! caller's view of the result. The vault keeps the real result. A path is a
 //! JSON pointer (`/rows/0/body`) or dotted (`rows.0.body`); `*` takes every
 //! child. An object field is removed, an array element masked to null, and
-//! the empty path masks the whole view. Nothing restores what one hid.
+//! the empty path masks the whole view. Nothing restores what one hid. A
+//! Redact names any number of paths of any length, and every one is applied
+//! before the caller sees the view (FIX 10086).
 
 use serde_json::Value;
-
-/// Paths one Redact may name.
-pub(super) const MAX_PATHS: usize = 64;
-/// Bytes one path may hold.
-pub(super) const MAX_PATH_BYTES: usize = 256;
 
 /// Hides `path` in `view`. A path that names nothing hides nothing.
 pub(super) fn hide(view: &mut Value, path: &str) {

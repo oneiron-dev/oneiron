@@ -62,6 +62,8 @@ pub(crate) struct VerbHookState {
     /// the ask it named, by invocation, until their chain starts (FIX 5693):
     /// that chain's receipts say so.
     expired: Mutex<HashSet<[u8; 16]>>,
+    /// The pack lines generative fact hooks' verdicts spend on (FIX 10075).
+    pub(crate) pack_lines: crate::runtime_hooks::pack_line::HookPackLines,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
