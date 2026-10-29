@@ -513,7 +513,7 @@ impl Vault {
 
     /// A proven handle on the served repository, pinned to a commit one of
     /// its publications names. `None` while it has no published commit.
-    fn mirror_handle(
+    pub(super) fn mirror_handle(
         &self,
         wire: &GitWire<'_>,
         repo_id: EntityId,

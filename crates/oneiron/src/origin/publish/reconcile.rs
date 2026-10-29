@@ -143,13 +143,29 @@ impl Vault {
         scope: &PublishScope<'_>,
         view: OriginPublishRequestView,
     ) -> Result<OriginPublishRequestView> {
-        let Ok(handle) = scope.handle_at(&GitOid::parse_hex(view.commit.clone())?) else {
+        let commit = GitOid::parse_hex(view.commit.clone())?;
+        let Some(handle) = self.publish_handle(scope, &commit)? else {
             return Ok(view);
         };
         let Some(_held) = try_lock_repository(&mirror_hold_dir(&handle)?)? else {
             return Ok(view);
         };
         self.settle_from_mirror(scope, &handle, &view, false, None)
+    }
+
+    /// A proven handle for a request's IO: pinned at its commit, else, once
+    /// a restore took the commit, at any commit the repository publishes
+    /// (FIX 7011), so a claim is still settled and its pin still released.
+    /// `None` while neither is here.
+    fn publish_handle(
+        &self,
+        scope: &PublishScope<'_>,
+        commit: &GitOid,
+    ) -> Result<Option<GitWireRepo>> {
+        if let Ok(handle) = scope.handle_at(commit) {
+            return Ok(Some(handle));
+        }
+        self.mirror_handle(&scope.wire, scope.repo_id, &scope.root)
     }
 
     /// Reads the branch and settles the claimed request from what it holds.
@@ -208,7 +224,9 @@ impl Vault {
         let released = (|| {
             let scope = self.publish_scope(&view.repo)?;
             let commit = GitOid::parse_hex(view.commit.clone())?;
-            let handle = scope.handle_at(&commit)?;
+            let handle = self
+                .publish_handle(&scope, &commit)?
+                .ok_or(Error::EntityNotFound)?;
             self.unpin_origin_object(
                 &scope.wire,
                 &handle,
