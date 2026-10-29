@@ -128,6 +128,10 @@ pub enum StoredIdentityOpAction {
         /// [`ProposalOutcome::ApprovedAmended`] — preserved verbatim as the
         /// producer artifact ED-01 (ONE-1757) diffs against the proposal.
         amended_body: Option<Vec<u8>>,
+        /// The op event an approving ruling applied, written in the same
+        /// transaction (FIX 9966); `None` for a rejection, which applies
+        /// nothing.
+        applied: Option<EntityId>,
     },
 }
 

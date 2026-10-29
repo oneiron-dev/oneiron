@@ -7892,7 +7892,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
         }
         "vault.inbox.groups" => {
-            crate::code_run::vault_read::request_schema::<Vec<crate::inbox::InboxGroup>>()
+            crate::code_run::vault_read::request_schema::<crate::inbox::InboxGroupPage>()
         }
         "vault.weave.digest.render" => crate::code_run::vault_read::request_schema::<
             Option<crate::claim::WeaveDigestRendered>,
@@ -26293,7 +26293,7 @@ pub fn vault_inbox_lens(
 pub fn vault_inbox_groups(
     memory: &Memory<'_>,
     input: crate::agent_inbox_lens::InboxRunGroupsRequest,
-) -> MemoryResult<Vec<crate::inbox::InboxGroup>> {
+) -> MemoryResult<crate::inbox::InboxGroupPage> {
     memory.inbox_run_groups(&memory.embedded_owner("vault.inbox.groups")?, &input)
 }
 pub fn vault_weave_digest_render(

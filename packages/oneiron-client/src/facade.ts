@@ -1367,7 +1367,7 @@ export interface FacadeResults {
   "vault.weave.owner.digest.render": Facade.WeaveDigestRendered | null;
   "vault.inbox.concerns.review": Facade.DreamerAttemptRef;
   "vault.inbox.lens": Facade.InboxLensPage;
-  "vault.inbox.groups": Facade.InboxGroup[];
+  "vault.inbox.groups": Facade.InboxGroupPage;
   "vault.weave.digest.render": Facade.WeaveDigestRendered | null;
   "vault.weave.link.corrections": Facade.WeaveLinkCorrectionView[];
   "self.inbox.lens": Facade.InboxLensPage;
@@ -2548,7 +2548,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.weave.owner.digest.render": { description: "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.inbox.concerns.review": { description: "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.inbox.lens": { description: "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.inbox.groups": { description: "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.inbox.groups": { description: "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.digest.render": { description: "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.weave.link.corrections": { description: "Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "self.inbox.lens": { description: "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -4102,7 +4102,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
         /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
         lens: (input: Facade.InboxLensRequest, options?: O): FacadeReturns<"vault.inbox.lens">[K] => invoke("vault.inbox.lens", input, options, newInvocation()),
-        /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
+        /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
         groups: (input: Facade.InboxRunGroupsRequest, options?: O): FacadeReturns<"vault.inbox.groups">[K] => invoke("vault.inbox.groups", input, options, newInvocation()),
       },
       skills: {

@@ -6,6 +6,7 @@
 mod revert;
 mod settle;
 mod snapshot;
+mod topology;
 
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};

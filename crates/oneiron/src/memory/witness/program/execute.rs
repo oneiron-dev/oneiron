@@ -40,14 +40,18 @@ impl Memory<'_> {
             door,
             before_txn,
             |txn| prepare(txn).map(|()| None),
-            effect,
+            |txn, _| effect(txn),
         )
     }
 
     /// [`Self::run_witness`] through the write door `callback` names: an
     /// `effect` that runs host code is [`crate::store::Callback::Opaque`].
     /// Its `prepare` may prove a Retry's room regeneration permit, which the
-    /// room guard admits the witness under (FIX 3149).
+    /// room guard admits the witness under (FIX 3149). A base landing hands
+    /// `effect` the receipt it just read in the transaction, with the TURN
+    /// and MESSAGE ids the turn actually stored (FIX 8533); an overlay
+    /// landing's receipt exists only after its segment commits, so it hands
+    /// none.
     #[expect(
         clippy::too_many_arguments,
         reason = "the write door joins the witness program's inputs"
@@ -60,7 +64,7 @@ impl Memory<'_> {
         door: WitnessDoor,
         before_txn: impl FnOnce(),
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<Option<RoomRegenerationPermit>>,
-        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, Option<&WitnessReceipt>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         validate_witness_origin(turn, door.is_host())?;
         if turn.messages.is_empty() {
@@ -406,7 +410,13 @@ impl Memory<'_> {
                     Landed::Overlay { segment, aliases }
                 }
             };
-            effect(wtxn)?;
+            effect(
+                wtxn,
+                match &landed {
+                    Landed::Base(receipt) => Some(receipt),
+                    _ => None,
+                },
+            )?;
             // FIX 10260: a reply born whole keeps the set its turn asserted,
             // as admitted above, beside each MESSAGE this write landed new; a
             // streamed birth's receipt, which `effect` saved, keeps it there.

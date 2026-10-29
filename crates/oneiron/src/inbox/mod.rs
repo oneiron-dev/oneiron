@@ -31,7 +31,9 @@ mod model;
 mod notification;
 mod projection;
 mod resolve;
+mod root_group;
 mod takeover_ask;
+mod traversal;
 
 pub use self::actions::NotificationAction;
 pub use self::list::{
@@ -44,10 +46,10 @@ pub use self::notification::{
 };
 
 pub use self::model::{
-    INBOX_GROUP_DOOR_PREFIX, INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX,
-    INBOX_SUBCLUSTER_MIN_MEMBERS, InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution,
-    InboxCheckInException, InboxExceptionClass, InboxGroup, InboxGroupMember, InboxGroupReopen,
-    InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
+    INBOX_GROUP_DOOR_PREFIX, INBOX_REASON_CHECKER_PREFIX, INBOX_SUBCLUSTER_MIN_MEMBERS,
+    InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution, InboxCheckInException,
+    InboxExceptionClass, InboxGroup, InboxGroupCursor, InboxGroupMember, InboxGroupPage,
+    InboxGroupReopen, InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
 };
 
 pub(crate) use self::projection::inbox_claim_hash;

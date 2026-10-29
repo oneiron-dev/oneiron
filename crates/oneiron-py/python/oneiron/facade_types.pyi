@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4180 declarations.
+Census: 1162 facade rows, 4181 declarations.
 Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -4761,6 +4761,7 @@ class InboxLensPage(TypedDict):
     concern_groups: list[InboxConcernGroup]
 class InboxRunGroupsRequest(TypedDict):
     limit: NotRequired[int | None]
+    after: NotRequired[str | None]
 InboxExceptionClass = Literal["checker_hedge", "manifest_critical", "supersedes_user_stated", "conflict", "meeting_outcome_check_in", "plugin_install"]
 ReceiptKind = Literal["outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle", "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook", "reference_refusal", "task_lifecycle"]
 class ReceiptRecord(TypedDict):
@@ -4805,6 +4806,9 @@ class InboxGroup(TypedDict):
     new_claim_count: int
     update_count: int
     conflict_count: int
+class InboxGroupPage(TypedDict):
+    groups: list[InboxGroup]
+    next: NotRequired[str | None]
 class HubPinSemver(TypedDict):
     type: Literal["semver"]
     value: str

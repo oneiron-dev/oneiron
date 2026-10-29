@@ -138,7 +138,21 @@ impl Memory<'_> {
                             };
                             applied
                         } else {
-                            Some(event)
+                            // FIX 9966: an already-ruled proposal's undo names
+                            // the op its ruling applied, never the proposal.
+                            let stored = self
+                                .vault()
+                                .identity_topology_event_in_txn(txn, &event)?
+                                .ok_or_else(|| {
+                                    MemoryError::not_found("topology event is absent")
+                                })?;
+                            super::super::topology::topology_outcome_in_txn(
+                                self.vault(),
+                                txn,
+                                event,
+                                &stored,
+                            )?
+                            .applied
                         };
                         inverse = applied.map(|event| RunInverse::Topology {
                             event: event.to_hex(),
