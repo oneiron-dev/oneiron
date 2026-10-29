@@ -178,6 +178,7 @@ fold_state_fields!(
     conversation_training_vault,
     policy_settings,
     refused_export_acts,
+    agent_carried_acts,
     home_candidacy,
     owner_work,
     world_keys,

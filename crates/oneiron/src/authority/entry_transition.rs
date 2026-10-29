@@ -148,6 +148,7 @@ pub(super) fn fold_entry_state(
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
             policy_settings: super::policy_setting_choice::PolicySettingChoiceState::default(),
             refused_export_acts: BTreeSet::new(),
+            agent_carried_acts: BTreeMap::new(),
             home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),

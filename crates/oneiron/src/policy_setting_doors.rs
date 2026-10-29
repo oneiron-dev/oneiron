@@ -15,8 +15,8 @@
 //! setting's live acts as its revision, and the setting as it stood. This
 //! install keeps it as its local index ([`Vault::policy_setting_acts`]), and
 //! the same commit signs it as a `PolicySettingSet` every machine the owner
-//! admits folds and checks (FIX 4624), best effort: a record that cannot be
-//! signed leaves the setting and this index as before.
+//! admits folds and checks (FIX 4624), last and best effort: a record that
+//! cannot be signed leaves the setting and this index as before.
 
 use serde::{Deserialize, Serialize};
 
@@ -218,9 +218,12 @@ const ACTS: SideTable<u64, PolicySettingActReceipt, Named> =
 /// (the person the caller revalidated in that transaction) on `setting`,
 /// whose value before the write was `prior` and after it `value`. The act's
 /// `seen` is the setting's live acts (zero where the fold does not read);
-/// `prior` is kept as BLAKE3 over it as JSON. The act is also signed as a
-/// `PolicySettingSet` in this transaction, best effort (FIX 4624). With no
-/// `surface`, the host named none, so nothing is recorded and the write
+/// `prior` is kept as BLAKE3 over it as JSON. Returns the act to sign as a
+/// `PolicySettingSet` (FIX 4624), which the caller passes to
+/// [`Vault::record_policy_setting_op_in_txn`] last in this transaction,
+/// after every write of its own, so the optional record never displaces a
+/// mandatory one; `None` where a revision or the value did not read. With
+/// no `surface`, the host named none, so nothing is recorded and the write
 /// stands as it is.
 pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
     vault: &Vault,
@@ -230,9 +233,9 @@ pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
     surface: Option<ActSurface>,
     prior: &T,
     value: &T,
-) -> Result<()> {
+) -> Result<Option<PolicySettingAct>> {
     let Some(surface) = surface else {
-        return Ok(());
+        return Ok(None);
     };
     let prior = serde_json::to_vec(prior)
         .map_err(|_| Error::InvariantViolation("policy setting act encoding"))?;
@@ -261,17 +264,6 @@ pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
         surface,
         signable.map_or([0; 32], |(seen, _)| seen),
     );
-    if let Some((_, value)) = signable {
-        vault.record_policy_setting_op_in_txn(
-            txn,
-            PolicySettingAct {
-                act,
-                setting,
-                prior,
-                value: Some(value),
-            },
-        );
-    }
     let sequence = match ACTS.iter_rev_from(&vault.store, txn, &[])?.next() {
         None => 0,
         Some(row) => row?
@@ -290,7 +282,13 @@ pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
             prior,
             at,
         },
-    )
+    )?;
+    Ok(signable.map(|(_, value)| PolicySettingAct {
+        act,
+        setting,
+        prior,
+        value: Some(value),
+    }))
 }
 
 impl Vault {

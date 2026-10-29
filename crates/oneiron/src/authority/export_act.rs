@@ -10,7 +10,9 @@
 //! parents hold removed, leaves it valid and without effect: it joins the
 //! fold's refused exports, which this install holds back, and never stalls
 //! what descends from it. An agent's export Grant row is no authority-log
-//! row, so the fold trusts the carrier for it (contract §4).
+//! row: the fold keeps the act's agent and Grant, and a view holds it back
+//! where this install holds that Grant refused (contract §4,
+//! [`super::carried_act`]).
 //!
 //! The export door ([`Vault::record_export_act_op_in_txn`]) signs the act
 //! after the copy left, in the write of its audit row, best effort
@@ -56,6 +58,8 @@ pub(super) fn apply_export_act(
     drop(standing);
     if !admitted || !super::owner_act::owner_live_at(state, record.act.owner) {
         state.refused_export_acts.insert(hash);
+    } else if let Some(agent) = super::carried_act::AgentCarriedAct::of(&record.act, entry.ts) {
+        state.agent_carried_acts.insert(hash, agent);
     }
     Ok(())
 }

@@ -178,7 +178,16 @@ pub struct AuthorityFold {
     pub(crate) conversation_training_vault:
         super::conversation_training_vault::FoldedConversationTrainingVault,
     /// Each setting's signed acts, keyed by target (FIX 4624, FIX 5660).
+    #[serde(
+        default,
+        skip_serializing_if = "super::policy_setting_choice::FoldedPolicySettings::is_empty"
+    )]
     pub(crate) policy_settings: super::policy_setting_choice::FoldedPolicySettings,
+    /// Each agent-carried setting or export act the fold admitted, whose
+    /// Grant a view judges on the rows this install holds (contract §4).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) agent_carried_acts:
+        BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
     /// Each machine's newest MACRO home candidacy, as the log carries it
     /// (FIX 4898); an election judges each on this fold.
     pub(crate) home_candidacy: BTreeMap<EntityId, super::home_candidacy::DeclaredHomeCandidacy>,
@@ -386,12 +395,24 @@ pub(super) struct FoldState {
     pub(super) conversation_training_vault:
         super::conversation_training_vault::ConversationTrainingVaultState,
     /// Each setting's signed acts, merged the same way, one frontier per
-    /// target (FIX 4624, FIX 5660).
+    /// target (FIX 4624, FIX 5660). Like the two fields below, an image
+    /// carries it only when some act of its kind folded.
+    #[serde(
+        default,
+        skip_serializing_if = "super::owner_choice::OwnerChoiceState::is_empty"
+    )]
     pub(super) policy_settings: super::policy_setting_choice::PolicySettingChoiceState,
     /// Well-signed export acts without effect, merged by union: their
     /// carrier was not admitted, or their owner not live, at their parents
     /// (FIX 4624).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) refused_export_acts: BTreeSet<AuthorityEntryHash>,
+    /// Each agent-carried setting or export act the fold admitted, with its
+    /// agent, Grant, kind and advisory time, merged by union: the fold holds
+    /// no Grant row, so a view judges each one's Grant (contract §4).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) agent_carried_acts:
+        BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
     /// Each machine's home candidacies, the newest replacing the older
     /// (FIX 4898).
     pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
@@ -658,6 +679,12 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .refused_export_acts
         .extend(right.refused_export_acts.iter().copied());
+    merged.agent_carried_acts.extend(
+        right
+            .agent_carried_acts
+            .iter()
+            .map(|(hash, act)| (*hash, *act)),
+    );
     super::home_candidacy::merge_home_candidacies(
         &mut merged.home_candidacy,
         &right.home_candidacy,

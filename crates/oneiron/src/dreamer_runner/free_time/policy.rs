@@ -296,9 +296,10 @@ impl FreeTimeAuthority<'_> {
 }
 
 /// Signs `actor`'s act on `agent`'s policy, from `prior` to `value`
-/// (`None` for a clear), in the write `txn` that made it (FIX 5660), best
-/// effort: a digest or a revision that does not read is logged and the row
-/// stands. A surface the door did not name is this install's.
+/// (`None` for a clear), in the write `txn` that made it (FIX 5660), after
+/// every write of its own, best effort: a digest or a revision that does not
+/// read is logged and the row stands. A surface the door did not name is this
+/// install's.
 fn record_act_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -492,11 +493,11 @@ impl Vault {
             // policy in force.
             let record = FreeTimePolicyRecord::after(Some(record), agent, None, actor.acting, now)?;
             POLICY.put(&self.store, txn, &agent, &record)?;
-            record_act_in_txn(self, txn, &actor, agent, prior.as_ref(), None);
             super::cycle::close_open_cycle_in_txn(self, txn, agent, now)?;
             // The clock goes with the policy: a later policy starts at its
             // own first boundary, and until then the agent dreams nightly.
             CLOCK.delete(&self.store, txn, &agent)?;
+            record_act_in_txn(self, txn, &actor, agent, prior.as_ref(), None);
             Ok(true)
         })?;
         if cleared {

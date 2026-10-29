@@ -224,6 +224,14 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
                 "export served without its audit row"
             );
         }
+        crate::workspace_roster::notify_exported_threads_in_txn(
+            vault,
+            txn,
+            &thread_roots,
+            exporter,
+            export,
+        );
+        // The signed record goes last, after the row and the notices.
         if let Some(act) = receipt.act {
             vault.record_export_act_op_in_txn(
                 txn,
@@ -234,13 +242,6 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
                 receipt.digest.as_deref(),
             );
         }
-        crate::workspace_roster::notify_exported_threads_in_txn(
-            vault,
-            txn,
-            &thread_roots,
-            exporter,
-            export,
-        );
         Ok(())
     });
     if let Err(error) = written {

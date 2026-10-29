@@ -439,6 +439,7 @@ pub(super) fn fold_authority_log_once(
             conversation_training_vault:
                 super::conversation_training_vault::FoldedConversationTrainingVault::default(),
             policy_settings: super::policy_setting_choice::FoldedPolicySettings::default(),
+            agent_carried_acts: BTreeMap::new(),
             home_candidacy: BTreeMap::new(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),

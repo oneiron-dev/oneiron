@@ -14,8 +14,9 @@
 //! one rule did not admit, or an owner the parents hold removed, leaves the
 //! act valid and without effect. An agent's act is the free-time policy's
 //! alone (the record's shape); its Grant row is no authority-log row, so the
-//! fold trusts the carrier for it, as it does for a world's settings
-//! (contract §4).
+//! fold keeps the act's agent and Grant, and a view holds it back where this
+//! install holds that Grant refused, trusting the carrier where it holds
+//! none (contract §4, [`super::carried_act`]).
 //!
 //! The doors ([`Vault::record_policy_setting_op_in_txn`]) sign the act in
 //! the setting's own write, best effort ([`super::carried_act`]).
@@ -48,6 +49,11 @@ pub(crate) struct FoldedPolicySettings {
 }
 
 impl FoldedPolicySettings {
+    /// Whether no setting act folded: a projection an image need not carry.
+    pub(super) fn is_empty(&self) -> bool {
+        self.targets.is_empty() && self.refused.is_empty()
+    }
+
     /// Whether any target's live act rests on how this install counts
     /// machines.
     pub(super) fn rests_on_counting(&self) -> bool {
@@ -100,6 +106,9 @@ pub(super) fn apply_policy_setting(
         restriction_only,
     )?;
     state.policy_settings.land(landing);
+    if let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
+        state.agent_carried_acts.insert(hash, agent);
+    }
     Ok(())
 }
 
