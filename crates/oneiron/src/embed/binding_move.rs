@@ -47,7 +47,7 @@ const BINDING_MOVE: SideTable<EntityId, PendingEmbedderBinding, Named> =
 const ROLE: ModelRole = ModelRole::RetrievalEmbedder;
 
 /// What chose a staged embedder binding.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BindingSource {
     /// An approved stock switch: its offer, and the owner who approved it.
@@ -68,7 +68,7 @@ impl BindingSource {
 }
 
 /// The space move that re-embeds for a binding.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BindingMoveLink {
     pub candidate: String,
@@ -78,7 +78,7 @@ pub struct BindingMoveLink {
 }
 
 /// Where a staged binding stands.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum BindingMoveState {
     /// No declared space pins its model yet, or the slots it moves move elsewhere; the old
@@ -96,7 +96,7 @@ pub enum BindingMoveState {
 }
 
 /// Why a staged binding never applied.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BindingNotApplied {
     /// The owner undid the switch before it applied.
@@ -109,7 +109,7 @@ pub enum BindingNotApplied {
 }
 
 /// One owner-approved retrieval embedder binding, staged until its space move swaps in.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PendingEmbedderBinding {
     pub source: BindingSource,

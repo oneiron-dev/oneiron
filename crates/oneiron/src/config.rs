@@ -278,7 +278,7 @@ impl Default for HnswConfig {
 /// space scores a true paraphrase below where a wide one scores noise. The
 /// host that knows its model states these; the default is the engine's
 /// original calibration.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, schemars::JsonSchema)]
 pub struct VectorEvidenceFloors {
     /// The similarity floor: with no keyword hit, a pack whose every vector
     /// score sits under it abstains.

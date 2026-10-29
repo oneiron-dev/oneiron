@@ -60,7 +60,7 @@ pub struct LegalHoldLiftAndEraseRequest {
 
 /// What the owner's one confirm did to one record, by one rule wherever the
 /// bytes live (WILL-PLAN L01 row 04).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LegalHoldEraseState {
     /// The hold is lifted and the record erased: its deletion receipt's
@@ -112,7 +112,7 @@ impl From<LiftAndEraseStatus> for LegalHoldEraseState {
 }
 
 /// One record the confirm named, with what it did to it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldErasedRecord {
     pub record: EntityId,
@@ -121,7 +121,7 @@ pub struct LegalHoldErasedRecord {
 
 /// `vault.legal_holds.lift_and_erase`'s answer: the customer holds lifted or
 /// narrowed to what is left, and each named record's state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftAndErased {
     pub holds: Vec<EntityId>,
