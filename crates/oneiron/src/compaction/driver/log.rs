@@ -108,6 +108,7 @@ impl CompactionDriver {
             sources,
             prior,
             note,
+            false,
             WindowLog::Host {
                 prior,
                 calls,

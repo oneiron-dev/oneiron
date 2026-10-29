@@ -780,6 +780,7 @@ impl CompactionDriver {
             window,
             Vec::new(),
             sources,
+            false,
             WindowLog::Conversation,
         )
     }
@@ -791,6 +792,7 @@ impl CompactionDriver {
         window: Vec<CompactionWindowMessage>,
         pins: Vec<String>,
         sources: Vec<EntityId>,
+        window_read_from_sources: bool,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
         let prior = match log {
@@ -808,6 +810,7 @@ impl CompactionDriver {
             sources,
             prior,
             None,
+            window_read_from_sources,
             log,
         )
     }
@@ -825,6 +828,7 @@ impl CompactionDriver {
         sources: Vec<EntityId>,
         prior: Option<crate::compaction::PriorEpoch>,
         note: Option<String>,
+        window_read_from_sources: bool,
         log: WindowLog,
     ) -> Result<CompactionRequest> {
         let CompactionState::Compacting { watermark, request } = &self.state else {
@@ -850,7 +854,7 @@ impl CompactionDriver {
             watermark,
             pins,
             sources,
-            window_read_from_sources: false,
+            window_read_from_sources,
             note,
             log,
         };
