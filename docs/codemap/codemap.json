@@ -54469,7 +54469,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Clock",
@@ -54479,7 +54479,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 17,
       "fn": 8,
       "struct": 1,
       "trait": 2
