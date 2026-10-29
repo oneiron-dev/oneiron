@@ -100518,6 +100518,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/board_setup/children.rs",
+     "purpose": "The connector actor's own children on its board (FIX 1052): each child that rides no TASK row is judged by…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -100764,7 +100774,7 @@
      "path": "src/api/mcp_gateway/exec_board_verbs.rs",
      "purpose": "Execute-code and board-verb executors",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -100864,7 +100874,7 @@
      "path": "src/api/mcp_gateway/tasks_response.rs",
      "purpose": "Tasks verb and response shaping",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -102092,7 +102102,7 @@
      "path": "src/api/report.rs",
      "purpose": "OF-537 report execution and owner triage",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -107990,6 +108000,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/exec_host/active_run.rs",
+     "purpose": "Single flight for each durable code-mode run (FIX 9505): an entry of a run whose earlier entry still runs…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -109118,7 +109138,7 @@
      "path": "src/models/worker_host/bundle.rs",
      "purpose": "The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server with every module it imports, the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -109128,7 +109148,7 @@
      "path": "src/models/worker_host/install.rs",
      "purpose": "A managed worker's install (DESIGN-V2 R2): its weights through the artifact store, its code bundle written…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -109148,7 +109168,17 @@
      "path": "src/models/worker_host/launcher.rs",
      "purpose": "The managed launcher for the house llama.cpp and EXL3 workers (DESIGN-V2 R2): what [`super::install`]…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/media_worker.rs",
+     "purpose": "The media workers under the owned supervisor (FIX 8318): VoxCPM2 speech and local ASR, each a managed worker…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -109158,7 +109188,7 @@
      "path": "src/models/worker_host/probe.rs",
      "purpose": "The probes for the house llama.cpp and EXL3 workers (INFERENCE R1 rules, R2 qualification): one actual chat…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 7
      }
     },
     {
@@ -109208,7 +109238,7 @@
      "path": "src/models/worker_host/session/park.rs",
      "purpose": "Parking (DESIGN-V2 §7 residency, V2-R3): an idle session's published checkpoint exported from its worker…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -110924,7 +110954,7 @@
      "path": "src/server/recall.rs",
      "purpose": "The recall verb as every server transport runs it",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -112077,7 +112107,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 590,
+     "files": 591,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112406,7 +112436,7 @@
      "purpose": "This server's check that a managed vault's attested owner is its live owner, which his queued work runs…"
     },
     "mcp": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -112420,7 +112450,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 91,
+     "files": 92,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112569,7 +112599,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1346,
+   "source_files": 1349,
    "test_files": 182
   },
   "oneiron-spawn": {
