@@ -17,14 +17,14 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use super::admit::ShadowAdmission;
 use super::types::{ShadowBodyRef, ShadowUnavailable, ShadowUnavailableReason};
 use crate::batch::secret_scan::{BodySpool, SpoolAdmission};
-use crate::code_run::CodeRunRawOutput;
+use crate::code_run::{CodeRunRawOutput, ProgramStepFeedback};
 use crate::compaction::output::OutputRef;
-use crate::engine_executor::RESULT_REPLY_INLINE_BYTES;
+use crate::engine_executor::{LatestFeedback, RESULT_REPLY_INLINE_BYTES};
 use crate::store::{BodyDir, BodySink, SunkBody, read_body_range};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -49,6 +49,18 @@ impl std::fmt::Debug for ShadowSourceHold {
     }
 }
 
+/// The type feedback of the program an arm ran (FIX 10389, fork d), as its
+/// check stands: one slot every clone of the arm's store shares, read under
+/// the arm's lease while the arm's host keeps the store.
+#[derive(Clone, Default)]
+struct ArmFeedback(Arc<Mutex<Option<LatestFeedback>>>);
+
+impl std::fmt::Debug for ArmFeedback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ArmFeedback")
+    }
+}
+
 /// One arm's bodies, in the directory at its root.
 #[derive(Debug, Clone)]
 pub struct ShadowBodyStore {
@@ -58,6 +70,8 @@ pub struct ShadowBodyStore {
     /// The vault its writes are admitted under; `None` for a store no
     /// source binds, whose writes are stored as they come.
     admit: Option<ShadowAdmission>,
+    /// The type feedback of the program the arm ran.
+    feedback: ArmFeedback,
 }
 
 impl ShadowBodyStore {
@@ -74,6 +88,7 @@ impl ShadowBodyStore {
             root,
             hold: None,
             admit: None,
+            feedback: ArmFeedback::default(),
         })
     }
 
@@ -106,6 +121,44 @@ impl ShadowBodyStore {
             ShadowUnavailableReason::SourceWithheld,
             crate::code_run::RESPONSE_ERASED,
         ))
+    }
+
+    /// Keeps `latest`, the type feedback of the program the arm runs, for
+    /// the reads under the arm's lease (FIX 10389, fork d).
+    pub(crate) fn hold_feedback(&self, latest: LatestFeedback) {
+        *self
+            .feedback
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(latest);
+    }
+
+    /// The type feedback of the program the arm ran, as its check stands
+    /// now, a check that landed after the arm answered included, masked as
+    /// each write of the arm is (FIX 10389, fork d; FIX 5718 part 3). `None`
+    /// once its source's content is gone, and for an arm that ran no
+    /// program of its own.
+    ///
+    /// # Errors
+    ///
+    /// Storage and custody errors of the masking.
+    pub fn latest_feedback(&self) -> Result<Option<ProgramStepFeedback>> {
+        if self.source_withheld().is_some() {
+            return Ok(None);
+        }
+        let latest = self
+            .feedback
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some(mut feedback) = latest.as_ref().map(LatestFeedback::feedback) else {
+            return Ok(None);
+        };
+        if let Some(admit) = &self.admit {
+            admit.admit_value(&mut feedback)?;
+        }
+        Ok(Some(feedback))
     }
 
     /// Where the store's bodies are.
