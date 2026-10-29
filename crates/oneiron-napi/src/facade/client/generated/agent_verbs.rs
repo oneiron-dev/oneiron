@@ -2640,6 +2640,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_outbox_diverged_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.outbox.diverged.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_outbox_diverged_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.outbox.diverged.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_inspection_resolve(
         &self,
         input: serde_json::Value,

@@ -1531,6 +1531,16 @@ export_facade! {
     let output = client.vault_mesh_dial(&input)?;
     crate::codec::lift_record("vault.mesh.dial", &output)
 };
+"vault.outbox.diverged.list" => fn vault_outbox_diverged_list(&self) -> OutboxDivergedPage = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.outbox.diverged.list")?;
+    let output = client.vault_outbox_diverged_list(&input)?;
+    crate::codec::lift_record("vault.outbox.diverged.list", &output)
+};
+"vault.outbox.diverged.answer" => fn vault_outbox_diverged_answer(&self, input: OutboxDivergedAnswerRequest) -> OutboxDivergedAnswerReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OutboxDivergedAnswerRequest = crate::codec::lower_record("vault.outbox.diverged.answer", input)?;
+    let output = client.vault_outbox_diverged_answer(&input)?;
+    crate::codec::lift_record("vault.outbox.diverged.answer", &output)
+};
 "vault.inspection.resolve" => fn vault_inspection_resolve(&self, input: InspectionResolveRequest) -> InspectionResolved = |client| {
     let input: oneiron::lens::InspectionResolveRequest = crate::codec::lower_record("vault.inspection.resolve", input)?;
     let output = client.vault_inspection_resolve(&input)?;

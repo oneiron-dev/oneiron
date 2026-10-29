@@ -1549,6 +1549,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.outbox.diverged.list",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.outbox.diverged.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OutboxDivergedAnswerRequest,
+                >(),
+            ),
+            (
                 "vault.inspection.resolve",
                 crate::code_run::vault_read::request_schema::<crate::lens::InspectionResolveRequest>(
                 ),
@@ -12595,6 +12606,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.outbox.diverged.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.outbox.diverged.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.inspection.resolve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19843,6 +19868,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.mesh.dial" => {
             let _input: crate::task_verb::sdk::MeshDialRequest = decode(value.clone())?;
         }
+        "vault.outbox.diverged.list" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.outbox.diverged.answer" => {
+            let _input: crate::task_verb::sdk::OutboxDivergedAnswerRequest = decode(value.clone())?;
+        }
         "vault.inspection.resolve" => {
             let _input: crate::lens::InspectionResolveRequest = decode(value.clone())?;
         }
@@ -23615,6 +23646,10 @@ pub fn invoke(
         "vault.mesh.set_alpn_grant" => encode(vault_mesh_set_alpn_grant(memory, decode(value)?)?),
         "vault.mesh.revoke_machine" => encode(vault_mesh_revoke_machine(memory, decode(value)?)?),
         "vault.mesh.dial" => encode(vault_mesh_dial(memory, decode(value)?)?),
+        "vault.outbox.diverged.list" => encode(vault_outbox_diverged_list(memory, decode(value)?)?),
+        "vault.outbox.diverged.answer" => {
+            encode(vault_outbox_diverged_answer(memory, decode(value)?)?)
+        }
         "vault.inspection.resolve" => encode(vault_inspection_resolve(memory, decode(value)?)?),
         "vault.shared.propose_delete" => {
             encode(vault_shared_propose_delete(memory, decode(value)?)?)
@@ -28122,6 +28157,18 @@ pub fn vault_mesh_dial(
     input: crate::task_verb::sdk::MeshDialRequest,
 ) -> MemoryResult<crate::sync::mesh_path::MeshPathReceipt> {
     crate::task_verb::sdk::host_only(memory, "vault.mesh.dial", &input)
+}
+pub fn vault_outbox_diverged_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::OutboxDivergedPage> {
+    crate::task_verb::sdk::host_only(memory, "vault.outbox.diverged.list", &input)
+}
+pub fn vault_outbox_diverged_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OutboxDivergedAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::OutboxDivergedAnswerReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.outbox.diverged.answer", &input)
 }
 pub fn vault_inspection_resolve(
     memory: &Memory<'_>,
