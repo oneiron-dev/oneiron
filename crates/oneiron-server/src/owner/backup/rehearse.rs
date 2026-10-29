@@ -13,7 +13,7 @@ use super::{RestoreTarget, kind_counts, restore_target_seal, write_budget};
 use crate::machine::DiskFloor;
 
 /// What a rehearsal found in one backup.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Rehearsal {
     pub(crate) backup: PathBuf,
     pub(crate) checkpoint_id: String,
@@ -55,7 +55,7 @@ pub(crate) struct Rehearsal {
 /// A directory on the live vault's path that another user could change,
 /// found when a rehearsal or an activation read the vault off the disk. It
 /// still ran: the vault opens and writes there as it is.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct SharedPathWarning {
     pub(crate) directory: PathBuf,
     /// What another user could do there, and the `chmod` that stops it.

@@ -43,13 +43,13 @@ mod account_routes;
 mod agent_grant_routes;
 mod authority_clock_routes;
 mod backup_setting_routes;
-mod browser_takeover_routes;
+pub(super) mod browser_takeover_routes;
 mod budget_hold_routes;
-mod checkpoint_policy_routes;
+pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
 mod commitment_routes;
 mod concern_routes;
-mod conflict_routes;
+pub(super) mod conflict_routes;
 pub(crate) mod connector_admission_routes;
 mod connector_consent_routes;
 pub(crate) mod connector_slate_routes;
@@ -58,7 +58,7 @@ mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
 mod craft_candidate_routes;
 mod decision_ask_routes;
-mod desktop_takeover_routes;
+pub(super) mod desktop_takeover_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
 mod dreamer_maintenance_routes;
@@ -89,6 +89,7 @@ pub(super) mod recovery_kit_routes;
 mod recovery_kit_target_routes;
 mod room_thread_setting_routes;
 mod root_routes;
+pub(super) mod schema;
 mod secret_control_routes;
 mod secret_found_routes;
 mod secret_lift_routes;
@@ -544,7 +545,7 @@ async fn run_housekeeping(
     Ok(Json(report))
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RehearseRequest {
     /// A backup file name from `GET /v1/owner/backups`; the newest by default.
@@ -800,7 +801,7 @@ async fn configure_cleanup(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideCleanup {
     /// A proposal id from `GET /v1/owner/cleanup`.
@@ -867,7 +868,7 @@ async fn decline_note_tombstone(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RestoreArchived {
     /// An id from the `archived` list of `GET /v1/owner/cleanup`.
@@ -897,7 +898,7 @@ async fn restore_archived(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertCleanupRun {
     /// A run's `attempt` from the `runs` list of `GET /v1/owner/cleanup`.

@@ -1,6 +1,7 @@
 //! The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX
-//! 10289, FIX 11103): each body and answer is read from the type the route reads or
-//! writes, and each refusal it answers beside the owner door's 403. Bound
+//! 10289, FIX 11103, FIX 11611): each body and answer is read from the type
+//! the route reads or writes, and each refusal it answers beside the owner
+//! door's 403. Bound
 //! after the owner table wrote its generic operations, so the document
 //! teaches a client the fields the route takes, with no SDK row added.
 
@@ -8,8 +9,24 @@ use serde_json::{Value, json};
 
 use oneiron_contracts::code_run::vault_read::request_schema;
 
+use crate::api::owner_routes::browser_takeover_routes::{
+    browser_input_body_schema, browser_input_reply_schema, browser_return_body_schema,
+    browser_return_reply_schema, browser_run_request_body_schema, browser_takeover_schema,
+};
+use crate::api::owner_routes::checkpoint_policy_routes::{
+    clear_policy_body_schema, policy_view_schema, select_policy_body_schema,
+};
+use crate::api::owner_routes::conflict_routes::{
+    conflict_settled_schema, revert_settlement_body_schema, review_held_schema,
+    review_resumed_schema, review_scope_body_schema, settle_conflict_body_schema,
+    settlement_reverted_schema,
+};
 use crate::api::owner_routes::connector_subscription_routes::{
     revoke_subscription_body_schema, subscription_revoked_schema,
+};
+use crate::api::owner_routes::desktop_takeover_routes::{
+    desktop_input_body_schema, desktop_input_reply_schema, desktop_return_reply_schema,
+    desktop_run_request_body_schema, desktop_takeover_schema,
 };
 use crate::api::owner_routes::diary_routes::{
     diary_grant_body_schema, diary_grant_schema, diary_review_body_schema, diary_review_schema,
@@ -21,6 +38,11 @@ use crate::api::owner_routes::owner_work_routes::{
 };
 use crate::api::owner_routes::recovery_kit_routes::{
     anchor_advance_body_schema, anchor_advance_schema,
+};
+use crate::api::owner_routes::schema::{
+    cleanup_accepted_schema, cleanup_review_schema, cleanup_settings_body_schema,
+    decide_cleanup_body_schema, rehearsal_schema, rehearse_request_body_schema,
+    restore_archived_body_schema, revert_cleanup_run_body_schema, run_reverted_schema,
 };
 use crate::api::owner_routes::wire_health_routes::{
     outcome_recorded_schema, record_outcome_body_schema,
@@ -121,6 +143,150 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
         "post",
         record_outcome_body_schema(),
         outcome_recorded_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/backups/rehearse",
+        "post",
+        rehearse_request_body_schema(),
+        rehearsal_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/browsers/input",
+        "post",
+        browser_input_body_schema(),
+        browser_input_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/browsers/return",
+        "post",
+        browser_return_body_schema(),
+        browser_return_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/browsers/take",
+        "post",
+        browser_run_request_body_schema(),
+        browser_takeover_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/checkpoint-policy",
+        "post",
+        select_policy_body_schema(),
+        policy_view_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/checkpoint-policy/clear",
+        "post",
+        clear_policy_body_schema(),
+        policy_view_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/cleanup",
+        "post",
+        cleanup_settings_body_schema(),
+        cleanup_review_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/cleanup/accept",
+        "post",
+        decide_cleanup_body_schema(),
+        cleanup_accepted_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/cleanup/reject",
+        "post",
+        decide_cleanup_body_schema(),
+        cleanup_review_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/cleanup/restore",
+        "post",
+        restore_archived_body_schema(),
+        cleanup_review_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/cleanup/revert-run",
+        "post",
+        revert_cleanup_run_body_schema(),
+        run_reverted_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/conflicts/revert",
+        "post",
+        revert_settlement_body_schema(),
+        settlement_reverted_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/conflicts/review",
+        "post",
+        review_scope_body_schema(),
+        review_resumed_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/conflicts/review/revoke",
+        "post",
+        review_scope_body_schema(),
+        review_held_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/conflicts/settle",
+        "post",
+        settle_conflict_body_schema(),
+        conflict_settled_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/desktops/input",
+        "post",
+        desktop_input_body_schema(),
+        desktop_input_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/desktops/return",
+        "post",
+        desktop_run_request_body_schema(),
+        desktop_return_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/desktops/take",
+        "post",
+        desktop_run_request_body_schema(),
+        desktop_takeover_schema(),
         &[],
     );
 }
