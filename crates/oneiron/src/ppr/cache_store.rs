@@ -15,6 +15,9 @@ use crate::store::{GRAPH_VERSION_KEY, ManifestDbs, Rows, Store};
 use super::query::DeferredPprCacheWrite;
 use super::walk::{CachedPprRow, PprCacheState, PprFrontierEntry, SCORE_EPSILON};
 
+mod purge;
+pub(crate) use purge::purge_ppr_for_erase_in_txn;
+
 pub(super) const SEED_HASH_LEN: usize = 16;
 pub(super) const CACHE_HEADER_LEN: usize = 17;
 pub(super) const CACHE_STALE_OFFSET: usize = 16;

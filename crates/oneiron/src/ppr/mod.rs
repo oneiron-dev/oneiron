@@ -9,7 +9,7 @@ pub(crate) use self::cache_evict::evict_ppr_cache_page;
 pub(crate) use self::cache_store::{
     MAX_PPR_SEEDS, cleanup_ppr_cache, drop_rebuildable_ppr_cache, flush_deferred_ppr_cache_writes,
     flush_deferred_ppr_cache_writes_admitted, increment_graph_version, invalidate_ppr_for_delete,
-    invalidate_ppr_for_edge, read_graph_version,
+    invalidate_ppr_for_edge, purge_ppr_for_erase_in_txn, read_graph_version,
 };
 pub(crate) use self::community::{
     CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
