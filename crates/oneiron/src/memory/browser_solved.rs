@@ -109,9 +109,19 @@ impl Memory<'_> {
         let envelope =
             bound.claim_envelope(source, SOLVED_RUN_PREDICATE, ClaimApprovalStatus::Auto)?;
         let now = self.vault.store.clock.now_recorded_at();
-        bound.with_verified_actor_write_txn(|txn| {
-            if self.vault.get_raw_in(txn, &evidence.id)?.is_some() {
-                refresh_witness_in_txn(self.vault, txn, &evidence.id, &caller)?;
+        // The scoped content door (FIX 10512): the claim birth folds this
+        // actor's live authority per position, and its index rows ride as
+        // that claim's support, so a scoped shared-vault member captures
+        // what the old full-grant door refused.
+        bound.with_actor_content_write_txn(|content| {
+            if self
+                .vault
+                .get_raw_in(content.read(), &evidence.id)?
+                .is_some()
+            {
+                content.update_claim(evidence.id, |txn| {
+                    refresh_witness_in_txn(self.vault, txn, &evidence.id, &caller)
+                })?;
                 return Ok(SolvedCaptureReceipt::Captured {
                     id: evidence.id,
                     group,
@@ -124,20 +134,20 @@ impl Memory<'_> {
                 rmpv::Value::from(value),
                 1.0,
             );
-            self.vault
-                .batch_in()
-                .claim_candidate(
-                    &evidence.id,
-                    candidate,
-                    &envelope,
-                    TimeRange {
-                        start: now,
-                        end: now,
-                    },
-                    now,
-                )
-                .apply(txn)?;
-            index_capture_in_txn(self.vault, txn, &evidence, &caller)?;
+            content.stage_claim_support(evidence.id, |_| Ok(()))?;
+            content.apply_batch(self.vault.batch_in().claim_candidate(
+                &evidence.id,
+                candidate,
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            ))?;
+            content.finish_claim_support(evidence.id, |txn| {
+                index_capture_in_txn(self.vault, txn, &evidence, &caller)
+            })?;
             Ok(SolvedCaptureReceipt::Captured {
                 id: evidence.id,
                 group,

@@ -36,7 +36,8 @@ pub(super) mod reason {
     pub(crate) const PARENT_HIDDEN: &str = "parent project is quarantined";
     pub(crate) const EXCEEDS_PARENT: &str = "project slice exceeds parent";
     pub(crate) const CYCLE: &str = "project ancestry cycle";
-    pub(crate) const TOO_DEEP: &str = "project history chain too deep";
+    // FIX 11121: this reason fires when a lineage link is not held.
+    pub(crate) const TOO_DEEP: &str = "project lineage link not held";
     pub(crate) const NOT_A_STATE: &str = "project envelope names an envelope as a state";
     pub(crate) const RESOLUTION_SIGNER: &str = "a resolution needs a board holder of its anchor";
     pub(crate) const RESOLUTION_STRANGER: &str = "a resolution names a revision of another anchor";
