@@ -3,7 +3,6 @@
 //! the contract the policy declared.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -13,15 +12,18 @@ use crate::llm::decision::catalogue::{
 };
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
-    DecisionQuestion, DecisionRung, GeneratedDecisions, GeneratedMiss, GeneratedRung,
-    GeneratedStep, HeldLadder, MAX_DECISION_STATE_BYTES, ProviderPin, Reversibility, TypedDecision,
-    cut_text, fit_state,
+    DecisionQuestion, DecisionRung, GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions,
+    GeneratedMiss, GeneratedRung, GeneratedStep, HeldLadder, MAX_DECISION_STATE_BYTES,
+    ProviderPin, Reversibility, TypedDecision, cut_text, fit_state,
 };
 use crate::llm::{
-    BudgetGuard, BudgetLease, ContentPart, DurableStepResult, FinishReason, LlmBackend,
-    LlmCapability, LlmGenerateFuture, LlmRequest, LlmResponse, LlmStreamResult, ModelId,
+    BudgetGuard, BudgetLease, ContentPart, DurableStepError, DurableStepResult, LlmBackend,
+    LlmMessage, LlmMessageRole, LlmRequest, ResponseFormat,
 };
 use crate::{EntityId, Error, Result};
+
+mod checked;
+use checked::{CheckedReplies, answer_tokens};
 
 use super::binding::PolicyContentBinding;
 use super::clock::PolicyCallClock;
@@ -33,14 +35,16 @@ use super::prompt::{
 };
 use super::request::{PolicyClassifyRequest, PolicyModelConfig};
 use super::verdict::{
-    PolicyClassifyVerdict, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicySkipReason,
-    PolicyVerdictCategory,
+    PolicyClassifyVerdict, PolicyConfidence, PolicyHedgeBucket, PolicyPassAudit, PolicyReadError,
+    PolicySkipReason, PolicyVerdictCategory,
 };
 
-/// The time the safeguard read has, from its call's start to its answer, its
-/// notes included. Generous: a reasoning safeguard model thinks before it
-/// answers, and a reply after it is no answer. One call's clock spends it
-/// once, across its retries ([`PolicyCallClock`]).
+/// The default time the safeguard read has, from its call's start to its
+/// answer, its notes included, when the host's
+/// [`PolicyModelConfig::safeguard_read_budget`] names none (FIX 1203).
+/// Generous: a reasoning safeguard model thinks before it answers, and a reply
+/// after it is no answer. One call's clock spends it once, across its retries
+/// ([`PolicyCallClock`]).
 pub(super) const SAFEGUARD_READ_BUDGET: Duration = Duration::from_secs(600);
 
 /// The option a category question offers for content the policy allows.
@@ -336,8 +340,8 @@ impl<'a> SafeguardModel<'a> {
 /// resolves to the strictest row); otherwise, which row it violates, or clean.
 /// The row decides the action. A read that does not decide is a skip, never an
 /// allow; under `rationale_json` a decided read is followed by the notes call
-/// that fills the audit. The read and its notes spend `clock`'s one
-/// [`SAFEGUARD_READ_BUDGET`].
+/// that fills the audit. The read and its notes spend `clock`'s one read
+/// budget ([`PolicyModelConfig::safeguard_read_budget`]).
 #[expect(
     clippy::too_many_arguments,
     reason = "the pass's plane, principal, binding, audit and clock join the read's inputs"
@@ -369,6 +373,7 @@ pub(super) async fn safeguard_verdict(
         request,
         prompt,
         &asked,
+        &wording.format,
         principal,
         config,
         clock,
@@ -387,11 +392,25 @@ pub(super) async fn safeguard_verdict(
         Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(_))) => {
             return Ok(skipped(PolicySkipReason::BudgetExhausted, audit));
         }
-        // A raw read never traps, and a read the ladder failed reached no
-        // model answer.
-        Ok(GeneratedDecisions::Unread(GeneratedMiss::Backend(_)) | GeneratedDecisions::Trapped)
-        | Err(_) => {
+        // A raw read never traps, and a backend the read could not reach
+        // gave no answer.
+        Ok(GeneratedDecisions::Unread(GeneratedMiss::Backend(_)) | GeneratedDecisions::Trapped) => {
             return Ok(skipped(PolicySkipReason::BackendUnavailable, audit));
+        }
+        // A failure once a reply came back is a reply the read could not use
+        // (FIX 1202), unless the reply's settlement broke: that skip stays,
+        // and its receipt names the fault.
+        Err(error) => {
+            if !checked.replied() {
+                return Ok(skipped(PolicySkipReason::BackendUnavailable, audit));
+            }
+            if let DurableStepError::Engine(Error::InvariantViolation(what)) = &error
+                && *what == GENERATED_SETTLEMENT_INVARIANT
+            {
+                audit.read_error = Some(PolicyReadError::SettlementInvariant);
+                return Ok(skipped(PolicySkipReason::BackendUnavailable, audit));
+            }
+            return Ok(skipped(PolicySkipReason::ResponseUnusable, audit));
         }
     };
     audit.typed_decisions = decisions;
@@ -448,6 +467,8 @@ struct Wording {
     binary: String,
     category: String,
     notes: String,
+    /// The read's answer format, its last instruction (FIX 1202).
+    format: String,
 }
 
 impl Wording {
@@ -540,10 +561,13 @@ fn option_labels(labels: Vec<&str>) -> Vec<(String, &str)> {
 /// The candidate's questions through an unstaffed ladder whose one rung, the
 /// big one, is the safeguard model's generated read over the prompt's own
 /// request, sent through `backend`, the safeguard's backend with its replies
-/// checked.
+/// checked. The host's paired question, when it lent one, rides each read
+/// (FIX 2436). The read's output cap is at least what its JSON answer takes,
+/// and its answer `format`, with the schema, is its last message, after the
+/// owner's document (FIX 1202).
 #[expect(
     clippy::too_many_arguments,
-    reason = "the checked backend joins the safeguard's read inputs"
+    reason = "the checked backend and the answer format join the safeguard's read inputs"
 )]
 async fn read(
     safeguard: SafeguardModel<'_>,
@@ -551,13 +575,32 @@ async fn read(
     request: &PolicyClassifyRequest,
     prompt: &PolicyClassifyPrompt,
     asked: &Asked<'_>,
+    format: &str,
     principal: EntityId,
     config: &PolicyModelConfig,
     clock: &PolicyCallClock,
 ) -> DurableStepResult<GeneratedDecisions> {
-    let shell = prompt.llm_request(config);
+    let mut shell = prompt.llm_request(config);
     let model = shell.model.to_string();
-    let seal = |request: LlmRequest| -> Result<LlmRequest> { Ok(request) };
+    let need = answer_tokens(&asked.questions, config.safeguard_paired.is_some());
+    if let Some(cap) = shell.params.get_mut("max_output_tokens")
+        && cap.as_u64().is_some_and(|cap| cap < need)
+    {
+        *cap = json!(need);
+    }
+    let seal = |mut request: LlmRequest| -> Result<LlmRequest> {
+        let schema = match &request.envelope.response_format {
+            ResponseFormat::Json { schema } => schema.to_string(),
+            _ => String::new(),
+        };
+        request.messages.push(LlmMessage {
+            role: LlmMessageRole::User,
+            content: vec![ContentPart::Text {
+                text: format!("{format}\n{schema}"),
+            }],
+        });
+        Ok(request)
+    };
     let rung = GeneratedRung {
         pin: ProviderPin {
             rung: DecisionRung::Big,
@@ -571,7 +614,10 @@ async fn read(
     };
     let questions: Vec<&DecisionQuestion> = asked.questions.iter().collect();
     let state = read_state(request, prompt, &asked.options);
-    let held = HeldLadder::unstaffed();
+    let held = HeldLadder {
+        paired: config.safeguard_paired.clone(),
+        ..HeldLadder::unstaffed()
+    };
     held.ladder()
         .run_pack_generated(
             &rung,
@@ -586,67 +632,9 @@ async fn read(
             },
             &DecisionBandPolicy::default(),
             Reversibility::OutboundEffect,
-            &clock.deadline(SAFEGUARD_READ_BUDGET),
+            &clock.deadline(config.read_budget()),
         )
         .await
-}
-
-/// The safeguard model's backend with its decision replies checked at the
-/// read boundary (FIX 7803): a reply that did not finish with Stop, or that
-/// carries a tool call, marks the read unusable, so no weight it carries
-/// becomes a verdict. Every reply passes on unchanged, and settles its spend
-/// as any reply does.
-struct CheckedReplies<'a> {
-    backend: &'a dyn LlmBackend,
-    unusable: AtomicBool,
-}
-
-impl<'a> CheckedReplies<'a> {
-    fn new(backend: &'a dyn LlmBackend) -> Self {
-        Self {
-            backend,
-            unusable: AtomicBool::new(false),
-        }
-    }
-
-    /// Whether any reply through it was unusable.
-    fn unusable(&self) -> bool {
-        self.unusable.load(Ordering::Acquire)
-    }
-}
-
-/// A finished decision reply: stopped, with no tool call among its parts.
-fn finished(response: &LlmResponse) -> bool {
-    response.finish_reason == FinishReason::Stop
-        && !response
-            .message
-            .content
-            .iter()
-            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
-}
-
-impl LlmBackend for CheckedReplies<'_> {
-    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
-        self.backend.supports(model, capability)
-    }
-
-    fn generate<'b>(
-        &'b self,
-        request: LlmRequest,
-        lease: &'b BudgetLease,
-    ) -> LlmGenerateFuture<'b> {
-        Box::pin(async move {
-            let reply = self.backend.generate(request, lease).await;
-            if reply.as_ref().is_ok_and(|response| !finished(response)) {
-                self.unusable.store(true, Ordering::Release);
-            }
-            reply
-        })
-    }
-
-    fn stream<'b>(&'b self, request: LlmRequest, lease: &'b BudgetLease) -> LlmStreamResult<'b> {
-        self.backend.stream(request, lease)
-    }
 }
 
 /// The read's bounded state: the request's subject and scope, and each row by

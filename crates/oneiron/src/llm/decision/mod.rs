@@ -10,7 +10,8 @@ pub mod catalogue;
 mod codec;
 mod generated;
 pub use generated::{
-    DecisionWireLabels, GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep,
+    DecisionWireLabels, GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions, GeneratedMiss,
+    GeneratedRung, GeneratedStep,
 };
 mod held;
 pub use held::HeldLadder;

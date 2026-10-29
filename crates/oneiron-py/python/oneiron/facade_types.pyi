@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1164 facade rows, 4180 declarations.
+Census: 1164 facade rows, 4181 declarations.
 Inputs: 1099 of 1164 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1164 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -9443,6 +9443,7 @@ class TypedDecision(TypedDict):
     in_band: bool
     receipt: DecisionReceipt
     human_ask: NotRequired[HumanAskReason | None]
+PolicyReadError = Literal["settlement_invariant"]
 class PolicyPassAudit(TypedDict):
     matched_pattern_ids: NotRequired[list[str]]
     acting_pattern_role: NotRequired[PolicyPatternRole | None]
@@ -9451,6 +9452,7 @@ class PolicyPassAudit(TypedDict):
     model_confidence: NotRequired[str | None]
     model_rationale: NotRequired[str | None]
     typed_decisions: NotRequired[list[TypedDecision]]
+    read_error: NotRequired[PolicyReadError | None]
 PolicyPlane = Literal["owner_policy", "hosted_legal"]
 HostedOutagePolicy = Literal["halt", "proceed_receipted"]
 class HostedPlaneAttestation(TypedDict):

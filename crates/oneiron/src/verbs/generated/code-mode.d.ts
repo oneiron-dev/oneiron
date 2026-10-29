@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1215 code-mode rows (1175 host rows, 40 run rows), 4240 declarations.
+// Census: 1215 code-mode rows (1175 host rows, 40 run rows), 4241 declarations.
 // Replies: 1090 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
@@ -1892,7 +1892,8 @@ declare namespace Sdk {
   type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null; asked?: ReceiptAsk | null };
   type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
   type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
-  type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; typed_decisions?: TypedDecision[] };
+  type PolicyReadError = "settlement_invariant";
+  type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; typed_decisions?: TypedDecision[]; read_error?: PolicyReadError | null };
   type PolicyPlane = "owner_policy" | "hosted_legal";
   type HostedOutagePolicy = "halt" | "proceed_receipted";
   type HostedPlaneAttestation = { plane: PolicyPlane; policy_version: string; policy_hash: string; classifier_mode?: RelayClassifierMode | null; decision_binding?: string | null; outage_policy?: HostedOutagePolicy | null; degraded?: boolean | null };
