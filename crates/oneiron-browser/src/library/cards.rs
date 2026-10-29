@@ -3,16 +3,23 @@
 //! `library` whole.
 
 use super::{RecentCounts, SecretParam, WorkflowSeed};
+use crate::site::{SeedCandidate, SiteSkillError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Lists the library's programs for a site: `site` (a host, as
-/// `www.example.com`), or the open page's.
+/// `www.example.com`), else `url`'s, else the open page's; and, apart, the
+/// seed candidates of the site skills that match `url`, or the open page
+/// when it is on that site (CUA E10).
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LibraryFindInput {
     #[serde(default)]
     pub site: Option<String>,
+    /// The page whose exact origin and path the seed candidates match: an
+    /// http or https URL. Beside `site`, both name the same site.
+    #[serde(default)]
+    pub url: Option<String>,
     /// Words the program's subgoal holds, ignoring case.
     #[serde(default)]
     pub subgoal: Option<String>,
@@ -66,6 +73,15 @@ pub struct LibraryCard {
 pub struct LibraryFindOutput {
     pub site: String,
     pub workflows: Vec<LibraryCard>,
+    /// The program seeds of the site skills that match the page exactly:
+    /// none is in the library; `library.propose` takes one by its
+    /// `candidate` handle (CUA E10).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidates: Vec<SeedCandidate>,
+    /// Why those site skills did not load, by name; the library's own
+    /// programs are listed all the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub site_skill_notes: Vec<SiteSkillError>,
 }
 
 /// Takes a program out of the library: no later `open` or `find` lists it,

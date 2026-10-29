@@ -1,7 +1,8 @@
 //! Closed answer contracts and engine-owned decision receipts.
 
+use super::{AskAct, AskRole, AskTo, DecisionAsk, HolderKind, RoleRank};
 use crate::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Error;
 use crate::memory::PixelRegion;
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +50,7 @@ pub enum AnswerContract {
 }
 
 impl AnswerContract {
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> crate::error::Result<()> {
         match self {
             Self::Choice { options }
                 if options.is_empty()
@@ -188,7 +189,7 @@ pub struct DecisionQuestion {
 }
 
 impl DecisionQuestion {
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> crate::error::Result<()> {
         if self.version == 0 || self.text.trim().is_empty() || self.text.len() > 16_384 {
             return Err(invalid("invalid typed question"));
         }
@@ -253,7 +254,7 @@ impl Default for DecisionBand {
 }
 
 impl DecisionBand {
-    pub fn validate(self) -> Result<()> {
+    pub fn validate(self) -> crate::error::Result<()> {
         if !self.low.is_finite()
             || !self.high.is_finite()
             || self.low < 0.0
@@ -283,7 +284,7 @@ impl DecisionDial {
     /// band a valid band inside this one's (FIX 1587), so
     /// `host.low <= resident.low < resident.high <= host.high`. An equal band
     /// stays inside.
-    pub fn narrow(self, resident: Self) -> Result<Self> {
+    pub fn narrow(self, resident: Self) -> crate::error::Result<Self> {
         self.band.validate()?;
         resident.band.validate()?;
         if self.first > self.ceiling
@@ -347,6 +348,113 @@ pub struct DecisionReceipt {
     /// from a host rule row (ARCH-0040, "a rule row as id@version"), else none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<super::HostRuleRef>,
+    /// The ask the decision went up as, or was answered by (ARCH-0076, "the role asked and
+    /// the principal who answered, agent or person"): set when the person rung queued it,
+    /// or when its caller read the ask back; none when no ask was put.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<ReceiptAsk>,
+}
+
+impl DecisionReceipt {
+    /// This receipt naming `ask`, the ask its decision went up as or was answered by: the
+    /// role it is at, its route and, once one landed, who answered as which role.
+    pub fn bind_ask(&mut self, ask: &DecisionAsk) {
+        self.asked = Some(ReceiptAsk::of(ask));
+    }
+}
+
+/// The ask a decision went up as, as its receipt keeps it: the role it was put to, the
+/// route's ceiling and act, and the role and kind of who answered once one did. Kept
+/// actor-free, as a kept ask is (FIX 4591): who answered, and the actor a responsible role
+/// names, stay on the ask row, which an erase scrubs. A request never reads as a grant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptAsk {
+    /// The ask's arrival number, when the queue numbered it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    /// The rank of the role it was put to: the role the vault resolved for it once read
+    /// back, else the role its caller bound first.
+    pub role: RoleRank,
+    /// The project whose boards that role's chain walks, when it names one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "super::codec::optional_entity"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub project: Option<EntityId>,
+    /// The highest rank the ask may climb to.
+    pub ceiling: RoleRank,
+    pub act: AskAct,
+    /// Who answered, as which role; none while the ask waits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered: Option<ReceiptAnswerer>,
+}
+
+/// Who answered an ask, as its receipt keeps it: the role it answered as and whether a
+/// person or a bound agent, never the actor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReceiptAnswerer {
+    pub role: RoleRank,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "super::codec::optional_entity"
+    )]
+    #[schemars(with = "Option<String>")]
+    pub project: Option<EntityId>,
+    pub kind: HolderKind,
+}
+
+impl ReceiptAsk {
+    /// The route `to` as the ladder queued it, numbered `seq` when the queue numbered it,
+    /// before the vault resolved a role.
+    pub(crate) fn queued(to: &AskTo, seq: Option<u64>) -> Self {
+        let (role, project) = role_parts(&to.role);
+        Self {
+            seq,
+            role,
+            project,
+            ceiling: to.ceiling,
+            act: to.act,
+            answered: None,
+        }
+    }
+
+    /// `ask` as a receipt keeps it: the role it is at (its bound role while none
+    /// resolved), its route, and its answer once one landed.
+    #[must_use]
+    pub fn of(ask: &DecisionAsk) -> Self {
+        let at = ask.role.as_ref().map_or(&ask.to.role, |at| &at.role);
+        let (role, project) = role_parts(at);
+        Self {
+            seq: Some(ask.seq),
+            role,
+            project,
+            ceiling: ask.to.ceiling,
+            act: ask.to.act,
+            answered: ask.answer.as_ref().map(|answer| {
+                let (role, project) = role_parts(&answer.role);
+                ReceiptAnswerer {
+                    role,
+                    project,
+                    kind: answer.kind,
+                }
+            }),
+        }
+    }
+}
+
+/// A role's rank and the project whose boards it walks, never the actor it names.
+fn role_parts(role: &AskRole) -> (RoleRank, Option<EntityId>) {
+    let project = match role {
+        AskRole::Responsible { project, .. } => *project,
+        AskRole::Board { project } => Some(*project),
+        AskRole::Owner => None,
+    };
+    (role.rank(), project)
 }
 
 /// What one measurement read of one image: the pixels as handed in, where they sit in

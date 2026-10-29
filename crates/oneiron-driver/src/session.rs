@@ -9,7 +9,9 @@
 //! * bump `last_activity` on an activity hint (turn-witness bumps ride the
 //!   engine's witness transaction),
 //! * set `endedAt` on the explicit-end hint OR the idle floor — first to
-//!   fire — and then fire SessionEnd → Meso consolidation,
+//!   fire — and then fire SessionEnd → Meso consolidation; the floor and
+//!   the ceiling below are the vault owner's rows, which a host may only
+//!   narrow (FIX 8600, see [`SessionLifecycleConfig`]),
 //! * HARDENING (H-S4): the idle floor is a backstop, NOT a cap — forged
 //!   activity hints reset `last_activity` forever — so a hard wall-clock
 //!   lifetime ceiling INDEPENDENT of hints also closes the session, and
@@ -37,21 +39,23 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
-use oneiron::session_lifecycle::{SessionActivityPeriod, SessionHintTimestamp, SessionKey};
+use oneiron::session_lifecycle::{
+    SessionActivityPeriod, SessionExpiryPolicy, SessionHintTimestamp, SessionKey,
+};
 use oneiron::{EndedSession, EntityId, Result, SessionClosePredicate, SessionMintOutcome, Vault};
 
 use crate::tick::{
     ArmedLane, NowMillis, SessionHintCarrier, SessionHintStamp, Tick, TickSource, sleep_until_due,
 };
 
-/// The ticket-pinned default idle floor: 20 minutes without activity ends
-/// the session. A floor, not a cap (H-S4).
-pub const DEFAULT_SESSION_IDLE_FLOOR_SECS: u64 = 20 * 60;
+mod policy;
+pub use self::policy::SessionLifecycleConfig;
+use self::policy::expiry_ms;
 
 /// Adjacent Activity arrivals separated by less than one second are rolled up
 /// in the push queue and durable period storage. This is tiny beside the
-/// 20-minute idle floor while bounding high-frequency typing storage; hosts
-/// can select zero for lossless per-delivery periods.
+/// shipped 20-minute idle floor while bounding high-frequency typing storage;
+/// hosts can select zero for lossless per-delivery periods.
 pub const DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS: u64 = 1_000;
 
 const HINT_RETRY_BACKOFF_BASE_MS: u64 = 1;
@@ -70,73 +74,6 @@ pub enum SessionHint {
     Activity,
     /// The app explicitly ended the sitting: close now.
     ExplicitEnd,
-}
-
-/// Driver session policy knobs, in unix SECONDS (the engine's clock
-/// convention).
-///
-/// There is no ceiling default on purpose: the hard lifetime ceiling is a
-/// security backstop (H-S4) whose right value is host-specific, so hosts
-/// must state it — a hidden default could silently be wider than the host's
-/// threat model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SessionLifecycleConfig {
-    /// Idle floor: the session ends after this many seconds without
-    /// activity. Defaults to [`DEFAULT_SESSION_IDLE_FLOOR_SECS`] via
-    /// [`Self::with_idle_floor_default`].
-    pub idle_floor_secs: u64,
-    /// Hard wall-clock lifetime ceiling, measured from `started_at` and
-    /// INDEPENDENT of activity hints. Must exceed the idle floor.
-    pub lifetime_ceiling_secs: u64,
-    /// Activity-period rollup gap in milliseconds for durable period storage.
-    /// This never participates in expiry, queue coalescing, or ordering
-    /// decisions.
-    pub activity_rollup_gap_ms: u64,
-}
-
-impl SessionLifecycleConfig {
-    #[must_use]
-    pub fn new(idle_floor_secs: u64, lifetime_ceiling_secs: u64) -> Self {
-        Self {
-            idle_floor_secs,
-            lifetime_ceiling_secs,
-            activity_rollup_gap_ms: DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS,
-        }
-    }
-
-    /// Overrides the Activity period rollup gap. `0` retains every delivery
-    /// without storage merging.
-    #[must_use]
-    pub fn with_activity_rollup_gap_ms(mut self, activity_rollup_gap_ms: u64) -> Self {
-        self.activity_rollup_gap_ms = activity_rollup_gap_ms;
-        self
-    }
-
-    /// The ticket-default 20-minute idle floor with a host-chosen ceiling.
-    #[must_use]
-    pub fn with_idle_floor_default(lifetime_ceiling_secs: u64) -> Self {
-        Self::new(DEFAULT_SESSION_IDLE_FLOOR_SECS, lifetime_ceiling_secs)
-    }
-
-    /// Rejects configs that disable either close path: a zero idle floor
-    /// would end every session instantly, and a ceiling at or below the
-    /// floor means the "backstop vs cap" split the hardening requires
-    /// cannot exist.
-    pub fn validate(&self) -> Result<()> {
-        if self.idle_floor_secs == 0 {
-            return Err(oneiron::Error::InvalidConfig(
-                "session idle_floor_secs must be > 0".into(),
-            ));
-        }
-        if self.lifetime_ceiling_secs <= self.idle_floor_secs {
-            return Err(oneiron::Error::InvalidConfig(format!(
-                "session lifetime_ceiling_secs ({}) must exceed idle_floor_secs ({}): \
-                 the ceiling is the hard cap the idle floor is not",
-                self.lifetime_ceiling_secs, self.idle_floor_secs
-            )));
-        }
-        Ok(())
-    }
 }
 
 /// What one applied hint did.
@@ -182,12 +119,18 @@ impl<'v> SessionLifecycleDriver<'v> {
         Arc::clone(&self.now_ms)
     }
 
+    /// The idle floor in force now, in seconds: the vault's row narrowed by
+    /// the host's value (FIX 8600).
+    pub fn idle_floor_secs(&self) -> Result<u64> {
+        Ok(self.config.resolve(self.vault)?.idle_floor_secs)
+    }
+
     fn hint_timestamp(
-        &self,
+        policy: SessionExpiryPolicy,
         stamp: SessionHintStamp,
         last_effective_ms: u64,
     ) -> SessionHintTimestamp {
-        let ceiling_ms = self.config.lifetime_ceiling_secs.saturating_mul(1_000);
+        let ceiling_ms = policy.lifetime_ceiling_secs.saturating_mul(1_000);
         let claim_is_insane = stamp.claimed_ms.is_some_and(|claimed_ms| {
             claimed_ms > stamp.arrival_ms
                 || stamp.arrival_ms.saturating_sub(claimed_ms) > ceiling_ms
@@ -235,17 +178,18 @@ impl<'v> SessionLifecycleDriver<'v> {
 
     fn apply_hint_carrier(&self, carrier: SessionHintCarrier) -> Result<SessionHintEffect> {
         let key = carrier.key;
+        let policy = self.config.resolve(self.vault)?;
         let mut open = self.vault.open_session(key)?;
-        let ceiling_ms = self.config.lifetime_ceiling_secs.saturating_mul(1_000);
+        let ceiling_ms = policy.lifetime_ceiling_secs.saturating_mul(1_000);
         let first_floor_ms = open.as_ref().map_or_else(
             || carrier.first.arrival_ms.saturating_sub(ceiling_ms),
             |session| session.last_effective_ms,
         );
-        let first = self.hint_timestamp(carrier.first, first_floor_ms);
+        let first = Self::hint_timestamp(policy, carrier.first, first_floor_ms);
         let last = if carrier.count == 1 {
             first
         } else {
-            self.hint_timestamp(carrier.last, first.effective_ms)
+            Self::hint_timestamp(policy, carrier.last, first.effective_ms)
         };
 
         // A prior sitting expires in real arrival time: an earlier sane claim
@@ -253,10 +197,10 @@ impl<'v> SessionLifecycleDriver<'v> {
         // before applying the fact at its effective time (an AppOpen may then
         // mint a replacement stamped at its claimed time).
         if let Some(session) = open
-            && self.expiry_ms(session.started_at, session.last_activity) <= first.arrival_ms
+            && expiry_ms(policy, session.started_at, session.last_activity) <= first.arrival_ms
         {
-            let due_at_ms = self.expiry_ms(session.started_at, session.last_activity);
-            open = match self.close_due_session_for_at(key, due_at_ms)? {
+            let due_at_ms = expiry_ms(policy, session.started_at, session.last_activity);
+            open = match self.close_due_session_for_at(policy, key, due_at_ms)? {
                 Some(_) => None,
                 // A concurrent bump may have won the transaction's expiry
                 // re-check. Re-read that winner so this carried fact still
@@ -284,7 +228,7 @@ impl<'v> SessionLifecycleDriver<'v> {
                 };
                 let ceiling_at_ms = session
                     .started_at
-                    .saturating_add(self.config.lifetime_ceiling_secs)
+                    .saturating_add(policy.lifetime_ceiling_secs)
                     .saturating_mul(1_000);
                 if first.effective_ms <= ceiling_at_ms && last.effective_ms > ceiling_at_ms {
                     // The carrier retains only its endpoints, so only `first`
@@ -300,7 +244,7 @@ impl<'v> SessionLifecycleDriver<'v> {
                         },
                         self.config.activity_rollup_gap_ms,
                     )?;
-                    self.close_due_session_for_at(key, ceiling_at_ms)?;
+                    self.close_due_session_for_at(policy, key, ceiling_at_ms)?;
                     return Ok(bumped.map_or(SessionHintEffect::NoOp, SessionHintEffect::Bumped));
                 }
                 Ok(self
@@ -333,21 +277,16 @@ impl<'v> SessionLifecycleDriver<'v> {
     }
 
     /// When the open session is due to close (unix MILLISECONDS): the
-    /// earlier of `last_activity + idle_floor` and `started_at + ceiling`.
-    /// `None` when no session is open.
+    /// earlier of `last_activity + idle_floor` and `started_at + ceiling`,
+    /// under the policy in force now. `None` when no session is open.
     pub fn next_expiry_ms(&self) -> Result<Option<u64>> {
+        let policy = self.config.resolve(self.vault)?;
         Ok(self
             .vault
             .open_sessions()?
             .into_iter()
-            .map(|open| self.expiry_ms(open.started_at, open.last_activity))
+            .map(|open| expiry_ms(policy, open.started_at, open.last_activity))
             .min())
-    }
-
-    fn expiry_ms(&self, started_at: u64, last_activity: u64) -> u64 {
-        let idle_due = last_activity.saturating_add(self.config.idle_floor_secs);
-        let ceiling_due = started_at.saturating_add(self.config.lifetime_ceiling_secs);
-        idle_due.min(ceiling_due).saturating_mul(1_000)
     }
 
     /// Closes the open session if its idle floor or lifetime ceiling has
@@ -356,7 +295,8 @@ impl<'v> SessionLifecycleDriver<'v> {
     ///
     /// The snapshot check here is only a fast path: the engine transaction
     /// re-validates identity AND the expiry predicate against the re-read
-    /// record, so a bump that races this close makes it a no-op instead of
+    /// record and the vault's policy as it then stands, so a bump or a
+    /// widened row that races this close makes it a no-op instead of
     /// ending a still-active sitting.
     pub fn close_due_session(&self) -> Result<Option<EndedSession>> {
         let observed_ms = (self.now_ms)();
@@ -367,36 +307,38 @@ impl<'v> SessionLifecycleDriver<'v> {
     /// mutation is stamped at the policy-derived due instant, never at a late
     /// resume/processing time, and does not read the driver's wall clock.
     pub fn close_due_session_at(&self, observed_ms: u64) -> Result<Option<EndedSession>> {
+        let policy = self.config.resolve(self.vault)?;
         let next = self
             .vault
             .open_sessions()?
             .into_iter()
-            .min_by_key(|open| self.expiry_ms(open.started_at, open.last_activity));
+            .min_by_key(|open| expiry_ms(policy, open.started_at, open.last_activity));
         match next {
-            Some(open) => self.close_due_session_for_at(open.key, observed_ms),
+            Some(open) => self.close_due_session_for_at(policy, open.key, observed_ms),
             None => Ok(None),
         }
     }
 
+    /// The close carries the observation, not this snapshot's due instant:
+    /// its transaction re-reads the vault's policy, decides whether the
+    /// sitting is due by then, and stamps the close at the instant that
+    /// policy makes it due (FIX 8600).
     fn close_due_session_for_at(
         &self,
+        policy: SessionExpiryPolicy,
         key: SessionKey,
         observed_ms: u64,
     ) -> Result<Option<EndedSession>> {
         let Some(open) = self.vault.open_session(key)? else {
             return Ok(None);
         };
-        let due_at_ms = self.expiry_ms(open.started_at, open.last_activity);
-        if observed_ms < due_at_ms {
+        if observed_ms < expiry_ms(policy, open.started_at, open.last_activity) {
             return Ok(None);
         }
         self.end_session(
             &open.session,
-            SessionClosePredicate::Expiry {
-                idle_floor_secs: self.config.idle_floor_secs,
-                lifetime_ceiling_secs: self.config.lifetime_ceiling_secs,
-            },
-            due_at_ms / 1_000,
+            self.config.expiry_predicate(),
+            observed_ms / 1_000,
             None,
         )
     }

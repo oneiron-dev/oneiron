@@ -176,6 +176,8 @@ impl Observations {
             rebound: None,
             fact: None,
             dialogs: Vec::new(),
+            site_skills: Vec::new(),
+            site_skill_notes: Vec::new(),
         };
         let snapshot = Snapshot {
             seq: read.seq,
@@ -213,6 +215,8 @@ impl Observations {
             rebound: None,
             fact: None,
             dialogs: Vec::new(),
+            site_skills: Vec::new(),
+            site_skill_notes: Vec::new(),
         };
         // AB-003: the two forms say the same; the answer takes the one
         // whose pages are fewer bytes, the whole one on a tie.
@@ -510,7 +514,8 @@ fn age_out<T>(held: &mut VecDeque<T>, read: &mut HashSet<u64>, key: impl Fn(&T) 
 
 /// `whole` with `rows` of its own: its scope, base and splice, `offset`
 /// where the rows start among its own, and, when `last`, its `walk_next`
-/// if it is partial. The receipt, library and fact stay on the first page.
+/// if it is partial. The receipt, library and fact stay on the first page;
+/// its site skills are on every page.
 fn part(whole: &Observation, rows: Vec<Row>, offset: Option<usize>, last: bool) -> Observation {
     Observation {
         seq: whole.seq,
@@ -534,6 +539,9 @@ fn part(whole: &Observation, rows: Vec<Row>, offset: Option<usize>, last: bool) 
         rebound: None,
         fact: None,
         dialogs: Vec::new(),
+        // A site's skills ride every page of the answer that carries them.
+        site_skills: whole.site_skills.clone(),
+        site_skill_notes: whole.site_skill_notes.clone(),
     }
 }
 
