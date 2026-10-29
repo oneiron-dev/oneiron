@@ -11,7 +11,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::{TypeRef, Window};
-use crate::team::{PlannerCard, TeamReceipt, model_mix, team_receipts};
+use crate::team::{PlannerCard, ReceiptScan, TeamReceipt, model_mix, team_receipts_in_txn};
 
 /// The weight of the vault's outcomes a project's skill with none of its
 /// own borrows (FIX 6038, own scope then the vault): their faded mass as
@@ -26,17 +26,23 @@ pub(super) struct WidthOutcomes {
 }
 
 impl WidthOutcomes {
-    /// Every receipt, read once and folded at `at`; none when `wanted` is
-    /// false (no pattern skill to weigh). [`team_receipts`] opens its own
-    /// snapshot, so this runs before the planner opens its own.
+    /// Every receipt, read once in the caller's snapshot and folded at
+    /// `at`; none when `wanted` is false (no pattern skill to weigh). The
+    /// planner folds its width evidence on the same snapshot as every
+    /// measured read.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub(super) fn read(vault: &Vault, at: u64, wanted: bool) -> Result<Self> {
+    pub(super) fn read_in_txn(
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        at: u64,
+        wanted: bool,
+    ) -> Result<Self> {
         Ok(Self {
             receipts: if wanted {
-                team_receipts(vault, None)?
+                team_receipts_in_txn(vault, txn, ReceiptScan::AllScopes(None))?
             } else {
                 Vec::new()
             },
