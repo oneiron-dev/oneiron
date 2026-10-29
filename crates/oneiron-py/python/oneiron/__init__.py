@@ -384,6 +384,28 @@ class Oneiron:
         resolved = os.fspath(path)
         return json.loads(_translate(lambda: self._client.export_to(resolved, format)))
 
+    @staticmethod
+    def vault_secrets_custody_seal(
+        view: dict[str, Any], change: str, holder: str | None, recipients: list[str], body: bytes
+    ) -> dict[str, Any]:
+        """Seals a custody register or rotate on the caller's own side (FIX 11441).
+
+        ``view`` is what ``vault.secrets.custody.get`` answered, ``change`` is
+        ``"register"`` or ``"rotate"``, ``holder`` the candidate the input is
+        sealed to (the view's own install when ``None``), ``recipients`` the
+        candidates permitted to hold the bytes (the holder alone when empty)
+        and ``body`` a register's whole record or a rotate's new value.
+        Answers the ``vault.secrets.custody.submit`` input that carries it. No
+        vault is opened and no call is made.
+        """
+        return json.loads(
+            _translate(
+                lambda: _NativeClient.vault_secrets_custody_seal(
+                    json.dumps(view), change, holder, recipients, body
+                )
+            )
+        )
+
     # BEGIN GENERATED FACADE VERBS
     @property
     def vault(self) -> "Oneiron._VaultVerbs":
@@ -3370,6 +3392,9 @@ class Oneiron:
         def rewrap(self, spec):
             """The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown."""
             return json.loads(_translate(lambda: self._client.vault_secrets_rewrap(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes a secret: the record goes terminal and every lease over it is revoked; the reply reads as a rotation's, with kind revoked, beside the custody request carried for his other machines."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_revoke(json.dumps(spec))))
         @property
         def custody(self) -> "Oneiron._VaultSecretsCustodyVerbs":
             return Oneiron._VaultSecretsCustodyVerbs(self._client)

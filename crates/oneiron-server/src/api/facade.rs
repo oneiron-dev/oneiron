@@ -159,6 +159,7 @@ mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;
+mod secret_body;
 mod secret_custody_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
@@ -335,7 +336,18 @@ async fn facade_route(
     super::answer_hold::until_encoded(async move {
         let call = FacadeCall::http(&server, &auth, &headers, &extensions);
         let verb = uri.path().trim_start_matches('/');
-        match call_verb(&server, &call, verb, facade_json(payload)).await {
+        // A wiped custody body's value, scoped for its door (FIX 11442).
+        let secret = extensions
+            .get::<secret_body::FacadeSecret>()
+            .map(secret_body::FacadeSecret::secret);
+        let input = facade_json(payload);
+        let output = match secret {
+            Some(secret) => {
+                secret_body::scope_secret(secret, call_verb(&server, &call, verb, input)).await
+            }
+            None => call_verb(&server, &call, verb, input).await,
+        };
+        match output {
             Ok(output) => released_reply(&server, &auth, verb, output).into_response(),
             Err(refused) => refused.into_response(),
         }

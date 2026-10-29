@@ -144,7 +144,9 @@ pub(super) const CARDS: SideTable<([u8; 16], [u8; 1], [u8; 16]), AgentHealthCard
     SideTable::new(&side_table::COACH_AGENT_HEALTH_CARD);
 
 /// How a card reads (agent-mind §3.5).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthTone {
     /// Loops, failed checks, silence, long waits, cost.
@@ -190,7 +192,9 @@ impl AgentHealthTone {
 
 /// A move the card proposes. A leader or the owner takes it; the Coach never
 /// does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthMove {
     /// Say a note to the agent.
@@ -208,7 +212,9 @@ pub enum AgentHealthMove {
 }
 
 /// What lowers a signal, or names another possible cause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthCounter {
     /// The repeated call got different answers: it may be polling.
@@ -232,7 +238,7 @@ pub enum AgentHealthCounter {
 }
 
 /// Low when counter-evidence stands against the signal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthConfidence {
     High,
@@ -240,7 +246,7 @@ pub enum AgentHealthConfidence {
 }
 
 /// Set by the leader or the owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthOutcome {
     Open,
@@ -274,7 +280,7 @@ impl AgentHealthOutcome {
 
 /// One agent-health card (agent-mind §3.5): one per actor, signal and task.
 /// Repeats merge into it. It holds refs and numbers, never a diary body.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCard {
     /// The agent the card is about.

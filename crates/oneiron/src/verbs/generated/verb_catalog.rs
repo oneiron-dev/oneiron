@@ -546,6 +546,7 @@ pub enum AgentVerb {
     VaultSecretsRegister,
     VaultSecretsRotate,
     VaultSecretsRewrap,
+    VaultSecretsRevoke,
     VaultSecretsCustodyGet,
     VaultSecretsCustodySubmit,
     VaultWidenProposals,
@@ -1761,6 +1762,7 @@ impl AgentVerb {
         Self::VaultSecretsRegister,
         Self::VaultSecretsRotate,
         Self::VaultSecretsRewrap,
+        Self::VaultSecretsRevoke,
         Self::VaultSecretsCustodyGet,
         Self::VaultSecretsCustodySubmit,
         Self::VaultWidenProposals,
@@ -2991,6 +2993,7 @@ impl AgentVerb {
             Self::VaultSecretsRegister => "vault.secrets.register",
             Self::VaultSecretsRotate => "vault.secrets.rotate",
             Self::VaultSecretsRewrap => "vault.secrets.rewrap",
+            Self::VaultSecretsRevoke => "vault.secrets.revoke",
             Self::VaultSecretsCustodyGet => "vault.secrets.custody.get",
             Self::VaultSecretsCustodySubmit => "vault.secrets.custody.submit",
             Self::VaultWidenProposals => "vault.widen_proposals",
@@ -4224,6 +4227,7 @@ impl AgentVerb {
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
                 | Self::VaultSecretsRewrap
+                | Self::VaultSecretsRevoke
                 | Self::VaultSecretsCustodyGet
                 | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposals
@@ -5468,6 +5472,7 @@ impl AgentVerb {
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
                 | Self::VaultSecretsRewrap
+                | Self::VaultSecretsRevoke
                 | Self::VaultSecretsCustodyGet
                 | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposals
@@ -6841,6 +6846,7 @@ impl AgentVerb {
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
                 | Self::VaultSecretsRewrap
+                | Self::VaultSecretsRevoke
                 | Self::VaultSecretsCustodyGet
                 | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposals
@@ -7783,6 +7789,7 @@ impl AgentVerb {
                 | Self::VaultSecretsRegister
                 | Self::VaultSecretsRotate
                 | Self::VaultSecretsRewrap
+                | Self::VaultSecretsRevoke
                 | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -8754,6 +8761,7 @@ impl AgentVerb {
             Self::VaultSecretsRegister => &["spec"],
             Self::VaultSecretsRotate => &["spec"],
             Self::VaultSecretsRewrap => &["spec"],
+            Self::VaultSecretsRevoke => &["spec"],
             Self::VaultSecretsCustodyGet => &["spec"],
             Self::VaultSecretsCustodySubmit => &["spec"],
             Self::VaultWidenProposals => &["spec"],
@@ -9970,6 +9978,7 @@ impl AgentVerb {
             Self::VaultSecretsRegister => &["spec"],
             Self::VaultSecretsRotate => &["spec"],
             Self::VaultSecretsRewrap => &["spec"],
+            Self::VaultSecretsRevoke => &["spec"],
             Self::VaultSecretsCustodyGet => &["spec"],
             Self::VaultSecretsCustodySubmit => &["spec"],
             Self::VaultWidenProposals => &["spec"],
@@ -12242,6 +12251,9 @@ impl AgentVerb {
             }
             Self::VaultSecretsRewrap => {
                 "The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown."
+            }
+            Self::VaultSecretsRevoke => {
+                "The owner revokes a secret: the record goes terminal and every lease over it is revoked; the reply reads as a rotation's, with kind revoked, beside the custody request carried for his other machines."
             }
             Self::VaultSecretsCustodyGet => {
                 "The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to."

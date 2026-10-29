@@ -22,11 +22,23 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 }
 
 /// `POST /v1/owner/workspace/finish`.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct FinishWorkspace {
     /// The stored workspace whose house leads the root.
     workspace_ref: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/workspace/finish`'s body
+/// (FIX 11611): [`FinishWorkspace`].
+pub(crate) fn finish_workspace_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<FinishWorkspace>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/workspace/finish`'s answer
+/// (FIX 11611): unit, answered as JSON null.
+pub(crate) fn workspace_finished_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<()>()
 }
 
 /// `POST /v1/owner/workspace/finish` with `{"workspace_ref": "<ref>"}`: a
