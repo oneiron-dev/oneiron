@@ -194,6 +194,30 @@ pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
     })
 }
 
+/// Every window under `prefix` whose thin index this device fetched from its
+/// home (`ri:w:{window}:{item}`): a window a peer holds that this device may
+/// hold no persisted state for (FIX 9388).
+pub(crate) fn indexed_windows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    prefix: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut windows = std::collections::BTreeSet::new();
+    for row in store
+        .sync_state
+        .prefix_iter(txn, &format!("ri:w:{prefix}"))?
+    {
+        let (key, _) = row?;
+        if let Some((window, _item)) = key
+            .strip_prefix("ri:w:")
+            .and_then(|rest| rest.rsplit_once(':'))
+        {
+            windows.insert(window.to_owned());
+        }
+    }
+    Ok(windows)
+}
+
 /// The shipped index page work slice. A larger request is served a page
 /// of the resolved slice with a cursor, never refused (FIX 8881).
 pub const INDEX_PAGE_MAX: usize = 256;
