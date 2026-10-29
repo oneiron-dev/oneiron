@@ -37,6 +37,7 @@ import type {
   EngineOptions,
   EngineReply,
   EngineRequest,
+  ExportReceipt,
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
@@ -412,6 +413,17 @@ export class Oneiron {
    */
   closeLensFrame(cardId: string): CloseLensFrameReply {
     return this.#call(() => this.#client.closeLensFrame(cardId) as CloseLensFrameReply)
+  }
+
+  /**
+   * Exports the whole vault into the file at `path`, owner only, as
+   * `vault.export` does: `format` is `archive` (the default) or `okf`. The
+   * file is created or truncated; the answer is the archive's format,
+   * length and BLAKE3. Over a server the archive streams through a kept
+   * transfer, so no ceiling on a reply applies to it.
+   */
+  exportTo(path: string, format?: string): ExportReceipt {
+    return this.#call(() => this.#client.exportTo(path, format) as ExportReceipt)
   }
 
   // BEGIN GENERATED FACADE VERBS

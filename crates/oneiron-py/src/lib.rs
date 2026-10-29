@@ -363,6 +363,34 @@ impl NativeClient {
         encode(&output)
     }
 
+    /// Exports the whole vault into the file at `path`, owner only, as
+    /// `vault.export` does: `format` is `archive` (the default) or `okf`.
+    /// The file is created or truncated; the answer is the archive's
+    /// format, length and BLAKE3 as JSON. Over a server the archive
+    /// streams through a kept transfer, so no ceiling on a reply
+    /// applies to it.
+    #[pyo3(signature = (path, format=None))]
+    fn export_to(
+        &self,
+        py: Python<'_>,
+        path: std::path::PathBuf,
+        format: Option<String>,
+    ) -> PyResult<String> {
+        let receipt = py
+            .detach(|| {
+                let file = std::fs::File::create(&path).map_err(|error| {
+                    MemoryError::new(
+                        oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                        format!("could not create the export file {path:?}: {error}"),
+                        &["Check that the export path's parent directory exists and is writable."],
+                    )
+                })?;
+                self.inner.vault_export_to(format.as_deref(), file)
+            })
+            .map_err(raise)?;
+        encode(&receipt)
+    }
+
     // BEGIN GENERATED AGENT VERBS
     fn vault_commitments_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.commitments.create")?;
