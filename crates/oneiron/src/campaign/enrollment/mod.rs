@@ -58,7 +58,9 @@ pub use self::home_node::{
     elect_campaign_home_node_designation, local_campaign_home_node_candidate,
     require_campaign_home_node,
 };
-pub use self::outbound_leg::enrollment_outbound_approval_digest;
+pub use self::outbound_leg::{
+    EnrollmentLegDrive, drive_enrollment_outbound_leg, enrollment_outbound_approval_digest,
+};
 pub use self::program::{
     AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition,
     CampaignProgramDraft, CampaignProgramStepDraft, archive_campaign_program,
@@ -79,12 +81,10 @@ pub use self::storage::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
 };
 
-// No `pub(crate) use` for the outward leg: `EnrollmentOutboundLeg` and
-// `run_enrollment_outbound_leg` are ONE-1778 staging — `pub(crate)` items with
-// the `#[cfg_attr(not(test), allow(dead_code))]` carve-out, used by nothing
-// outside this module yet — so a crate-visible re-export would be an unused
-// import in every build. The `#[cfg(test)]` seam below keeps them reachable to
-// `tests.rs`; the host driver re-adds the re-export when it lands.
+// The outward leg reaches the host through `drive_enrollment_outbound_leg`
+// (FIX 2636); `EnrollmentOutboundLeg` and `run_enrollment_outbound_leg` stay
+// module-private, and the `#[cfg(test)]` seam below keeps them reachable to
+// `tests.rs`.
 
 #[cfg(test)]
 mod tests;
