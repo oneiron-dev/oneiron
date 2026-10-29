@@ -111,6 +111,7 @@ impl AssetConsumer {
 /// anytime budget. A provider reads the task and the image's description as
 /// the call's bounded state. Only an in-band "no" steps an image down from
 /// full; an abstain, an answer outside the band or a failed ladder sends it.
+#[derive(Clone)]
 pub struct ImagePick<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,

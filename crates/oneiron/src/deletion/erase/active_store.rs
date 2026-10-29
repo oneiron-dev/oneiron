@@ -100,6 +100,12 @@ impl Vault {
                 self.store.clock.now_recorded_at(),
                 true,
             )?;
+            crate::runtime_hooks::scrub_hook_source_in_txn(
+                self,
+                wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
         }
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
@@ -225,6 +231,12 @@ impl Vault {
         // part 2).
         if erase {
             self.fence_erased_credential_in_txn(wtxn, id)?;
+            crate::runtime_hooks::scrub_hook_source_in_txn(
+                self,
+                wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
