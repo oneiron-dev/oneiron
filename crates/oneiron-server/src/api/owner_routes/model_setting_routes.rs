@@ -22,11 +22,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 }
 
 /// The owner's model settings.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ModelSettings {
     /// Whether a provider keeps each Responses turn (`store`).
     responses_store: bool,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/models`'s body and answer (FIX
+/// 11103): [`ModelSettings`].
+pub(crate) fn model_settings_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ModelSettings>()
 }
 
 /// `GET /v1/owner/settings/models`.

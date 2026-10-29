@@ -7,7 +7,7 @@ are `Any`, and the census below counts them.
 Census: 1190 facade rows, 4310 declarations.
 Inputs: 1119 of 1190 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1035 of 1190 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 118; unread shapes: 0.
+Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -9477,7 +9477,7 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
-class EvidenceFloors(TypedDict):
+class VectorEvidenceFloors(TypedDict):
     floor: float
     strong: float
 class EmbeddingSpace(TypedDict):
@@ -9485,7 +9485,7 @@ class EmbeddingSpace(TypedDict):
     dimensions: int
     accepts: list[InputKind]
     query_towers: list[InputKind]
-    evidence: NotRequired[EvidenceFloors | None]
+    evidence: NotRequired[VectorEvidenceFloors | None]
 class SpaceRefDeclared(TypedDict):
     declared: str
 SpaceRef = Literal["text_index"] | SpaceRefDeclared
@@ -22286,7 +22286,8 @@ class LensFrameEventRequest(TypedDict):
     event: GeneratedUiActionEvent
     idempotencyKey: str
     selectedContext: NotRequired[list[str]]
-LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot})
+    stream: NotRequired[GeneratedUiStreamProfile]
+LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot, "refinement": NotRequired[Any | None]})
 class LensFrameEventReplyTool(TypedDict):
     outcome: Any
     readReceipt: ScopedReadReceipt

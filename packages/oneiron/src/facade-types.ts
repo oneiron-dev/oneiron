@@ -3,7 +3,7 @@
 // Census: 1190 facade rows, 4310 declarations.
 // Inputs: 1119 of 1190 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 // Results: 1035 of 1190 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Opaque serde_json::Value leaves: 118; unread shapes: 0.
+// Opaque serde_json::Value leaves: 119; unread shapes: 0.
 /** `oneiron::memory::commitment_doors::types::CommitmentObligorKind` */
 export type CommitmentObligorKind = "owner" | "agent" | "third_party"
 /** `oneiron::memory::commitment_doors::types::CommitmentObligor` */
@@ -3752,10 +3752,10 @@ export type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind;
 export type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null; holds: CourtesyDeleteHold[] }
 /** `oneiron::verbs::courtesy_delete::CourtesyDeleteAnswerRequest` */
 export type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null }
-/** `oneiron::embed::space::Row` */
-export type EvidenceFloors = { floor: number; strong: number }
+/** `oneiron::config::VectorEvidenceFloors` */
+export type VectorEvidenceFloors = { floor: number; strong: number }
 /** `oneiron::embed::space::EmbeddingSpace` */
-export type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: EvidenceFloors | null }
+export type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: VectorEvidenceFloors | null }
 /** `oneiron::embed::space_move::SpaceRef` */
 export type SpaceRef = "text_index" | { declared: string }
 /** `oneiron::embed::space_move::SpaceMoveState` */
@@ -8593,9 +8593,9 @@ export type BoardSubscriptionRequest = { scopes: SubscriptionScope[] }
 /** `oneiron::verbs::BoardSubscriptionReply` */
 export type BoardSubscriptionReply = { connection: string; active: SubscriptionScope[] }
 /** `oneiron_remote::lens_frames::LensFrameEventRequest` */
-export type LensFrameEventRequest = { event: GeneratedUiActionEvent; idempotencyKey: string; selectedContext?: string[] }
+export type LensFrameEventRequest = { event: GeneratedUiActionEvent; idempotencyKey: string; selectedContext?: string[]; stream?: GeneratedUiStreamProfile }
 /** `oneiron_remote::lens_frames::LensFrameEventReply` */
-export type LensFrameEventReply = { $state: GeneratedUiStateSnapshot } | { outcome: unknown; readReceipt: ScopedReadReceipt } | { queued: boolean; callbackId: string }
+export type LensFrameEventReply = { $state: GeneratedUiStateSnapshot; refinement?: unknown | null } | { outcome: unknown; readReceipt: ScopedReadReceipt } | { queued: boolean; callbackId: string }
 /** `oneiron_remote::lens_frames::CloseLensFrameReply` */
 export type CloseLensFrameReply = { closed: boolean }
 /** `oneiron::lens::generated_ui::genui_render::GeneratedUiCardStart` */

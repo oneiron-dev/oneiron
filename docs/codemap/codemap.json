@@ -31575,7 +31575,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 45,
+      "crate-vis": 43,
       "enum": 1,
       "fn": 17,
       "struct": 3
@@ -42951,7 +42951,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -59175,7 +59175,7 @@
      "path": "src/scope_summary/derivation.rs",
      "purpose": "Scope-summary derivation envelopes and change-driven re-derivation",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 1,
       "struct": 5
      }
@@ -70490,10 +70490,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/forward/edge_pass/apply.rs",
+     "purpose": "The edge pass's mandate-checked write: one edge's reserved-kind mandate, endpoint readiness, stored-byte…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/sync/window/forward/edge_pass.rs",
+     "path": "src/sync/window/forward/edge_pass/mod.rs",
      "purpose": "Edge pass of forward rematerialization: materialize window edge rows into LMDB",
      "surface": {
       "crate-vis": 2
@@ -82551,7 +82561,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 281,
+     "files": 282,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82763,7 +82773,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5527,
+   "source_files": 5528,
    "test_files": 902
   },
   "oneiron-android": {
@@ -96309,13 +96319,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embedded_engine.rs",
      "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -96351,7 +96361,7 @@
     "embedded_engine": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…"
     },
@@ -100719,7 +100729,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -103303,11 +103313,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi/owner_rest_paths.rs",
-     "purpose": "The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289): each body and answer is read…",
+     "purpose": "The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289, FIX 11103, FIX 11611): each…",
      "surface": {
       "crate-vis": 1
      }
@@ -103389,7 +103399,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 35
      }
     },
     {
@@ -103439,7 +103449,7 @@
      "path": "src/api/owner_routes/browser_takeover_routes.rs",
      "purpose": "`/v1/owner/browsers*`: the owner takes a run's browser over (CUA-001), to sign in or pay inside the same…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -103459,7 +103469,7 @@
      "path": "src/api/owner_routes/checkpoint_policy_routes.rs",
      "purpose": "`/v1/owner/checkpoint-policy`: the owner selects which roots attest his authority checkpoint images, and how…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -103489,7 +103499,7 @@
      "path": "src/api/owner_routes/concern_routes.rs",
      "purpose": "`/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health cards (OF-568) with its run-tree…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 9
      }
     },
     {
@@ -103499,7 +103509,7 @@
      "path": "src/api/owner_routes/conflict_routes.rs",
      "purpose": "`/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 8
      }
     },
     {
@@ -103508,6 +103518,16 @@
      "notable": [],
      "path": "src/api/owner_routes/connector_admission_routes.rs",
      "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/connector_admission_routes/schema.rs",
+     "purpose": "The OpenAPI schemas of the connector admission writes (FIX 11611): `POST /v1/owner/connectors/register`…",
      "surface": {
       "crate-vis": 9
      }
@@ -103519,7 +103539,7 @@
      "path": "src/api/owner_routes/connector_consent_routes.rs",
      "purpose": "`/v1/owner/connectors/consent`: the owner's one act that lets an actor call a catalog connector's tools…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -103539,7 +103559,7 @@
      "path": "src/api/owner_routes/connector_subscription_routes.rs",
      "purpose": "`/v1/owner/connectors/subscriptions`: the owner's door that lets an agent answer a built-in channel (OF-519)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -103549,7 +103569,7 @@
      "path": "src/api/owner_routes/conversation_learning_routes.rs",
      "purpose": "`/v1/owner/conversation-learning`: the vault's \"Learn from my conversations\" setting, and each person's own…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -103559,7 +103579,7 @@
      "path": "src/api/owner_routes/courtesy_delete_routes.rs",
      "purpose": "`/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -103569,7 +103589,7 @@
      "path": "src/api/owner_routes/craft_candidate_routes.rs",
      "purpose": "`/v1/owner/craft-candidates`: the owner lists the craft notes residents' dreaming proposed about themselves…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -103589,7 +103609,7 @@
      "path": "src/api/owner_routes/desktop_takeover_routes.rs",
      "purpose": "`/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 7
      }
     },
     {
@@ -103599,7 +103619,7 @@
      "path": "src/api/owner_routes/diary_routes.rs",
      "purpose": "`/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -103613,13 +103633,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/dreamer_maintenance_routes.rs",
      "purpose": "`/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: \"autoapply + revert rather than holdout\"): the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -103629,7 +103649,7 @@
      "path": "src/api/owner_routes/dreamer_routes.rs",
      "purpose": "`/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -103639,7 +103659,7 @@
      "path": "src/api/owner_routes/embedding_space_routes.rs",
      "purpose": "`/v1/owner/embedding-spaces`: the owner declares embedding spaces, binds kind slots and moves a slot to a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -103659,7 +103679,7 @@
      "path": "src/api/owner_routes/federation_connect_routes.rs",
      "purpose": "`/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 7
      }
     },
     {
@@ -103709,7 +103729,7 @@
      "path": "src/api/owner_routes/history_routes.rs",
      "purpose": "`/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -103739,7 +103759,7 @@
      "path": "src/api/owner_routes/intent_routes.rs",
      "purpose": "`/v1/owner/intents`: the owner states an intent in his own words (FIX 8949)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -103779,7 +103799,7 @@
      "path": "src/api/owner_routes/model_setting_routes.rs",
      "purpose": "`/v1/owner/settings/models`: the owner's model settings",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -103849,7 +103869,7 @@
      "path": "src/api/owner_routes/peer_confidence_routes.rs",
      "purpose": "`/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -103859,7 +103879,17 @@
      "path": "src/api/owner_routes/proactivity_routes.rs",
      "purpose": "`/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/proactivity_routes/schema.rs",
+     "purpose": "The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -103879,7 +103909,7 @@
      "path": "src/api/owner_routes/recovery_kit_routes.rs",
      "purpose": "`/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -103940,6 +103970,16 @@
      "purpose": "`/v1/owner/roots/requests`: the owner decides a change to one install's recovery root from any surface he is…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/schema.rs",
+     "purpose": "The OpenAPI schemas of the owner routes handled in [`super`] itself (FIX 11611): `POST…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -104019,7 +104059,7 @@
      "path": "src/api/owner_routes/shared_training_setup_routes.rs",
      "purpose": "`/v1/owner/conversation-learning/setup`: a shared vault's one training question, asked once at setup (OF-420…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -104129,7 +104169,7 @@
      "path": "src/api/owner_routes/wire_health_routes.rs",
      "purpose": "`/v1/owner/wire-health`: the health check past a threshold (OF-520)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -114749,7 +114789,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 610,
+     "files": 613,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115248,7 +115288,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1419,
+   "source_files": 1422,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -115311,7 +115351,7 @@
      "path": "src/codec.rs",
      "purpose": "Lift and lower codecs between this crate's UniFFI records and the engine types the shared…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -115457,6 +115497,7 @@
       "ActAnswerArtifactAskOutcome",
       "ActAnswerConnectorCallReply",
       "ActAnswerFanoutLaunchView",
+      "ActAnswerLiveVoiceToolReply",
       "ActAnswerRecordEraseOutcome",
       "ActAnswerSharedActExecuted",
       "ActAnswerSlideReviewOutcome",
@@ -116855,7 +116896,6 @@
       "EventOutcomeClaimValue",
       "EvidenceBasis",
       "EvidenceChange",
-      "EvidenceFloors",
       "EvidenceKind",
       "EvidenceObservation",
       "EvidenceRef",
@@ -119366,6 +119406,7 @@
       "TaskAskShort",
       "TaskAskSource",
       "TaskAskSpec",
+      "TaskAskStatus",
       "TaskAskSurface",
       "TaskAskTarget",
       "TaskAskWait",
@@ -119492,6 +119533,18 @@
       "TrustedContactTier",
       "TrustedContactTierRequest",
       "TrustedContactTierSet",
+      "TupleEntityIdEntityId",
+      "TupleEntityIdRevisionRef",
+      "TupleEntityIdString",
+      "TupleFloatFloat",
+      "TupleI64I64",
+      "TupleStringAxisScores",
+      "TupleStringStringU32",
+      "TupleStringU32",
+      "TupleTaskAskHandleTaskAskStatus",
+      "TupleU32U32",
+      "TupleU64I32",
+      "TupleU64U64",
       "TurnAction",
       "TurnActionRebindReceipt",
       "TurnActionRebindRequest",
@@ -119537,6 +119590,7 @@
       "Vad",
       "VadAnnotationSource",
       "VadBadge",
+      "VectorEvidenceFloors",
       "VectorPutReceipt",
       "VectorPutRequest",
       "VectorRefinement",
@@ -119741,8 +119795,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1058,
-      "struct": 3230
+      "enum": 1060,
+      "struct": 3242
      }
     },
     {

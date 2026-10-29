@@ -135,6 +135,17 @@ impl<'de> Deserialize<'de> for SwitchOwner {
     }
 }
 
+/// Its schema is its wire form: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
+impl schemars::JsonSchema for SwitchOwner {
+    fn schema_name() -> String {
+        "SwitchOwner".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
 }

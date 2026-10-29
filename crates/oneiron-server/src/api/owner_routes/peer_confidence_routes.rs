@@ -39,14 +39,14 @@ struct PeerScales {
     peers: Vec<PeerScale>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PeerScale {
     peer: String,
     scale: f32,
     set: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetPeerScale {
     /// The peer principal, as 32 hex.
@@ -54,6 +54,18 @@ struct SetPeerScale {
     /// Above 0, at most 1; none returns the peer to the default.
     #[serde(default)]
     scale: Option<f32>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/peer-confidence`'s body (FIX 11611):
+/// [`SetPeerScale`].
+pub(crate) fn set_peer_scale_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetPeerScale>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/peer-confidence`'s answer (FIX 11611):
+/// [`PeerScale`].
+pub(crate) fn peer_scale_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PeerScale>()
 }
 
 /// `GET /v1/owner/federation/peer-confidence`: every owner-set scale.
@@ -107,7 +119,7 @@ async fn set(
     Ok(Json(scale))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetGrantTravel {
     /// The federation grant, as 32 hex.
@@ -128,13 +140,25 @@ struct GrantTravelQuery {
     grant: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct GrantTravel {
     grant: String,
     travel: Option<TravelChoice>,
     set: Option<String>,
     /// The grant's revision, to present back as `seen`, as 64 hex.
     revision: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/grant-travel`'s body (FIX 11611):
+/// [`SetGrantTravel`].
+pub(crate) fn set_grant_travel_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetGrantTravel>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/grant-travel`'s answer (FIX 11611):
+/// [`GrantTravel`].
+pub(crate) fn grant_travel_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GrantTravel>()
 }
 
 /// `GET /v1/owner/federation/grant-travel?grant=<id>`: the travel choice

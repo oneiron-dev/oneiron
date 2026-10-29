@@ -81,7 +81,7 @@ impl IntoResponse for DagWriteError {
     params(("conversation_id" = String, Path)), request_body = DagAppendRequest,
     responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
         (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
-        (status = 409, description = "The conversation or its HEAD is not in a state this append takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The conversation or its HEAD is not in a state this append takes: the engine's INVALID_STATE, as the facade's MemoryError body. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = super::facade::MemoryErrorEnvelopeSchema),
         (status = 422, description = "A ref the write names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn append_core_record(
     auth: CoreAuth,
@@ -249,7 +249,8 @@ pub(crate) async fn get_core_dag(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/head",
     params(("conversation_id" = String, Path)), request_body = DagHeadRequest,
-    responses((status = 200, body = DagHeadResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagHeadResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope)))]
 pub(crate) async fn move_core_head(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -292,7 +293,8 @@ pub(crate) async fn resolve_core_scope(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/migrate-dag",
     params(("conversation_id" = String, Path)),
-    responses((status = 200, body = DagMigrationResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagMigrationResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope)))]
 pub(crate) async fn migrate_core_dag(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -309,7 +311,8 @@ pub(crate) async fn migrate_core_dag(
 
 #[utoipa::path(post, path = "/v1/core/turns/{turn_id}/sub-sessions",
     params(("turn_id" = String, Path)), request_body = DagSpawnRequest,
-    responses((status = 200, body = DagSpawnResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagSpawnResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope)))]
 pub(crate) async fn spawn_core_sub_session(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -376,7 +379,7 @@ fn declare_summary(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/summaries",
     params(("conversation_id" = String, Path)), request_body = DagSummaryRequest,
-    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
+    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, description = "Refused in the scope's current state; or a keyed retry whose first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
 pub(crate) async fn mint_core_scope_summary(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -450,7 +453,7 @@ pub(crate) async fn drill_core_header(
     params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagAppendRequest,
     responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
         (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
-        (status = 409, description = "The thread or its conversation is not in a state this reply takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The thread or its conversation is not in a state this reply takes: the engine's INVALID_STATE, as the facade's MemoryError body. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = super::facade::MemoryErrorEnvelopeSchema),
         (status = 422, description = "A ref the reply names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn reply_in_thread(
     auth: CoreAuth,
@@ -525,7 +528,7 @@ pub(crate) async fn get_thread(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
     params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagThreadSummaryRequest,
-    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
+    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
 pub(crate) async fn summarize_thread(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -659,7 +662,7 @@ fn reaction_records(
 #[utoipa::path(post, path = "/v1/core/messages/{message}/reactions",
     params(("message" = String, Path)), request_body = ReactionRequest,
     responses((status = 200, body = ReactionResponse), (status = 400, body = ApiErrorEnvelope),
-        (status = 403, body = ApiErrorEnvelope)))]
+        (status = 403, body = ApiErrorEnvelope), (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope)))]
 pub(crate) async fn react_core_message(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
