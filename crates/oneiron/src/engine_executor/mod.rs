@@ -50,7 +50,7 @@ pub(crate) use self::store::{
     is_result_output_path, result_handle_json, store_result_output_path,
 };
 pub use self::types::{
-    ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
+    CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
     ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig,
     EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult,
     EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY, JsCodeModeHost,
