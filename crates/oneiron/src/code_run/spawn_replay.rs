@@ -428,14 +428,17 @@ impl CodeRunBridgeCall {
     /// is built, encoded, decoded or replayed, before its request can match.
     /// Targets name a spawn's seats; an erased ask and a prior id belong to
     /// a spawn that answers `TargetErased` (or a checkpoint image's retired
-    /// stub of one), and such a spawn keeps no live ask. A live spawn's row,
-    /// whatever it asked and answered, is never refused here.
+    /// stub of one), and such a spawn keeps no live ask. An undispatched
+    /// barrier keeps its content-free marker only beside durable wait or
+    /// failure. A live spawn's row, whatever it asked and answered, is never
+    /// refused here.
     ///
     /// # Errors
     ///
     /// A row no host records: targets on another effect, an ask that is
-    /// neither text, nil nor the erased marker, an erased ask or prior id
-    /// beside a live answer, or a live ask beside `TargetErased`.
+    /// not text, nil or a typed marker, an erased ask or prior id beside a
+    /// live answer, a live ask beside `TargetErased`, or a barrier beside
+    /// another outcome.
     pub(super) fn validate_spawn_coherence(&self) -> Result<()> {
         if self.effect != SelfEffect::AgentsSpawn {
             if self.spawn_targets.is_empty() {
@@ -454,10 +457,11 @@ impl CodeRunBridgeCall {
         let live = ask.is_some_and(Value::is_str);
         if !erased && !barrier && !live && ask.is_some_and(|ask| !ask.is_nil()) {
             return Err(invalid_code_run_replay(
-                "spawn ask is neither an ask nor its erased marker",
+                "spawn ask is not text, nil, or a typed marker",
             ));
         }
-        let answer = match decode_self_dispatch_outcome(&self.outcome)? {
+        let outcome = decode_self_dispatch_outcome(&self.outcome)?;
+        let answer = match &outcome {
             SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
                 SpawnAnswer::Erased
             }
@@ -466,6 +470,17 @@ impl CodeRunBridgeCall {
             }
             _ => SpawnAnswer::Live,
         };
+        if barrier
+            && (answer != SpawnAnswer::Live
+                || !matches!(
+                    outcome,
+                    SelfDispatchOutcome::DurableWait(_) | SelfDispatchOutcome::Failed(_)
+                ))
+        {
+            return Err(invalid_code_run_replay(
+                "a spawn barrier answers neither durable wait nor failure",
+            ));
+        }
         if (erased || self.spawn_targets.prior.is_some()) && answer == SpawnAnswer::Live {
             return Err(invalid_code_run_replay(
                 "an erased spawn carries a live answer",
