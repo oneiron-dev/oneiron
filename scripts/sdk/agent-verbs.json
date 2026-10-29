@@ -1023,6 +1023,19 @@
       "openapi": true
     },
     {
+      "name": "self.billing.account.file",
+      "description": "Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only.",
+      "input": "crate::llm::run_admission::BillingAccountFiling",
+      "output": "Option<crate::llm::run_admission::FiledBillingAccount>",
+      "call": "crate::llm::run_admission::file_self_billing_account(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.budgets.lease.open",
       "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit.",
       "input": "crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest",

@@ -226,6 +226,9 @@ impl OneironClient {
                 "self.budget.land" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::PartialResultHold,
                 >(client, verb, &input),
+                "self.billing.account.file" => remote_agent_verb_output::<
+                    Option<oneiron::llm::run_admission::FiledBillingAccount>,
+                >(client, verb, &input),
                 "vault.budgets.lease.open" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::budget_doors::SpendLeaseView,
                 >(client, verb, &input),
@@ -4400,6 +4403,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.budget.land", value)
+    }
+    pub fn self_billing_account_file(
+        &self,
+        input: &oneiron::llm::run_admission::BillingAccountFiling,
+    ) -> Result<Option<oneiron::llm::run_admission::FiledBillingAccount>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.billing.account.file", value)
     }
     pub fn vault_budgets_lease_open(
         &self,

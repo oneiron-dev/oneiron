@@ -89,16 +89,25 @@ impl fmt::Display for PayerFault {
 /// The host's PERSON-to-billing-account map, the one hook (CALLS, FIX 805
 /// resolver). A live Owner of the vault bills the vault's own account, the
 /// one owner spend bills: that is the Owner's own account, not a fallback.
-/// Neither canon nor a root's payer consent maps any other PERSON to an
-/// account, so their room-paid calls hold on a payer-needed ask until a host
-/// maps them here. An owner check that fails to read maps none, so the call
+/// Any other PERSON bills the account they filed as their own
+/// (`self.billing.account.file`, FIX 3332); a PERSON who filed none holds on
+/// a payer-needed ask, as before. A read that fails maps none, so the call
 /// holds rather than bills the vault unasked.
 fn billing_account(vault: &Vault, person: EntityId) -> Option<PayerAccount> {
     match vault.is_live_owner_person(&person) {
-        Ok(true) => Some(PayerAccount::VaultOwner),
-        Ok(false) => None,
+        Ok(true) => return Some(PayerAccount::VaultOwner),
+        Ok(false) => {}
         Err(error) => {
             tracing::warn!(%error, "a payer's owner standing could not be read");
+            return None;
+        }
+    }
+    match vault.own_billing_account(&person) {
+        Ok(filed) => filed.map(|filed| PayerAccount::Person {
+            account: filed.account,
+        }),
+        Err(error) => {
+            tracing::warn!(%error, "a payer's own billing account could not be read");
             None
         }
     }

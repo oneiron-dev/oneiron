@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1166 facade rows, 4192 declarations.
-Inputs: 1099 of 1166 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1039 of 1166 fully typed, 127 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1167 facade rows, 4194 declarations.
+Inputs: 1100 of 1167 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1167 fully typed, 127 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -2251,6 +2251,11 @@ class BudgetLandRequest(TypedDict):
     marker: str
     artifact_ref: NotRequired[str | None]
     reason: str
+class BillingAccountFiling(TypedDict):
+    account: str
+class FiledBillingAccount(TypedDict):
+    account: str
+    filed_at: int
 class OpenSpendLeaseRequest(TypedDict):
     launch: str
     cap_units: int

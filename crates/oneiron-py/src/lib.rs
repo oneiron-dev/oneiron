@@ -798,6 +798,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_billing_account_file(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.billing.account.file")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.billing.account.file", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_budgets_lease_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.budgets.lease.open")?;
         let output = py

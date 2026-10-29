@@ -1749,6 +1749,28 @@ async fn self_budget_land(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_billing_account_file(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.billing.account.file",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_budgets_lease_open(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37038,6 +37060,7 @@ pub(crate) async fn call_verb(
         "vault.fanout.launch" => vault_fanout_launch(server, call, input).await,
         "self.budget" => self_budget(server, call, input).await,
         "self.budget.land" => self_budget_land(server, call, input).await,
+        "self.billing.account.file" => self_billing_account_file(server, call, input).await,
         "vault.budgets.lease.open" => vault_budgets_lease_open(server, call, input).await,
         "vault.budgets.lease" => vault_budgets_lease(server, call, input).await,
         "vault.budgets.lease.top_up" => vault_budgets_lease_top_up(server, call, input).await,

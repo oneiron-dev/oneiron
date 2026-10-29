@@ -66,6 +66,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.fanout.launch", post(facade_route))
         .route("/self.budget", post(facade_route))
         .route("/self.budget.land", post(facade_route))
+        .route("/self.billing.account.file", post(facade_route))
         .route("/vault.budgets.lease.open", post(facade_route))
         .route("/vault.budgets.lease", post(facade_route))
         .route("/vault.budgets.lease.top_up", post(facade_route))

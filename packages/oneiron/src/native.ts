@@ -95,6 +95,7 @@ vaultFanoutSlots(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 selfBudget(input: unknown): unknown
 selfBudgetLand(input: unknown): unknown
+selfBillingAccountFile(input: unknown): unknown
 vaultBudgetsLeaseOpen(input: unknown): unknown
 vaultBudgetsLease(input: unknown): unknown
 vaultBudgetsLeaseTopUp(input: unknown): unknown

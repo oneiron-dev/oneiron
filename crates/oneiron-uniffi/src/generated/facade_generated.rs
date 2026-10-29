@@ -303,6 +303,11 @@ export_facade! {
     let output = client.self_budget_land(&input)?;
     crate::codec::lift_record("self.budget.land", &output)
 };
+"self.billing.account.file" => fn self_billing_account_file(&self, input: BillingAccountFiling) -> Option<FiledBillingAccount> = |client| {
+    let input: oneiron::llm::run_admission::BillingAccountFiling = crate::codec::lower_record("self.billing.account.file", input)?;
+    let output = client.self_billing_account_file(&input)?;
+    crate::codec::lift_record("self.billing.account.file", &output)
+};
 "vault.budgets.lease.open" => fn vault_budgets_lease_open(&self, input: OpenSpendLeaseRequest) -> SpendLeaseView = |client| {
     let input: oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest = crate::codec::lower_record("vault.budgets.lease.open", input)?;
     let output = client.vault_budgets_lease_open(&input)?;

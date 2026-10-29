@@ -363,6 +363,10 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
+    /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
+    /// 3332). Key: id16 (PERSON).
+    PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
+        => crate::llm::run_admission::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
     PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3

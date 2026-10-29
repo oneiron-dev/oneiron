@@ -3358,6 +3358,8 @@ class Oneiron:
         @property
         def budget(self) -> "Oneiron._SelfBudgetVerbs": ...
         @property
+        def billing(self) -> "Oneiron._SelfBillingVerbs": ...
+        @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
@@ -3460,6 +3462,12 @@ class Oneiron:
             """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
         def land(self, spec: Facade.BudgetLandRequest) -> Facade.PartialResultHold:
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
+    class _SelfBillingVerbs:
+        @property
+        def account(self) -> "Oneiron._SelfBillingAccountVerbs": ...
+    class _SelfBillingAccountVerbs:
+        def file(self, spec: Facade.BillingAccountFiling) -> Facade.FiledBillingAccount | None:
+            """Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."""
     class _SelfCredentialVerbs:
         def attenuate(self, spec: Facade.CredentialAttenuationRequest) -> Facade.CredentialAttenuated:
             """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""

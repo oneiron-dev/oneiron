@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4252 declarations.
-// Replies: 1087 fully typed, 129 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4254 declarations.
+// Replies: 1088 fully typed, 129 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: none.
 declare namespace Sdk {
@@ -425,6 +425,8 @@ declare namespace Sdk {
   type PartialResultHold = { root_attempt: AttemptId; state: BudgetHoldState; warned?: AttemptId[]; held?: HeldAttempt[]; partial_result_refs?: string[]; plan?: TeamPlan | null; reason: string; warned_at?: number | null; held_at?: number | null; notice?: BudgetHoldNotice | null; resume_ready?: boolean; resumed_at?: number | null; resumed_by?: string | null };
   type AgentBudgetView = { attempt: string; lease?: SpendLeaseView | null; landing_reserve: AttemptLandingReserve; ordinary_limit_units: number; landing?: AttemptLanding | null; budget_notices: AttemptCancelReceipt[]; checkpoint?: AttemptResumePoint | null; hold?: PartialResultHold | null };
   type BudgetLandRequest = { attempt: string; run: string; lease_owner: string; attempt_count: number; marker: string; artifact_ref?: string | null; reason: string };
+  type BillingAccountFiling = { account: string };
+  type FiledBillingAccount = { account: string; filed_at: number };
   type OpenSpendLeaseRequest = { launch: string; cap_units: number; unit: string; shown_at_ms: number };
   type SpendScopeRequest = { scope: string };
   type TopUpSpendLeaseRequest = { scope: string; expected_cap_units: number; cap_units: number; unit: string; shown_at_ms: number };
@@ -4467,6 +4469,12 @@ declare namespace self {
   };
   const agents: {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
+  };
+  const billing: {
+    account: {
+      /** Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only. */
+      file(input: Sdk.BillingAccountFiling): Promise<Sdk.FiledBillingAccount | null | StoredResult>;
+    };
   };
   const browser: {
     /** Runs one batched browser program for a subgoal; type, fill and expect take a secret by handle; a stop names its stop_cause; a blocked, empty or interstitial page is the cue to switch_engine to chromium and retry. */

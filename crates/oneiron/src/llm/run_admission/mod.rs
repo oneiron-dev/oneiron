@@ -20,6 +20,7 @@ mod job_maximum;
 mod media;
 mod media_job;
 mod permit;
+mod person_billing;
 mod receipt;
 mod resident;
 pub mod resident_doors;
@@ -44,6 +45,10 @@ pub use job_maximum::{
 };
 pub use media::{MediaGate, MediaStreamLease};
 pub use permit::RunPermit;
+pub(crate) use person_billing::erase_billing_account_actor_in_txn;
+pub use person_billing::{
+    BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
+};
 pub use receipt::{
     CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
     RunStreamUsage, RunTokenUsage, TeacherReport,

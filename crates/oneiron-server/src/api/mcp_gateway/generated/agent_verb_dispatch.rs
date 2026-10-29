@@ -185,6 +185,7 @@ fn mcp_agent_verb_input(
         "vault.fanout.launch" => a.spec.clone().ok_or_else(invalid),
         "self.budget" => a.spec.clone().ok_or_else(invalid),
         "self.budget.land" => a.spec.clone().ok_or_else(invalid),
+        "self.billing.account.file" => a.spec.clone().ok_or_else(invalid),
         "vault.budgets.lease.open" => a.spec.clone().ok_or_else(invalid),
         "vault.budgets.lease" => a.spec.clone().ok_or_else(invalid),
         "vault.budgets.lease.top_up" => a.spec.clone().ok_or_else(invalid),
@@ -1672,6 +1673,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.budget.land" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.billing.account.file" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.budgets.lease.open" => {
@@ -6056,6 +6060,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::agent_dispatch::budget_doors::BudgetLandRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_budget_land(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.billing.account.file" => {
+            let input: oneiron::llm::run_admission::BillingAccountFiling =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_billing_account_file(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

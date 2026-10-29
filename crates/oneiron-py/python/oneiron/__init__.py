@@ -5357,6 +5357,9 @@ class Oneiron:
         def budget(self) -> "Oneiron._SelfBudgetVerbs":
             return Oneiron._SelfBudgetVerbs(self._client)
         @property
+        def billing(self) -> "Oneiron._SelfBillingVerbs":
+            return Oneiron._SelfBillingVerbs(self._client)
+        @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs":
             return Oneiron._SelfCredentialVerbs(self._client)
         @property
@@ -5527,6 +5530,18 @@ class Oneiron:
         def land(self, spec):
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
             return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
+    class _SelfBillingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def account(self) -> "Oneiron._SelfBillingAccountVerbs":
+            return Oneiron._SelfBillingAccountVerbs(self._client)
+    class _SelfBillingAccountVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def file(self, spec):
+            """Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."""
+            return json.loads(_translate(lambda: self._client.self_billing_account_file(json.dumps(spec))))
     class _SelfCredentialVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

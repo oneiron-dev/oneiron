@@ -451,6 +451,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_billing_account_file(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.billing.account.file", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_budgets_lease_open(
         &self,
         input: serde_json::Value,

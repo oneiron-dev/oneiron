@@ -346,6 +346,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.billing.account.file",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::run_admission::BillingAccountFiling,
+                >(),
+            ),
+            (
                 "vault.budgets.lease.open",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
@@ -6746,6 +6752,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.fanout.slots",
     "self.budget",
     "self.budget.land",
+    "self.billing.account.file",
     "vault.budgets.lease.open",
     "vault.budgets.lease",
     "vault.budgets.lease.top_up",
@@ -7614,6 +7621,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.budget.land" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::PartialResultHold,
+        >(),
+        "self.billing.account.file" => crate::code_run::vault_read::request_schema::<
+            Option<crate::llm::run_admission::FiledBillingAccount>,
         >(),
         "vault.budgets.lease.open" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::SpendLeaseView,
@@ -10480,6 +10490,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.budget.land" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.billing.account.file" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18395,6 +18412,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::agent_dispatch::budget_doors::BudgetLandRequest =
                 decode(value.clone())?;
         }
+        "self.billing.account.file" => {
+            let _input: crate::llm::run_admission::BillingAccountFiling = decode(value.clone())?;
+        }
         "vault.budgets.lease.open" => {
             let _input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest =
                 decode(value.clone())?;
@@ -22392,6 +22412,7 @@ pub fn invoke(
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
         "self.budget" => encode(self_budget(memory, decode(value)?)?),
         "self.budget.land" => encode(self_budget_land(memory, decode(value)?)?),
+        "self.billing.account.file" => encode(self_billing_account_file(memory, decode(value)?)?),
         "vault.budgets.lease.open" => encode(vault_budgets_lease_open(memory, decode(value)?)?),
         "vault.budgets.lease" => encode(vault_budgets_lease(memory, decode(value)?)?),
         "vault.budgets.lease.top_up" => encode(vault_budgets_lease_top_up(memory, decode(value)?)?),
@@ -25254,6 +25275,12 @@ pub fn self_budget_land(
     input: crate::agent_dispatch::budget_doors::BudgetLandRequest,
 ) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
     crate::agent_dispatch::budget_doors::land_for_budget(memory, &input)
+}
+pub fn self_billing_account_file(
+    memory: &Memory<'_>,
+    input: crate::llm::run_admission::BillingAccountFiling,
+) -> MemoryResult<Option<crate::llm::run_admission::FiledBillingAccount>> {
+    crate::llm::run_admission::file_self_billing_account(memory, &input)
 }
 pub fn vault_budgets_lease_open(
     memory: &Memory<'_>,

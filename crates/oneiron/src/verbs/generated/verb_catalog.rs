@@ -65,6 +65,7 @@ pub enum AgentVerb {
     VaultFanoutLaunch,
     SelfBudget,
     SelfBudgetLand,
+    SelfBillingAccountFile,
     VaultBudgetsLeaseOpen,
     VaultBudgetsLease,
     VaultBudgetsLeaseTopUp,
@@ -1256,6 +1257,7 @@ impl AgentVerb {
         Self::VaultFanoutLaunch,
         Self::SelfBudget,
         Self::SelfBudgetLand,
+        Self::SelfBillingAccountFile,
         Self::VaultBudgetsLeaseOpen,
         Self::VaultBudgetsLease,
         Self::VaultBudgetsLeaseTopUp,
@@ -2450,6 +2452,7 @@ impl AgentVerb {
             Self::VaultFanoutLaunch => "vault.fanout.launch",
             Self::SelfBudget => "self.budget",
             Self::SelfBudgetLand => "self.budget.land",
+            Self::SelfBillingAccountFile => "self.billing.account.file",
             Self::VaultBudgetsLeaseOpen => "vault.budgets.lease.open",
             Self::VaultBudgetsLease => "vault.budgets.lease",
             Self::VaultBudgetsLeaseTopUp => "vault.budgets.lease.top_up",
@@ -3671,6 +3674,7 @@ impl AgentVerb {
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLease
                 | Self::VaultBudgetsLeaseTopUp
@@ -4891,6 +4895,7 @@ impl AgentVerb {
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLease
                 | Self::VaultBudgetsLeaseTopUp
@@ -6252,6 +6257,7 @@ impl AgentVerb {
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLease
                 | Self::VaultBudgetsLeaseTopUp
@@ -7336,6 +7342,7 @@ impl AgentVerb {
                 | Self::TasksWave
                 | Self::VaultFanoutSpawn
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLeaseTopUp
                 | Self::VaultBudgetsHoldResume
@@ -8115,6 +8122,7 @@ impl AgentVerb {
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
+            Self::SelfBillingAccountFile => &["spec"],
             Self::VaultBudgetsLeaseOpen => &["spec"],
             Self::VaultBudgetsLease => &["spec"],
             Self::VaultBudgetsLeaseTopUp => &["spec"],
@@ -9307,6 +9315,7 @@ impl AgentVerb {
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
+            Self::SelfBillingAccountFile => &["spec"],
             Self::VaultBudgetsLeaseOpen => &["spec"],
             Self::VaultBudgetsLease => &["spec"],
             Self::VaultBudgetsLeaseTopUp => &["spec"],
@@ -10615,6 +10624,9 @@ impl AgentVerb {
             }
             Self::SelfBudgetLand => {
                 "The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."
+            }
+            Self::SelfBillingAccountFile => {
+                "Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."
             }
             Self::VaultBudgetsLeaseOpen => {
                 "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."
