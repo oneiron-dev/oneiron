@@ -45,7 +45,9 @@ pub(crate) struct Row {
     pub(crate) struck: bool,
 }
 
-#[derive(Debug, Deserialize)]
+/// `POST /v1/owner/persona/export`'s body; the OpenAPI document publishes
+/// its schema (FIX 10289).
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExportRequest {
     /// The person the card is about.
@@ -66,7 +68,7 @@ pub(crate) struct ExportRequest {
 }
 
 /// The exported card.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Exported {
     /// The export record; its Share receipt carries the compile stamp.
     pub(crate) export_id: String,

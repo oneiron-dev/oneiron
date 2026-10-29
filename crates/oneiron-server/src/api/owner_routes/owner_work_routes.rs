@@ -39,6 +39,7 @@ use oneiron::world_keys::{
     BundleHomeWarning, OwnerWorkDiagnostics, OwnerWorkReceipt, OwnerWorkUnassigned,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use super::machine_routes::{act_surface, parse_revision};
 use super::{OwnerReply, blocking, owner};
@@ -131,11 +132,71 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
 
 /// `POST /v1/owner/bundles/publications`'s body: the linked install that is
 /// to keep the sealed bundle. Ids only.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct BundlePublicationRequest {
     /// The home install, 32 hex.
     home: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/bundles/publications`'s body (FIX
+/// 4782): [`BundlePublicationRequest`].
+pub(crate) fn bundle_publication_body_schema() -> Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<BundlePublicationRequest>()
+}
+
+/// The OpenAPI schema of [`OwnerWorkView`], as every route that records
+/// owner work answers it (FIX 4782). The receipt's engine types carry no
+/// schema derive, so its fields are spelled here, beside the view; each
+/// closed value names its current words without fixing the set.
+pub(crate) fn owner_work_view_schema() -> Value {
+    let text = |what: &str| json!({"type": "string", "description": what});
+    json!({
+        "type": "object",
+        "description": "One owner work request's receipt as a surface shows it: ids only, with the engine's words for where it stands.",
+        "required": ["kind", "target", "status", "status_text"],
+        "properties": {
+            "request": {
+                "type": ["string", "null"],
+                "description": "The request's signed authority-log entry, 64 hex: read it again at GET /v1/owner/owner-work/{request}. Null when no install could be named and nothing was recorded."
+            },
+            "kind": text("What the work is: world_key, root, publish_bundle or custody."),
+            "target": text("What the work is for, 32 hex: the world, the install a root change is for, the home a bundle publication is for, or a secret's custody record."),
+            "executor": {
+                "type": ["string", "null"],
+                "description": "The one install that is to do it, 32 hex; null with no request."
+            },
+            "status": {
+                "type": "object",
+                "description": "Where it stands.",
+                "required": ["state"],
+                "properties": {
+                    "state": text("recorded_awaiting_holder, enacted, refused, cancelled or superseded."),
+                    "reason": text("With refused: why its holder refused it, as owner_not_live or home_not_linked.")
+                }
+            },
+            "unassigned": text("Why no install was named, when nothing was recorded: as no_bundle_holder or target_not_linked."),
+            "manifest_check": {
+                "type": "object",
+                "description": "For a custody register, what its holder checked the record against, as its signed result says."
+            },
+            "home_warning": text("For a bundle publication, why its home may keep no sealed copy: home_does_not_keep_sealed_bundles or home_profile_unknown. It decides nothing."),
+            "cancel": {
+                "type": "object",
+                "description": "For a root request the owner cancelled: each cancel's entry and where it stands.",
+                "properties": {
+                    "entries": {"type": "array", "items": {"type": "string"}},
+                    "state": text("cancelled, already_enacted or already_refused.")
+                }
+            },
+            "manifest_text": text("The words for manifest_check."),
+            "status_text": text("The words for status: as \"recorded, awaiting a holder\"."),
+            "unassigned_text": text("The words for unassigned."),
+            "advice_text": text("What the owner may do next, when a refusal names it."),
+            "home_warning_text": text("The words for home_warning."),
+            "cancel_text": text("The words for cancel's state.")
+        }
+    })
 }
 
 /// One request's executor diagnostics as a surface shows them: ids and
