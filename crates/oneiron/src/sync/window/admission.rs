@@ -516,7 +516,8 @@ fn check_edge_residence(
             .map_err(read_fault)?;
         let live = map_get_bytes(&entities, &id.to_hex());
         let old = historical.get(id);
-        let raw = if let Some(stored) = stored.as_deref().map(Vec::as_slice) {
+        // `own`: the bytes are this vault's stored row, not the peer's carrier.
+        let (raw, own) = if let Some(stored) = stored.as_deref().map(Vec::as_slice) {
             let header = EntityMetadataHeader::parse(stored)
                 .ok_or_else(|| read_fault(Error::CorruptedIndex("entity metadata")))?;
             if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
@@ -527,15 +528,15 @@ fn check_edge_residence(
                 if old_header.learned_at != header.learned_at {
                     return Err(denied());
                 }
-                old.as_slice()
+                (old.as_slice(), false)
             } else {
-                stored
+                (stored, true)
             }
         } else if let Some(live) = live.as_deref() {
-            live
+            (live, false)
         } else {
             match old {
-                Some(raw) => raw.as_slice(),
+                Some(raw) => (raw.as_slice(), false),
                 None => {
                     let Some((staged_key, raw)) = staged.get(id) else {
                         return Err(Error::InvalidConfig("edge endpoint unresolved".into()));
@@ -545,12 +546,19 @@ fn check_edge_residence(
                     {
                         return Err(denied());
                     }
-                    raw.as_slice()
+                    (raw.as_slice(), false)
                 }
             }
         };
         let header = EntityMetadataHeader::parse(raw).ok_or_else(denied)?;
-        worlds[index] = Some(crate::sync::types::entity_world(raw)?);
+        // A stored row of this vault whose world does not decode is this
+        // vault's own read fault (FIX 5924); the peer's carrier is refused.
+        let world = crate::sync::types::entity_world(raw);
+        worlds[index] = Some(if own {
+            world.map_err(read_fault)?
+        } else {
+            world.map_err(|_| denied())?
+        });
         learned[index] = Some(header.learned_at);
     }
     if !crate::sync::types::edge_worlds_match(worlds[0].flatten(), worlds[1].flatten(), key) {
