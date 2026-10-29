@@ -709,7 +709,7 @@ class DiagnosticsListRequest(TypedDict):
     evidence_ref: NotRequired[str | None]
     limit: int
 class ReadScope(TypedDict):
-    entity_types: NotRequired[list[int] | None]
+    entity_types: NotRequired[list[str] | None]
     max_sensitivity_band: int
     include_stale: bool
     min_confidence: float
