@@ -917,6 +917,8 @@ export class Oneiron {
       arm: (input: Facade.ArmTurnProgram): Facade.TurnProgramRegistration => this.#call(() => this.#client.vaultTurnProgramsArm(input) as Facade.TurnProgramRegistration),
       /** Disarms one of the caller's own armed turn programs; true when it was armed. */
       disarm: (input: Facade.DisarmTurnProgram): boolean => this.#call(() => this.#client.vaultTurnProgramsDisarm(input) as boolean),
+      /** Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes. */
+      rebind: (input: Facade.TurnProgramRebindRequest): Facade.TurnProgramRebindReceipt => this.#call(() => this.#client.vaultTurnProgramsRebind(input) as Facade.TurnProgramRebindReceipt),
       /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
       admission: (input: Facade.TurnProgramAdmissionRequest): Facade.TurnProgramAdmissionView | null => this.#call(() => this.#client.vaultTurnProgramsAdmission(input) as Facade.TurnProgramAdmissionView | null),
     },
@@ -3156,6 +3158,8 @@ export class Oneiron {
     grants: {
       /** Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it. */
       ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
+      /** Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing. */
+      asked: (input: Facade.GrantAskedRequest): Facade.GrantAskedPage => this.#call(() => this.#client.selfGrantsAsked(input) as Facade.GrantAskedPage),
       /** The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner. */
       answer: (input: Facade.GrantAnswerRequest): Facade.GrantAnswered => this.#call(() => this.#client.selfGrantsAnswer(input) as Facade.GrantAnswered),
     },
