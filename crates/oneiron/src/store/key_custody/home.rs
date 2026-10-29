@@ -33,8 +33,8 @@ use super::head::head_position;
 use super::log::CustodyPosition;
 use super::platform;
 use super::protocol::{
-    ACK_VERSION, AckOperation, AckPosition, AckRecord, EvidenceKind, Lineage, ResidenceCommit,
-    TargetSpec, hex, operation_id,
+    ACK_VERSION, AckOperation, AckPosition, AckRecord, DeletionEvidence, DrainAck, DrainTicket,
+    EvidenceKind, Lineage, ResidenceCommit, TargetSpec, hex, operation_id,
 };
 
 const HOME: &str = "custody-residence";
@@ -202,5 +202,77 @@ impl Store {
             rmp_serde::to_vec_named(&ack).map_err(|_| refused("its ack does not encode"))?;
         replace_file(&acks, &ack_name, &encoded)?;
         Ok(ack)
+    }
+
+    /// Drains the lineage `ticket` names for the owner's drain (FIX 5843):
+    /// its head, every stage and every temporary go, synced, and a fresh
+    /// listing counts the heads left. The keyless log stays. Returns this
+    /// member's sweep ack as `residence:<home hex>`. A lineage with nothing
+    /// stored drains to the same ack.
+    pub(crate) fn residence_custody_drain(
+        &self,
+        ticket: &DrainTicket,
+        home: EntityId,
+    ) -> Result<DrainAck> {
+        let lineage = Lineage::of(&ticket.position);
+        let root = self.residence_home()?;
+        // The commit's own lineage lock: no frame or part lands while the
+        // drain sweeps (FIX 6415).
+        let _lock = Self::lineage_lock(&root, lineage)?;
+        let dir = FolderTarget::at(root).dir(lineage);
+        let mut removed = 0_u64;
+        if dir.is_dir() {
+            // Every stage and temporary, as the folder drain sweeps them.
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let Some(text) = name.to_str() else {
+                    continue;
+                };
+                let stage = text.starts_with(STAGE_PREFIX);
+                if !stage && !(text.starts_with(".t") && text.ends_with(".pending")) {
+                    continue;
+                }
+                match std::fs::remove_file(entry.path()) {
+                    Ok(()) => removed = removed.saturating_add(1),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(err.into()),
+                }
+            }
+            platform::sync_dir(&dir)?;
+            match std::fs::remove_file(dir.join("head")) {
+                Ok(()) => removed = removed.saturating_add(1),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+            platform::sync_dir(&dir)?;
+        }
+        let mut names: Vec<std::ffi::OsString> = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<std::io::Result<_>>()?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(err) => return Err(err.into()),
+        };
+        names.sort();
+        let mut inventory = blake3::Hasher::new();
+        let mut heads = 0_u64;
+        for name in &names {
+            let text = name.to_string_lossy();
+            if text == "head" || text.starts_with(STAGE_PREFIX) || text.starts_with(".t") {
+                heads = heads.saturating_add(1);
+            }
+            inventory.update(&(text.len() as u64).to_be_bytes());
+            inventory.update(text.as_bytes());
+        }
+        ticket.ack(
+            &TargetSpec::residence(home),
+            DeletionEvidence {
+                kind: EvidenceKind::ResidenceSweep,
+                superseded_removed: removed,
+                remaining_heads: heads,
+                inventory_digest: hex(inventory.finalize().as_bytes()),
+            },
+        )
     }
 }
