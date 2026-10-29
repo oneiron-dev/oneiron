@@ -28361,6 +28361,36 @@ async fn ai_video_cancel(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn ai_ask_image(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "ai.ask_image")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.ask_image", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.ask_image", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_ask_image(server, auth, facade_door_input(&mut hooks)?).await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn ai_verdict(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38696,6 +38726,7 @@ pub(crate) async fn call_verb(
         "ai.video" => ai_video(server, call, input).await,
         "ai.video.poll" => ai_video_poll(server, call, input).await,
         "ai.video.cancel" => ai_video_cancel(server, call, input).await,
+        "ai.ask_image" => ai_ask_image(server, call, input).await,
         "ai.verdict" => ai_verdict(server, call, input).await,
         "vault.graph.ask" => vault_graph_ask(server, call, input).await,
         "vault.graph.admit" => vault_graph_admit(server, call, input).await,

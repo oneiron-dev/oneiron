@@ -191,6 +191,16 @@ export type WitnessTurn = {
   occurredAt?: number
   /** A new project room thread root's audience seed (32-hex ids); edited later through vault.rooms.thread_audience. */
   threadAudience?: string[]
+  /** The records this reply names as cited or created, judged by the engine under the writer's own read; omitted means it asserts nothing. */
+  assertions?: WitnessAssertions
+}
+
+/** The records one witnessed reply names. A supplied assertion is the engine's input, never proof of creation: a `created` record whose birth does not prove the writer made it is recorded `creation_not_proven`. */
+export type WitnessAssertions = {
+  /** Records the reply cites. */
+  cited: RecordRef[]
+  /** Records the reply reports it created. */
+  created: RecordRef[]
 }
 
 /** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
@@ -581,6 +591,8 @@ class WitnessTurn(TypedDict):
     occurred_at: NotRequired[int]
     # A new project room thread root's audience seed; edited later through vault.rooms.thread_audience.
     thread_audience: NotRequired[list[str] | None]
+    # The records this reply names as cited or created, judged by the engine under the writer's own read; omitted asserts nothing.
+    assertions: NotRequired[Facade.WitnessAssertions]
 
 class WitnessReceipt(TypedDict):
     turn_short_id: str
@@ -4146,6 +4158,8 @@ class Oneiron:
             """One embedding vector per input text, from the host's embedding model."""
         @property
         def video(self) -> "Oneiron._AiVideoVerbs": ...
+        def ask_image(self, spec: Facade.AskImageRequest) -> Facade.AskImageAnswer:
+            """One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt."""
         def verdict(self, spec: Facade.AiVerdictRequest) -> Facade.AiVerdict:
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
     class _AiChatVerbs:

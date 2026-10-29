@@ -4491,6 +4491,11 @@ export_facade! {
     let output = client.ai_video_cancel(&input)?;
     crate::codec::lift_record("ai.video.cancel", &output)
 };
+"ai.ask_image" => fn ai_ask_image(&self, input: AskImageRequest) -> AskImageAnswer = |client| {
+    let input: oneiron::task_verb::sdk::AskImageRequest = crate::codec::lower_record("ai.ask_image", input)?;
+    let output = client.ai_ask_image(&input)?;
+    crate::codec::lift_record("ai.ask_image", &output)
+};
 "ai.verdict" => fn ai_verdict(&self, input: AiVerdictRequest) -> AiVerdict = |client| {
     let input: oneiron::task_verb::sdk::AiVerdictRequest = crate::codec::lower_record("ai.verdict", input)?;
     let output = client.ai_verdict(&input)?;

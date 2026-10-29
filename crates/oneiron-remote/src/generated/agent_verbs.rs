@@ -2783,6 +2783,11 @@ impl OneironClient {
                 "ai.video.cancel" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AiVideoCancelled,
                 >(client, verb, &input),
+                "ai.ask_image" => {
+                    remote_agent_verb_output::<oneiron::task_verb::sdk::AskImageAnswer>(
+                        client, verb, &input,
+                    )
+                }
                 "ai.verdict" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiVerdict>(
                     client, verb, &input,
                 ),
@@ -14679,6 +14684,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.video.cancel", value)
+    }
+    pub fn ai_ask_image(
+        &self,
+        input: &oneiron::task_verb::sdk::AskImageRequest,
+    ) -> Result<oneiron::task_verb::sdk::AskImageAnswer, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.ask_image", value)
     }
     pub fn ai_verdict(
         &self,

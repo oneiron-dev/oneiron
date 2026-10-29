@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1167 facade rows, 4199 declarations.
-Inputs: 1100 of 1167 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1043 of 1167 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 110; unread shapes: 0.
+Census: 1163 facade rows, 4183 declarations.
+Inputs: 1098 of 1163 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1163 fully typed, 123 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -16456,6 +16456,25 @@ class AiVideoJobFailed(TypedDict):
 AiVideoJob = AiVideoJobQueued | AiVideoJobRunning | AiVideoJobDone | AiVideoJobFailed
 class AiVideoCancelled(TypedDict):
     job: str
+class AskImageRequest(TypedDict):
+    handle: str
+    question: str
+    region: NotRequired[PixelRegion | None]
+    contract: NotRequired[AnswerContract | None]
+class AskImageReceipt(TypedDict):
+    pull: str
+    run: str
+    model: ModelId
+    locality: ModelLocality
+    usage: NotRequired[LlmUsage | None]
+    finish_reason: NotRequired[FinishReason | None]
+class AskImageAnswer(TypedDict):
+    asset_ref: str
+    text: NotRequired[str | None]
+    answer: NotRequired[DecisionAnswer | None]
+    typed: NotRequired[TypedDecision | None]
+    presence: NotRequired[TypedDecision | None]
+    receipt: AskImageReceipt
 AiVerdictReversibility = Literal["reversible_read", "outbound_effect"]
 class AiVerdictRequest(TypedDict):
     question: str

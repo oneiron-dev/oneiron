@@ -932,6 +932,7 @@ aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
 aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
+aiAskImage(input: unknown): unknown
 aiVerdict(input: unknown): unknown
 vaultGraphAsk(input: unknown): unknown
 vaultGraphAdmit(input: unknown): unknown

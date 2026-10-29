@@ -1,7 +1,8 @@
 //! The host doors of the verb-table rows only a server's own state answers:
 //! the owner's `vault.packs.put`, `vault.hooks.replay` and
-//! `vault.authority.audit`, the `ai.*` model calls past text, and
-//! `ai.verdict` through the host's decision ladder. The
+//! `vault.authority.audit`, the `ai.*` model calls past text,
+//! `ai.ask_image` through the Local-vision seat, and `ai.verdict` through
+//! the host's decision ladder. The
 //! generated HTTP facade handler and the MCP dispatcher both call these, so
 //! a tool call, a code-mode call and an SDK call meet one admission.
 //!
@@ -22,6 +23,7 @@ mod media;
 mod packs;
 pub(super) mod support;
 mod verdict_hooks;
+mod vision;
 
 pub(super) use self::admission::*;
 pub(crate) use self::artifacts_audit::*;
@@ -31,6 +33,7 @@ pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
 pub(crate) use self::support::*;
 pub(crate) use self::verdict_hooks::*;
+pub(crate) use self::vision::*;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;

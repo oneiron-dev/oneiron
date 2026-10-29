@@ -902,6 +902,7 @@ pub enum AgentVerb {
     AiVideo,
     AiVideoPoll,
     AiVideoCancel,
+    AiAskImage,
     AiVerdict,
     VaultGraphAsk,
     VaultGraphAdmit,
@@ -2105,6 +2106,7 @@ impl AgentVerb {
         Self::AiVideo,
         Self::AiVideoPoll,
         Self::AiVideoCancel,
+        Self::AiAskImage,
         Self::AiVerdict,
         Self::VaultGraphAsk,
         Self::VaultGraphAdmit,
@@ -3335,6 +3337,7 @@ impl AgentVerb {
             Self::AiVideo => "ai.video",
             Self::AiVideoPoll => "ai.video.poll",
             Self::AiVideoCancel => "ai.video.cancel",
+            Self::AiAskImage => "ai.ask_image",
             Self::AiVerdict => "ai.verdict",
             Self::VaultGraphAsk => "vault.graph.ask",
             Self::VaultGraphAdmit => "vault.graph.admit",
@@ -4544,6 +4547,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::AiAskImage
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
                 | Self::VaultGraphAdmit
@@ -5776,6 +5780,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoPoll
                 | Self::AiVideoCancel
+                | Self::AiAskImage
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
                 | Self::VaultGraphAdmit
@@ -6223,6 +6228,7 @@ impl AgentVerb {
                 | Self::VaultRepoCheckoutBind
                 | Self::VaultRepoExport
                 | Self::VaultWorkflowsDispatchBound
+                | Self::AiAskImage
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
                 | Self::VaultCalendarPassportsHistory
@@ -9030,6 +9036,7 @@ impl AgentVerb {
             Self::AiVideo => &["spec"],
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
+            Self::AiAskImage => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
             Self::VaultGraphAdmit => &["spec"],
@@ -10234,6 +10241,7 @@ impl AgentVerb {
             Self::AiVideo => &["spec"],
             Self::AiVideoPoll => &["spec"],
             Self::AiVideoCancel => &["spec"],
+            Self::AiAskImage => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
             Self::VaultGraphAdmit => &["spec"],
@@ -13177,6 +13185,9 @@ impl AgentVerb {
                 "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
             }
             Self::AiVideoCancel => "Stops a video job at its provider.",
+            Self::AiAskImage => {
+                "One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt."
+            }
             Self::AiVerdict => {
                 "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."
             }
