@@ -319,6 +319,7 @@ fn merged_candidate(
     let mut chain: Vec<ConsolidationProvenanceHop> = Vec::new();
     let mut meet = ClaimSource::UserStated;
     let mut confidence = 0.0_f32;
+    let mut sources: Option<Vec<EntityId>> = Some(Vec::new());
     for member in members {
         combined = Some(combined.map_or_else(
             || member.evidence.clone(),
@@ -336,6 +337,7 @@ fn merged_candidate(
                 chain.push(*hop);
             }
         }
+        sources = crate::skill_optimize::union_source_rows([sources, member.sources.clone()]);
         meet = source_meet(meet, member.evidence_meet);
         confidence = confidence.max(0.5);
     }
@@ -401,6 +403,7 @@ fn merged_candidate(
         },
         evidence: combined,
         answers: Vec::new(),
+        sources,
     })
 }
 
