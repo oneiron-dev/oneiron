@@ -228,7 +228,7 @@ async fn open(
         crate::commands::credential_file::PairedCredentialFile::read(&credential_file)?;
     // Each mesh dial targets the home the last committed election routes to
     // (FIX 3131); a move of it rebuilds the link, as a renewal does.
-    let topology = home_node.map(|node| home_topology(node, &url));
+    let topology = home_node.map(|node| route::home_topology(node, home, &url));
     let routes = || {
         topology
             .as_ref()
@@ -665,21 +665,6 @@ fn declare_candidacy(
         );
     }
     Ok(())
-}
-
-/// The connection's home-node topology: the one named home, as this
-/// device's own candidate beside the vault's authorized candidates, reached
-/// at `url`, so residence reads go there while it is the elected home. It
-/// is the sync URL itself, so residence reads ride the same mesh dialer.
-#[cfg(feature = "mesh")]
-fn home_topology(node: u64, url: &str) -> oneiron::sync::HomeNodeTopology {
-    let home = home_candidate(node);
-    let topology = oneiron::sync::HomeNodeTopology::new(vec![home]);
-    topology.publish_with_endpoints(
-        vec![home],
-        std::collections::BTreeMap::from([(node, url.to_owned())]),
-    );
-    topology
 }
 
 /// What residence reads select: the own-device member grant the paired

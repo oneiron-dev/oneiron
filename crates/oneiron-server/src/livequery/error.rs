@@ -26,6 +26,10 @@ pub(crate) struct AppError {
     /// on an ask with the invocation and the ask, or hidden.
     #[serde(skip_serializing_if = "Option::is_none")]
     hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
+    /// The refusal's stable reason codes, in its producer's order, when it
+    /// named any (FIX 7398).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reason_codes: Vec<String>,
 }
 
 impl AppError {
@@ -44,6 +48,7 @@ impl AppError {
             narrowing: None,
             wrong_root: None,
             hook: None,
+            reason_codes: Vec::new(),
         }
     }
 
@@ -168,6 +173,7 @@ impl From<MemoryError> for AppError {
             narrowing: error.read_receipt,
             wrong_root: error.wrong_root,
             hook: error.hook,
+            reason_codes: error.reason_codes,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

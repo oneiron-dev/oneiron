@@ -338,5 +338,6 @@ fn mcp_saved_error(error: McpGatewayError) -> oneiron::MemoryError {
     };
     let mut saved = oneiron::MemoryError::new(code, error.message, &[]);
     saved.hook = error.hook;
+    saved.reason_codes = error.reason_codes;
     saved
 }

@@ -58,6 +58,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         pending: None,
         retry_after: None,
         resets_at: Vec::new(),
+        reason_codes: Vec::new(),
     }
 }
 

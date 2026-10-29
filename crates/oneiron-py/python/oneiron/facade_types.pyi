@@ -17543,6 +17543,7 @@ class FacadeMemoryError(TypedDict):
     hook: NotRequired[VerbHookStop | None]
     retry_after: NotRequired[int | None]
     resets_at: NotRequired[list[int]]
+    reason_codes: NotRequired[list[str]]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus

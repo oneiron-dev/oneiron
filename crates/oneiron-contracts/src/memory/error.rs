@@ -8,6 +8,9 @@ use crate::error::{
     ClaimError, Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError, VerbHookStop,
 };
 
+mod gate_denial;
+pub use self::gate_denial::MemoryGateDenial;
+
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
 pub const MEMORY_CODE_BAD_REQUEST: &str = "BAD_REQUEST";
@@ -211,6 +214,13 @@ pub struct MemoryError {
     /// order its source said them (FIX 8190); empty where it said none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resets_at: Vec<u64>,
+    /// The stable reason codes behind this refusal, in the order and
+    /// spelling its producer gave them (FIX 7398): a room's upkeep voice
+    /// refusal names its `gate.rooms.upkeep.*` code here, so no client parses
+    /// it out of `message`. Empty, and absent on the wire, where the producer
+    /// named none. A Gate write rejection's codes stay in `gate_denial`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -221,29 +231,6 @@ pub struct MemoryWrongRoot {
     pub replacement: String,
     #[serde(rename = "schemaRef")]
     pub schema_ref: String,
-}
-
-/// The stable Gate rejection strings behind a [`MemoryError`] whose engine
-/// cause was [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected): the outcome (`pending`/`deny`) and
-/// the `gate.*` reason codes, exactly as the engine spelled them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MemoryGateDenial {
-    /// `pending` or `deny`.
-    pub outcome: String,
-    /// Stable `gate.*` reason codes.
-    pub reason_codes: Vec<String>,
-    /// The ask this refusal raised or found, as its hex ref: a
-    /// `gate.deny.message_address` refusal for want of comm reach names the
-    /// parent's widen ask here, so no client parses it out of `message`
-    /// (FIX 1380). Absent on every other denial.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ask_ref: Option<String>,
-    /// While the Gate holds the act for the owner (`pending`), the
-    /// approve-once digest his one-time press must name to release it, 64
-    /// lower-hex (FIX 6424), copied from the held dispatch's result. Absent
-    /// on every other denial.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_digest: Option<String>,
 }
 
 /// Typed provenance and exception door for a refused policy-controlled act.
@@ -278,6 +265,7 @@ impl MemoryError {
             hook: None,
             retry_after: None,
             resets_at: Vec::new(),
+            reason_codes: Vec::new(),
         }
     }
 

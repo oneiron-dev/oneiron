@@ -553,6 +553,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("retry_after".to_owned(), json!(retry_after));
     }
+    if !error.reason_codes.is_empty()
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("reason_codes".to_owned(), json!(error.reason_codes));
+    }
     if let Some(steps) = error.program_steps
         && let Some(object) = data.as_object_mut()
     {

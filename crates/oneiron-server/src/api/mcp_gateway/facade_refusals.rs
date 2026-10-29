@@ -5,8 +5,17 @@
 use super::McpGatewayError;
 use super::tasks_response::{MCP_HOST_ACTION_REFUSED, mcp_hook_stop};
 
-/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
-pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary,
+/// its reason codes kept whatever its kind (FIX 7398).
+pub(crate) fn mcp_facade_error(mut error: oneiron::MemoryError) -> McpGatewayError {
+    let reason_codes = std::mem::take(&mut error.reason_codes);
+    McpGatewayError {
+        reason_codes,
+        ..mcp_facade_refusal(error)
+    }
+}
+
+fn mcp_facade_refusal(error: oneiron::MemoryError) -> McpGatewayError {
     if let Some(stop) = error.hook {
         return mcp_hook_stop(*stop);
     }

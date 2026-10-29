@@ -54388,7 +54388,7 @@ pub struct EsignEventRow {
     pub at: u64,
 }
 
-/// `oneiron_contracts::memory::error::MemoryGateDenial`.
+/// `oneiron_contracts::memory::error::gate_denial::MemoryGateDenial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemoryGateDenial {
     #[serde(rename = "outcome")]
@@ -54526,6 +54526,12 @@ pub struct MemoryError {
     pub retry_after: Option<u64>,
     #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<Vec<u64>>,
+    #[serde(
+        rename = "reason_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reason_codes: Option<Vec<String>>,
     #[serde(flatten)]
     pub memory_wrong_root: Option<MemoryWrongRoot>,
 }

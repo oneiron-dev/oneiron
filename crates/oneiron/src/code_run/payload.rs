@@ -354,6 +354,11 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
     }
 }
 
+/// The key [`word_refusal`] writes a refused row's own reason codes under
+/// (FIX 7398), apart from the outcome's own `reason_codes`; the outcome's
+/// decoder reads past it.
+const ROW_REASON_CODES: &str = "row_reason_codes";
+
 /// Writes a refused row's own words onto its recorded `denied` outcome,
 /// beside the code; the outcome's decoder reads past them.
 pub(super) fn word_refusal(outcome: &mut Value, words: &AgentVerbRefusalWords) {
@@ -369,6 +374,18 @@ pub(super) fn word_refusal(outcome: &mut Value, words: &AgentVerbRefusalWords) {
                     .collect(),
             ),
         ));
+        if !words.reason_codes.is_empty() {
+            entries.push((
+                Value::from(ROW_REASON_CODES),
+                Value::Array(
+                    words
+                        .reason_codes
+                        .iter()
+                        .map(|code| Value::from(code.as_str()))
+                        .collect(),
+                ),
+            ));
+        }
     }
 }
 
@@ -389,6 +406,9 @@ pub(super) fn refusal_words(outcome: &Value) -> Option<AgentVerbRefusalWords> {
         code: text("outcome")?,
         message: text("message")?,
         suggestions: map_get(entries, "suggestions").and_then(str_array).ok()?,
+        reason_codes: map_get(entries, ROW_REASON_CODES)
+            .and_then(str_array)
+            .unwrap_or_default(),
     })
 }
 
