@@ -130,9 +130,13 @@ impl Call {
 
 /// Whom a socket's calls run as.
 enum Credential {
-    /// The slip its upgrade presented: each call names a fresh holder proof
-    /// for it.
-    Slip(HeaderValue),
+    /// The slip its upgrade presented, and that slip as its upgrade
+    /// verified it: each call names a fresh holder proof for it, and
+    /// carries the verified slip for a deferred clock repair (FIX 11525).
+    Slip {
+        bearer: HeaderValue,
+        verified: Option<oneiron::authority::VerifiedSlip>,
+    },
     /// A managed vault's owner, whose upgrade his supervisor attested (FIX
     /// 5128).
     Owner(ManagedOwnerSession),
@@ -153,7 +157,7 @@ impl Caller {
     /// One `mcp` call's params, read as this socket's caller sends them.
     fn call(&self, params: serde_json::Value) -> Option<Call> {
         match self.credential {
-            Credential::Slip(_) => serde_json::from_value(params).ok().map(Call::Slip),
+            Credential::Slip { .. } => serde_json::from_value(params).ok().map(Call::Slip),
             Credential::Owner(_) => serde_json::from_value(params).ok().map(Call::Owner),
         }
     }
@@ -166,7 +170,7 @@ impl Caller {
         let mut request = Request::post(surface).body(Body::from(body)).ok()?;
         let headers = request.headers_mut();
         headers.extend(self.headers.clone());
-        if let Credential::Slip(bearer) = &self.credential {
+        if let Credential::Slip { bearer, .. } = &self.credential {
             headers.insert(header::AUTHORIZATION, bearer.clone());
         }
         if let Some(binding) = binding {
@@ -186,6 +190,11 @@ impl Caller {
         // Whose socket it came on, never the attestation of the upgrade.
         if let Credential::Owner(session) = &self.credential {
             extensions.insert(*session);
+        }
+        // The slip a slip socket's upgrade verified (FIX 11525): a
+        // deferred clock repair runs as it, judged in the repair's writer.
+        if let Credential::Slip { verified: Some(verified), .. } = &self.credential {
+            extensions.insert(crate::api::clock_ingress::McpSocketSlip::of(verified.clone()));
         }
         if let Some(managed) = &self.managed {
             managed.carry(&mut request);
@@ -267,8 +276,12 @@ pub(super) fn upgrade(
                     .ok_or_else(unauthorized)?;
                 let auth = CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
                     .map_err(|_| unauthorized())?;
+                // The slip as its upgrade verified it (FIX 11525): every
+                // call's request carries it for a deferred clock repair.
+                // The upgrade is admitted as before whether or not it has one.
+                let verified = auth.verified_slip().cloned();
                 (
-                    Credential::Slip(bearer),
+                    Credential::Slip { bearer, verified },
                     auth.jti().map(str::to_owned),
                     None,
                 )
