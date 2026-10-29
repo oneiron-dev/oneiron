@@ -47,7 +47,7 @@ const AMENDMENT_SOURCE_DOMAIN: &[u8] = b"oneiron:agent-health-amendment-cause:v1
 
 /// One attribution label a card carries (OF-568 L10): a typed reference to
 /// the judge's retained label, never prose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthCauseSource {
     /// The retained label's immutable source id: the DIAGNOSTIC cites it.
