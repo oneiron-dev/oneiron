@@ -65,6 +65,8 @@ mod planner;
 mod planner_live;
 mod project_conversation;
 mod project_proposal;
+mod requester;
+pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
 mod resident;
 mod room_join;
 mod run_objectives;

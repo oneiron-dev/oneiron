@@ -75,8 +75,8 @@ pub(super) fn re_paired_standing(
         return Err(invalid_authority());
     }
     // Key possession: the key the roster holds signs this redemption.
-    let key = VerifyingKey::from_bytes(&current.profile.machine_key)
-        .map_err(|_| invalid_authority())?;
+    let key =
+        VerifyingKey::from_bytes(&current.profile.machine_key).map_err(|_| invalid_authority())?;
     key.verify_strict(
         &machine_possession_transcript(
             &vault_id,
