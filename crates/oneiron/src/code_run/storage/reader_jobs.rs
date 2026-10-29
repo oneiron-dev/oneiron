@@ -87,6 +87,12 @@ fn queued_key(enqueued_ms: u64, task: EntityId) -> Vec<u8> {
     tagged(b'q', &[&enqueued_ms.to_be_bytes(), task.as_bytes()])
 }
 
+/// A queued child parked on its payer (FIX 3740): out of the claim queue
+/// until its funding reads yes.
+fn parked_key(task: EntityId) -> Vec<u8> {
+    tagged(b'p', &[task.as_bytes()])
+}
+
 fn waiter_key(task: EntityId, set: EntityId) -> Vec<u8> {
     tagged(b'w', &[task.as_bytes(), set.as_bytes()])
 }
@@ -306,6 +312,7 @@ impl ReaderTxn<'_, '_> {
         match job.state {
             ReaderJobState::Queued => {
                 self.delete_index(&queued_key(job.enqueued_at_ms, job.task))?;
+                self.delete_index(&parked_key(job.task))?;
             }
             ReaderJobState::Active => {}
             _ => return Ok(job),
@@ -903,6 +910,23 @@ impl ExecutorStorage<'_> {
             if !tx.scoped_parent_lease_holds(&job)? {
                 return Ok(tx.settle_lease_lost(job, now_ms)?.state);
             }
+            // A child whose payer must first say yes waits queued, out of the
+            // claim queue, under a fenced claim (FIX 3740): nothing was spent,
+            // its reserved scope stays, and its cutoff still ends it.
+            if *end == ReaderRunEnd::PayerParked {
+                let mut job = job;
+                let parent_run = job.binding.parent_run;
+                if let Some(mut parent) = tx.parent(parent_run)? {
+                    parent.active = parent.active.saturating_sub(1);
+                    parent.queued = parent.queued.saturating_add(1);
+                    tx.put_parent(parent_run, &parent)?;
+                }
+                job.state = ReaderJobState::Queued;
+                job.generation = job.generation.saturating_add(1);
+                tx.put_index(&parked_key(job.task), &[])?;
+                tx.put_job(&job)?;
+                return Ok(job.state);
+            }
             let finding = tx.committed_finding(&job)?;
             let state = match (end, &finding) {
                 (ReaderRunEnd::Completed, Some(_)) => ReaderJobState::Done,
@@ -956,6 +980,42 @@ impl ExecutorStorage<'_> {
                 tx.put_job(&job)?;
             }
             Ok(active.len())
+        })
+    }
+
+    /// Every child parked on its payer (FIX 3740), queued out of the claim
+    /// queue.
+    pub(crate) fn payer_parked_reader_jobs(&self) -> Result<Vec<ReaderJob>> {
+        self.reader_read(|txn, dbs| {
+            let mut jobs = Vec::new();
+            for row in INDEX.iter_from(&dbs, txn, b"p")? {
+                let (key, _) = row?;
+                if let Some(job) = JOBS.get(&dbs, txn, &id_at(&key, 1)?)? {
+                    jobs.push(job);
+                }
+            }
+            Ok(jobs)
+        })
+    }
+
+    /// Puts child `task`, parked on its payer at `generation`, back in the
+    /// claim queue: its funding reads yes, or its cutoff came, which its
+    /// claim then settles. A child no longer parked there changes nothing.
+    pub(crate) fn unpark_reader_job(&self, task: EntityId, generation: u32) -> Result<bool> {
+        self.reader_txn(|tx| {
+            let Some(job) = tx.job(task)? else {
+                return Ok(false);
+            };
+            if tx.index(&parked_key(task))?.is_none() {
+                return Ok(false);
+            }
+            if job.state != ReaderJobState::Queued || job.generation != generation {
+                tx.delete_index(&parked_key(task))?;
+                return Ok(false);
+            }
+            tx.delete_index(&parked_key(task))?;
+            tx.put_index(&queued_key(job.enqueued_at_ms, job.task), &[])?;
+            Ok(true)
         })
     }
 
@@ -1344,6 +1404,17 @@ impl<'a> ReaderJobs<'a> {
     ) -> Result<ReaderJobState> {
         self.storage
             .complete_reader_job(task, generation, &end, now_ms)
+    }
+
+    /// Every child parked on its payer (FIX 3740).
+    pub fn payer_parked(&self) -> Result<Vec<ReaderJob>> {
+        self.storage.payer_parked_reader_jobs()
+    }
+
+    /// Puts child `task`, parked on its payer at `generation`, back in the
+    /// claim queue; `false` when it was not parked there.
+    pub fn unpark(&self, task: EntityId, generation: u32) -> Result<bool> {
+        self.storage.unpark_reader_job(task, generation)
     }
 
     /// Requeues every child a stopped runner left active, or settles it
