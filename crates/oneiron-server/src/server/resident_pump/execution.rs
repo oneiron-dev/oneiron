@@ -361,7 +361,8 @@ fn record_resident_read_sets(
     record(ReadSetProducer::CODE_RUN_STEP_INPUT, None);
     // Engine 03:58 (CALLS `FIX 7020 host-built task source`): claimed.task
     // plus executor_config is host-built, not source-free. Witnessed skill
-    // additions do not prove the host text itself.
+    // additions do not prove the host text itself. A future witnessed task
+    // carrier must also cover before-seat Handoff reads and 6999 views/results.
     record(ReadSetProducer::CODE_RUN_HOST_TASK, None);
 }
 
