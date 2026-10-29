@@ -1,9 +1,11 @@
-//! The owner's free-time host doors (FIX 4453): `vault.free_time.policy.get`,
-//! `.policy.set`, `.cycles` and `.cycle`. `host_doors` re-exports them, so
+//! The free-time host doors (FIX 4453): the owner's
+//! `vault.free_time.policy.get`, `.policy.set`, `.cycles` and `.cycle`, and
+//! the agent's `.policy.set_as` (FIX 11424). `host_doors` re-exports them, so
 //! the generated HTTP facade handler and the MCP dispatcher call them by the
 //! name every host door has; `/v1/owner/free-time` runs the same engine
-//! doors. Each takes the vault owner's proof as `/v1/owner` takes it, and
-//! each engine door rechecks it in its own read or write.
+//! doors. Each owner row takes the vault owner's proof as `/v1/owner` takes
+//! it, and each engine door rechecks it in its own read or write; the agent
+//! row takes the credential's own agent under its live Grant naming the act.
 //!
 //! A cycle's sheet joins this server's usage records: the settled calls
 //! stamped with that cycle, matched on the stamp, never on a run's name,
@@ -18,7 +20,8 @@ use oneiron::dreamer_runner::{
 };
 use oneiron::memory::MemoryError;
 
-use super::host_doors::support::Listed;
+use super::FacadeApiError;
+use super::host_doors::support::{Listed, credential_listing};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -61,6 +64,32 @@ pub(crate) async fn vault_free_time_policy_set(
                 .map_err(MemoryError::from)
         },
         |_| Vec::new(),
+    )
+    .await
+}
+
+/// `vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one
+/// agent's free-time policy under its own live Grant naming the act. The
+/// credential's own actor calls, as the clustering judgments admit theirs;
+/// the engine row admits an agent only, finds that agent's standing Grant
+/// and builds its act from it. An agent's act records this install, never
+/// where its call reached it.
+pub(crate) async fn vault_free_time_policy_set_as(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: FreeTimePolicySetRequest,
+) -> Listed<FreeTimePolicyView> {
+    let caller = match super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)
+    {
+        Ok(caller) => caller,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        "vault.free_time.policy.set_as",
+        move |_, _, memory| oneiron::task_verb::sdk::free_time_policy_set_as_agent(&memory, input),
     )
     .await
 }

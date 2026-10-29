@@ -223,7 +223,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
@@ -320,6 +320,7 @@ async fn facade_route(
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
     let auth = match caller {
@@ -329,7 +330,7 @@ async fn facade_route(
         }
     };
     super::answer_hold::until_encoded(async move {
-        let call = FacadeCall::http(&server, &auth, &headers);
+        let call = FacadeCall::http(&server, &auth, &headers, &extensions);
         let verb = uri.path().trim_start_matches('/');
         match call_verb(&server, &call, verb, facade_json(payload)).await {
             Ok(output) => released_reply(&server, &auth, verb, output).into_response(),

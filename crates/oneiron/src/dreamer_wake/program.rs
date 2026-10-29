@@ -29,7 +29,8 @@
 //! A managed vault's attested owner's program runs only while the vault
 //! records him as its live owner (FIX 11090): the owner refusal its entry's
 //! binding or a write's reservation raises ends that try Failed, never held
-//! for his standing to return.
+//! for his standing to return. A withdrawal refusal ends its try the same
+//! way, on the withdrawal's reason (FIX 11593).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -42,7 +43,7 @@ use crate::code_run::{AgentVerbDoor, HostSelfDispatcher};
 use crate::dreamer_runner::{
     DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
     DreamerRunnerStore, ProgramHold, ProgramRecipePin, TurnProgramBinding, TurnProgramBound,
-    TurnProgramEntered,
+    TurnProgramEntered, is_withdrawal_refusal,
 };
 use crate::engine_executor::{
     EngineExecutorConfig, EngineExecutorError, EngineExecutorResult, EngineExecutorStatus,
@@ -191,6 +192,15 @@ fn owner_not_live(completed_units: u64) -> DreamerAttemptExecution {
     }
 }
 
+/// The try whose original authorization was positively withdrawn, ended
+/// Failed with what it spent (FIX 11593).
+fn withdrawn(completed_units: u64, reason: &str) -> DreamerAttemptExecution {
+    DreamerAttemptExecution::Failed {
+        reason: reason.to_owned(),
+        completed_units,
+    }
+}
+
 /// The program's task, as its host binds its run's config and seat from it:
 /// its pinned callable entry, exactly as pinned. The entry runs as pinned
 /// with no model writing its call.
@@ -220,6 +230,7 @@ async fn run_program(
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return hold(ctx, attempt, held),
         TurnProgramBound::OwnerNotLive => return Ok(owner_not_live(0)),
+        TurnProgramBound::Withdrawn { reason } => return Ok(withdrawn(0, reason)),
     };
     let task = program_task(&binding.pin);
     let request = TurnProgramRequest {
@@ -423,7 +434,8 @@ fn pinned_entry(
 /// short is held by the program runtime, its spend settled on the pass's
 /// meter all the same. One that stopped on the owner refusal its attested
 /// owner's authority check raised ends Failed on that refusal, carried as it
-/// was raised (FIX 11090), never held.
+/// was raised (FIX 11090), never held. One that stopped on a withdrawal
+/// refusal ends Failed on the withdrawal's reason (FIX 11593).
 fn settle(
     vault: &Vault,
     binding: &TurnProgramBinding,
@@ -432,6 +444,12 @@ fn settle(
     ran: Result<Ran>,
     used: u64,
 ) -> Result<DreamerAttemptExecution> {
+    // A write's reservation met the withdrawal refusal (FIX 11593).
+    if let Err(error) = &ran
+        && let Some(reason) = is_withdrawal_refusal(error)
+    {
+        return Ok(withdrawn(used, reason));
+    }
     let ran = match ran {
         Ok(ran) => ran,
         Err(error) if ManagedOwnerCheckError::is_owner_refusal(&error) => {
@@ -469,6 +487,12 @@ fn settle(
             return held(ProgramHold::Diverged);
         }
         Err(error) => {
+            // A write's reservation met the withdrawal refusal (FIX 11593).
+            if let EngineExecutorError::Engine(engine) = &error
+                && let Some(reason) = is_withdrawal_refusal(engine)
+            {
+                return Ok(withdrawn(used, reason));
+            }
             return Ok(match ran.stop {
                 // The step layer parked the try in its trap's own commit.
                 Some(SeamStop::Trapped) => DreamerAttemptExecution::Park {

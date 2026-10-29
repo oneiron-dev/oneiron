@@ -38,6 +38,7 @@ mod stop_recovery;
 mod stop_sends;
 mod types;
 mod wake;
+mod withdrawn;
 
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
@@ -82,6 +83,7 @@ pub use self::types::{
 pub(crate) use self::wake::{
     drain_turn_program_wakes, record_turn_program_wakes_in_txn, turn_programs_armed_in_txn,
 };
+pub(crate) use self::withdrawn::is_withdrawal_refusal;
 
 use self::types::{
     TurnProgramAdmissionRecord, TurnProgramArming, TurnProgramAttemptStamp, TurnProgramWake,

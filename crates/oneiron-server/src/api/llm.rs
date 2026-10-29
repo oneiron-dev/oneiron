@@ -134,6 +134,7 @@ async fn replace_defaults(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
     Json(table): Json<oneiron::llm::PurposeDefaultTable>,
 ) -> Response {
     if !auth.is_owner_grade() {
@@ -158,7 +159,7 @@ async fn replace_defaults(
     }
     // FIX 8211: a live policy-power holder's table lands; anyone else's is
     // kept as an inert proposal.
-    defaults_submit::submit(&server, &auth, &headers, table.table())
+    defaults_submit::submit(&server, &auth, &headers, &extensions, table.table())
 }
 
 /// Admits a raw call: the owner, or an agent whose live Grant the owner
