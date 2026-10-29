@@ -1032,6 +1032,7 @@ class ShapeRowMember(TypedDict):
     kind: Literal["member"]
     member: str
     role: ShapeMemberRole
+    pending_invitation: NotRequired[str | None]
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
     name: str

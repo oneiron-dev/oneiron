@@ -3350,6 +3350,12 @@ pub enum ShapeRow {
         member: String,
         #[serde(rename = "role")]
         role: ShapeMemberRole,
+        #[serde(
+            rename = "pending_invitation",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        pending_invitation: Option<String>,
     },
     #[serde(rename = "world")]
     World {
