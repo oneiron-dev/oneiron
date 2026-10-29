@@ -400,6 +400,8 @@ pub(crate) use principal_standing::{
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use readonly_fold::folded_vault_id_of_records;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
