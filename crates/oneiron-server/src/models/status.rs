@@ -91,6 +91,8 @@ pub struct SnapshotSkips {
     pub oversize: u64,
     /// What it was computed with was not named whole.
     pub unsupported: u64,
+    /// It was too short to pay back its transfer.
+    pub short: u64,
 }
 
 /// One vault lock's release, as the host ran it: ids and outcomes only.

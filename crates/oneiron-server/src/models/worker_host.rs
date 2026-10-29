@@ -20,10 +20,17 @@
 //! V2-R1): its provider's calls to it go there ([`native_route`],
 //! `models/native_exl3`), its qualification asks there, and its activity
 //! poll reads its stats there.
+//!
+//! The media workers, VoxCPM2 speech and local ASR, are supervised the same
+//! way (FIX 8318, `media_worker`): a media rung's call holds its worker's
+//! lease from before its admission through its renders, its partial
+//! settlement or its cancellation, and the worker runs one inference at a
+//! time.
 mod bundle;
 mod install;
 mod launch_manifest;
 mod launcher;
+mod media_worker;
 mod probe;
 #[cfg(unix)]
 mod process;

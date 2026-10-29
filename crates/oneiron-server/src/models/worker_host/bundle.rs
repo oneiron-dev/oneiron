@@ -1,14 +1,21 @@
 //! The worker code this binary carries (DESIGN-V2 R2): the house EXL3 server
-//! with every module it imports, the llama.cpp launch-identity script, and
-//! the EXL3 environment lock. A managed install writes them under the
-//! runtime root in a directory named by their digest; nothing is fetched.
+//! with every module it imports, the llama.cpp launch-identity script, the
+//! EXL3 environment lock, and the media workers (FIX 8318): VoxCPM2 speech,
+//! local ASR and the module they share. A managed install writes them under
+//! the runtime root in a directory named by their digest; nothing is
+//! fetched.
 //!
-//! They are the files in `deploy/house-model/`, read when this crate is
-//! built from the source tree.
+//! They are the files in `deploy/house-model/`, `deploy/voxcpm2/`,
+//! `deploy/asr/` and `deploy/media-worker/`, read when this crate is built
+//! from the source tree.
 use sha2::{Digest as _, Sha256};
 
 /// Every file a worker runs from, by the name it is written under.
 pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
+    (
+        "asr_worker.py",
+        include_bytes!("../../../../../deploy/asr/worker.py"),
+    ),
     (
         "body_codec.py",
         include_bytes!("../../../../../deploy/house-model/body_codec.py"),
@@ -82,8 +89,16 @@ pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../../deploy/house-model/llama_identity.py"),
     ),
     (
+        "voxcpm2_worker.py",
+        include_bytes!("../../../../../deploy/voxcpm2/worker.py"),
+    ),
+    (
         "weights_manifest.py",
         include_bytes!("../../../../../deploy/house-model/weights_manifest.py"),
+    ),
+    (
+        "worker_support.py",
+        include_bytes!("../../../../../deploy/media-worker/worker_support.py"),
     ),
 ];
 
@@ -92,6 +107,12 @@ pub(super) const EXL3_SERVER: &str = "exl3_server.py";
 
 /// The llama.cpp launch-identity script, within the bundle.
 pub(super) const LLAMA_IDENTITY: &str = "llama_identity.py";
+
+/// The VoxCPM2 speech worker's script, within the bundle.
+pub(super) const VOXCPM2_WORKER: &str = "voxcpm2_worker.py";
+
+/// The local ASR worker's script, within the bundle.
+pub(super) const ASR_WORKER: &str = "asr_worker.py";
 
 /// The EXL3 worker's hash-locked Python environment.
 pub(super) const EXL3_LOCK: &[u8] =

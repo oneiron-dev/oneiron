@@ -19,6 +19,9 @@
 //! check: the serving resolver (FIX 7895) stays nonblocking and is not used
 //! here.
 //!
+//! The media workers, VoxCPM2 speech and local ASR, are qualified by one
+//! actual render or transcription ([`super::media_worker::probe`]).
+//!
 //! A pinned value the answer contradicts is `Failed`; a pin or a piece of
 //! evidence that is missing is `Unverified`; no answer is `Unreachable`.
 use std::collections::BTreeMap;
@@ -37,10 +40,10 @@ use serde_json::{Value as JsonValue, json};
 use super::super::http::{KeyStyle, MAX_REPLY_BYTES, ProviderHttp};
 use super::bundle::sha256_hex;
 use super::launch_manifest::{LaunchRecord, LaunchSlot};
-use crate::config::models::ProviderConfig;
+use crate::config::models::{ProviderConfig, ProviderKind};
 
 /// The usage key an EXL3 answer echoes its launch manifest's digest under.
-const LAUNCH_MANIFEST_KEY: &str = "launch_manifest";
+pub(super) const LAUNCH_MANIFEST_KEY: &str = "launch_manifest";
 
 /// The llama.cpp identity manifest schema this probe reads.
 const LLAMA_SCHEMA_VERSION: u64 = 1;
@@ -80,6 +83,11 @@ impl HouseProbe {
         let mut provider = provider.clone();
         if let Some(endpoint) = endpoint {
             endpoint.clone_into(&mut provider.base_url);
+        }
+        // A VoxCPM2 worker's paths sit at its root, as its media client
+        // reaches them.
+        if provider.kind == ProviderKind::Voxcpm2 {
+            provider.base_url = provider.base_url.trim_end_matches('/').to_owned();
         }
         let http = ProviderHttp::direct(&provider, KeyStyle::Bearer).map_err(|error| {
             tracing::warn!(model = %wire_model, %error, "model worker probe unavailable");
@@ -239,6 +247,11 @@ impl WorkerProbe for HouseProbe {
             match expected.kind {
                 WorkerKind::Exl3 => self.exl3(http, expected).await,
                 WorkerKind::LlamaCpp => self.llama(http, expected).await,
+                WorkerKind::VoxCpm2 | WorkerKind::Asr => {
+                    let launch = self.launch();
+                    super::media_worker::probe(http, &self.wire_model, expected, launch.as_ref())
+                        .await
+                }
                 _ => WorkerReadiness::Unverified { observed: None },
             }
         })
@@ -334,9 +347,9 @@ fn verify_llama(
 }
 
 /// One pinned field of an identity.
-type Field = fn(&CacheIdentity) -> &Option<CacheDigest>;
+pub(super) type Field = fn(&CacheIdentity) -> &Option<CacheDigest>;
 
-fn model(identity: &CacheIdentity) -> &Option<CacheDigest> {
+pub(super) fn model(identity: &CacheIdentity) -> &Option<CacheDigest> {
     &identity.model
 }
 
@@ -344,7 +357,7 @@ fn tokenizer(identity: &CacheIdentity) -> &Option<CacheDigest> {
     &identity.tokenizer
 }
 
-fn runtime(identity: &CacheIdentity) -> &Option<CacheDigest> {
+pub(super) fn runtime(identity: &CacheIdentity) -> &Option<CacheDigest> {
     &identity.runtime
 }
 
@@ -352,15 +365,27 @@ fn template(identity: &CacheIdentity) -> &Option<CacheDigest> {
     &identity.template
 }
 
-/// Whether `observed` serves as pinned: a contradiction of any pin, from the
-/// config or this launch's verified bytes, is `Failed`; with no
-/// contradiction, `Ready` needs model, runtime and template pinned and
-/// observed (the tokenizer too when it is pinned), an epoch, and verified
-/// artifacts; anything less is `Unverified`.
+/// A chat worker's judgement: [`judge_pins`] with model, runtime and
+/// template required.
 fn judge(
     observed: WorkerDescriptor,
     config: &CacheIdentity,
     launch: Option<&LaunchRecord>,
+) -> WorkerReadiness {
+    let required: [Field; 3] = [model, runtime, template];
+    judge_pins(observed, config, launch, &required)
+}
+
+/// Whether `observed` serves as pinned: a contradiction of any pin, from the
+/// config or this launch's verified bytes, is `Failed`; with no
+/// contradiction, `Ready` needs every `required` field pinned and observed
+/// (the tokenizer too when it is pinned), an epoch, and verified artifacts;
+/// anything less is `Unverified`.
+pub(super) fn judge_pins(
+    observed: WorkerDescriptor,
+    config: &CacheIdentity,
+    launch: Option<&LaunchRecord>,
+    required: &[Field],
 ) -> WorkerReadiness {
     let pins: Vec<&CacheIdentity> = std::iter::once(config)
         .chain(launch.map(|launch| &launch.pins))
@@ -382,10 +407,9 @@ fn judge(
         }
     }
     let pinned = |field: Field| pins.iter().any(|pin| field(pin).is_some());
-    let required: [Field; 3] = [model, runtime, template];
     let complete = required
-        .into_iter()
-        .all(|field| pinned(field) && field(seen).is_some())
+        .iter()
+        .all(|&field| pinned(field) && field(seen).is_some())
         && (!pinned(tokenizer) || seen.tokenizer.is_some())
         && seen.backend_epoch.is_some()
         && observed.build_evidence == WorkerBuildEvidence::VerifiedArtifacts;
