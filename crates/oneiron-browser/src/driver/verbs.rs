@@ -125,24 +125,19 @@ impl BrowserDriver for CdpDriver {
         let bound = wanted.min(self.wait_cap);
         let start = Instant::now();
         loop {
-            let capture = self.capture()?;
-            // A named handle matches its own row, or, once its node is
-            // gone, the row its locator names now, as a rebinding.
-            let (rows, rebindings) = if input.targets.is_empty() {
-                let query = input.query();
-                let rows = capture
-                    .rows
-                    .into_iter()
-                    .filter(|row| query.matches(row))
-                    .collect();
-                (rows, Vec::new())
-            } else {
-                rows_named(&input.targets, &capture.rows, &capture.scope, |target| {
-                    self.handles.info(target)
-                })
-            };
+            // Only the capture whose rows the wait returns reads the DOM
+            // (`capture_dom_policy`, FIX 6965): a poll that finds them is
+            // read again whole, and the last poll is read whole.
+            let last = start.elapsed() >= bound;
+            let probe = self.capture_read(last)?;
+            let mut found = self.waited_rows(&input, probe);
+            if !last && !found.0.is_empty() {
+                let whole = self.capture()?;
+                found = self.waited_rows(&input, whole);
+            }
+            let (rows, rebindings) = found;
             let waited = start.elapsed();
-            if !rows.is_empty() || waited >= bound {
+            if !rows.is_empty() || last {
                 let timed_out = rows.is_empty();
                 let (rows, next) = self.pages.first_rows(rows);
                 return Ok(WaitForOutput {
@@ -331,5 +326,30 @@ impl BrowserDriver for CdpDriver {
 
     fn handle_info(&self, handle: &str) -> Option<HandleInfo> {
         self.handles.info(handle)
+    }
+}
+
+impl CdpDriver {
+    /// The rows of `capture` a wait waits for: those its role and name
+    /// match, or the rows its handles name, a named handle matching its own
+    /// row or, once its node is gone, the row its locator names now, as a
+    /// rebinding.
+    fn waited_rows(
+        &self,
+        input: &WaitForInput,
+        capture: handles::Capture,
+    ) -> (Vec<Row>, Vec<crate::Rebound>) {
+        if input.targets.is_empty() {
+            let query = input.query();
+            let rows = capture
+                .rows
+                .into_iter()
+                .filter(|row| query.matches(row))
+                .collect();
+            return (rows, Vec::new());
+        }
+        rows_named(&input.targets, &capture.rows, &capture.scope, |target| {
+            self.handles.info(target)
+        })
     }
 }

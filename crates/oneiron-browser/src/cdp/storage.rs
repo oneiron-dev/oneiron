@@ -23,6 +23,15 @@ impl Pipe {
         let _ = self.sink.set(sink);
     }
 
+    /// The bound one read after an act, at hand-back or on exit takes: the
+    /// session's snapshots' own (FIX 10335), else its default.
+    pub(crate) fn snapshot_read_chars(&self) -> usize {
+        self.sink.get().map_or_else(
+            || crate::session::storage::switch_state_limits().read_chars,
+            Sink::read_chars,
+        )
+    }
+
     /// Whether this pipe keeps its pages' storage reads.
     pub(crate) fn collects(&self) -> bool {
         self.sink.get().is_some()
@@ -81,7 +90,8 @@ impl Pipe {
             return;
         };
         let engine = BrowserEngine::Chromium;
-        let Some(chars) = switch_storage_capture_policy(engine, StoragePhase::Exit) else {
+        let bound = self.snapshot_read_chars();
+        let Some(chars) = switch_storage_capture_policy(engine, StoragePhase::Exit, bound) else {
             return;
         };
         match page_read(&read, chars, engine) {

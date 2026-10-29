@@ -176,7 +176,9 @@ const SWITCH_ENGINE_VERB: &str = "self.browser.switch_engine";
 /// reason as the code, its message as the words. A press a control waits on
 /// and a ref that no longer stands carry the error's own words, naming the
 /// control and the ref (FIX 249): a row's name as the read shows it, a
-/// secret by its handle. Every other code is worded by its code, as before.
+/// secret by its handle. Every other refusal carries its code and the
+/// error's own words, which say what failed (FIX 10426): a call that ran
+/// out of time names its method, a navigation the browser's error.
 pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
     match error {
         BrowserError::Unsupported(_) => {
@@ -198,13 +200,12 @@ pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
             suggestions: Vec::new(),
             reason_codes: Vec::new(),
         },
-        BrowserError::NeedsPress(_) | BrowserError::StaleRef(_) => AgentVerbRefusalWords {
+        _ => AgentVerbRefusalWords {
             code: error.code().to_owned(),
             message: error.to_string(),
             suggestions: Vec::new(),
             reason_codes: Vec::new(),
         },
-        _ => code_words(error.code().to_owned()),
     }
 }
 
@@ -212,8 +213,9 @@ pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
 /// door to copy into the program's answer (FIX 6887): kept where they say
 /// more than their code, as [`refusal_words`] words `browser_unsupported`,
 /// naming the verb that serves what was refused, a destination refusal in
-/// the host's own words (FIX 7122), and a press's control or a stale ref
-/// (FIX 249). A call that answered, or was refused another way, keeps none.
+/// the host's own words (FIX 7122), a press's control or a stale ref (FIX
+/// 249), and any other refusal's own words (FIX 10426). A call that
+/// answered, or whose words say no more than its code, keeps none.
 #[derive(Default)]
 pub(super) struct KeptRefusal(Mutex<Option<AgentVerbRefusalWords>>);
 

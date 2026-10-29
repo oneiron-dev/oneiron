@@ -124,7 +124,7 @@ impl CdpDriver {
             .pipe
             .oopifs(&self.session)
             .into_iter()
-            .map(|(frame, _)| frame)
+            .map(|(frame, _, _)| frame)
             .collect();
         if dom.needs_main_base(lines) {
             dom.bases[0] = self.main_base();

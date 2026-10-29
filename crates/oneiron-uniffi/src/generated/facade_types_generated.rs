@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1180 facade rows, 4252 generated types.
+// UniFFI census: 1180 facade rows, 4254 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1132.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -66488,6 +66488,13 @@ pub struct EngineSwitchRecord {
     pub outcome: SwitchOutcome,
 }
 
+/// `oneiron_browser::verbs::ReceiptOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ReceiptOutcome {
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
 /// `oneiron_browser::verbs::EffectReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EffectReceipt {
@@ -66593,6 +66600,8 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub result_unread: Option<String>,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ReceiptOutcome>,
     #[serde(rename = "duration_ms")]
     pub duration_ms: u64,
 }
@@ -68217,6 +68226,30 @@ pub struct BrowserAnswerHandoverOutput {
     pub flattened: HandoverOutput,
 }
 
+/// `oneiron_browser::switch::SnapshotBounds`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotBounds {
+    #[serde(
+        rename = "read_chars",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub read_chars: Option<u64>,
+    #[serde(
+        rename = "snapshot_origins",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_origins: Option<u64>,
+    #[serde(
+        rename = "snapshot_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_bytes: Option<u64>,
+}
+
 /// `oneiron_browser::switch::SwitchEngineInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -68225,6 +68258,12 @@ pub struct SwitchEngineInput {
     pub engine: BrowserEngine,
     #[serde(rename = "reason")]
     pub reason: String,
+    #[serde(
+        rename = "snapshot_bounds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_bounds: Option<SnapshotBounds>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SwitchEngineInput`.
