@@ -11789,7 +11789,7 @@ impl AgentVerb {
                 "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where."
             }
             Self::VaultEmbeddingSpacesList => {
-                "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."
+                "Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move."
             }
             Self::VaultEmbeddingSpacesDeclare => {
                 "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."

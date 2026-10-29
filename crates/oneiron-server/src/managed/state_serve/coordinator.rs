@@ -190,7 +190,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 bearer: None,
             }
         }))
-        .with_feedback_triage(config.feedback.triage.clone());
+        .with_feedback_triage(config.feedback.triage.clone())
+        // The settings file's `[policy]`, as plain serve applies it (FIX 5042).
+        .with_owner_policy_config(config.policy.owner_policy_config());
     // Its browser readiness starts from the `[browser]` section, its runtime
     // binding and the runtime fact the supervisor observed for this vault's
     // UID (FIX 7670). No state of it stops this start.

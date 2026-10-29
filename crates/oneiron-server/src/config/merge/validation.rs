@@ -29,6 +29,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "failure_signals" => struct_fields::<FailureSignalsConfigOverride>(),
         "self_heal" => struct_fields::<SelfHealConfigOverride>(),
         "recall" => struct_fields::<RecallConfigOverride>(),
+        "policy" => struct_fields::<crate::config::PolicyConfig>(),
         "skills" => struct_fields::<SkillsConfigOverride>(),
         "keystore" => struct_fields::<KeystoreConfigOverride>(),
         "limits" => struct_fields::<LimitsConfigOverride>(),
