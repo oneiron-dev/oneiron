@@ -53,14 +53,11 @@ impl PipelineBuilder<'_> {
         } else {
             Default::default()
         };
+        // Coverage reads the configured channels without consuming them: the
+        // first attempt still runs the caller's Search PPR and any explicit Expand.
         let mut explicit_seeds = Vec::new();
-        for (seeds, _) in self
-            .ppr_search
-            .take()
-            .into_iter()
-            .chain(self.ppr_expand.take())
-        {
-            explicit_seeds.extend(seeds);
+        for (seeds, _) in self.ppr_search.iter().chain(self.ppr_expand.iter()) {
+            explicit_seeds.extend(seeds.iter().copied());
         }
         explicit_seeds.sort_unstable();
         explicit_seeds.dedup();
