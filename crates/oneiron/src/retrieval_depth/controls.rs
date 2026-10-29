@@ -108,6 +108,14 @@ impl RetrievalDeadline {
     pub(crate) fn answer_due(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed) || self.now() >= self.at
     }
+    /// Absolute answer-time checkpoint for work outside an open retrieval stage.
+    pub(crate) fn answer_checkpoint(&self, error: Error) -> Result<()> {
+        if self.answer_due() {
+            Err(error)
+        } else {
+            Ok(())
+        }
+    }
     pub(crate) fn stop_before_stage(&self) -> bool {
         if self.cancelled.load(Ordering::Relaxed) || self.now() >= self.stages_by {
             self.cut_short.store(true, Ordering::Relaxed);

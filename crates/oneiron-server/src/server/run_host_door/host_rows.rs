@@ -135,6 +135,7 @@ pub(super) fn host_row(
                 request.id,
                 request.expected_version,
                 request.at.unwrap_or(now),
+                request.joins,
             )?)
         }
         AgentVerb::VaultQuestionsRead => {
