@@ -3,9 +3,9 @@
 //! When the verb table or the sandbox contract changes under it, the intent
 //! runs again through an injected [`HookRegenerator`], and the hook's newest
 //! saved runs, loaded once, replay as its golden set under the last good body
-//! and under the candidate. Only a complete, identical fingerprint adopts; a
-//! diff, or a run either body could not replay on its record, waits for the
-//! owner's stamp; a failure rolls back, never to a blank body. Only a
+//! and under the candidate. Only an identical fingerprint over successful runs
+//! adopts; a diff, an execution failure, a withheld run, or a run without
+//! history waits for the owner's stamp; a failure rolls back, never to a blank body. Only a
 //! vault's own packs regen: a hub pack's hooks change through their hub,
 //! under the update rule.
 
@@ -20,7 +20,7 @@ use crate::skill_hub::pack_catalog::{HookSelector, PackInstallDisposition};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::body::HookBodyRuntime;
-use super::replay::{self, HookReplayCompare, HookReplayEntry, HookReplayResult};
+use super::replay::{self, HookReplayEntry, HookReplayResult};
 
 /// One record per binding: the contract its last good body passed under.
 const REGEN: SideTable<EntityId, HookRegenRecord, Named> = SideTable::new(&side_table::HOOKS_REGEN);
@@ -109,13 +109,18 @@ pub trait HookRegenerator {
     ) -> std::result::Result<String, HookRegenFailure>;
 }
 
-/// What one body returned on each golden run, by run key: the outcome token
-/// and its JSON. A run whose replay did not give back what it recorded (its
-/// history gone, a failed body, another outcome) is incomplete instead.
+/// What one body returned on each golden run, by run key. A run the body ran
+/// without failing records its outcome token and JSON in `cases`, whatever
+/// `compare` says against the live record: the compare stands to the live run,
+/// not to a failure category. A run the body failed records its replay reason
+/// in `execution_failed`. A run the current grant withholds records its key in
+/// `withheld`; a run whose inputs are gone records its key in `missing_history`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookGoldenFingerprint {
     pub cases: BTreeMap<String, String>,
-    pub incomplete: BTreeSet<String>,
+    pub execution_failed: BTreeMap<String, String>,
+    pub withheld: BTreeSet<String>,
+    pub missing_history: BTreeSet<String>,
 }
 
 impl HookGoldenFingerprint {
@@ -125,7 +130,17 @@ impl HookGoldenFingerprint {
         for (run, entry) in entries {
             match &entry.result {
                 HookReplayResult::Ran {
-                    compare: HookReplayCompare::Same,
+                    outcome,
+                    outcome_json,
+                    reason,
+                    ..
+                } if outcome.as_str() == "failed" => {
+                    fingerprint.execution_failed.insert(
+                        run.clone(),
+                        reason.clone().unwrap_or_else(|| "the body failed".to_owned()),
+                    );
+                }
+                HookReplayResult::Ran {
                     outcome,
                     outcome_json,
                     ..
@@ -135,8 +150,11 @@ impl HookGoldenFingerprint {
                         format!("{outcome}:{}", outcome_json.as_deref().unwrap_or("")),
                     );
                 }
-                _ => {
-                    fingerprint.incomplete.insert(run.clone());
+                HookReplayResult::Withheld { .. } => {
+                    fingerprint.withheld.insert(run.clone());
+                }
+                HookReplayResult::MissingHistory { .. } => {
+                    fingerprint.missing_history.insert(run.clone());
                 }
             }
         }
@@ -144,14 +162,23 @@ impl HookGoldenFingerprint {
     }
 }
 
-/// Where a candidate's golden replay parts from the last good body's.
+/// Where a candidate's golden replay parts from the last good body's. A golden
+/// execution failure is execution-failed, not a valid difference: a
+/// case-to-failure or case-to-history transition never lands in `changed`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HookGoldenDiff {
-    /// The golden runs compared.
+    /// Every golden run compared: the union of all categories of both
+    /// fingerprints.
     pub cases: usize,
-    /// The run keys whose outcome changed, or that either body could not
-    /// replay on its record.
+    /// The run keys present in both `cases` maps whose successful outcome
+    /// values differ.
     pub changed: Vec<String>,
+    /// The run keys either fingerprint execution-failed, sorted.
+    pub execution_failed: Vec<String>,
+    /// The run keys either fingerprint withheld, sorted.
+    pub withheld: Vec<String>,
+    /// The run keys either fingerprint found without history, sorted.
+    pub missing_history: Vec<String>,
 }
 
 impl HookGoldenDiff {
@@ -159,27 +186,69 @@ impl HookGoldenDiff {
         let runs: BTreeSet<&String> = last_good
             .cases
             .keys()
-            .chain(&last_good.incomplete)
+            .chain(last_good.execution_failed.keys())
+            .chain(&last_good.withheld)
+            .chain(&last_good.missing_history)
             .chain(candidate.cases.keys())
-            .chain(&candidate.incomplete)
+            .chain(candidate.execution_failed.keys())
+            .chain(&candidate.withheld)
+            .chain(&candidate.missing_history)
             .collect();
         let cases = runs.len();
-        let changed = runs
-            .into_iter()
+        let changed: Vec<String> = runs
+            .iter()
+            .copied()
             .filter(|run| {
-                last_good.incomplete.contains(*run)
-                    || candidate.incomplete.contains(*run)
-                    || last_good.cases.get(*run) != candidate.cases.get(*run)
+                match (last_good.cases.get(*run), candidate.cases.get(*run)) {
+                    (Some(before), Some(after)) => before != after,
+                    _ => false,
+                }
             })
             .cloned()
             .collect();
-        Self { cases, changed }
+        let execution_failed: Vec<String> = runs
+            .iter()
+            .copied()
+            .filter(|run| {
+                last_good.execution_failed.contains_key(*run)
+                    || candidate.execution_failed.contains_key(*run)
+            })
+            .cloned()
+            .collect();
+        let withheld: Vec<String> = runs
+            .iter()
+            .copied()
+            .filter(|run| last_good.withheld.contains(*run) || candidate.withheld.contains(*run))
+            .cloned()
+            .collect();
+        let missing_history: Vec<String> = runs
+            .iter()
+            .copied()
+            .filter(|run| {
+                last_good.missing_history.contains(*run)
+                    || candidate.missing_history.contains(*run)
+            })
+            .cloned()
+            .collect();
+        Self {
+            cases,
+            changed,
+            execution_failed,
+            withheld,
+            missing_history,
+        }
     }
 
-    /// An empty golden set proves nothing, so it never adopts by itself.
+    /// An empty golden set proves nothing, so it never adopts by itself. Any
+    /// execution failure or history category also refuses adoption: only a
+    /// nonempty set with no changed run and no diagnostic key is identical.
     #[must_use]
     pub fn identical(&self) -> bool {
-        self.cases > 0 && self.changed.is_empty()
+        self.cases > 0
+            && self.changed.is_empty()
+            && self.execution_failed.is_empty()
+            && self.withheld.is_empty()
+            && self.missing_history.is_empty()
     }
 }
 
@@ -187,14 +256,15 @@ impl HookGoldenDiff {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum HookRegenOutcome {
-    /// An identical fingerprint: the candidate adopts without a question.
+    /// An identical fingerprint over successful runs: the candidate adopts
+    /// without a question.
     AutoAdopt {
         candidate: String,
         target: HookContractStamp,
         diff: HookGoldenDiff,
     },
-    /// The golden replay differs, is incomplete, or there is none: the owner
-    /// stamps it.
+    /// The golden replay differs, execution-failed, withheld, or lost history,
+    /// or there is none: the owner stamps it.
     NeedsHumanStamp {
         candidate: String,
         target: HookContractStamp,
