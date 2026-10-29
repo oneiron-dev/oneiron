@@ -4129,7 +4129,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def mint(self, spec):
-            """The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant."""
+            """The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."""
             return json.loads(_translate(lambda: self._client.vault_agents_grants_mint(json.dumps(spec))))
         def revoke(self, spec):
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
@@ -5919,19 +5919,19 @@ class Oneiron:
             """One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."""
             return json.loads(_translate(lambda: self._client.ai_anonymous_chat(json.dumps(spec))))
         def options(self, spec):
-            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
+            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
         def image(self, spec):
-            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."""
+            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. The owner calls it, or an agent whose Grant names ai.image, as his call."""
             return json.loads(_translate(lambda: self._client.ai_image(json.dumps(spec))))
         def speech(self, spec):
-            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."""
+            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. The owner calls it, or an agent whose Grant names ai.speech, as his call."""
             return json.loads(_translate(lambda: self._client.ai_speech(json.dumps(spec))))
         def transcribe(self, spec):
-            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."""
+            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. The owner calls it, or an agent whose Grant names ai.transcribe, as his call."""
             return json.loads(_translate(lambda: self._client.ai_transcribe(json.dumps(spec))))
         def embed(self, spec):
-            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."""
+            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. The owner calls it, or an agent whose Grant names ai.embed, as his call."""
             return json.loads(_translate(lambda: self._client.ai_embed(json.dumps(spec))))
         @property
         def video(self) -> "Oneiron._AiVideoVerbs":
@@ -6027,13 +6027,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."""
+            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. The owner calls it, or an agent whose Grant names ai.video, as his call."""
             return json.loads(_translate(lambda: self._client.ai_video(json.dumps(spec))))
         def poll(self, spec):
-            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. The owner polls every job; an agent whose owner agent Grant names ai.video polls only the jobs it asked for."""
             return json.loads(_translate(lambda: self._client.ai_video_poll(json.dumps(spec))))
         def cancel(self, spec):
-            """Stops a video job at its provider."""
+            """Stops a video job at its provider. The owner cancels any job; an agent whose owner agent Grant names ai.video cancels only the jobs it asked for."""
             return json.loads(_translate(lambda: self._client.ai_video_cancel(json.dumps(spec))))
     class _RevealVerbs:
         def __init__(self, client: _NativeClient) -> None:
