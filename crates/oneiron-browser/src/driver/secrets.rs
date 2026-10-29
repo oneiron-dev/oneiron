@@ -336,13 +336,7 @@ impl CdpDriver {
             Instant::now() + CALL,
         )?;
         match answer.get("exceptionDetails") {
-            Some(error) => Err(BrowserError::Protocol(
-                error
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("script error")
-                    .to_owned(),
-            )),
+            Some(error) => Err(BrowserError::Protocol(self.thrown_text(error))),
             None => Ok(()),
         }
     }

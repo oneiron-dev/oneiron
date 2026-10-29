@@ -489,18 +489,25 @@ impl CdpDriver {
             json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
         )?;
         if let Some(error) = result.get("exceptionDetails") {
-            return Err(BrowserError::Protocol(
-                error
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("script error")
-                    .to_owned(),
-            ));
+            return Err(BrowserError::Protocol(self.thrown_text(error)));
         }
         Ok(result
             .pointer("/result/value")
             .cloned()
             .unwrap_or(Value::Null))
+    }
+
+    /// What a script the driver ran threw, as an error names it: the page
+    /// controls that text, so each secret the run's reads took shows its
+    /// handle there, as in a title or a URL (FIX 11581).
+    fn thrown_text(&self, error: &Value) -> String {
+        let text = error
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("script error");
+        self.secrets
+            .mask_known(text)
+            .unwrap_or_else(|| text.to_owned())
     }
 
     /// Waits until the front tab's document has loaded, up to `deadline`:
