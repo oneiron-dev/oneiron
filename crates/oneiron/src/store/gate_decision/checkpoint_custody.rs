@@ -275,11 +275,12 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 
 /// The live custody state of the vault at `vault_dir`, read without opening
 /// it as a vault, through the read-only door's paired read
-/// (`read_existing_custody_pad_rows`), its pad object rows in the same
-/// transaction: a vault another process serves reads beside it, and one this
-/// process holds, under any name, is refused. A sealed vault reads with
-/// `page_seal`. A missing or unreadable vault refuses; pad object rows that
-/// do not read leave its objects not captured (PAD-1).
+/// (`read_existing_custody_pad_rows`), its pad object rows, bundle parts and
+/// the vault and home they name in the same transaction: a vault another
+/// process serves reads beside it, and one this process holds, under any
+/// name, is refused. A sealed vault reads with `page_seal`. A missing or
+/// unreadable vault refuses; pad object rows that do not read, or do not
+/// name their vault, leave its objects not captured (PAD-1).
 pub(crate) fn read_live_custody(
     vault_dir: &Path,
     page_seal: Option<&crate::world_keys::VaultPageSeal>,
@@ -292,15 +293,15 @@ pub(crate) fn read_live_custody(
     if let Some(callback) = BEFORE_LIVE_CUSTODY_READ.with(|slot| slot.borrow_mut().take()) {
         callback();
     }
+    let prefixes = pad_objects::pad_object_prefixes();
     let read = crate::world_keys::read_sealed(vault_dir, page_seal, || {
         read_existing_custody_pad_rows(
             vault_dir,
             &live_custody_prefixes(),
-            &pad_objects::pad_object_prefixes(),
-            pad_objects::is_pad_object_row,
+            &pad_objects::paired_source_ask(&prefixes),
         )
     })?;
-    let pad_objects = pad_objects::disk_capture(read.sync_state);
+    let pad_objects = pad_objects::disk_capture(read.sync_state, read.identity);
     let mut live = LiveCustody::from_rows(&read.root, read.vault_meta, pad_objects)?;
     live.fences = crate::store::CredentialFences::at_vault(&read.root, page_seal);
     Ok(live)

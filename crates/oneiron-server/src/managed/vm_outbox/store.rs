@@ -7,7 +7,8 @@
 //! transfer taken from the other end, the transfer sent and not yet acked,
 //! the highest revision this end ever sent, a digest cache keyed by the
 //! local file's stamp, and the state of a file whose put the other end
-//! refused as `digest_mismatch` (FIX 11075). A record outlives its member
+//! refused as `digest_mismatch` (FIX 11075), and a copy kept when the origin
+//! retired a version this end never agreed on (FIX 11074). A record outlives its member
 //! as a tombstone, so a late replay never brings a retired file back; none
 //! is aged out or evicted. The next transfer id is `next-transfer`.
 //! Every record is read into memory when the end starts.
@@ -20,7 +21,7 @@
 //! VM runs.
 
 use super::local::FileStamp;
-use oneiron_vault_contract::vm_outbox::{VmOutboxDescriptor, VmOutboxKind};
+use oneiron_vault_contract::vm_outbox::{VmOutboxDescriptor, VmOutboxKind, VmOutboxSide};
 use rustix::fs::{AtFlags, Mode, OFlags};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
@@ -90,6 +91,38 @@ pub(super) struct MemberRecord {
     /// member changes.
     #[serde(default)]
     pub(super) source: Option<SourceStatus>,
+    /// A copy of the member the carrier never agreed on, kept as its origin
+    /// retired the agreed version: on the end that holds it, and on the
+    /// origin as the other end answered (FIX 11074). `None` once its owner
+    /// had it removed, and once the member changes on the end that holds it.
+    #[serde(default)]
+    pub(super) diverged: Option<Diverged>,
+}
+
+/// A copy of a member the carrier never agreed on, kept when the member's
+/// origin retired the version both ends agreed on (FIX 11074). The carrier
+/// never removes it by itself: only its owner's answer does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Diverged {
+    /// The end that holds the copy.
+    pub(super) held_by: VmOutboxSide,
+    /// The kept copy's version.
+    pub(super) held: Version,
+    /// The agreed version's digest the origin retired, when the retirement
+    /// named one.
+    pub(super) retired: Option<String>,
+    /// The owner's answer once given: kept, or removed and still being
+    /// carried.
+    #[serde(default)]
+    pub(super) answer: Option<DivergedAnswer>,
+}
+
+/// The owner's answer to a diverged copy's ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DivergedAnswer {
+    Keep,
+    Remove,
 }
 
 /// What this end knows of its own file after the other end refused a put
@@ -197,6 +230,13 @@ impl Store {
             .filter(|((of, _), _)| *of == kind)
             .map(|((_, member), record)| (member.clone(), record.clone()))
             .collect()
+    }
+
+    /// Every record this end has, by kind and member.
+    pub(super) fn records(&self) -> impl Iterator<Item = (VmOutboxKind, &str, &MemberRecord)> {
+        self.records
+            .iter()
+            .map(|((kind, member), record)| (*kind, member.as_str(), record))
     }
 
     /// Writes `member`'s record durably, then keeps it in memory; the record

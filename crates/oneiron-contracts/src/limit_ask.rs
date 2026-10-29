@@ -505,6 +505,11 @@ pub enum EngineLimit {
     /// (FIX 8854). Past it the row asks whether everything is okay and the
     /// snapshot is still served whole; nothing is refused or cut.
     CommunityCacheBytes,
+    /// Tools one connector manifest under admission declares, and the
+    /// permissions or triggers one of its tools declares (FIX 8684, 8758).
+    /// The vault policy's admission quota asks first when it is lower. Past
+    /// it the row asks and the whole manifest is admitted.
+    ConnectorManifestEntries,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

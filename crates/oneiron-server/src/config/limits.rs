@@ -393,6 +393,7 @@ impl LimitsConfig {
             identity_decision_state_bytes,
             identity_excerpt_bytes,
             community_cache_bytes,
+            connector_manifest_entries,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -627,6 +628,10 @@ impl LimitsConfig {
             (EngineLimit::IdentityDecisionStateBytes, identity_decision_state_bytes),
             (EngineLimit::IdentityExcerptBytes, identity_excerpt_bytes),
             (EngineLimit::CommunityCacheBytes, community_cache_bytes),
+            (
+                EngineLimit::ConnectorManifestEntries,
+                connector_manifest_entries,
+            ),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);

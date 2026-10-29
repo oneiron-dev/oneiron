@@ -38,14 +38,80 @@ impl WireTelemetry {
         }
     }
 
-    /// Every limit question kept, by key: each row's windows, oldest first.
-    pub(crate) fn kept_limit_questions(&self) -> Result<Vec<(String, WireLimitQuestion)>> {
-        let mut kept = Vec::new();
-        for key in self.vault.sync_state_keys_with_prefix(LIMIT_QUESTION)? {
-            if let Some(bytes) = self.vault.sync_state_get(&key)? {
-                kept.push((key, decode(&bytes)?));
+    /// The last call-volume question sequence kept, if any. Pages the whole
+    /// family (FIX 11013) and keeps only the last key, so no count bounds it;
+    /// a key that does not parse is skipped.
+    pub(crate) fn last_kept_question_seq(&self) -> Result<Option<u64>> {
+        let mut last = None;
+        let mut after: Option<String> = None;
+        loop {
+            let mut page_last = None;
+            let next = self.vault.sync_state_prefix_page(
+                QUESTION_SEQ,
+                after.as_deref(),
+                KEPT_PAGE,
+                |key, _| {
+                    if let Some(seq) = key
+                        .strip_prefix(QUESTION_SEQ)
+                        .and_then(|seq| seq.parse::<u64>().ok())
+                    {
+                        page_last = Some(seq);
+                    }
+                    Ok(())
+                },
+            )?;
+            if page_last.is_some() {
+                last = page_last;
+            }
+            match next {
+                Some(next) => after = Some(next),
+                None => return Ok(last),
             }
         }
-        Ok(kept)
+    }
+
+    /// The last key kept under `prefix`, if any. Pages the family whole
+    /// (FIX 11013), so no count bounds it.
+    pub(crate) fn last_kept_key(&self, prefix: &str) -> Result<Option<String>> {
+        let mut last = None;
+        let mut after: Option<String> = None;
+        loop {
+            let next = self.vault.sync_state_prefix_page(
+                prefix,
+                after.as_deref(),
+                KEPT_PAGE,
+                |key, _| {
+                    last = Some(key.to_owned());
+                    Ok(())
+                },
+            )?;
+            match next {
+                Some(next) => after = Some(next),
+                None => return Ok(last),
+            }
+        }
+    }
+
+    /// Every limit question kept, by key: each row's windows, oldest first.
+    /// Pages the family (FIX 11013) as `kept_questions_after` does, so no
+    /// count bounds it.
+    pub(crate) fn kept_limit_questions(&self) -> Result<Vec<(String, WireLimitQuestion)>> {
+        let mut kept: Vec<(String, WireLimitQuestion)> = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            let next = self.vault.sync_state_prefix_page(
+                LIMIT_QUESTION,
+                after.as_deref(),
+                KEPT_PAGE,
+                |key, bytes| {
+                    kept.push((key.to_owned(), decode(bytes)?));
+                    Ok(())
+                },
+            )?;
+            match next {
+                Some(next) => after = Some(next),
+                None => return Ok(kept),
+            }
+        }
     }
 }

@@ -347,6 +347,7 @@ connector_dispatch_batch = 4096   # dispatches one connector-key batch admission
 identity_decision_state_bytes = 65536 # whole encoded identity-decision state; past it the row asks and the whole state is still sent
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
+connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

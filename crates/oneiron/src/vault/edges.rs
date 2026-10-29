@@ -12,7 +12,6 @@ use crate::ports::EdgeDirection;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::store::Store;
 
 /// Length of the edge-kind prefix: `entity_id (16) | kind (1)`.
 #[cfg(test)]
@@ -60,7 +59,7 @@ pub struct IdScanPage {
 /// Each node has at most one ChildOf parent. If multiple exist due to data
 /// corruption, only the first by LMDB key order is returned.
 fn first_child_of_parent(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     node: &EntityId,
 ) -> Result<Option<EntityId>> {
@@ -463,149 +462,156 @@ impl Vault {
         Ok(edges)
     }
 
-    /// Subtree descendants via ChildOf traversal, limited to `max_depth`.
-    /// Returns `(id, depth)` pairs sorted by depth.
-    ///
-    /// Uses BFS internally (queue-based), so shallower nodes always come
-    /// before deeper ones. Children are found via inbound ChildOf edges
-    /// (since ChildOf direction is child → parent, children appear in the
-    /// parent's edges_in). Every descendant is returned, however many: past
-    /// the advisory threshold row the walk raises one check and reads on
-    /// (rule 5).
+    /// Subtree descendants via ChildOf traversal, limited to `max_depth`:
+    /// [`subtree_in`] over base.
     pub fn subtree(&self, root: &EntityId, max_depth: u32) -> Result<Vec<(EntityId, u32)>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut count = ScanCount::start_at(
-            EngineScan::DagWalkRecords,
-            root.as_bytes(),
-            MAX_SUBTREE_RESULTS as u64,
-        );
-        let mut result = Vec::new();
-        let mut frontier = std::collections::VecDeque::from([(*root, 0_u32)]);
-        let mut visited = std::collections::HashSet::new();
-        visited.insert(*root);
-
-        while let Some((node, depth)) = frontier.pop_front() {
-            count.row();
-            if depth > 0 {
-                result.push((node, depth));
-            }
-            if depth >= max_depth {
-                continue;
-            }
-
-            // Find children: inbound ChildOf edges (child --ChildOf--> node)
-
-            for entry in self.store.port_edges(
-                &rtxn,
-                &node,
-                crate::ports::EdgeDirection::In,
-                Some(EdgeKind::ChildOf),
-                None,
-            )? {
-                let edge_row = entry?;
-                count.row();
-                let child = edge_row.target;
-                if visited.insert(child) {
-                    frontier.push_back((child, depth + 1));
-                }
-            }
-        }
-
-        // BFS already produces depth-ordered results, but sort to ensure
-        // deterministic ordering within each depth level (by entity ID).
-        result.sort_unstable_by(|a, b| {
-            a.1.cmp(&b.1)
-                .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
-        });
-        drop(rtxn);
-        count.finish(self);
-        Ok(result)
+        subtree_in(&self.store, &rtxn, root, max_depth)
     }
 
-    /// Walk ancestors via outbound ChildOf edges.
-    ///
-    /// Returns ancestor IDs from immediate parent to root (nearest first),
-    /// however many. The `visited` set prevents infinite loops on corrupted
-    /// cyclic data; past the advisory threshold row the walk raises one check
-    /// and reads on (rule 5).
+    /// Walk ancestors via outbound ChildOf edges: [`ancestors_in`] over base.
     pub fn ancestors(&self, node: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
-        let mut count = ScanCount::start(
-            &self.store,
-            &rtxn,
-            EngineScan::DagWalkRecords,
-            node.as_bytes(),
-        )?;
-        let mut result = Vec::new();
-        let mut current = *node;
-        let mut visited = std::collections::HashSet::new();
-        visited.insert(current);
-
-        while let Some(parent) = first_child_of_parent(&self.store, &rtxn, &current)? {
-            count.row();
-            if !visited.insert(parent) {
-                break; // Cycle detected — stop walking but don't error
-            }
-            result.push(parent);
-            current = parent;
-        }
-
-        drop(rtxn);
-        count.finish(self);
-        Ok(result)
+        ancestors_in(&self.store, &rtxn, node)
     }
 
-    /// Checks whether making `target` a parent of `node` would create a cycle.
-    ///
-    /// Convenience wrapper that opens its own read transaction.
-    /// For atomic check+insert, use `would_create_cycle_in_txn` within a
-    /// write transaction (see `BatchBuilder::edge_checked`).
+    /// Checks whether making `target` a parent of `node` would create a cycle:
+    /// [`would_create_cycle_in`] over base, in its own read transaction.
     pub fn would_create_cycle(&self, node: &EntityId, target: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        self.would_create_cycle_in_txn(&rtxn, node, target)
+        would_create_cycle_in(&self.store, &rtxn, node, target)
     }
+}
 
-    /// Checks whether making `target` a parent of `node` would create a cycle,
-    /// using the provided read transaction for atomicity with subsequent writes.
-    ///
-    /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
-    /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
-    /// The `visited` set prevents infinite loops on corrupted cyclic data;
-    /// `false` is returned only once the reachable ancestors are all walked.
-    fn would_create_cycle_in_txn(
-        &self,
-        rtxn: &heed::RoTxn<'_>,
-        node: &EntityId,
-        target: &EntityId,
-    ) -> Result<bool> {
-        if node == target {
-            return Ok(true);
+/// Subtree descendants of `root` via ChildOf traversal, limited to
+/// `max_depth`, read through `store`, a room's view included. Returns
+/// `(id, depth)` pairs sorted by depth.
+///
+/// Uses BFS internally (queue-based), so shallower nodes always come before
+/// deeper ones. Children are found via inbound ChildOf edges (since ChildOf
+/// direction is child → parent, children appear in the parent's edges_in).
+/// Every descendant is returned, however many: past the advisory threshold
+/// row the walk raises one check and reads on (rule 5).
+pub(crate) fn subtree_in(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    root: &EntityId,
+    max_depth: u32,
+) -> Result<Vec<(EntityId, u32)>> {
+    let mut count = ScanCount::start_at(
+        EngineScan::DagWalkRecords,
+        root.as_bytes(),
+        MAX_SUBTREE_RESULTS as u64,
+    );
+    let mut result = Vec::new();
+    let mut frontier = std::collections::VecDeque::from([(*root, 0_u32)]);
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(*root);
+
+    while let Some((node, depth)) = frontier.pop_front() {
+        count.row();
+        if depth > 0 {
+            result.push((node, depth));
         }
-        let mut count = ScanCount::start(
-            &self.store,
+        if depth >= max_depth {
+            continue;
+        }
+
+        // Find children: inbound ChildOf edges (child --ChildOf--> node)
+
+        for entry in store.port_edges(
             rtxn,
-            EngineScan::DagWalkRecords,
-            target.as_bytes(),
-        )?;
-        let mut current = *target;
-        let mut visited = std::collections::HashSet::new();
-        visited.insert(current);
-        let mut cyclic = false;
-
-        while let Some(parent) = first_child_of_parent(&self.store, rtxn, &current)? {
+            &node,
+            crate::ports::EdgeDirection::In,
+            Some(EdgeKind::ChildOf),
+            None,
+        )? {
+            let edge_row = entry?;
             count.row();
-            if parent == *node {
-                cyclic = true;
-                break;
+            let child = edge_row.target;
+            if visited.insert(child) {
+                frontier.push_back((child, depth + 1));
             }
-            if !visited.insert(parent) {
-                break; // Existing cycle in data — stop walking
-            }
-            current = parent;
         }
-        count.defer(&self.store);
-        Ok(cyclic)
     }
+
+    // BFS already produces depth-ordered results, but sort to ensure
+    // deterministic ordering within each depth level (by entity ID).
+    result.sort_unstable_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
+    });
+    count.defer(store);
+    Ok(result)
+}
+
+/// Walk `node`'s ancestors via outbound ChildOf edges, read through
+/// `store`, a room's view included.
+///
+/// Returns ancestor IDs from immediate parent to root (nearest first),
+/// however many. The `visited` set prevents infinite loops on corrupted
+/// cyclic data; past the advisory threshold row the walk raises one check
+/// and reads on (rule 5).
+pub(crate) fn ancestors_in(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    node: &EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut count = ScanCount::start(store, rtxn, EngineScan::DagWalkRecords, node.as_bytes())?;
+    let mut result = Vec::new();
+    let mut current = *node;
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(current);
+
+    while let Some(parent) = first_child_of_parent(store, rtxn, &current)? {
+        count.row();
+        if !visited.insert(parent) {
+            break; // Cycle detected — stop walking but don't error
+        }
+        result.push(parent);
+        current = parent;
+    }
+
+    count.defer(store);
+    Ok(result)
+}
+
+/// Checks whether making `target` a parent of `node` would create a cycle,
+/// read through `store`, a room's view included, in the caller's `rtxn`
+/// for atomicity with subsequent writes.
+///
+/// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
+/// Short-circuits as soon as `node` is found instead of collecting all ancestors.
+/// The `visited` set prevents infinite loops on corrupted cyclic data;
+/// `false` is returned only once the reachable ancestors are all walked.
+pub(crate) fn would_create_cycle_in(
+    store: &impl crate::store::ManifestDbs,
+    rtxn: &heed::RoTxn<'_>,
+    node: &EntityId,
+    target: &EntityId,
+) -> Result<bool> {
+    if node == target {
+        return Ok(true);
+    }
+    let mut count = ScanCount::start(store, rtxn, EngineScan::DagWalkRecords, target.as_bytes())?;
+    let mut current = *target;
+    let mut visited = std::collections::HashSet::new();
+    visited.insert(current);
+    let mut cyclic = false;
+
+    while let Some(parent) = first_child_of_parent(store, rtxn, &current)? {
+        count.row();
+        if parent == *node {
+            cyclic = true;
+            break;
+        }
+        if !visited.insert(parent) {
+            break; // Existing cycle in data — stop walking
+        }
+        current = parent;
+    }
+    count.defer(store);
+    Ok(cyclic)
 }
 
 /// [`Vault::filtered_edge_peers`] read through `store`, a room's view

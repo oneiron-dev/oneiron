@@ -77,6 +77,8 @@ pub(crate) fn maybe_propose_standing_policy_at(
             cited_receipts: window.cited_receipts,
             proposed_at: at,
             accepted_at: None,
+            accepted_by: None,
+            decision_ref: None,
             superseded: Vec::new(),
         };
         STANDING_POLICY.put(&vault.store, wtxn, &key, &row)?;
@@ -185,6 +187,8 @@ fn standing_policy_parts(row: &StoredStandingPolicy) -> Result<StandingPolicy> {
         ruling: ruling_from_parts(&row.ruling, row.delta.as_deref(), STANDING_POLICY_ROW_LABEL)?,
         budget_band_ceiling: row.band_ceiling,
         cited_receipts: row.cited_receipts.clone(),
+        accepted_by: row.accepted_by.clone(),
+        decision_ref: row.decision_ref.clone(),
     })
 }
 
@@ -237,7 +241,7 @@ pub(crate) fn accept_standing_policy_at(
 ) -> Result<()> {
     let wanted = row_ref.to_hex();
     vault.with_write_txn_grouped(|wtxn| {
-        standing_policy_holder_in_txn(vault, &*wtxn, holder)?;
+        let actor = standing_policy_holder_in_txn(vault, &*wtxn, holder)?;
         let found = find_standing_policy_in_txn(&vault.store, &*wtxn, &wanted)?;
         let Some((key, mut row)) = found else {
             return Err(Error::Gate(GateError::InvalidConsentBound(
@@ -248,6 +252,8 @@ pub(crate) fn accept_standing_policy_at(
             return Ok(());
         }
         row.accepted_at = Some(at);
+        row.accepted_by = Some(actor.to_hex());
+        row.decision_ref = Some(holder.decision_id().to_hex());
         STANDING_POLICY.put(&vault.store, wtxn, &key, &row)?;
         Ok(())
     })
