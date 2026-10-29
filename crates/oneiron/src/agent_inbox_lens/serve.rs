@@ -313,3 +313,77 @@ pub struct InboxRunGroupsRequest {
     #[serde(default)]
     pub after: Option<String>,
 }
+
+impl Memory<'_> {
+    /// The owner's one inbox over both group kinds (FIX 3026): the Dreamer
+    /// run groups [`Memory::inbox_run_groups`] pages and the vault shape's
+    /// apply groups, interleaved newest first, one page of complete groups
+    /// and where the next page resumes.
+    pub fn inbox_groups_page(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &InboxRunGroupsRequest,
+    ) -> MemoryResult<crate::inbox::UnifiedInboxGroupPage> {
+        self.inbox_owner(owner)?;
+        let after = input
+            .after
+            .as_deref()
+            .map(|token| {
+                crate::inbox::UnifiedInboxGroupCursor::parse(token).ok_or_else(|| {
+                    MemoryError::bad_request("after is not the next cursor of a groups page")
+                })
+            })
+            .transpose()?;
+        Ok(self.vault().inbox_groups_unified(
+            self.vault().now_recorded_at(),
+            input.limit.unwrap_or(50).min(200),
+            after.as_ref(),
+        )?)
+    }
+
+    /// The owner's answer to one inbox group, dispatched by its kind: a
+    /// Dreamer group's bundle consent or a shape apply's answer, with
+    /// `slips`, the host's slip issuer, when it has one.
+    pub fn resolve_inbox_group_of_kind(
+        &self,
+        owner: &AuthenticatedOwner,
+        slips: Option<&crate::authority::HostSlipIssuer>,
+        input: &crate::inbox::InboxGroupResolveRequest,
+    ) -> MemoryResult<crate::inbox::InboxGroupResolution> {
+        self.inbox_owner(owner)?;
+        Ok(self.vault().resolve_inbox_group_of_kind(
+            owner,
+            slips,
+            input,
+            self.vault().now_recorded_at(),
+        )?)
+    }
+
+    /// The vault shape's apply groups alone (ARCH-0070), each with the
+    /// items waiting for the owner's word, oldest first.
+    pub fn shape_inbox_groups(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> MemoryResult<Vec<crate::vault_shape::ShapeInboxGroup>> {
+        self.inbox_owner(owner)?;
+        Ok(self.vault().inbox_shape_groups()?)
+    }
+
+    /// The owner's answer to one apply's inbox group: accept-all,
+    /// reject-all or review-each, through the owner's doors.
+    pub fn resolve_shape_inbox_group(
+        &self,
+        owner: &AuthenticatedOwner,
+        slips: Option<&crate::authority::HostSlipIssuer>,
+        input: &crate::memory::ShapeGroupResolveRequest,
+    ) -> MemoryResult<crate::vault_shape::ShapeApplyReceipt> {
+        self.inbox_owner(owner)?;
+        Ok(self.vault().resolve_shape_inbox_group(
+            owner,
+            slips,
+            &input.group_key,
+            input.verb,
+            self.vault().now_recorded_at(),
+        )?)
+    }
+}

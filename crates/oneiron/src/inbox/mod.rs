@@ -29,11 +29,13 @@ mod actions;
 mod list;
 mod model;
 mod notification;
+mod outbox_ask;
 mod projection;
 mod resolve;
 mod root_group;
 mod takeover_ask;
 mod traversal;
+mod unified;
 
 pub use self::actions::NotificationAction;
 pub use self::list::{
@@ -50,6 +52,10 @@ pub use self::model::{
     InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution, InboxCheckInException,
     InboxExceptionClass, InboxGroup, InboxGroupCursor, InboxGroupMember, InboxGroupPage,
     InboxGroupReopen, InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
+};
+pub use self::unified::{
+    InboxGroupKind, InboxGroupResolution, InboxGroupResolveRequest, UnifiedInboxGroup,
+    UnifiedInboxGroupCursor, UnifiedInboxGroupPage,
 };
 
 pub(crate) use self::projection::inbox_claim_hash;
