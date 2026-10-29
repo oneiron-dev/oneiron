@@ -77,9 +77,9 @@ impl RetrievalBlendWeights {
     #[must_use]
     pub const fn bootstrap() -> Self {
         Self {
-            recency: 0.35,
-            salience: 0.30,
-            confidence: 0.20,
+            recency: 0.175,
+            salience: 0.15,
+            confidence: 0.10,
             gravity: 0.075,
             relevance: 0.50,
         }

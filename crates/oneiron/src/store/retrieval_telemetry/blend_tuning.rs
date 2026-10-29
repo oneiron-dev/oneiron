@@ -412,11 +412,11 @@ impl Store {
         let rtxn = self.env.read_txn()?;
         let previous = self.retrieval_blend_weight_table_in_txn(&rtxn)?;
         let pins = self.retrieval_policy_pins_in_txn(&rtxn)?;
-        let mut gradient = [0.0_f64; 4];
+        let mut gradient = [0.0_f64; 5];
         let mut reward_count = 0_usize;
         let mut component_count = 0_usize;
         let mut data_window = RetrievalBlendWeightDataWindow::default();
-        let mut holdout_gradient = [0.0_f64; 4];
+        let mut holdout_gradient = [0.0_f64; 5];
         let mut holdout_rewards = 0_usize;
         let mut ungated_skipped = 0_u32;
         let mut manifest = String::new();
@@ -488,7 +488,7 @@ impl Store {
                     computed.to_bits()
                 ));
                 let reward = f64::from(computed);
-                let mut outcome_gradient = [0.0_f64; 4];
+                let mut outcome_gradient = [0.0_f64; 5];
                 let mut outcome_component_count = 0_usize;
                 let mut outcome_candidate_count = 0_u32;
                 for candidate in &record.score_breakdown {

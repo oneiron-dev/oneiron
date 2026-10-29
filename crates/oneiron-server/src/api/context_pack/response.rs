@@ -103,7 +103,7 @@ pub(crate) struct CoreContextPackStats {
     /// Neighbor entities hydrated.
     #[schema(example = 0)]
     neighbors_hydrated: usize,
-    /// Vector-only candidates dampened by cosine-ghost suppression.
+    /// Vector-only candidates counted for cosine-ghost lexical disagreement.
     #[schema(example = 0)]
     cosine_ghosts_dampened: usize,
     /// Claims suppressed by read-path gates.

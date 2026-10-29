@@ -171,6 +171,7 @@ impl PipelineBuilder<'_> {
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let mut phonetic_channel_index = None;
+            let mut ppr_channel_index = None;
             let blend_weights = match self.blend_weights_override {
                 Some(weights) => weights,
                 None => retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?,
@@ -406,14 +407,14 @@ impl PipelineBuilder<'_> {
                 record_ppr_cache_outcome(&mut diagnostics, ppr.cache);
                 let ppr_results = ppr.scores;
                 let deferred_cache_write = ppr.deferred_cache_write;
-                let ppr_channel_index = acc.admit_channel(
+                ppr_channel_index = Some(acc.admit_channel(
                     RetrievalSignal::Ppr,
                     ppr_results,
                     &self.read,
                     rtxn,
                     filter_config,
                     &mut metadata_cache,
-                )?;
+                ))?;
                 if let Some(deferred_cache_write) = deferred_cache_write {
                     deferred_ppr_cache_writes.push(deferred_cache_write);
                 }
