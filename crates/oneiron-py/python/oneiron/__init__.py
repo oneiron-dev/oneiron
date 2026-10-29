@@ -5779,6 +5779,9 @@ class Oneiron:
         @property
         def video(self) -> "Oneiron._AiVideoVerbs":
             return Oneiron._AiVideoVerbs(self._client)
+        def ask_image(self, spec):
+            """One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt."""
+            return json.loads(_translate(lambda: self._client.ai_ask_image(json.dumps(spec))))
         def verdict(self, spec):
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
             return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))

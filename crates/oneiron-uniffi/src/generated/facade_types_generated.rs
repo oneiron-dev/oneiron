@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1162 facade rows, 4164 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1114.
+// UniFFI census: 1163 facade rows, 4167 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1115.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -50628,6 +50628,58 @@ pub enum AiVideoJob {
 pub struct AiVideoCancelled {
     #[serde(rename = "job")]
     pub job: String,
+}
+
+/// `oneiron::verbs::host::ask_image::AskImageRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AskImageRequest {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "question")]
+    pub question: String,
+    #[serde(rename = "region", default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<PixelRegion>,
+    #[serde(rename = "contract", default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<AnswerContract>,
+}
+
+/// `oneiron::verbs::host::ask_image::AskImageReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AskImageReceipt {
+    #[serde(rename = "pull")]
+    pub pull: String,
+    #[serde(rename = "run")]
+    pub run: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "locality")]
+    pub locality: ModelLocality,
+    #[serde(rename = "usage", default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<LlmUsage>,
+    #[serde(
+        rename = "finish_reason",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub finish_reason: Option<FinishReason>,
+}
+
+/// `oneiron::verbs::host::ask_image::AskImageAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AskImageAnswer {
+    #[serde(rename = "asset_ref")]
+    pub asset_ref: String,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<DecisionAnswer>,
+    #[serde(rename = "typed", default, skip_serializing_if = "Option::is_none")]
+    pub typed: Option<TypedDecision>,
+    #[serde(rename = "presence", default, skip_serializing_if = "Option::is_none")]
+    pub presence: Option<TypedDecision>,
+    #[serde(rename = "receipt")]
+    pub receipt: AskImageReceipt,
 }
 
 /// `oneiron::verbs::host::AiVerdictReversibility`.

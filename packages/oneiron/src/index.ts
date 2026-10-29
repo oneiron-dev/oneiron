@@ -3325,6 +3325,8 @@ export class Oneiron {
       /** Stops a video job at its provider. */
       cancel: (input: Facade.AiVideoJobRequest): Facade.AiVideoCancelled => this.#call(() => this.#client.aiVideoCancel(input) as Facade.AiVideoCancelled),
     }),
+    /** One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt. */
+    ask_image: (input: Facade.AskImageRequest): Facade.AskImageAnswer => this.#call(() => this.#client.aiAskImage(input) as Facade.AskImageAnswer),
     /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
     verdict: (input: Facade.AiVerdictRequest): Facade.AiVerdict => this.#call(() => this.#client.aiVerdict(input) as Facade.AiVerdict),
   }

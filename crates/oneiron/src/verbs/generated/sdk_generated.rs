@@ -4876,6 +4876,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<AiVideoJobRequest>(),
             ),
             (
+                "ai.ask_image",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AskImageRequest>(
+                ),
+            ),
+            (
                 "ai.verdict",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::AiVerdictRequest,
@@ -16157,6 +16162,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.ask_image" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.verdict" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21047,6 +21059,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.video.cancel" => {
             let _input: AiVideoJobRequest = decode(value.clone())?;
         }
+        "ai.ask_image" => {
+            let _input: crate::task_verb::sdk::AskImageRequest = decode(value.clone())?;
+        }
         "ai.verdict" => {
             let input: crate::task_verb::sdk::AiVerdictRequest = decode(value.clone())?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
@@ -23863,6 +23878,7 @@ pub fn invoke(
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
         "ai.video.poll" => encode(ai_video_poll(memory, decode(value)?)?),
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
+        "ai.ask_image" => encode(ai_ask_image(memory, decode(value)?)?),
         "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
         "vault.graph.ask" => encode(vault_graph_ask(memory, decode(value)?)?),
         "vault.graph.admit" => encode(vault_graph_admit(memory, decode(value)?)?),
@@ -31888,6 +31904,12 @@ pub fn ai_video_cancel(
     input: AiVideoJobRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AiVideoCancelled> {
     crate::task_verb::sdk::host_only(memory, "ai.video.cancel", &input)
+}
+pub fn ai_ask_image(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AskImageRequest,
+) -> MemoryResult<crate::task_verb::sdk::AskImageAnswer> {
+    crate::task_verb::sdk::host_only(memory, "ai.ask_image", &input)
 }
 pub fn ai_verdict(
     memory: &Memory<'_>,

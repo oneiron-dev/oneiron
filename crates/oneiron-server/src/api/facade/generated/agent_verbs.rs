@@ -973,6 +973,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.video", post(facade_route))
         .route("/ai.video.poll", post(facade_route))
         .route("/ai.video.cancel", post(facade_route))
+        .route("/ai.ask_image", post(facade_route))
         .route("/ai.verdict", post(facade_route))
         .route("/vault.graph.ask", post(facade_route))
         .route("/vault.graph.admit", post(facade_route))
