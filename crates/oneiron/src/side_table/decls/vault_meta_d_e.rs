@@ -250,6 +250,9 @@ side_tables! {
     /// OF-490: what a resident's dreaming has read so far: newest receipt and INBOX times, last
     /// dreaming, entries written. Key: id16 (resident).
     DREAMER_RESIDENT_PROGRESS: VaultMeta b"dreamer:resident:progress:v1:" Named;
+    /// FIX 7753: the rows and revisions one resident dreaming read, keyed by the diary entry it
+    /// landed. Key: id16 (entry).
+    DREAMER_RESIDENT_READ: VaultMeta b"dreamer:resident:read:v1:" Named;
     /// Parent/child attempt-tree edge row (parent_attempt, created_at) keyed by attempt id. Key:
     /// id16.
     DREAMER_RUN_TREE: VaultMeta b"dreamer:run_tree:" Raw;
@@ -352,10 +355,14 @@ side_tables! {
     /// Write-once Δ side-ledger row for one receipt: a captured edit-distance measurement (canonical
     /// JSON), or the literal marker "uncaptured" when capture was attempted and failed. Key: string.
     EDIT_DISTANCE_AMENDMENT_DELTA: VaultMeta b"edit_distance/amendment_delta/v1\0" Raw;
-    /// Recorded routing/attribution evidence for one amendment receipt. Key: string.
-    EDIT_DISTANCE_AMENDMENT_EVIDENCE: VaultMeta b"edit_distance/amendment_evidence/v1\0" Raw;
-    /// Judge-routed classification of one amendment's edit distance/preference class. Key: string.
-    EDIT_DISTANCE_AMENDMENT_JUDGMENT: VaultMeta b"edit_distance/amendment_judgment/v1\0" Raw;
+    /// Recorded routing/attribution evidence for one amendment receipt; a project's erase re-keys
+    /// the project it names (FIX 6038). Key: string.
+    EDIT_DISTANCE_AMENDMENT_EVIDENCE: VaultMeta b"edit_distance/amendment_evidence/v1\0" Raw
+        => crate::edit_distance::attribution::erase_amendment_project_in_txn;
+    /// Judge-routed classification of one amendment's edit distance/preference class; a project's
+    /// erase re-keys the project it names (FIX 6038). Key: string.
+    EDIT_DISTANCE_AMENDMENT_JUDGMENT: VaultMeta b"edit_distance/amendment_judgment/v1\0" Raw
+        => crate::edit_distance::attribution::erase_amendment_project_in_txn;
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;

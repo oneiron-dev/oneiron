@@ -313,6 +313,9 @@ impl WindowManager {
         // queues the recovered delete as a delete-bearing `q:` row, closing
         // the "delete while sync off → enable sync → tombstone never
         // published" hole (ONE-1135 review blocker, OWNER-DECISION 4).
+        // The recovery's writes skip the write door's scope-summary rederive;
+        // one write re-derives once after the forward pass (FIX 11607).
+        let deferral = crate::scope_summary::defer_rederive();
         let pending_tombstones = replay_pending_tombstones(&self.vault, &doc, key)?;
         let replayed = replay_pending_mirrors(&self.vault, &doc, key)?;
         let mirrored = reverse_rematerialize(&self.vault, &doc, key)?;
@@ -320,6 +323,10 @@ impl WindowManager {
         // before the forward pass clears the marks it mirrored.
         self.route_recovered_delta(&doc, key, &recovered_from)?;
         let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer, key)?;
+        drop(deferral);
+        // The door re-derives every scope summary after a write: this one
+        // writes nothing else.
+        self.vault.with_write_txn_grouped(|_| Ok(()))?;
         tracing::debug!(
             window = %key,
             pending_tombstones,

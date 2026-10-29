@@ -1,5 +1,5 @@
 use super::scoped_auth::check_request_auth;
-use crate::error::ApiError;
+use crate::error::{ApiError, ApiErrorEnvelope};
 use crate::server::SyncServer;
 use axum::extract::State;
 use axum::http::request::Parts;
@@ -63,6 +63,12 @@ pub(crate) struct LeaseRevokeResponse {
             status = 401,
             description = "Missing or invalid bearer credentials.",
             body = ApiError,
+            content_type = "application/json"
+        ),
+        (
+            status = 409,
+            description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.",
+            body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
         (
