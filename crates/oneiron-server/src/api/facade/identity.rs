@@ -135,11 +135,15 @@ pub(in crate::api) fn owner_authorship(
     // transaction proves again. A hosted operator's root gets the refusal.
     if let Some(action) = super::host_action::host_action_of(server.vault(), auth) {
         let action = action.map_err(super::host_action::host_action_refusal)?;
+        // A typed refusal the recheck carries keeps its code (FIX 6032).
         return server
             .vault()
             .authenticate_host_action_owner(&action, oneiron::store::GateDecisionId::now())
             .map(Some)
-            .map_err(|_| ApiError::forbidden_scope("owner"));
+            .map_err(|error| {
+                crate::api::error_map::carried_refusal(&error)
+                    .unwrap_or_else(|| ApiError::forbidden_scope("owner"))
+            });
     }
     let Some((principal, actor)) = auth
         .principal_ref()

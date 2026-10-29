@@ -98,8 +98,9 @@ async fn land(
     match tokio::task::spawn_blocking(move || take(&vault, &body, now)).await {
         Ok(Ok(CooperativeDeletionIngress::Filed)) => StatusCode::ACCEPTED.into_response(),
         Ok(Ok(CooperativeDeletionIngress::AlreadyFiled)) => StatusCode::OK.into_response(),
+        // No pact and a bad signature answer the same typed 403 (FIX 6032).
         Ok(Ok(CooperativeDeletionIngress::Unauthenticated)) => {
-            StatusCode::FORBIDDEN.into_response()
+            crate::error::ApiError::courtesy_delete_unauthenticated().into_response()
         }
         Ok(Ok(CooperativeDeletionIngress::Conflict)) => StatusCode::CONFLICT.into_response(),
         Ok(Err(error)) => {
