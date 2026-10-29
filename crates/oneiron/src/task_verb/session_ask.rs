@@ -94,7 +94,7 @@ impl SessionAskRecord {
         })
     }
 
-    /// Admits one recipient's word, idempotently for the same actor and word.
+    /// Admits one asked holder's word, idempotently for the same actor and word.
     /// No member TASK, notification, launch or durable background work runs.
     pub(crate) fn answer(
         &mut self,
@@ -106,7 +106,7 @@ impl SessionAskRecord {
         word_ref: EntityId,
         now: u64,
     ) -> MemoryResult<TaskAskAnswer> {
-        if !self.admits(actor) {
+        if !self.parts.holders.contains(&actor) {
             return Err(MemoryError::bad_request(
                 "ask handle is not addressed to this actor",
             ));
