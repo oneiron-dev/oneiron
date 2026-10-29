@@ -270,7 +270,10 @@ impl Memory<'_> {
                     };
                     return (planned.holder, outcome);
                 }
-                let outcome = match (planned.hold, options.veto_starter.zip(shared_vault_id)) {
+                let outcome = match (
+                    planned.hold.clone(),
+                    options.veto_starter.zip(shared_vault_id),
+                ) {
                     (Some(reason), Some((starter, vault_id))) => {
                         match self.start_held_erase(starter, vault_id, &planned) {
                             Ok(act) => SameBytesOutcome::Held {
