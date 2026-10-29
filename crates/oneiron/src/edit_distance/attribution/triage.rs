@@ -361,6 +361,64 @@ pub(super) fn packet_in_txn(
     })
 }
 
+/// Whether [`escalate_in_txn`] with a packet carrying exactly (`signal`,
+/// `subject`, `scope`, `project`) would write no owner row: the read-only twin
+/// of escalate's dedup loop, run before the packet is built so a trigger every
+/// live owner already holds skips the full judgment scan. The two must agree
+/// owner by owner. Skipping is safe: the FIX 11634 signature emit fires iff
+/// escalate wrote, so a skip — which fires exactly when no owner row would be
+/// written — never suppresses a first emit.
+///
+/// # Errors
+///
+/// Storage errors; a held notification body that does not decode (as in
+/// escalate).
+pub(super) fn escalation_held_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+    scope: &str,
+    project: Option<EntityId>,
+    signal: &WorseningSignal,
+) -> Result<bool> {
+    let subject = subject.to_hex();
+    let project = project.map(|project| project.to_hex());
+    for owner in crate::policy_model::owners_in_txn(vault, txn)? {
+        let owner_ref = owner.to_hex();
+        let source = NotificationSource {
+            producer: NOTIFICATION_PRODUCER_WORSENING.to_owned(),
+            event: format!(
+                "{}:{}:{owner_ref}:{}:{}",
+                signal.token(),
+                subject,
+                project.as_deref().unwrap_or_default(),
+                scope
+            ),
+            ..NotificationSource::default()
+        };
+        let id = crate::inbox::notification_id(&source)?;
+        let LiveEntityRow::Live { entity_type, body } =
+            live_entity_row_in_txn(&vault.store, txn, &id)?
+        else {
+            return Ok(false);
+        };
+        if entity_type != ENTITY_TYPE_NOTIFICATION {
+            continue;
+        }
+        let body = decode_notification_body(&body)?;
+        let held = body
+            .source
+            .detail
+            .as_deref()
+            .and_then(|held| serde_json::from_str::<TriagePacket>(held).ok());
+        if held.is_some_and(|held| held.signal.trigger() == signal.trigger()) {
+            continue;
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 /// Raises or brings up to date `packet`'s escalation in each live owner's
 /// inbox, in the caller's write. A row already carrying this trigger is left
 /// as it is; one carrying an earlier trigger takes this packet and comes back
