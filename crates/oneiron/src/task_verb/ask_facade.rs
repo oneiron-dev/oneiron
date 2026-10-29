@@ -56,6 +56,11 @@ struct AskCensus {
 
 /// What a first admission, or an approval releasing a held ask, mints.
 impl AskCensus {
+    /// The effective question, for a session-owned digest.
+    pub(super) fn question(&self) -> &TaskAskQuestion {
+        &self.effective.what
+    }
+
     /// The validated, session-owned projection: no member TASK or launch
     /// work escapes the ordinary census (FIX 10087).
     pub(super) fn into_session_parts(

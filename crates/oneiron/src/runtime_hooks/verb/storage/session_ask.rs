@@ -2,7 +2,7 @@
 //! Records and pauses share the same close-scoped `Kept` row.
 
 use super::*;
-use crate::MemoryResult;
+use crate::memory::MemoryResult;
 
 impl SessionHookKeep {
     /// Opens one session-owned typed ask and its paused call atomically in
