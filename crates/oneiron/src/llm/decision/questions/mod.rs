@@ -69,6 +69,7 @@ pub use refresh::{
 };
 pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
 pub(crate) use role_asks::keep_artifact_unit_ask;
+pub(crate) use saved_reader::wake_artifact_reads;
 pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;

@@ -524,6 +524,17 @@ impl ScopedReadActorKey {
         self.owner.is_some()
     }
 
+    /// How a reader holding this key sees a stored key: as stored for the
+    /// vault owner's own key, as its handle for every other. A door derives
+    /// it from the key it reads under each time, never from a stored sight.
+    pub(crate) fn secret_sight(&self) -> crate::secret_custody::SecretSight {
+        if self.reads_as_vault_owner() {
+            crate::secret_custody::SecretSight::Owner
+        } else {
+            crate::secret_custody::SecretSight::Masked
+        }
+    }
+
     /// This key, bound to the credential it was presented with: every read
     /// checks `proof` as it checks any credential's, live (unexpired and
     /// unrevoked) in the read's own snapshot and within its records and
