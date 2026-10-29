@@ -6,7 +6,7 @@ use oneiron::embed::EmbedderLocality;
 use oneiron::llm::manifest::doors::{
     ModelManifestReplace, ModelRoleInput, ModelRoleInvocation, ModelRoleInvoke, ModelRoleOutput,
     ModelRoleRead, ModelRoleReceipt, ModelRouteRead, ModelRouteReplace, ModelRouteView,
-    OneironerBind,
+    OneironerBind, OneironerBundleReceipt,
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
 use oneiron::memory::extraction::{
@@ -71,10 +71,10 @@ pub(crate) async fn vault_models_oneironer_bind(
         auth,
         "vault.models.oneironer.bind",
         move |server, owner| {
-            let (model, tier) = loaded_oneironer(server, &input)?;
+            let (model, tier, receipt) = loaded_oneironer(server, &input)?;
             Ok(server
                 .vault()
-                .bind_oneironer_as_owner(owner, &model, &tier)?)
+                .bind_oneironer_as_owner(owner, &model, &tier, &receipt)?)
         },
         |_| Vec::new(),
     )
@@ -89,7 +89,7 @@ pub(crate) async fn vault_models_oneironer_bind(
 fn loaded_oneironer(
     server: &SyncServer,
     guards: &OneironerBind,
-) -> MemoryResult<(ModelId, ModelTierRef)> {
+) -> MemoryResult<(ModelId, ModelTierRef, OneironerBundleReceipt)> {
     let slot = server
         .tagger
         .as_ref()
@@ -128,7 +128,14 @@ fn loaded_oneironer(
         ));
     }
     let tier = oneironer_tier(config, Some(&card), model);
-    Ok((model.clone(), tier))
+    let receipt = OneironerBundleReceipt {
+        stack_sha16: card.stack_sha16.clone().unwrap_or_default(),
+        checkpoint_sha16: checkpoint.to_owned(),
+        label_count: card.label_count,
+        // The bind path has no manifest read for per-artifact hashes.
+        artifacts: None,
+    };
+    Ok((model.clone(), tier, receipt))
 }
 
 /// The tier an Oneironer bind or host receipt names, and the one place its
