@@ -2880,8 +2880,10 @@ A vault with no manifest tags with the host's `[oneironer]` section as its
 selection, and `vault.models.roles.read` and `vault.models.roles.invoke`
 both report `extraction_encoder` from that section for it, with one receipt
 that names the loaded tagger: role `extraction_encoder`, slot `oneironer`,
-revision the configured `checkpoint_sha16`, route `on_device`, the section's
-provider, and its tier. Every other role, and every role of a vault with a
+revision the configured `checkpoint_sha16`, route the slot's own locality
+(`on_device` for provider `local`; an endpoint-provider slot reports its
+endpoint's locality), the section's provider, and its tier.
+Every other role, and every role of a vault with a
 manifest, is read and served from the manifest as before.
 
 Bind and that receipt name the tier in one order: the section's named
