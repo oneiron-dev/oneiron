@@ -118,7 +118,8 @@ pub struct WorkerActivity {
 }
 
 impl WorkerActivity {
-    fn is_idle(&self) -> bool {
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
         self.queued == 0 && self.active == 0
     }
 }
