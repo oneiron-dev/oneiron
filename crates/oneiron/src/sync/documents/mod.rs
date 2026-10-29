@@ -1,10 +1,14 @@
-//! Per-entity text documents. Only live edit sessions retain Loro residents.
+//! Per-entity text documents. A NOTE's text is its NOTE storage; any other
+//! record's text is its canonical entity document (FIX 8871), or, for a kind
+//! with no document birth that holds none, the sequence rows of its own
+//! slot. Each reader and writer reads it durable, never from a resident copy.
 //!
 //! The serialized commit path performs Observer A's duty (durable append,
-//! stale VV, then wire notice). There is no Observer B: text never overwrites
-//! entity bodies in LMDB. Reads and socket imports use short-lived sessions.
+//! stale VV, then wire notice). Reads and socket imports use short-lived
+//! sessions.
 
 mod destination;
+mod entity;
 mod note_requests;
 pub(crate) use destination::text_withheld;
 pub use destination::{
@@ -17,9 +21,8 @@ mod tests;
 use crate::error::{Error, Result, SyncEngineContext, SyncProtocolValidation};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Raw, SideTable};
-use crate::sync::loro_support::doc_from_snapshot;
 use crate::sync::transport::{document_sub_tags, encode_document};
-use crate::{EntityId, Vault};
+use crate::{EntityId, Vault, WriteActor};
 use loro::{ExportMode, LoroDoc, VersionVector};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -86,13 +89,18 @@ impl DocumentRegistry {
         }
         self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, id)?;
-            // Startup step 3: snapshot first, then ordered pending updates.
-            let doc = storage::load(&self.vault, txn, id)?;
-            storage::snapshot(&self.vault, txn, id, &doc, false)?;
+            // Startup step 3 for a NOTE: snapshot first, then ordered pending
+            // updates. A record's entity document keeps its own counters.
+            if self.vault.get_entity_type_in_txn(txn, &id)?
+                == Some(crate::registry::ENTITY_TYPE_NOTE)
+            {
+                let doc = storage::load(&self.vault, txn, id)?;
+                storage::snapshot(&self.vault, txn, id, &doc, false)?;
+            }
             let handle = Arc::new(EntityDocument {
                 id,
                 vault: self.vault.clone(),
-                doc: Mutex::new(doc),
+                writer: Mutex::new(()),
                 notices: self.notices.clone(),
                 _turn: turn,
             });
@@ -289,11 +297,12 @@ impl DocumentRegistry {
     }
 }
 
-/// A live editable document. No raw Loro handle escapes the serialization lock.
+/// A live editable document. Its text is durable; it holds no Loro copy.
 pub struct EntityDocument {
     id: EntityId,
     vault: Arc<Vault>,
-    doc: Mutex<LoroDoc>,
+    /// Serializes this document's writers.
+    writer: Mutex<()>,
     notices: broadcast::Sender<Vec<u8>>,
     /// The document's turn under the vault's live document row, held while
     /// it is resident.
@@ -311,7 +320,10 @@ impl EntityDocument {
                 .get_text("body")
                 .to_string());
         }
-        Ok(self.lock()?.get_text("body").to_string())
+        Ok(entity::document_in(&self.vault, &txn, self.id)?
+            .0
+            .get_text("body")
+            .to_string())
     }
 
     pub fn version_vector(&self) -> Result<Vec<u8>> {
@@ -324,41 +336,32 @@ impl EntityDocument {
                 .oplog_vv()
                 .encode());
         }
-        Ok(self.lock()?.oplog_vv().encode())
+        Ok(entity::document_in(&self.vault, &txn, self.id)?
+            .0
+            .oplog_vv()
+            .encode())
     }
 
-    /// Edit a Unicode-scalar range. The update is durable before return or notice.
-    pub fn edit_text(&self, start: usize, delete: usize, insert: &str) -> Result<Vec<u8>> {
+    /// Edit a Unicode-scalar range as `actor`, authenticated by the caller,
+    /// at `at` (FIX 8873): the canonical attributed edit, its prose admitted
+    /// and its commit stamped. A MESSAGE with no document yet is born first,
+    /// naming no one. The update is durable before return or notice.
+    pub fn edit_text(
+        &self,
+        actor: WriteActor,
+        at: u64,
+        start: usize,
+        delete: usize,
+        insert: &str,
+    ) -> Result<Vec<u8>> {
         self.refuse_raw_note()?;
-        let mut resident = self.lock()?;
-        let staged = clone_doc(&resident)?;
-        let before = staged.oplog_vv();
-        let text = staged.get_text("body");
-        text.delete(start, delete)
-            .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapDelete, e))?;
-        text.insert(start, insert)
-            .map_err(|e| Error::sync_engine(SyncEngineContext::LoroMapInsert, e))?;
-        staged.commit();
-        let bytes = staged
-            .export(ExportMode::updates(&before))
-            .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
-        let frame = encode_document(self.id, document_sub_tags::UPDATE, &bytes)
-            .into_result()
-            .map_err(|_| Error::InvariantViolation("document edit exceeds wire limit"))?;
-        self.vault.with_write_txn_grouped(|txn| {
-            eligible(&self.vault, txn, self.id)?;
-            let seq = storage::append(&self.vault, txn, self.id, &bytes)?;
-            QD_E.put(
-                &self.vault.store,
-                txn,
-                &format!("{}:{seq:08x}", self.id.to_hex()).into_bytes(),
-                &frame,
-            )?;
-            Ok(())
-        })?;
-        *resident = staged;
-        let _ = self.notices.send(frame.clone());
-        Ok(frame)
+        self.edit_record(&crate::entity_doc::SyncEdit {
+            actor,
+            at,
+            start,
+            delete,
+            insert,
+        })
     }
 
     /// Privileged embedding/authority import, without peer grant admission.
@@ -412,11 +415,10 @@ impl EntityDocument {
         session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
     ) -> Result<()> {
         self.refuse_raw_note()?;
-        let mut resident = self.lock()?;
-        let landed = super::selector::secret_projection::import_document_copy(
+        let _writer = self.lock()?;
+        super::selector::secret_projection::import_document_copy(
             &self.vault,
             self.id,
-            &resident,
             bytes,
             |txn| {
                 eligible(&self.vault, txn, self.id)?;
@@ -434,62 +436,20 @@ impl EntityDocument {
                     selector,
                 )
             },
-        )?;
-        if let Some(staged) = landed {
-            *resident = staged;
-        }
-        Ok(())
+        )
     }
 
-    fn import_admitted(
+    /// The internal admitted importer: `admit` judges the text in the
+    /// writer that lands it, which takes a STATE as well as an UPDATE
+    /// (FIX 8861). Its callers choose which kinds they let through.
+    pub(super) fn import_admitted(
         &self,
         kind: u8,
         bytes: &[u8],
         admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         self.refuse_raw_note()?;
-        let mut resident = self.lock()?;
-        let staged = match kind {
-            document_sub_tags::STATE => LoroDoc::new(),
-            document_sub_tags::UPDATE => clone_doc(&resident)?,
-            _ => {
-                return Err(Error::sync_protocol(
-                    SyncProtocolValidation::DocumentAdmissionDenied,
-                ));
-            }
-        };
-        storage::import_complete(&staged, bytes)?;
-        if kind == document_sub_tags::STATE {
-            for frame in self.pending_frames()? {
-                let frame = crate::sync::transport::decode_document(&frame[1..]).map_err(|_| {
-                    Error::sync_protocol(SyncProtocolValidation::InvalidDocumentKey)
-                })?;
-                storage::import_complete(&staged, frame.payload)?;
-            }
-        }
-        if kind == document_sub_tags::STATE && !covers(&staged.oplog_vv(), &resident.oplog_vv()) {
-            return Err(Error::sync_protocol(
-                SyncProtocolValidation::DocumentPendingUpdate,
-            ));
-        }
-        self.vault.with_write_txn_grouped(|txn| {
-            eligible(&self.vault, txn, self.id)?;
-            if self.vault.get_entity_type_in_txn(txn, &self.id)?
-                == Some(crate::registry::ENTITY_TYPE_NOTE)
-            {
-                return Err(Error::sync_protocol(
-                    SyncProtocolValidation::DocumentAdmissionDenied,
-                ));
-            }
-            admit(txn)?;
-            if kind == document_sub_tags::STATE {
-                storage::snapshot(&self.vault, txn, self.id, &staged, true)
-            } else {
-                storage::append(&self.vault, txn, self.id, bytes).map(|_| ())
-            }
-        })?;
-        *resident = staged;
-        drop(resident);
+        self.import_record(kind, bytes, admit)?;
         // The document now held can prove a `regenerates` link owed on its
         // entity (FIX 6204).
         super::bridge::wake_regenerates_after_document(&self.vault, &[self.id]);
@@ -549,24 +509,22 @@ impl EntityDocument {
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<Vec<u8>> {
         let peer = storage::decode_vv(remote_vv)?;
-        let resident = self.lock()?;
+        let _writer = self.lock()?;
         self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, self.id)?;
             admit(txn)?;
-            let note_doc;
             let mut note_head = None;
-            let doc = if self.vault.get_entity_type_in_txn(txn, &self.id)?
+            let (text, slot) = if self.vault.get_entity_type_in_txn(txn, &self.id)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
             {
-                note_head = Some(crate::note::documents::head_in(
-                    &self.vault.store,
-                    txn,
-                    self.id,
-                )?);
-                note_doc = storage::load(&self.vault, txn, self.id)?;
-                &note_doc
+                let head = crate::note::documents::head_in(&self.vault.store, txn, self.id)?;
+                note_head = Some(head);
+                (
+                    storage::load(&self.vault, txn, self.id)?,
+                    DocumentSlot::of(head.0),
+                )
             } else {
-                &*resident
+                entity::document_in(&self.vault, txn, self.id)?
             };
             // FIX 7608 slice 4: a marked repo item's document leaves only as
             // its copy lineage, under its copy id, its floor naming its stamp.
@@ -574,9 +532,9 @@ impl EntityDocument {
                 &self.vault,
                 txn,
                 self.id,
-                doc,
+                &text,
             )?;
-            let doc = copy.as_ref().map_or(doc, |copy| &copy.doc);
+            let doc = copy.as_ref().map_or(&text, |copy| &copy.doc);
             // A NOTE's floor names its head, so a head move reaches every
             // peer as a state-only copy.
             let key = match note_head {
@@ -601,13 +559,12 @@ impl EntityDocument {
                 Some(bytes) => !covers(&peer, &storage::decode_vv(&bytes)?),
                 None => true,
             };
-            let slot = note_head.map_or(self.id, |(head, _)| head);
-            let slot = copy.as_ref().map_or(slot, |copy| copy.id);
-            if let Some(bytes) = self.vault.store.port_document_row(
-                txn,
-                DocumentSlot::of(slot),
-                DocumentRow::ShallowSince,
-            )? {
+            let slot = copy.as_ref().map_or(slot, |copy| DocumentSlot::of(copy.id));
+            if let Some(bytes) =
+                self.vault
+                    .store
+                    .port_document_row(txn, slot, DocumentRow::ShallowSince)?
+            {
                 state_copy |= !covers(&peer, &storage::decode_vv(&bytes)?);
             }
             state_copy |= !covers(&peer, &doc.shallow_since_vv().to_vv());
@@ -643,35 +600,12 @@ impl EntityDocument {
     /// month-key-only window queue and survives registry eviction and restart.
     pub fn pending_frames(&self) -> Result<Vec<Vec<u8>>> {
         let txn = self.vault.store.env.read_txn()?;
-        Ok(QD_E
-            .scan_from(
-                &self.vault.store,
-                &txn,
-                format!("{}:", self.id.to_hex()).as_bytes(),
-            )?
-            .into_iter()
-            .map(|(_, bytes)| bytes)
-            .collect())
+        entity::journal_in(&self.vault, &txn, self.id)
     }
 
     /// Clear only after the remote VV proves it holds every local operation.
     pub fn acknowledge(&self, remote_vv: &[u8]) -> Result<()> {
-        let remote = storage::decode_vv(remote_vv)?;
-        let doc = self.lock()?;
-        if !covers(&remote, &doc.oplog_vv()) {
-            return Ok(());
-        }
-        self.vault.with_write_txn_grouped(|txn| {
-            let keys: Vec<Vec<u8>> = QD_E.scan_keys(
-                &self.vault.store,
-                txn,
-                format!("{}:", self.id.to_hex()).as_bytes(),
-            )?;
-            for key in keys {
-                QD_E.delete(&self.vault.store, txn, &key)?;
-            }
-            Ok(())
-        })
+        self.acknowledge_record(&storage::decode_vv(remote_vv)?)
     }
 
     pub(crate) fn is_note(&self) -> Result<bool> {
@@ -686,8 +620,8 @@ impl EntityDocument {
         }
         Ok(())
     }
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, LoroDoc>> {
-        self.doc
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        self.writer
             .lock()
             .map_err(|_| Error::InvariantViolation("entity document poisoned"))
     }
@@ -734,13 +668,6 @@ fn covers(peer: &VersionVector, floor: &VersionVector) -> bool {
     matches!(
         peer.partial_cmp(floor),
         Some(std::cmp::Ordering::Equal | std::cmp::Ordering::Greater)
-    )
-}
-
-fn clone_doc(doc: &LoroDoc) -> Result<LoroDoc> {
-    doc_from_snapshot(
-        &doc.export(ExportMode::Snapshot)
-            .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))?,
     )
 }
 

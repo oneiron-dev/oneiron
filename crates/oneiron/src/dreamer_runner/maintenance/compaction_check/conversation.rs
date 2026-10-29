@@ -221,7 +221,10 @@ pub(super) async fn run_conversation_check(
         Ok(verdict) => verdict,
         Err(parked) => return Ok(parked),
     };
-    let mut settled = match read(ctx.vault, &declaration)? {
+    let mut settled = match read(ctx.vault, &declaration).map_err(|error| {
+        verdict.spend.note_before_error(ctx);
+        error
+    })? {
         Reading::Ready { .. } => {
             let (reason, conflicts) = judged.map_or_else(
                 || (NO_DIAGNOSTIC.to_owned(), Vec::new()),
@@ -246,7 +249,10 @@ pub(super) async fn run_conversation_check(
         }
     };
     settled.judge = Some(judging.judge(&model));
-    record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+    if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, now) {
+        verdict.spend.note_before_error(ctx);
+        return Err(error);
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: verdict.spend.units,
         step_hashes: Vec::new(),

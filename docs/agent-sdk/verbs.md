@@ -49,8 +49,13 @@ both bindings and their export-census tests in one change.
 - `vault.shape.read`
 - `vault.shape.plan`
 - `vault.shape.apply`
+- `vault.shape.plan.card`
+- `vault.shape.items.receipt`
+- `vault.shape.groups`
+- `vault.shape.groups.resolve`
 - `self.message`
 - `self.grants.ask`
+- `self.grants.asked`
 - `vault.companions.access_requests.answer`
 - `self.grants.answer`
 - `vault.personas.preview`
@@ -181,6 +186,7 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.archive`
 - `vault.turn_programs.arm`
 - `vault.turn_programs.disarm`
+- `vault.turn_programs.rebind`
 - `self.saved_query.create`
 - `self.saved_query.read`
 - `self.saved_query.update`
@@ -206,6 +212,7 @@ both bindings and their export-census tests in one change.
 - `vault.inbox.concerns.review`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
+- `vault.inbox.groups.resolve`
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`
@@ -447,6 +454,7 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.prepare`
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
+- `vault.coach.training_offers.sources`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`
@@ -1160,3 +1168,7 @@ both bindings and their export-census tests in one change.
 - `vault.identity.events.get`
 - `vault.identity.proposals.resolve`
 - `vault.identity.proposals.for_pair`
+- `vault.custody.members.drain.begin`
+- `vault.custody.members.drain.commit`
+- `vault.custody.members.drain.folder`
+- `vault.custody.members.reenrol`

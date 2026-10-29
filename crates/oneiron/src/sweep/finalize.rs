@@ -268,8 +268,9 @@ pub(super) fn finalize_withdrawn_job(
             );
             return Ok(false);
         }
-        // Ingest keeps refusing the withdrawn body once this row is gone.
-        raise_withdrawn_generation_fence_in_txn(&vault.store, wtxn, id, job.scope.generation)?;
+        // Ingest keeps refusing the withdrawn body once this row is gone, and
+        // the fence keeps the row's replacement (FIX 931).
+        raise_withdrawn_generation_fence_in_txn(&vault.store, wtxn, id, job.scope.cutoff())?;
         // The words have left every window, and what the artifact was
         // withdrawn for retires with them, unless another generation of it
         // still waits.

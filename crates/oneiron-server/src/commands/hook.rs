@@ -11,10 +11,17 @@
 //!   a plugin that runs inside its host (Hermes's memory provider).
 //!
 //! A hook never blocks the host: whatever fails, it exits 0. It never reads
-//! a credential itself; `oneiron mcp` reads the agent's credential file.
+//! a credential itself; `oneiron mcp` reads the credential file: the
+//! agent's `--credential-file` for a pinned or local vault, and the one the
+//! hosted selection names, in its own auth mode, for the hosted vault it
+//! selected (`oneiron hosted`, [`hosted_command`]).
 
 mod bind;
+mod hosted_command;
+mod hosted_selection;
 mod recall;
+
+pub use self::hosted_command::hosted;
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
@@ -23,6 +30,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
+use self::hosted_selection::{HostedDiscovery, HostedVault};
+use self::recall::RecallAuth;
 use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookRecallArgs};
 
 /// The most of the host's event read from stdin.
@@ -59,7 +68,10 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
         deadline,
     );
     let mut said = bound.lines;
-    let (Some(url), Some(credential)) = (bound.url, &args.credential_file) else {
+    let Some(url) = bound.url else {
+        return said;
+    };
+    let Some(auth) = recall_auth(bound.hosted.as_ref(), args.credential_file.as_deref()) else {
         return said;
     };
     let query = args.query.clone().unwrap_or_else(|| {
@@ -76,7 +88,7 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
         let recall = recall::Recall {
             oneiron: &oneiron,
             url: &url,
-            credential,
+            auth,
             query: &query,
             limit: args.limit,
             effort: args.effort,
@@ -89,8 +101,10 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
     said
 }
 
-/// The vault a session binds, as `{"url", "lines"}`: `url` is null when none
-/// answers, and `lines` are what the session is told, the first naming it.
+/// The vault a session binds, as `{"url", "lines", "hosted"}`: `url` is null
+/// when none answers, `lines` are what the session is told, the first naming
+/// it, and `hosted` is the selected hosted vault step 3 bound (its origin,
+/// vault id, auth mode and credential file, never a value in it), else null.
 fn bind_json(args: &HookBindArgs) -> String {
     let deadline = deadline(args.common.timeout);
     let oneiron = oneiron(args.common.oneiron.as_deref());
@@ -100,16 +114,21 @@ fn bind_json(args: &HookBindArgs) -> String {
         args.common.settings_file.as_deref(),
         deadline,
     );
-    serde_json::json!({ "url": bound.url, "lines": bound.lines }).to_string()
+    serde_json::json!({ "url": bound.url, "lines": bound.lines, "hosted": bound.hosted })
+        .to_string()
 }
 
 fn prompt(args: &HookRecallArgs) -> Vec<String> {
     let Some(event) = read_event() else {
         return Vec::new();
     };
-    let Some(credential) = &args.credential_file else {
+    // Nothing to recall with: no credential named, and no hosted vault
+    // selected whose own credential a recall from it would run as.
+    if args.credential_file.is_none()
+        && !matches!(hosted_selection::discover(), HostedDiscovery::Selected(_))
+    {
         return Vec::new();
-    };
+    }
     let query = args
         .query
         .as_deref()
@@ -122,20 +141,38 @@ fn prompt(args: &HookRecallArgs) -> Vec<String> {
         return Vec::new();
     }
     let deadline = deadline(args.common.timeout);
-    let Some(url) = bind::quietly(args.url.as_deref(), deadline) else {
+    let bound = bind::quietly(args.url.as_deref(), deadline);
+    let Some(url) = bound.url else {
+        return Vec::new();
+    };
+    let Some(auth) = recall_auth(bound.hosted.as_ref(), args.credential_file.as_deref()) else {
         return Vec::new();
     };
     let oneiron = oneiron(args.common.oneiron.as_deref());
     let recall = recall::Recall {
         oneiron: &oneiron,
         url: &url,
-        credential,
+        auth,
         query: &query,
         limit: args.limit,
         effort: args.effort,
         deadline,
     };
     recall.block("From your Oneiron vault, for this prompt (may be dated):")
+}
+
+/// Whom a recall from the vault bound runs as: the hosted vault step 3
+/// bound, by the credential its selection names, in its own mode, which
+/// goes to that vault alone; a pinned or local vault, by `--credential-file`
+/// as a slip. `None` when there is nothing to recall with.
+fn recall_auth<'a>(
+    hosted: Option<&'a HostedVault>,
+    credential_file: Option<&'a Path>,
+) -> Option<RecallAuth<'a>> {
+    match hosted {
+        Some(vault) => Some(vault.recall_auth()),
+        None => credential_file.map(RecallAuth::Slip),
+    }
 }
 
 /// `oneiron import claude-code <log> --queue`: one small file in the queue

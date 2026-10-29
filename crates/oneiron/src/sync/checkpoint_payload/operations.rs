@@ -77,7 +77,7 @@ struct LoroIn<'a> {
 /// Where a row sits among its window's Loro rows.
 enum Place {
     Snapshot,
-    Pending(u32),
+    Pending(u64),
     Queued(u64),
 }
 
@@ -140,7 +140,7 @@ pub(super) fn project(
         match place {
             Place::Snapshot => window.snapshot = Some(row),
             Place::Pending(seq) => {
-                window.updates.insert((0, u64::from(seq)), row);
+                window.updates.insert((0, seq), row);
             }
             Place::Queued(seq) => {
                 window.updates.insert((1, seq), row);
