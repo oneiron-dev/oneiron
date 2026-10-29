@@ -591,7 +591,14 @@ fn promote_one(
             None => Ok(()),
         }
     };
-    let hints: Vec<&str> = prospective_queries.iter().map(String::as_str).collect();
+    // A signed (MACHINE) promotion carries no lexical query hints: a hint is a stale side CLAIM, and a
+    // machine claim birth refuses every stale birth (claim/machine_birth.rs), so a hint would fail the
+    // whole candidate. The belief itself still lands.
+    let hints: Vec<&str> = if envelope.machine_signature().is_some() {
+        Vec::new()
+    } else {
+        prospective_queries.iter().map(String::as_str).collect()
+    };
     let write = if let Some(checker) = checker {
         vault
             .batch()
@@ -623,6 +630,12 @@ fn promote_one(
         })
     };
     if let Err(error) = write {
+        tracing::warn!(
+            attempt_id = %crate::entity_id::bytes_to_hex_lower(run.attempt_id.as_bytes()),
+            stage = "promote",
+            error_kind = ?error.kind(),
+            "a scoped consolidation candidate's gated write was rejected"
+        );
         return Err(format!("gated write rejected: {error}"));
     }
 
