@@ -1,13 +1,12 @@
 //! Media and single-route doors for one run's admission handle.
 use std::sync::Arc;
 
-use super::super::SingleRouteBackend;
-use super::super::media::{MediaBackend, MediaRequest};
-use super::gate::GatedBackend;
-use super::host::OfferBinding;
-use super::media::MediaGate;
-use super::permit::RunPermit;
+use super::super::gate::GatedBackend;
+use super::super::host::OfferBinding;
+use super::super::media::{MediaBackend, MediaGate, MediaRequest};
+use super::super::permit::RunPermit;
 use super::{RunAdmission, RunCall, RunDenied};
+use crate::llm::SingleRouteBackend;
 
 impl RunAdmission {
     /// The only backend a host hands a run for `offer`, over that offer's own
@@ -41,7 +40,7 @@ impl RunAdmission {
     /// Admits one bounded media stream (live `ai.transcribe` partials) as
     /// [`Self::admit_media`] admits one call, on one permit for the whole
     /// stream. The permit reserves `reserve_units`, the stream's bound at its
-    /// rung's rate ([`MediaStreamLease::reserve_units`](super::MediaStreamLease::reserve_units)), in place of one
+    /// rung's rate ([`MediaStreamLease::reserve_units`](super::super::MediaStreamLease::reserve_units)), in place of one
     /// call's reservation; the run's line and the vault's allocation must
     /// hold all of it before any audio leaves.
     pub fn admit_media_stream(

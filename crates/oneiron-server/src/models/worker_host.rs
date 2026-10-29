@@ -49,8 +49,8 @@ use oneiron::llm::{
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
-    ExecutorRegistration, InferenceWorker, WorkRequest, WorkTicket, WorkerPolicy, WorkerProbe,
-    WorkerSpec,
+    ExecutorRegistration, InferenceWorker, PressureDecision, UnloadOutcome, WorkRequest,
+    WorkTicket, WorkerPolicy, WorkerProbe, WorkerSpec,
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
@@ -150,7 +150,10 @@ impl BoundWork {
 
     #[must_use]
     pub(super) fn is_foreground(&self) -> bool {
-        self.context.class == WorkClass::Foreground
+        self.ticket.as_ref().map_or_else(
+            || self.context.class == WorkClass::Foreground,
+            |ticket| ticket.request.class == WorkClass::Foreground,
+        )
     }
 
     pub(super) async fn wait_runnable(&self) -> Result<(), AdmissionStop> {
@@ -161,20 +164,40 @@ impl BoundWork {
     }
 
     pub(super) async fn execution_grant(&mut self) -> Result<Option<DeviceGrant>, AdmissionStop> {
-        let grant = match &self.ticket {
-            Some(ticket) => Some(ticket.wait_execution_grant().await?),
-            None => None,
+        let Some(ticket) = &self.ticket else {
+            self.armed = false;
+            return Ok(None);
+        };
+        let grant = match ticket.resolve_pressure() {
+            PressureDecision::Grant(grant) => {
+                self.armed = false;
+                return Ok(Some(grant));
+            }
+            PressureDecision::Stop(stop) => return Err(stop),
+            PressureDecision::UnloadIdle(worker) => {
+                let _ = unload_idle_worker(&worker).await;
+                ticket.wait_execution_grant().await?
+            }
+            PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {
+                ticket.wait_execution_grant().await?
+            }
         };
         self.armed = false;
-        Ok(grant)
+        Ok(Some(grant))
     }
 
     #[must_use]
     pub(super) fn schedule(&self, grant: Option<&DeviceGrant>) -> CallSchedule {
         CallSchedule {
-            work_class: self.context.class,
+            work_class: self
+                .ticket
+                .as_ref()
+                .map_or(self.context.class, |ticket| ticket.request.class),
             priority: self.context.priority,
-            deadline: self.context.deadline,
+            deadline: self
+                .ticket
+                .as_ref()
+                .map_or_else(|| self.context.deadline, |ticket| ticket.request.deadline),
             admission: grant.map(DeviceGrant::admission),
         }
     }
@@ -250,6 +273,19 @@ fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
         .unwrap_or_else(PoisonError::into_inner)
         .get(&device)
         .cloned()
+}
+
+/// Runs the driver-owned restartable idle unload for one pressure victim.
+async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
+    let worker = HOST.get().and_then(|host| {
+        host.lock()
+            .get(worker_id)
+            .map(|hosted| hosted.worker.clone())
+    });
+    match worker {
+        Some(worker) => worker.unload_if_idle().await,
+        None => UnloadOutcome::NotRunning,
+    }
 }
 
 /// Takes a device ticket for one bound call before its worker acquire. No

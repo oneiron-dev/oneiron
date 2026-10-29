@@ -22,7 +22,9 @@ fn active() -> &'static Mutex<BTreeMap<String, Vec<Active>>> {
     ACTIVE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-/// Removes one call's update row when its Sent custody ends.
+/// Removes one call's update row when its Sent custody ends. The last
+/// foreground exit resumes background work; another foreground call still
+/// active keeps it yielded.
 pub(super) struct Registration {
     device: String,
     grant_id: u64,
@@ -30,11 +32,26 @@ pub(super) struct Registration {
 
 impl Drop for Registration {
     fn drop(&mut self) {
-        let mut active = active().lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(calls) = active.get_mut(&self.device) {
-            calls.retain(|call| call.grant_id != self.grant_id);
-            if calls.is_empty() {
+        let resume = {
+            let mut active = active().lock().unwrap_or_else(PoisonError::into_inner);
+            let resume = active.get_mut(&self.device).is_some_and(|calls| {
+                calls.retain(|call| call.grant_id != self.grant_id);
+                !calls.is_empty()
+                    && calls.iter().any(|call| call.class == WorkClass::Background)
+                    && !calls.iter().any(|call| call.class == WorkClass::Foreground)
+            });
+            if active
+                .get(&self.device)
+                .is_some_and(|calls| calls.is_empty())
+            {
                 active.remove(&self.device);
+            }
+            resume
+        };
+        if resume {
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                let device = self.device.clone();
+                runtime.spawn(async move { send_action(&device, ScheduleAction::Resume).await });
             }
         }
     }
@@ -69,6 +86,10 @@ pub(super) fn register(
 /// Foreground work on this device makes background work yield at its next
 /// engine round. The grant and its bytes stay held; no memory is freed.
 pub(super) async fn foreground_arrival(device: &str) {
+    send_action(device, ScheduleAction::Yield).await;
+}
+
+async fn send_action(device: &str, action: ScheduleAction) {
     let calls: Vec<(u64, CallUpdates)> = {
         let mut active = active().lock().unwrap_or_else(PoisonError::into_inner);
         active
@@ -85,13 +106,13 @@ pub(super) async fn foreground_arrival(device: &str) {
     for (revision, updates) in calls {
         let update = ScheduleUpdate {
             revision,
-            action: ScheduleAction::Yield,
+            action: action.clone(),
             work_class: None,
             priority: None,
             deadline: None,
         };
         if let Err(error) = updates.send(&update).await {
-            tracing::warn!(%error, "a native background yield could not be sent");
+            tracing::warn!(%error, action = ?action, "a native schedule update could not be sent");
         }
     }
 }

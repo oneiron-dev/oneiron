@@ -442,10 +442,6 @@ pub(super) struct CallUpdates {
 impl CallUpdates {
     /// Sends `update` under the call's id and epoch; the worker's
     /// `schedule_ack` comes back as [`Event::Scheduled`].
-    #[expect(
-        dead_code,
-        reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
-    )]
     pub(super) async fn send(&self, update: &ScheduleUpdate) -> io::Result<()> {
         let bytes = Channel::frame(
             "schedule",
@@ -639,10 +635,6 @@ impl Call {
     }
 
     /// A sender of this call's `schedule` updates, on its connection.
-    #[expect(
-        dead_code,
-        reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
-    )]
     pub(super) fn updates(&self) -> Option<CallUpdates> {
         let channel = self.channel.as_ref()?;
         Some(CallUpdates {

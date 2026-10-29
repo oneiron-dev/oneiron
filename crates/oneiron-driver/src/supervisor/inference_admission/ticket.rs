@@ -73,6 +73,11 @@ impl WorkTicket {
         }
     }
 
+    /// Resolves this ticket against current capacity and idle workers.
+    pub fn resolve_pressure(&self) -> PressureDecision {
+        self.admission.resolve_pressure(self)
+    }
+
     /// Cancels this ticket and any children still inheriting from it.
     pub fn cancel(&self) {
         self.request.cancel.store(true, Ordering::Release);
