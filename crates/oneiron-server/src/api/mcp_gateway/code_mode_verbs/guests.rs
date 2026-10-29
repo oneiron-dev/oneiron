@@ -647,11 +647,19 @@ impl RunGuests {
                         tracing::warn!(%error, "browser caller's solved-run scope did not encode");
                     })
                     .ok();
+                let filing = memory
+                    .browser_filing_envelope(origin.clone())
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "browser caller's filing envelope did not bind");
+                    })
+                    .ok()
+                    .flatten();
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
                     scope,
                     admission: self.admission,
+                    filing,
                 };
                 // Its site skills load under the run's skill-load lease (CUA E10).
                 let lease = self.admission_lease.as_ref();
@@ -697,6 +705,7 @@ impl RunGuests {
                 by,
                 scope: None,
                 admission: None,
+                filing: None,
             };
             planner.observe(call.verb, &call.input, &output, |workflow| {
                 let filed = library.program(workflow).ok().flatten()?;
