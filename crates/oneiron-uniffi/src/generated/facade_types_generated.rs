@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1191 facade rows, 4306 generated types.
+// UniFFI census: 1191 facade rows, 4309 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1143.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -10864,6 +10864,105 @@ pub struct RetrievalPolicyUpdateReceipt {
     pub view: RetrievalPolicyView,
 }
 
+/// `oneiron_authority::authority::owner_work::result::OwnerWorkRefusal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum OwnerWorkRefusal {
+    #[serde(rename = "stale_revision")]
+    StaleRevision,
+    #[serde(rename = "owner_not_live")]
+    OwnerNotLive,
+    #[serde(rename = "world_not_live")]
+    WorldNotLive,
+    #[serde(rename = "executor_not_reader")]
+    ExecutorNotReader,
+    #[serde(rename = "home_not_linked")]
+    HomeNotLinked,
+    #[serde(rename = "secret_not_portable")]
+    SecretNotPortable,
+    #[serde(rename = "secret_not_active")]
+    SecretNotActive,
+    #[serde(rename = "recipient_changed")]
+    RecipientChanged,
+    #[serde(rename = "invalid_input")]
+    InvalidInput,
+    #[serde(rename = "custody_conflict")]
+    CustodyConflict,
+    #[serde(rename = "wider_than_floor")]
+    WiderThanFloor,
+    #[serde(rename = "root_revision_mismatch")]
+    RootRevisionMismatch,
+}
+
+/// `oneiron::world_keys::owner_work::OwnerWorkStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum OwnerWorkStatus {
+    #[serde(rename = "recorded_awaiting_holder")]
+    RecordedAwaitingHolder,
+    #[serde(rename = "enacted")]
+    Enacted,
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "reason")]
+        reason: OwnerWorkRefusal,
+    },
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+/// `oneiron::authority::export_secret_work::HolderExportUnassigned`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum HolderExportUnassigned {
+    #[serde(rename = "no_owner_act")]
+    NoOwnerAct,
+    #[serde(rename = "owner_not_live")]
+    OwnerNotLive,
+    #[serde(rename = "no_recipient")]
+    NoRecipient,
+    #[serde(rename = "recipient_not_linked")]
+    RecipientNotLinked,
+    #[serde(rename = "no_holder")]
+    NoHolder,
+    #[serde(rename = "no_carrier")]
+    NoCarrier,
+}
+
+/// `oneiron::authority::export_secret_work::HolderExportState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum HolderExportState {
+    #[serde(rename = "recorded")]
+    Recorded {
+        #[serde(rename = "request")]
+        request: String,
+        #[serde(rename = "holder")]
+        holder: String,
+        #[serde(rename = "status")]
+        status: OwnerWorkStatus,
+    },
+    #[serde(rename = "unassigned")]
+    Unassigned {
+        #[serde(rename = "reason")]
+        reason: HolderExportUnassigned,
+    },
+    #[serde(rename = "unrecorded")]
+    Unrecorded,
+}
+
+/// `oneiron::authority::export_secret_work::HolderExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HolderExportRequest {
+    #[serde(rename = "secret")]
+    pub secret: String,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "state")]
+    pub state: HolderExportState,
+}
+
 /// `oneiron::memory::export::MemoryExport`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemoryExport {
@@ -10873,6 +10972,12 @@ pub struct MemoryExport {
     pub archive: String,
     #[serde(rename = "digest")]
     pub digest: String,
+    #[serde(
+        rename = "holder_requests",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub holder_requests: Option<Vec<HolderExportRequest>>,
 }
 
 /// `oneiron::memory::export::ExportTransfer`.
@@ -10886,6 +10991,12 @@ pub struct ExportTransfer {
     pub bytes: u64,
     #[serde(rename = "digest")]
     pub digest: String,
+    #[serde(
+        rename = "holder_requests",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub holder_requests: Option<Vec<HolderExportRequest>>,
 }
 
 /// `oneiron::memory::export::ExportAnswer`.
@@ -28154,54 +28265,8 @@ pub enum OwnerWorkKind {
     PublishBundle,
     #[serde(rename = "custody")]
     Custody,
-}
-
-/// `oneiron_authority::authority::owner_work::result::OwnerWorkRefusal`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum OwnerWorkRefusal {
-    #[serde(rename = "stale_revision")]
-    StaleRevision,
-    #[serde(rename = "owner_not_live")]
-    OwnerNotLive,
-    #[serde(rename = "world_not_live")]
-    WorldNotLive,
-    #[serde(rename = "executor_not_reader")]
-    ExecutorNotReader,
-    #[serde(rename = "home_not_linked")]
-    HomeNotLinked,
-    #[serde(rename = "secret_not_portable")]
-    SecretNotPortable,
-    #[serde(rename = "secret_not_active")]
-    SecretNotActive,
-    #[serde(rename = "recipient_changed")]
-    RecipientChanged,
-    #[serde(rename = "invalid_input")]
-    InvalidInput,
-    #[serde(rename = "custody_conflict")]
-    CustodyConflict,
-    #[serde(rename = "wider_than_floor")]
-    WiderThanFloor,
-    #[serde(rename = "root_revision_mismatch")]
-    RootRevisionMismatch,
-}
-
-/// `oneiron::world_keys::owner_work::OwnerWorkStatus`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "state")]
-pub enum OwnerWorkStatus {
-    #[serde(rename = "recorded_awaiting_holder")]
-    RecordedAwaitingHolder,
-    #[serde(rename = "enacted")]
-    Enacted,
-    #[serde(rename = "refused")]
-    Refused {
-        #[serde(rename = "reason")]
-        reason: OwnerWorkRefusal,
-    },
-    #[serde(rename = "cancelled")]
-    Cancelled,
-    #[serde(rename = "superseded")]
-    Superseded,
+    #[serde(rename = "export_secret")]
+    ExportSecret,
 }
 
 /// `oneiron::world_keys::owner_work::OwnerWorkUnassigned`.
