@@ -34983,6 +34983,12 @@ pub struct ForeignCodeRunResult {
     pub isolation: ForeignCodeIsolation,
     #[serde(rename = "receipt_ref")]
     pub receipt_ref: String,
+    #[serde(
+        rename = "program_steps",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub program_steps: Option<Vec<ProgramStepFeedbackRelease>>,
 }
 
 /// `oneiron::memory::code_run_doors::types::CodeRunModelHealCountRequest`.

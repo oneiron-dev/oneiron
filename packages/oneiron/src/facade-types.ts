@@ -4559,7 +4559,7 @@ export type ForeignCodeProposal = { proposal_ref: string; receipt_ref: string; a
 /** `oneiron::memory::foreign_code::ForeignCodeIsolation` */
 export type ForeignCodeIsolation = { backend: string; runtime: string; image: string; argv_digest: string; network: string; generation: string; fence_proven: boolean }
 /** `oneiron::memory::foreign_code::ForeignCodeRunResult` */
-export type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string }
+export type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string; program_steps?: ProgramStepFeedbackRelease[] }
 /** `oneiron::memory::code_run_doors::types::CodeRunModelHealCountRequest` */
 export type CodeRunModelHealCountRequest = { model_id: string }
 /** `oneiron::memory::code_run_doors::types::CodeRunModelHealCountView` */

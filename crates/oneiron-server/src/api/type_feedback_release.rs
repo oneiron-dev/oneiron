@@ -8,8 +8,9 @@
 //! the step's row stays whole.
 //!
 //! A door whose answer carries its run's step feedback as `program_steps`
-//! (`self.off_record.execute`) gives each item released whole; its carrier
-//! is known by the verb, never by its JSON's shape.
+//! (`self.off_record.execute`, the foreign `execute_code`) gives each item
+//! released whole; its carrier is known by the verb, never by its JSON's
+//! shape.
 
 use oneiron::code_run::{FeedbackWithheldReason, ProgramStepFeedback, ProgramStepFeedbackRelease};
 use oneiron::settings::ReadDestination;
@@ -19,6 +20,10 @@ use serde_json::Value;
 /// A session-bound run's entry: its answer carries the run's step feedback
 /// as `program_steps`.
 pub(crate) const OFF_RECORD_EXECUTE_VERB: &str = "self.off_record.execute";
+
+/// A foreign program's run: its answer carries the program's feedback as
+/// `program_steps` (FIX 10389).
+pub(crate) const FOREIGN_EXECUTE_CODE_VERB: &str = "execute_code";
 
 /// How a carrier's feedback was read inside its answer, and is read alone
 /// now: as JSON whose whole strings may be short refs, and by its bytes for
@@ -91,9 +96,16 @@ pub(crate) fn take_program_steps(
     verb: &str,
     value: &Value,
 ) -> Option<(Value, Vec<(usize, ProgramStepFeedback)>)> {
-    if verb != OFF_RECORD_EXECUTE_VERB {
+    if verb != OFF_RECORD_EXECUTE_VERB && verb != FOREIGN_EXECUTE_CODE_VERB {
         return None;
     }
+    program_steps_of(value)
+}
+
+/// [`take_program_steps`] of an answer already known to carry them.
+pub(crate) fn program_steps_of(
+    value: &Value,
+) -> Option<(Value, Vec<(usize, ProgramStepFeedback)>)> {
     let steps: Vec<ProgramStepFeedbackRelease> =
         serde_json::from_value(value.get("program_steps")?.clone()).ok()?;
     let feedback: Vec<(usize, ProgramStepFeedback)> = steps

@@ -12,13 +12,15 @@
 //! The carriers are the known typed ones, each found by the host's own
 //! record of what it is, never by its JSON's shape: an `execute_code`
 //! answer's `program_steps`, a wait set's answer among its bridge steps, the
-//! owner's feedback read, a run's history and a session-bound run's entry
-//! (FIX 10389), called directly or from inside the run.
+//! owner's feedback read, a run's history, a session-bound run's entry and
+//! a foreign program's run (FIX 10389), called directly or from inside the
+//! run. A foreign program's refusal keeps its program's feedback beside it
+//! ([`source_run_error`]).
 
 use super::{McpCallContext, McpGatewayError};
 use crate::api::type_feedback_release::{
-    FeedbackScan, OFF_RECORD_EXECUTE_VERB, put_program_step, release_step_feedback,
-    take_program_steps,
+    FOREIGN_EXECUTE_CODE_VERB, FeedbackScan, OFF_RECORD_EXECUTE_VERB, program_steps_of,
+    put_program_step, release_step_feedback,
 };
 use crate::server::SyncServer;
 use oneiron::EntityId;
@@ -27,6 +29,7 @@ use oneiron::code_run::{
     ProgramStepFeedback, ProgramStepFeedbackRelease, ProgramStepIdentity, SelfEffect,
     TYPE_FEEDBACK_NOT_KEPT, TaskWaitSetResult, TypeDiagnostics,
 };
+use oneiron::memory::foreign_code::ForeignCodeFailure;
 use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
@@ -45,9 +48,10 @@ enum Carrier {
     /// A run's history: each step's `type_diagnostics` and
     /// `preparation_note`.
     History,
-    /// A session-bound run's entry: its `program_steps`, each released
-    /// whole by its door.
-    OffRecord,
+    /// A door's answer carrying its run's `program_steps`, each released
+    /// whole by its door: a session-bound run's entry, a foreign program's
+    /// run.
+    ProgramSteps,
 }
 
 impl Carrier {
@@ -117,7 +121,7 @@ impl Carrier {
                 }
                 Some((base, feedback))
             }
-            Self::OffRecord => take_program_steps(OFF_RECORD_EXECUTE_VERB, value),
+            Self::ProgramSteps => program_steps_of(value),
         }
     }
 
@@ -145,7 +149,7 @@ impl Carrier {
                     step.insert("type_feedback".to_owned(), withheld);
                 }
             }
-            Self::OffRecord => put_program_step(value, slot, withheld),
+            Self::ProgramSteps => put_program_step(value, slot, withheld),
         }
     }
 }
@@ -317,7 +321,9 @@ fn step_carrier(
         SelfEffect::AgentVerb => match recorded_verb(call)? {
             OWNER_FEEDBACK_VERB => Some((Carrier::Owner, named, "agent_verb", "output")),
             HISTORY_VERB => Some((Carrier::History, named, "agent_verb", "output")),
-            OFF_RECORD_EXECUTE_VERB => Some((Carrier::OffRecord, named, "agent_verb", "output")),
+            OFF_RECORD_EXECUTE_VERB | FOREIGN_EXECUTE_CODE_VERB => {
+                Some((Carrier::ProgramSteps, named, "agent_verb", "output"))
+            }
             _ => None,
         },
         _ => None,
@@ -389,7 +395,7 @@ pub(super) fn hold_verb_feedback(tool: &str, output: &mut Value) -> Option<HeldV
     let carrier = match tool {
         OWNER_FEEDBACK_VERB => Carrier::Owner,
         HISTORY_VERB => Carrier::History,
-        OFF_RECORD_EXECUTE_VERB => Carrier::OffRecord,
+        OFF_RECORD_EXECUTE_VERB | FOREIGN_EXECUTE_CODE_VERB => Carrier::ProgramSteps,
         _ => return None,
     };
     Held::of(carrier, FeedbackScan::Named, output).map(HeldVerbFeedback)
@@ -452,6 +458,33 @@ pub(super) fn release_run_error(
     };
     McpGatewayError {
         program_steps: Some(Box::new(steps)),
+        ..error
+    }
+}
+
+/// A foreign program's refusal (FIX 10389): its error under the gateway's
+/// vocabulary, its code, kind and retry as they are today, and its
+/// program's type feedback released apart beside it, by `rows`, those the
+/// call served before it failed. The refusal itself is released by the
+/// call's own path, as every refusal is; a refusal before the program's
+/// source was admitted carries no feedback.
+pub(super) fn source_run_error(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    rows: Option<&[EntityId]>,
+    failure: ForeignCodeFailure,
+) -> McpGatewayError {
+    let error = super::mcp_facade_error(failure.error);
+    if failure.program_steps.is_empty() {
+        return error;
+    }
+    let steps = failure
+        .program_steps
+        .into_iter()
+        .map(|feedback| release_feedback(server, actor, rows, feedback, FeedbackScan::Named))
+        .collect();
+    McpGatewayError {
+        program_steps: Some(Box::new(ErrorProgramSteps::Kept(steps))),
         ..error
     }
 }

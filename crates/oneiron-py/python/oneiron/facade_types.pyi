@@ -11253,6 +11253,7 @@ class ForeignCodeRunResult(TypedDict):
     proposals: list[ForeignCodeProposal]
     isolation: ForeignCodeIsolation
     receipt_ref: str
+    program_steps: NotRequired[list[ProgramStepFeedbackRelease]]
 class CodeRunModelHealCountRequest(TypedDict):
     model_id: str
 class CodeRunModelHealCountView(TypedDict):

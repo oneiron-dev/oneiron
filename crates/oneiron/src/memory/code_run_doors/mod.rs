@@ -77,6 +77,12 @@ impl Memory<'_> {
     /// session it names, bound for the owner as the owner manages it, and
     /// the rows its runs keep on its route; a session that is gone or
     /// closing is refused as such, never read again on the vault's rows.
+    ///
+    /// A foreign program's or a pack script's run keeps no result store, so
+    /// its row holds its whole collection: this read gives every diagnostic
+    /// of it, with no replay record (CALLS "foreign feedback late read scope
+    /// = run owner"). The reader is the owner by this proof, never the
+    /// caller who ran the program for that alone.
     pub fn code_run_type_diagnostics_as(
         &self,
         owner: &AuthenticatedOwner,

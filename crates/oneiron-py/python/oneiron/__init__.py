@@ -397,7 +397,7 @@ class Oneiron:
     def graph_fs(self) -> "Oneiron._GraphFsVerbs":
         return Oneiron._GraphFsVerbs(self._client)
     def execute_code(self, spec):
-        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
+        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
         return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""

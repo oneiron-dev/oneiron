@@ -5,7 +5,10 @@
 //! record keeps them in base, as it keeps its bodies, and its close leaves
 //! them there; an off-record stretch keeps them in its overlay, and they go
 //! with it. No row of a session-bound run is copied to base, and none is
-//! read from base when its stretch is gone.
+//! read from base when its stretch is gone. A run with no result store of
+//! its own (a foreign program, a pack script) keeps its whole collection in
+//! its row on the vault's rows; a shadow arm keeps its feedback under its
+//! lease alone, in no row.
 
 use super::super::type_diagnostics::{
     StepKey, StoredStepFeedback, put_in, row_in, rows_in, runs_program_steps_in_txn,
@@ -20,15 +23,26 @@ use crate::side_table::RoutedDbs;
 pub(crate) type SessionInstanceBind =
     Box<dyn Fn(&Vault, &mut dyn FnMut(OffRecordSession<'_>)) + Send + Sync>;
 
+/// Whether a shadow arm's lease still holds the arm (FIX 10389, fork d).
+pub(crate) type ArmLiveness = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// Where a check that lands after its step keeps its result (FIX 10389):
 /// owned by the check, never borrowing its run, so the run never waits on
 /// it and it never extends the run's stretch.
 pub(crate) enum FeedbackRoute {
     /// The vault with this id's own rows.
     Canonical(VaultId),
+    /// The vault with this id's own rows, for a run with no result store of
+    /// its own (a foreign program, a pack script): its whole collection
+    /// stays in its row, read by its `check_ref`, never in a body no reader
+    /// of the run reaches.
+    RowsOnly(VaultId),
     /// The route a session-bound run captured, in the instance it was bound
     /// to.
     Session(SessionFeedbackRoute),
+    /// A shadow arm's own feedback (fork d): no row anywhere, read under the
+    /// arm's lease alone; its check runs only while the lease holds the arm.
+    Arm(ArmLiveness),
     /// A stretch that records nothing: its feedback rides with its run
     /// alone.
     NotKept,
@@ -47,24 +61,37 @@ impl FeedbackRoute {
     pub(crate) fn canonical_on<'v>(&self, vault: &'v Vault) -> Option<&'v Vault> {
         match self {
             Self::Canonical(id) if *id == vault.vault_id() => Some(vault),
-            Self::Canonical(_) | Self::Session(_) | Self::NotKept => None,
+            Self::Canonical(_)
+            | Self::RowsOnly(_)
+            | Self::Session(_)
+            | Self::Arm(_)
+            | Self::NotKept => None,
         }
     }
 
     /// Whether a check may keep its own result on `vault` by this route.
     pub(crate) fn reaches(&self, vault: &Vault) -> bool {
         match self {
-            Self::Canonical(id) => *id == vault.vault_id(),
+            Self::Canonical(id) | Self::RowsOnly(id) => *id == vault.vault_id(),
             Self::Session(_) => true,
-            Self::NotKept => false,
+            Self::Arm(_) | Self::NotKept => false,
         }
     }
 
-    /// Whether the stretch this route names still lives on `vault`; a
-    /// canonical route, and one that keeps nothing, always do.
+    /// Whether a collection past one reply goes to a body of the run: on a
+    /// route whose run reads its results back. A run with no result store,
+    /// and an arm, keep theirs whole where their feedback is.
+    pub(crate) fn keeps_bodies(&self) -> bool {
+        !matches!(self, Self::RowsOnly(_) | Self::Arm(_))
+    }
+
+    /// Whether the stretch or the arm this route names still lives on
+    /// `vault`; a canonical route, and one that keeps nothing, always do.
     pub(crate) fn live_on(&self, vault: &Vault) -> bool {
-        let Self::Session(session) = self else {
-            return true;
+        let session = match self {
+            Self::Session(session) => session,
+            Self::Arm(live) => return (**live)(),
+            Self::Canonical(_) | Self::RowsOnly(_) | Self::NotKept => return true,
         };
         let mut live = false;
         (session.bind)(vault, &mut |_: OffRecordSession<'_>| live = true);
@@ -77,10 +104,10 @@ impl FeedbackRoute {
     /// closed.
     pub(crate) fn on(&self, vault: &Vault, publish: &mut dyn FnMut(&ExecutorStorage<'_>)) {
         match self {
-            Self::Canonical(id) if *id == vault.vault_id() => {
+            Self::Canonical(id) | Self::RowsOnly(id) if *id == vault.vault_id() => {
                 publish(&ExecutorStorage::Canonical(vault));
             }
-            Self::Canonical(_) | Self::NotKept => {}
+            Self::Canonical(_) | Self::RowsOnly(_) | Self::Arm(_) | Self::NotKept => {}
             Self::Session(session) => {
                 (session.bind)(vault, &mut |bound: OffRecordSession<'_>| {
                     publish(&ExecutorStorage::Session(SessionBinding {

@@ -32,6 +32,9 @@ mod wire;
 pub(crate) use self::attempt_cancels::{AttemptCancels, stop_attempt_step};
 pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
 pub use self::code_check::TypeFeedback;
+// FIX 10389: a program a door other than a run's own step runs, checked as a
+// step's is.
+pub(crate) use self::code_check::{CheckedDoor, LatestFeedback, RowsCheck};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.

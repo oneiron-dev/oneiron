@@ -30,7 +30,12 @@ use crate::code_run::{
 use crate::receipt::{ActionInputs, call_bytes_digest};
 use crate::{EntityId, Vault};
 
+mod door;
 mod publication;
+
+pub(crate) use self::door::{
+    CheckedDoor, LatestFeedback, ProgramAdmission, ProgramCheck, RowsCheck,
+};
 
 /// The action a feedback check's digest names.
 const FEEDBACK_CHECK_ACTION: &str = "code_check.feedback";
