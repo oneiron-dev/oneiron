@@ -37,14 +37,27 @@ fn resolved_ask(
     Some(resolved.ceil() as u64)
 }
 
+/// The cap a spawn's carve narrows by (FIX 10539): a pin's value; a
+/// seed's hard cap as its fitted plan states it, or the seed itself where no
+/// plan states one. A direct spawn is never fitted, so its seed stands as
+/// given, exactly as a plan with no learned spend leaves it.
+pub(crate) fn resolved_budget_ask(
+    asked: Option<&SpawnOverride<u64>>,
+    plan: Option<&TeamPlan>,
+) -> Option<u64> {
+    match asked? {
+        SpawnOverride::Pin { value } => Some(*value),
+        SpawnOverride::Seed { value, .. } => plan
+            .and_then(|plan| plan.envelope.hard_cap_units)
+            .or(Some(*value)),
+    }
+}
+
 /// The cap a planned launch's group runs under: a pinned ask's value, or the
 /// hard cap a seeded ask resolved to when its plan was fitted (the seed
 /// itself where that plan states none).
 pub(in crate::agent_dispatch) fn launch_budget(asked: &SpawnNeed, plan: &TeamPlan) -> Option<u64> {
-    match asked.budget_cap_units.as_ref()? {
-        SpawnOverride::Pin { value } => Some(*value),
-        SpawnOverride::Seed { value, .. } => plan.envelope.hard_cap_units.or(Some(*value)),
-    }
+    resolved_budget_ask(asked.budget_cap_units.as_ref(), Some(plan))
 }
 
 impl PlanBudget {
