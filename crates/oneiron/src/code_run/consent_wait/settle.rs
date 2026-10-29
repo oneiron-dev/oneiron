@@ -86,6 +86,7 @@ impl Vault {
             )));
         }
         let answered = self.with_write_txn_grouped(|txn| answer_in_txn(self, txn, owner, input))?;
+        self.signal_code_owned_call_asks();
         if answered.drive
             && let Some(host) = host
             && let Err(error) = host.resume_answered(self, input.wait_id)

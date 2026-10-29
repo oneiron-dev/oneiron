@@ -1,6 +1,7 @@
 //! A connector dispatch's outcome mapped to a call step and its reason codes.
 //! Entry: `step_from_host`. Defines its own items.
 
+use crate::connector_key::EffectorBudgetCharge;
 use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentState, OutboundFailureKind, OutboundSendFailure,
     OutboundSendOutcome,
@@ -53,6 +54,12 @@ fn step_from_dispatch(
     if let ScopedMcpConsentDecision::Escalate(reason) = dispatch.decision {
         push_reason(&mut reasons, escalation_code(reason));
     }
+    if let Some(next_eligible_at) = dispatch.paced_until() {
+        return Step::Paced {
+            next_eligible_at,
+            reasons,
+        };
+    }
     let denied = dispatch.gate_outcome() == Some("deny");
     let hold_or_deny = |mut reasons: Vec<String>, decision_ref: Option<String>| {
         if denied {
@@ -90,6 +97,11 @@ fn step_from_dispatch(
                     .is_none()
                     .then_some(ConnectorResultAbsence::NotRetained),
                 result: reply,
+                budget_steering: dispatch
+                    .budget_charge
+                    .as_ref()
+                    .map(EffectorBudgetCharge::steering_messages)
+                    .unwrap_or_default(),
             },
         },
         // A stop of a send that may have gone out (delivery left unresolved),

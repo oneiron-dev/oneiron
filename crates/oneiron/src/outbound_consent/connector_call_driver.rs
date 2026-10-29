@@ -42,6 +42,7 @@ pub(super) enum Step {
         intent: Option<[u8; 32]>,
         result: Option<UntrustedToolResult>,
         result_absence: Option<ConnectorResultAbsence>,
+        budget_steering: Vec<String>,
     },
     Held {
         decision_ref: Option<String>,
@@ -72,6 +73,13 @@ pub(super) enum Step {
         intent: Option<[u8; 32]>,
         input: ConnectorAwaitingInput,
     },
+    /// A full count-bound budget window paces the call until
+    /// `next_eligible_at`, Unix seconds (FIX 8686): unsent and uncharged, it
+    /// waits, and the settler's pass drives it again once the window opens.
+    Paced {
+        next_eligible_at: u64,
+        reasons: Vec<String>,
+    },
 }
 
 fn held(reason: &str) -> Step {
@@ -97,7 +105,8 @@ impl Step {
             | Self::Refused { reasons, .. }
             | Self::Retryable { reasons, .. }
             | Self::Unsettled { reasons, .. }
-            | Self::NotDelivered { reasons, .. } => reasons,
+            | Self::NotDelivered { reasons, .. }
+            | Self::Paced { reasons, .. } => reasons,
             Self::Delivered { .. } | Self::AwaitingInput { .. } => Vec::new(),
         }
     }
@@ -181,6 +190,9 @@ impl Vault {
         // A custody record a host presented for an earlier send is never
         // this pass's; the record and grant this call names are its own.
         drop(host.take_sent_custody());
+        // A pass ends a call's budget wait; this pass's step names any new
+        // one (FIX 8686).
+        let was_paced = pending.paced_until.take().is_some();
         let named = pending
             .credential
             .into_iter()
@@ -247,12 +259,14 @@ impl Vault {
                 intent,
                 result,
                 result_absence,
+                budget_steering,
             } => {
                 settle(call_ref, SettledConnectorCall::Delivered { intent })?;
                 ConnectorCallOutcome::Delivered {
                     intent,
                     result,
                     result_absence,
+                    budget_steering,
                 }
             }
             // The call reached the connector, which asked for input: the
@@ -321,6 +335,10 @@ impl Vault {
                 // current one (none for an administrative hold).
                 let mut row = pending.clone();
                 super::approval::retain_held_ask(&mut row, ask.as_ref());
+                // A call a budget window paced is held from now on.
+                if was_paced {
+                    row.held_at_ms = now_ms();
+                }
                 // A hold for consent alone binds a code consent wait in the
                 // same writer, when the call came from a code run.
                 let (call_ref, code_owned) =
@@ -360,6 +378,24 @@ impl Vault {
                 call_ref: Some(keep(call_ref, &pending)?),
                 reasons,
             },
+            // FIX 8686: the call waits for its budget window, asking no
+            // one; the settler drives it again from `next_eligible_at`.
+            Step::Paced {
+                next_eligible_at,
+                reasons,
+            } => {
+                let row = PendingConnectorCall {
+                    held_reasons: reasons.clone(),
+                    paced_until: Some(next_eligible_at),
+                    ..pending.clone()
+                };
+                ConnectorCallOutcome::Held {
+                    call_ref: keep(call_ref, &row)?,
+                    decision_ref: None,
+                    reasons,
+                    approval_digest: None,
+                }
+            }
             // The ledger stops the send, so nothing resends it, and the call
             // reads its definite non-delivery at once: its caller re-issues
             // it against the connector as now installed (FIX 2553).
