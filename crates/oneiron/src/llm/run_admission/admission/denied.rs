@@ -40,6 +40,10 @@ pub enum RunDenied {
     AllocationExhausted,
     #[error("the host refused a fresh allocation: {reason:?}")]
     AllocationRefused { reason: AllocationRefusal },
+    /// The resident's share of the allocation, which the owner pinned, does
+    /// not fit the call (FIX 7767). An unpinned share never refuses.
+    #[error("the owner's pinned share for this resident is spent")]
+    ResidentShareSpent { resident: crate::EntityId },
     #[error("dispatch refused: {refused}")]
     Dispatch { refused: DispatchRefused },
     #[error("a run never edits its own declaration")]
@@ -55,9 +59,9 @@ impl From<RunDenied> for LlmError {
     fn from(denied: RunDenied) -> Self {
         match denied {
             RunDenied::Budget { denied } => Self::BudgetDenied(denied),
-            RunDenied::NoAllocation | RunDenied::AllocationExhausted => {
-                Self::BudgetDenied(BudgetDenied::Exhausted)
-            }
+            RunDenied::NoAllocation
+            | RunDenied::AllocationExhausted
+            | RunDenied::ResidentShareSpent { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
             // The account owner's question holds the work: never a spent
             // budget (FIX 9924).
             RunDenied::AllocationRefused {

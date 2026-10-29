@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4174 declarations.
-Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1161 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 105; unread shapes: 0.
+Census: 1162 facade rows, 4180 declarations.
+Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2649,6 +2649,8 @@ class RecallRequest(TypedDict):
     scope: NotRequired[RecallScope | None]
     limit: NotRequired[int | None]
     format: NotRequired[str | None]
+    token_budget: NotRequired[int | None]
+    reader_agent_ref: NotRequired[str | None]
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
     media: NotRequired[ContextPackMediaQuery | None]
@@ -7253,12 +7255,16 @@ class FilesLimitCrossed(TypedDict):
     row: str
     limit: int
     observed: int
+class FilesOriginalsUnkept(TypedDict):
+    files: int
+    first_error: str
 class FilesRescanView(TypedDict):
     source: EntityId
     folder: str
     counts: NotRequired[FilesRescanCounts | None]
     error: NotRequired[str | None]
     limits_crossed: NotRequired[list[FilesLimitCrossed]]
+    originals_unkept: NotRequired[FilesOriginalsUnkept | None]
 class FilesSourceAttachAnswer(TypedDict):
     world: FilesWorldView
     source: FilesSourceView
@@ -9381,6 +9387,20 @@ class ImagePin(TypedDict):
 class HostRuleRef(TypedDict):
     id: str
     revision: int
+RoleRank = Literal["responsible", "board", "owner"]
+AskAct = Literal["judgment", "e_signature", "payment"]
+HolderKind = Literal["person", "agent"]
+class ReceiptAnswerer(TypedDict):
+    role: RoleRank
+    project: NotRequired[str | None]
+    kind: HolderKind
+class ReceiptAsk(TypedDict):
+    seq: NotRequired[int | None]
+    role: RoleRank
+    project: NotRequired[str | None]
+    ceiling: RoleRank
+    act: AskAct
+    answered: NotRequired[ReceiptAnswerer | None]
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -9397,6 +9417,7 @@ class DecisionReceipt(TypedDict):
     think_row: NotRequired[int | None]
     person_row: NotRequired[int | None]
     rule: NotRequired[HostRuleRef | None]
+    asked: NotRequired[ReceiptAsk | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
@@ -9750,6 +9771,7 @@ class LearningCellKey(TypedDict):
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
+    project: NotRequired[str | None]
 class LearningReadRequest(TypedDict):
     cell: LearningCellKey
     project_ref: NotRequired[str | None]
@@ -10165,6 +10187,7 @@ class LensProposeRequest(TypedDict):
     pack_content_hash: str
     compiled: Any
     intent_prompt: str
+    trigger: NotRequired[MadeByTrigger | None]
 LensApproval = Literal["proposed"]
 class LensProposalReceipt(TypedDict):
     lens_ref: str
@@ -10359,6 +10382,8 @@ SecretUseStatus = Literal["answered", "failed", "withheld"]
 class SecretUseRecord(TypedDict):
     handle: str
     generation: int
+    presented_custody: NotRequired[EntityId | None]
+    presented_generation: NotRequired[int | None]
     effector: str
     operation: str
     decision: str
@@ -11009,6 +11034,7 @@ class LearningCell(TypedDict):
     axis: NotRequired[str | None]
     consent_scope: NotRequired[str | None]
     setting_key: NotRequired[str | None]
+    project: NotRequired[EntityId | None]
 CritiqueVerdict = Literal["accept", "revise", "discard"]
 CritiqueSeverity = Literal["info", "low", "medium", "high", "blocking"]
 class CodeProposalReviewRequest(TypedDict):
@@ -11340,6 +11366,7 @@ class ResultCard(TypedDict):
     name: NotRequired[str | None]
     taint: ResultTaint
     more: list[ResultFacet]
+    shape: NotRequired[Any | None]
 class ResultReadRefusal(TypedDict):
     denied: str
     reasonCodes: list[str]
@@ -12754,6 +12781,7 @@ class WorkflowRunView(TypedDict):
     steps: list[WorkflowStepCapture]
     results: list[WorkflowStepRun]
     task_ref: NotRequired[EntityId | None]
+    release_refusal: NotRequired[str | None]
 class WorkflowPersonDispatchRequest(TypedDict):
     workflow_ref: EntityId
     intent_key: str
@@ -12887,12 +12915,14 @@ class DoorsLearningCellView(TypedDict):
     executor: str
     type_ref: TypeStamp
     axis: str
+    project: NotRequired[EntityId | None]
 class BorrowedCellView(TypedDict):
     predicate: str
     subject: EntityId
     executor: NotRequired[str | None]
     type_ref: NotRequired[TypeStamp | None]
     axis: NotRequired[str | None]
+    project: NotRequired[EntityId | None]
 class DoorsLearningEvidenceView(TypedDict):
     receipt_ref: str
     at: int
@@ -13434,6 +13464,7 @@ class CriticReviewSubmit(TypedDict):
     catalog: Any
     critics: list[CriticBinding]
     spawn_attempt_ref: NotRequired[str | None]
+    project_ref: NotRequired[str | None]
 class CritiqueTriageScores(TypedDict):
     accept: float
     revise: float
@@ -15537,6 +15568,14 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+RevisionRef = list[int]
+class ManifestEntry(TypedDict):
+    kind: ManifestKind
+    reference: str
+    version: str
+    at: int
+    revision: NotRequired[tuple[EntityId, RevisionRef] | None]
 class AsrOpenRequest(TypedDict):
     utterance_id: str
     scope: NotRequired[RecallScope]
@@ -16111,6 +16150,7 @@ class VoicePackSummary(TypedDict):
     id: str
     origin: VoiceRefOrigin
     clips: list[VoiceClipSummary]
+    crossed: list[str]
 class VoiceRenderConsentView(TypedDict):
     event_id: str
     subject: str
@@ -16423,13 +16463,10 @@ class AskRoleBoard(TypedDict):
 class AskRoleOwner(TypedDict):
     role: Literal["owner"]
 AskRole = AskRoleResponsible | AskRoleBoard | AskRoleOwner
-RoleRank = Literal["responsible", "board", "owner"]
-AskAct = Literal["judgment", "e_signature", "payment"]
 class AskTo(TypedDict):
     role: AskRole
     ceiling: RoleRank
     act: AskAct
-HolderKind = Literal["person", "agent"]
 class RoleHolder(TypedDict):
     actor: str
     kind: HolderKind
@@ -16460,6 +16497,7 @@ class DecisionAsk(TypedDict):
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
     withdrawn_at: NotRequired[int | None]
+    pack_state: NotRequired[Any | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
 class ConnectorListRequest(TypedDict):
@@ -18450,7 +18488,6 @@ class OfficeBodyEdit(TypedDict):
     effects: list[str]
 class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
-    run_root_ref: NotRequired[str | None]
     proposal_ref: NotRequired[str | None]
 BodyActor = str
 class ForkStateOpen(TypedDict):

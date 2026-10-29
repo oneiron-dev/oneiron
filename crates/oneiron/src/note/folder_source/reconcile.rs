@@ -245,6 +245,7 @@ impl Vault {
                     raw_hash: raw_hashes.get(&note.path).cloned(),
                     state: FolderFileState::Landed,
                     meta: next_meta(old, facts.get(&note.path).copied(), at, Some(at)),
+                    original: None,
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
             }
@@ -330,6 +331,7 @@ impl Vault {
             raw_hash: None,
             state: FolderFileState::Landed,
             meta: None,
+            original: None,
         });
         row.note = Some(id);
         row.raw_hash = raw_hash;
@@ -440,6 +442,7 @@ impl Vault {
                     raw_hash: None,
                     state,
                     meta: Some(FileMeta::first(file.facts, at, None)),
+                    original: None,
                 };
                 FILES.put(&self.store, txn, &key, &row)?;
                 return Ok(Held::Named);

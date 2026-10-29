@@ -13,7 +13,6 @@ use crate::conversation_dag::{
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::extraction::{
     EncoderInput, EncoderMessage, EncoderRegister, EncoderTurn, SpeakerRole,
 };
@@ -553,13 +552,37 @@ pub(super) fn earlier_turns_in_txn(
     turn: &EntityId,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
+    Ok(earlier_walk_in_txn(vault, txn, turn, limit, Some(MAX_EDGE_QUERY_RESULTS))?.turns)
+}
+
+/// The turns a walk along a conversation read, and whether it stopped short
+/// of the conversation's end on its side (FIX 10705).
+#[derive(Default)]
+pub(super) struct TurnWalk {
+    /// Nearest first, for an earlier walk; oldest first, for a later one.
+    pub(super) turns: Vec<EntityId>,
+    /// Turns lie past where the walk stopped, unread: at its bound, past the
+    /// turns a scan examines, or, walking down a DAG, at a branch.
+    pub(super) cut: bool,
+}
+
+/// [`earlier_turns_in_txn`] under the caller's own bound, saying where it
+/// stopped. `scan` is how many of a conversation's turns its time order
+/// examines, past which the turn reads alone; with none it examines every
+/// turn and keeps the nearest `limit`, which bound what it holds.
+pub(super) fn earlier_walk_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    limit: usize,
+    scan: Option<usize>,
+) -> Result<TurnWalk> {
     let store = &vault.store;
-    let limit = limit.min(MAX_ANCESTOR_DEPTH);
     if limit == 0 {
-        return Ok(Vec::new());
+        return Ok(TurnWalk::default());
     }
     let Ok(parent) = retained_parent(store, txn, turn) else {
-        return Ok(Vec::new());
+        return Ok(TurnWalk::default());
     };
     if let Some(parent) = parent {
         // A DAG record's parent existed when the append door wrote it, and
@@ -571,9 +594,9 @@ pub(super) fn earlier_turns_in_txn(
             LiveEntityRow::Live { body, .. } if matches!(record_kind(&body), Ok(Some(_))) => None,
             LiveEntityRow::Live { .. } => match header_key(vault, txn, turn)? {
                 Some((at, _)) => Some(at),
-                None => return Ok(Vec::new()),
+                None => return Ok(TurnWalk::default()),
             },
-            _ => return Ok(Vec::new()),
+            _ => return Ok(TurnWalk::default()),
         };
         let mut walked = vec![*turn];
         let mut ancestry = Vec::new();
@@ -592,10 +615,15 @@ pub(super) fn earlier_turns_in_txn(
             }
             cursor = retained_parent(store, txn, &id).ok().flatten();
         }
-        return Ok(ancestry);
+        // The bound stopped a walk whose ancestry goes on.
+        let cut = cursor.is_some_and(|id| !walked.contains(&id));
+        return Ok(TurnWalk {
+            turns: ancestry,
+            cut,
+        });
     }
     let Some(conversation) = sole_peer(vault, txn, turn, EdgeKind::ChildOf)? else {
-        return Ok(Vec::new());
+        return Ok(TurnWalk::default());
     };
     // Only a live conversation's turns are a window; a turn under another
     // structural parent reads alone.
@@ -603,20 +631,21 @@ pub(super) fn earlier_turns_in_txn(
         live_entity_row_in_txn(store, txn, &conversation)?,
         LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_CONVERSATION
     ) {
-        return Ok(Vec::new());
+        return Ok(TurnWalk::default());
     }
     let dag_record = match live_entity_row_in_txn(store, txn, turn)? {
         LiveEntityRow::Live { body, .. } => !matches!(record_kind(&body), Ok(None)),
-        _ => return Ok(Vec::new()),
+        _ => return Ok(TurnWalk::default()),
     };
     if dag_record || keeps_dag_topology(store, txn, &conversation).unwrap_or(true) {
-        return Ok(Vec::new());
+        return Ok(TurnWalk::default());
     }
     let Some((at, _)) = header_key(vault, txn, turn)? else {
-        return Ok(Vec::new());
+        return Ok(TurnWalk::default());
     };
     // The nearest `limit` earlier turns, the farthest of them on top.
     let mut nearest: BinaryHeap<Reverse<(u64, [u8; 16])>> = BinaryHeap::new();
+    let mut cut = false;
     for (examined, edge) in store
         .port_edges(
             txn,
@@ -627,8 +656,11 @@ pub(super) fn earlier_turns_in_txn(
         )?
         .enumerate()
     {
-        if examined >= MAX_EDGE_QUERY_RESULTS {
-            return Ok(Vec::new());
+        if scan.is_some_and(|scan| examined >= scan) {
+            return Ok(TurnWalk {
+                turns: Vec::new(),
+                cut: true,
+            });
         }
         let id = edge?.target;
         let Some(key) = header_key(vault, txn, &id)? else {
@@ -643,7 +675,7 @@ pub(super) fn earlier_turns_in_txn(
             if is_thread_record(store, txn, &id).unwrap_or(false) {
                 continue;
             }
-            return Ok(Vec::new());
+            return Ok(TurnWalk::default());
         }
         // Only a strictly earlier second proves a turn came first.
         if key.0 >= at {
@@ -652,14 +684,16 @@ pub(super) fn earlier_turns_in_txn(
         nearest.push(Reverse(key));
         if nearest.len() > limit {
             nearest.pop();
+            cut = true;
         }
     }
     let mut earlier: Vec<(u64, [u8; 16])> = nearest.into_iter().map(|Reverse(key)| key).collect();
     earlier.sort_unstable_by_key(|key| Reverse(*key));
-    earlier
+    let turns: Vec<EntityId> = earlier
         .into_iter()
         .map(|(_, id)| EntityId::from_bytes(id))
-        .collect()
+        .collect::<Result<_>>()?;
+    Ok(TurnWalk { turns, cut })
 }
 
 /// A TURN's place in time, read from its row header: its occurred second,

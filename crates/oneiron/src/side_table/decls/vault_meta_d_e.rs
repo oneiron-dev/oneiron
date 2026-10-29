@@ -85,6 +85,10 @@ side_tables! {
     DREAMER_BUDGET_RESERVATION: VaultMeta b"dreamer:budget_reservation:" Raw;
     /// Paid-step receipt keyed by attempt id16 + step hash32. Value: one-byte marker.
     DREAMER_BUDGET_STEP_CHARGE: VaultMeta b"dreamer:budget_step_charge:" Raw;
+    /// FIX 2425: one candidate a Dreamer attempt decided a correction for, kept before the
+    /// branch builds, filters or selects it: its subject, the claim it corrects and its kept
+    /// decisions, never its value. Key: id16 (attempt) + u64be(position).
+    DREAMER_CANDIDATE_DECISION: VaultMeta b"dreamer:candidate_decision:v1:" Named;
     /// Operator-set predicate key rules governing which claim keys the consolidator may fold;
     /// defaults from key_defaults.json when absent. Key: ().
     /// Resident-owned v1 failure rules, stored as the validated JSON payload with its author.
@@ -107,7 +111,8 @@ side_tables! {
     /// tournament with the identical prefix and key layout (see WHERE) - worth a second look for
     /// accidental collision if the same (attempt, artifact_id) pair is ever used from both callers.
     /// Key: id16 + u16be + string.
-    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored;
+    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored
+        => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
     /// FIX 7510: one admitted source observation of a follower session, its exact rendered bytes
@@ -352,8 +357,6 @@ side_tables! {
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
-    /// Dial: agreeing-ruling count needed to auto-propose a standing escalation policy. Key: ().
-    EDIT_DISTANCE_ESCALATION_STANDING_N: VaultMeta b"edit_distance/escalation/standing_n/dial/v1" Raw;
     /// Append-only ruled-escalation ledger row, scope-major (scope digest then UUIDv7 row id) so one
     /// scope's history is a contiguous range. Key: id16 + id16.
     EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw;
@@ -383,7 +386,8 @@ side_tables! {
     EDIT_DISTANCE_PREFERENCE_PROPOSAL: VaultMeta b"edit_distance/preference_proposal/v1\0" Raw;
     /// Immutable owner-bound decision on an inbox/amendment intake item, keyed by receipt id. Key:
     /// string.
-    EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw;
+    EDIT_DISTANCE_PRINCIPAL_DECISION: VaultMeta b"edit_distance/principal_decision/v1\0" Raw
+        => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
     EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored;

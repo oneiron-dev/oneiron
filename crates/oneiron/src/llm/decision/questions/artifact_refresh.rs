@@ -23,6 +23,7 @@ pub use self::history::artifact_ask_records;
 pub(super) use self::history::artifact_event_record;
 pub use self::manual::refresh_artifact_question_now;
 pub use self::unit_receipts::ArtifactUnitReceipt;
+pub(crate) use self::unit_receipts::artifact_unit_receipts;
 
 use serde::{Deserialize, Serialize};
 

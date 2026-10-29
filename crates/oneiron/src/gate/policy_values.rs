@@ -8,6 +8,9 @@ pub(super) enum PolicyValueKey {
     ArtifactAnswerQuietSeconds,
     CommOptOutPosture,
     DreamerRetryParkSeconds,
+    EscalationStandingRulings,
+    MinerRecurrenceReceipts,
+    MinerRejectionWaitSeconds,
     ProposalCheckThreshold,
     ProviderCooldownDefaultSeconds,
     ProviderCooldownMaxSeconds,
@@ -20,6 +23,9 @@ impl PolicyValueKey {
             "artifact_answer_quiet_seconds" => Some(Self::ArtifactAnswerQuietSeconds),
             "comm_opt_out_posture" => Some(Self::CommOptOutPosture),
             "dreamer_retry_park_seconds" => Some(Self::DreamerRetryParkSeconds),
+            "escalation_standing_rulings" => Some(Self::EscalationStandingRulings),
+            "miner_recurrence_receipts" => Some(Self::MinerRecurrenceReceipts),
+            "miner_rejection_wait_seconds" => Some(Self::MinerRejectionWaitSeconds),
             "proposal_check_threshold" => Some(Self::ProposalCheckThreshold),
             "provider_cooldown_default_seconds" => Some(Self::ProviderCooldownDefaultSeconds),
             "provider_cooldown_max_seconds" => Some(Self::ProviderCooldownMaxSeconds),
@@ -33,6 +39,9 @@ impl PolicyValueKey {
             Self::ArtifactAnswerQuietSeconds => "artifact_answer_quiet_seconds",
             Self::CommOptOutPosture => "comm_opt_out_posture",
             Self::DreamerRetryParkSeconds => "dreamer_retry_park_seconds",
+            Self::EscalationStandingRulings => "escalation_standing_rulings",
+            Self::MinerRecurrenceReceipts => "miner_recurrence_receipts",
+            Self::MinerRejectionWaitSeconds => "miner_rejection_wait_seconds",
             Self::ProposalCheckThreshold => "proposal_check_threshold",
             Self::ProviderCooldownDefaultSeconds => "provider_cooldown_default_seconds",
             Self::ProviderCooldownMaxSeconds => "provider_cooldown_max_seconds",
@@ -55,10 +64,15 @@ impl PolicyValueKey {
             // read at vault scope only, and an offer's cooldown is the
             // deployment's, never one world's.
             // A held answer's proposer is woken on the vault's clock, and a
-            // Dreamer Retry park resumes on it (FIX 8716).
+            // Dreamer Retry park resumes on it (FIX 8716). The edit-distance
+            // ledger and miner read their thresholds with no world or project
+            // (FIX 9802, 9809).
             Self::ArtifactAnswerQuietSeconds
             | Self::CommOptOutPosture
             | Self::DreamerRetryParkSeconds
+            | Self::EscalationStandingRulings
+            | Self::MinerRecurrenceReceipts
+            | Self::MinerRejectionWaitSeconds
             | Self::ProviderCooldownDefaultSeconds
             | Self::ProviderCooldownMaxSeconds
             | Self::ProviderCooldownMaxWaitSeconds
@@ -93,6 +107,9 @@ pub(super) enum PolicyValue {
     ArtifactAnswerQuietSeconds(u64),
     CommOptOutPosture(crate::gate::resolution::CommOptOutPosture),
     DreamerRetryParkSeconds(u64),
+    EscalationStandingRulings(u64),
+    MinerRecurrenceReceipts(u64),
+    MinerRejectionWaitSeconds(u64),
     ProposalCheckThreshold(u64),
     ProviderCooldownDefaultSeconds(u64),
     ProviderCooldownMaxSeconds(u64),
@@ -114,6 +131,18 @@ impl PolicyValue {
             // trusted row asks.
             (Self::DreamerRetryParkSeconds(a), Self::DreamerRetryParkSeconds(b)) => {
                 Self::DreamerRetryParkSeconds(a.max(b))
+            }
+            // More agreeing rulings or recurring receipts, or a longer quiet
+            // after a rejection, never proposes sooner than any trusted row
+            // asks.
+            (Self::EscalationStandingRulings(a), Self::EscalationStandingRulings(b)) => {
+                Self::EscalationStandingRulings(a.max(b))
+            }
+            (Self::MinerRecurrenceReceipts(a), Self::MinerRecurrenceReceipts(b)) => {
+                Self::MinerRecurrenceReceipts(a.max(b))
+            }
+            (Self::MinerRejectionWaitSeconds(a), Self::MinerRejectionWaitSeconds(b)) => {
+                Self::MinerRejectionWaitSeconds(a.max(b))
             }
             (Self::ProposalCheckThreshold(a), Self::ProposalCheckThreshold(b)) => {
                 Self::ProposalCheckThreshold(a.min(b))
@@ -140,6 +169,9 @@ impl PolicyValue {
             Self::CommOptOutPosture(value) => value.as_str().to_owned(),
             Self::ArtifactAnswerQuietSeconds(value)
             | Self::DreamerRetryParkSeconds(value)
+            | Self::EscalationStandingRulings(value)
+            | Self::MinerRecurrenceReceipts(value)
+            | Self::MinerRejectionWaitSeconds(value)
             | Self::ProposalCheckThreshold(value)
             | Self::ProviderCooldownDefaultSeconds(value)
             | Self::ProviderCooldownMaxSeconds(value)
@@ -337,6 +369,17 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                         }
                         PolicyValueKey::DreamerRetryParkSeconds => {
                             PolicyValue::DreamerRetryParkSeconds(retry_park_seconds(raw)?)
+                        }
+                        // A threshold of zero rulings or receipts is no
+                        // threshold; a zero wait re-proposes at the next pass.
+                        PolicyValueKey::EscalationStandingRulings => {
+                            PolicyValue::EscalationStandingRulings(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::MinerRecurrenceReceipts => {
+                            PolicyValue::MinerRecurrenceReceipts(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::MinerRejectionWaitSeconds => {
+                            PolicyValue::MinerRejectionWaitSeconds(raw.as_u64()?)
                         }
                         PolicyValueKey::ProposalCheckThreshold => {
                             PolicyValue::ProposalCheckThreshold(raw.as_u64().filter(|v| *v > 0)?)

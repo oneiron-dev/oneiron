@@ -8,16 +8,18 @@
 //! is called. Its stream's text comes back to the host as [`VoiceBrainOut`],
 //! and the host speaks it past the session's safeguards. A cancel drops the
 //! turn's stream, and its run settles what it spent; what it had already
-//! said stays in the history, marked interrupted. Each safeguard notice said
-//! to the person enters the history too, and the next turn hears it. A turn
-//! assembled for a new audience revision, as after an attendee entered the
-//! call's room, starts from that audience's own history (OF-365 P5), and so
-//! does one after another call went live in the room or ended. A call heard
-//! in a room reads it again each turn, with every speaker a call live there
-//! must place; a room a missing entry holds starts no turn (FIX 3342). What
-//! a turn's memories read found, heard and withheld goes to the owner's
-//! client with the turn's first event, its narrowing receipts whole; a turn
-//! cancelled or ended before any event sends it then.
+//! said stays in the history, marked interrupted. A turn whose stream ends
+//! without a stop keeps every word it said, marked incomplete (FIX 7808).
+//! Each safeguard notice said to the person enters the history too, and the
+//! next turn hears it. A turn assembled for a new audience revision, as after
+//! an attendee entered the call's room, starts from that audience's own
+//! history (OF-365 P5), and so does one after another call went live in the
+//! room or ended. A call heard in a room reads it again each turn, with
+//! every speaker a call live there must place; a room a missing entry holds
+//! starts no turn (FIX 3342). What a turn's memories read found, heard and
+//! withheld goes to the owner's client with the turn's first event, its
+//! narrowing receipts whole; a turn cancelled or ended before any event
+//! sends it then.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -50,6 +52,9 @@ use crate::models::Seat;
 /// How an interrupted answer's history entry ends: the person cut in after
 /// the brain had said this much.
 const INTERRUPTED_MARK: &str = " [interrupted: the person cut in here]";
+/// How an answer that ended without a stop ends its history entry: every
+/// word it said was spoken, and the answer is not whole (FIX 7808).
+const INCOMPLETE_MARK: &str = " [incomplete: the answer ended before it finished]";
 /// What the call's earlier turns become for a turn assembled for a new
 /// audience (CALLS.md: FIX 1389 history).
 const PRIOR_TURNS_ON_NEW_AUDIENCE: PriorTurns = PriorTurns::Dropped;
@@ -654,19 +659,35 @@ impl Turn {
                     }
                     return;
                 }
-                Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Done,
+                // Only a stop is a whole answer (FIX 7808). Every other
+                // terminal ended it mid-answer: what it said is spoken to its
+                // end, and the turn is marked one that never finished.
+                Some(Ok(LlmStreamEvent::Done {
+                    finish_reason: FinishReason::Stop,
+                    ..
+                })) => break BrainEvent::Done,
+                Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Incomplete,
                 Some(Ok(_)) => {}
                 Some(Err(error)) => break BrainEvent::Error(error.to_string()),
                 None => break BrainEvent::Error("stream ended without a terminal".into()),
             }
         };
         let said = self.said.lock().ok().and_then(|mut said| said.take());
-        if matches!(event, BrainEvent::Done)
-            && let Some(said) = said
+        // Only a stop completes an answer (FIX 7808). One that ended without
+        // it keeps every word it said, marked the answer it never finished;
+        // a broken stream and a cancel keep their own handling.
+        let entry = match &event {
+            BrainEvent::Done => said,
+            BrainEvent::Incomplete => said
+                .filter(|said| !said.is_empty())
+                .map(|said| format!("{said}{INCOMPLETE_MARK}")),
+            _ => None,
+        };
+        if let Some(entry) = entry
             && let Ok(mut history) = self.history.lock()
         {
             history.push((
-                text_message(LlmMessageRole::Assistant, said),
+                text_message(LlmMessageRole::Assistant, entry),
                 self.said_from.clone(),
             ));
         }

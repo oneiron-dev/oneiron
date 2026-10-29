@@ -16,6 +16,7 @@ use crate::Result;
 use crate::llm::decision::{DecisionAnswer, TypedDecision};
 use crate::llm::seat::SeatPolicy;
 use crate::llm::{ModelId, ReasoningEffort};
+use crate::task_type::TaskTypeRef;
 
 /// One candidate's grade: the model, the effort it was graded at, and its
 /// complete typed decision.
@@ -39,16 +40,26 @@ impl DescriptionGrading {
     }
 }
 
-/// Every candidate's complete grade, in the order the route asked them.
+/// Every candidate's complete grade, in the order the route asked them, and
+/// the type stamp of the task they were graded for.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptionFitnessReadings {
     pub gradings: Vec<DescriptionGrading>,
+    /// The task's type stamp as placed, which the grades read (ARCH-0079,
+    /// "placed once, read everywhere"); none for an untyped task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<TaskTypeRef>,
 }
 
 impl DescriptionFitnessReadings {
-    /// Each asked candidate's grade, paired with its decision.
-    pub(super) fn of(candidates: &[Candidate<'_>], decisions: Vec<TypedDecision>) -> Self {
+    /// Each asked candidate's grade, paired with its decision, for a task
+    /// stamped `type_ref`.
+    pub(super) fn of(
+        candidates: &[Candidate<'_>],
+        decisions: Vec<TypedDecision>,
+        type_ref: Option<&TaskTypeRef>,
+    ) -> Self {
         Self {
             gradings: candidates
                 .iter()
@@ -59,6 +70,7 @@ impl DescriptionFitnessReadings {
                     decision,
                 })
                 .collect(),
+            type_ref: type_ref.cloned(),
         }
     }
 }
@@ -83,6 +95,7 @@ pub(super) fn resolve<'a>(
     settings: &SeatSettings,
     purpose: &CallPurpose,
     task: &str,
+    type_ref: Option<&TaskTypeRef>,
     decisions: &DescriptionDecisions<'_>,
 ) -> Result<Resolved<'a>> {
     let composed = seat_policy.compose_defaults(&purpose_key(purpose), Some(policy))?;
@@ -105,6 +118,7 @@ pub(super) fn resolve<'a>(
         .collect();
     let grading = decisions.fitness(
         task,
+        type_ref,
         &rows
             .iter()
             .map(|&(row, description, effort)| Candidate {

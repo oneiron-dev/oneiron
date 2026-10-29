@@ -17,10 +17,10 @@
 //! still in flight, and the render answers without waiting on a page server
 //! that never answers.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::Arc;
 
-use oneiron::web_fetch::{HostedEgressGuard, HostedEgressRefusal, RendererError};
+use oneiron::web_fetch::{HostedEgressRefusal, RendererError, hosted_dns_resolver};
 use oneiron_browser::{BrowserError, BrowserRequestHandler, DestinationRefusal};
 use oneiron_container::{HttpRequest, HttpResponse};
 use reqwest::Url;
@@ -81,7 +81,7 @@ impl PageRequests {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none());
         let builder = match &operation.guard {
-            Some(guard) => builder.dns_resolver(Arc::new(GuardedResolver(Arc::clone(guard)))),
+            Some(guard) => builder.dns_resolver(hosted_dns_resolver(Arc::clone(guard))),
             None => builder,
         };
         let client = builder.build()?;
@@ -191,32 +191,4 @@ impl BrowserRequestHandler for PageRequests {
                 Unanswered::Failed(detail) => BrowserError::Navigation(detail),
             })
     }
-}
-
-/// A guarded render's resolver: every name its client connects to resolves
-/// here, and a name the guard refuses by its answers
-/// ([`HostedEgressGuard::refuses_resolved`]: infrastructure, or a private
-/// address for a name no operator origin names) fails its connection with
-/// the typed refusal; the connection goes only to the addresses just
-/// admitted, as the engine's guarded client resolves.
-struct GuardedResolver(Arc<HostedEgressGuard>);
-
-impl reqwest::dns::Resolve for GuardedResolver {
-    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        Box::pin(resolve_admitted(
-            Arc::clone(&self.0),
-            name.as_str().to_owned(),
-        ))
-    }
-}
-
-async fn resolve_admitted(
-    guard: Arc<HostedEgressGuard>,
-    host: String,
-) -> Result<reqwest::dns::Addrs, Box<dyn std::error::Error + Send + Sync>> {
-    let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0)).await?.collect();
-    if let Some(refused) = guard.refuses_resolved(&host, addresses.iter().map(SocketAddr::ip)) {
-        return Err(Box::new(refused));
-    }
-    Ok(Box::new(addresses.into_iter()))
 }

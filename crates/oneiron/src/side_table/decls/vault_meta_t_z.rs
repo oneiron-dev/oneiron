@@ -124,7 +124,8 @@ side_tables! {
     TEAM_PATTERN_SKILL: VaultMeta b"team:pattern_skill:v1:" Named;
     /// One team run's receipt (type, pattern, models, shape, who decided, coverage, confessions,
     /// anchored outcome). Key: string (team reference).
-    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named;
+    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named
+        => crate::learning::erase_team_receipt_scope_in_txn;
     /// One team start as the host saw it: stamp, leader, root TASK, queued members and widenings.
     /// Key: string (leader attempt hex, `:`, team reference).
     TEAM_RUN: VaultMeta b"team:run:v1:" Named;
@@ -157,6 +158,10 @@ side_tables! {
     /// The MESSAGE rows a kept TURN lost to a window demotion (OF-534, FIX 3859), until each is
     /// back with its PartOf edge: derived, local, never synced. Key: id16 (turn).
     TURN_MISSING_MESSAGES: VaultMeta b"turn:missing_messages:v1:" Named;
+    /// A TURN owed a tag pass that a physical tear, with no vault in hand, could not mark (FIX
+    /// 6262), until the tagging reconciler's upkeep marks it: derived, local, never synced. Empty
+    /// marker. Key: id16 (turn).
+    TURN_TAG_OWED: VaultMeta b"turn:tag_owed:v1:" Raw;
     /// A typed body's Loro snapshot at its head. Key: id16 (entity).
     TYPED_BODY_DOC: VaultMeta b"typed_body:doc:v1:" Raw;
     /// Work on a typed body away from its head: opener, base frontier and state. Key: id16

@@ -248,8 +248,7 @@ struct ImageFormBody<'a> {
     height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     asset_text_ref: Option<String>,
-    /// The description beside a thumbnail; the full image names its
-    /// caption by ref alone.
+    /// The admitted caption beside the pixels.
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<&'a str>,
     handle: &'a str,
@@ -345,7 +344,7 @@ impl AssetForms {
                     width: None,
                     height: None,
                     asset_text_ref: caption.clone(),
-                    text: None,
+                    text: self.text.as_ref().map(|(_, text)| text.as_str()),
                     handle: &handle,
                 })?;
                 if admits(body.len()) {
