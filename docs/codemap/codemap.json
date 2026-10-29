@@ -46324,7 +46324,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/memory/witness/program/validation.rs",
+     "path": "src/memory/witness/program/provenance.rs",
      "purpose": "Witness provenance checks and the overlay landing's receipt",
      "surface": {
       "crate-vis": 3
