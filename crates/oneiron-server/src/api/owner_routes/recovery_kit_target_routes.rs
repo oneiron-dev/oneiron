@@ -39,8 +39,8 @@
 //!
 //! The console never receives the recovery seed (DEC-0005, FIX 6028): while
 //! [`OWNER_DEVICE_ONLY_KIT_TARGETS`] holds, a hosted or managed install takes
-//! no kit material at all. Both calls refuse there with
-//! `kit_requires_owner_device` before their body is read ([`OwnerDevice`]);
+//! no kit material at all. Every kit call refuses there with
+//! `kit_requires_owner_device` before its body is read ([`OwnerDevice`]);
 //! the owner still says so from any surface and the work runs on his own
 //! device.
 

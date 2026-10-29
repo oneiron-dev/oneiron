@@ -1809,8 +1809,9 @@ argument, and sends kit material only to an `https://` server or to `http://` on
   machine proof: it verifies under the key that machine stands on in the vault.
 - The target must also be a machine the worlds' privacy lets hold their keys, as the
   verified-destination judge reads each world's recipient choice. For one-machine and
-  my-machines worlds that means one of your own machines (marked mine), and the host too on a
-  hosted vault. Any other proven machine qualifies only where no world keeps its keys off it.
+  my-machines worlds that means one of your own machines (marked mine). Any other proven machine
+  qualifies only where no world keeps its keys off it. A hosted or managed install takes no kit
+  material at all (`kit_requires_owner_device`): the work runs on your own device.
 - A target that is another install, or is unproved, or is disallowed, gets a named refusal
   (`kit_target_elsewhere`, `kit_target_unproved`, `kit_target_not_allowed`) before any kit is
   read.
