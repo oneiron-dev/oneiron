@@ -28,6 +28,15 @@ use crate::api::owner_routes::schema::{decide_run_body_schema, run_resolved_sche
 
 /// Binds each route's REST shapes.
 pub(super) fn merge(spec: &mut Value) {
+    #[cfg(target_os = "linux")]
+    super::bind(
+        spec,
+        "/v1/owner/outbox/diverged",
+        "post",
+        crate::api::owner_routes::outbox_diverged_routes::answer_body_schema(),
+        crate::api::owner_routes::outbox_diverged_routes::answer_receipt_schema(),
+        &[],
+    );
     super::bind(
         spec,
         "/v1/owner/pads/read",

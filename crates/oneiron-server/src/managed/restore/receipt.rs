@@ -135,6 +135,11 @@ pub(super) fn receipt(
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
+            pad_object_notes: report
+                .pad_object_notes
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
         },
         admission: admission_wire(admission),
         wake_sequence_floor: context.plan.wake_sequence_floor,
