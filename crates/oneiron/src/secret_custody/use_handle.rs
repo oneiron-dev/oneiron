@@ -20,10 +20,13 @@
 //! (each copy becomes the record's `[secret scN]` text) before they go
 //! anywhere, so no hook, receipt, record or reply holds it: inside the send's
 //! own door, with the bytes it released (`output`, FIX 7647). Every use the
-//! handle resolves for writes one Gate record: the handle, the generation its
-//! send released, the effector, the operation, the decision and the send
-//! status, and beside the handle's own identity the record and generation
-//! its send actually presented (FIX 8052).
+//! handle resolves for writes its Gate records (`receipt`): an admitted use
+//! commits its intent, send `pending`, before the send, and appends its
+//! outcome after, linked to it (FIX 2622); a refused one writes one outcome.
+//! The outcome names the handle, the generation its send released, the
+//! effector, the operation, the decision and the send status, and beside the
+//! handle's own identity the record and generation its send actually
+//! presented (FIX 8052).
 //!
 //! Beside the table, a server sends [`SECRET_USE_CONNECTOR_CALL`]: one
 //! connector call with the handle's secret as its credential, in place of
@@ -36,6 +39,7 @@
 mod bind;
 mod lease;
 mod output;
+mod receipt;
 
 use std::fmt;
 use std::sync::{Mutex, PoisonError};
@@ -54,7 +58,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
 use crate::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use crate::skill_hub::pack_catalog::{PackSetupAuth, PackSetupSecret};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::{GateDecisionId, Store};
 use crate::vault::Vault;
 
 pub use self::bind::{SECRET_BIND_REASON, SecretBindRequest, SecretBound};
@@ -63,6 +67,7 @@ pub use self::output::{
     SentPresentation, SentValue,
 };
 use self::output::{clear_text, handle_text};
+use self::receipt::{UsePhase, Used};
 
 /// The owner door that adds a binding to a secret, named by every refusal of
 /// a handle that has none for the operation's effector.
@@ -70,13 +75,6 @@ pub const SECRET_BIND_DOOR: &str = "POST /v1/owner/secrets/bind";
 
 /// The Gate reason code of every use's record.
 pub const SECRET_USE_REASON: &str = "gate.secret.use";
-
-/// The Gate content kind of every use's record.
-const SECRET_USE_CONTENT_KIND: &str = "secret_use";
-
-/// Domain of a use record's diff handle: a digest of what was used, by
-/// what, never of the value.
-const USE_DIFF_DOMAIN: &[u8] = b"oneiron.secret_use.v1";
 
 /// What the agent's own surface sees in place of the record's name: the
 /// operation table's `pack` for a provider check.
@@ -258,6 +256,10 @@ pub enum SecretUseSend {
     /// It ran, but the result could not be cleared of the value, so none
     /// comes back.
     Withheld,
+    /// The use's intent, committed before its send: sent or not is not
+    /// known until its outcome says (FIX 2622). An intent no outcome
+    /// answers reads so.
+    Pending,
 }
 
 impl SecretUseSend {
@@ -269,6 +271,7 @@ impl SecretUseSend {
             Self::Failed => "failed",
             Self::NotSent => "not_sent",
             Self::Withheld => "withheld",
+            Self::Pending => "pending",
         }
     }
 }
@@ -393,13 +396,15 @@ impl Vault {
     }
 
     /// The half of a use every entry shares once its admission is settled:
-    /// a refused admission writes its refused record and returns the
-    /// refusal; an admitted one runs `consume` on the record `used` names
-    /// (its live name is `name`; `grant`, for a table operation under a
-    /// grant, is redeemed at its send), which clears what came back of the
-    /// value inside the send's door, and writes the used record at the
-    /// generation that send released. A grant the send's redemption refused
-    /// writes the refused record and answers with that refusal (FIX 4491).
+    /// a refused admission writes its one refused record and returns the
+    /// refusal; an admitted one commits its intent record, send `pending`,
+    /// then runs `consume` on the record `used` names (its live name is
+    /// `name`; `grant`, for a table operation under a grant, is redeemed at
+    /// its send), which clears what came back of the value inside the
+    /// send's door, and appends the used outcome, linked to that intent, at
+    /// the generation that send released (FIX 2622). A grant the send's
+    /// redemption refused appends the refused outcome and answers with that
+    /// refusal (FIX 4491).
     fn use_admitted(
         &self,
         used: &Used<'_>,
@@ -411,12 +416,26 @@ impl Vault {
         if let Err(refusal) = admitted {
             used.record(
                 self,
+                UsePhase::Outcome,
+                None,
                 SecretUseDecision::Refused,
                 SecretUseSend::NotSent,
                 None,
             )?;
             return Err(refusal);
         }
+        // The intent is durable before the send (FIX 2622): a crash past it
+        // leaves it pending, sent or not unknown, never an invented outcome.
+        let intent = used
+            .record(
+                self,
+                UsePhase::Intent,
+                None,
+                SecretUseDecision::Used,
+                SecretUseSend::Pending,
+                None,
+            )?
+            .receipt;
         let (id, effector) = (used.secret, used.effector);
         let target = SecretUseTarget {
             name,
@@ -441,6 +460,8 @@ impl Vault {
         if let Some(refusal) = refused {
             used.record(
                 self,
+                UsePhase::Outcome,
+                Some(intent),
                 SecretUseDecision::Refused,
                 SecretUseSend::NotSent,
                 None,
@@ -465,114 +486,18 @@ impl Vault {
         // The receipt names the generation the send released for the
         // handle's own record, and beside it what the send actually
         // presented, never the admitted generation in its place (FIX 8052).
-        let used = Used {
-            generation: sent
-                .filter(|sent| sent.custody == id)
-                .map_or(used.generation, |sent| sent.generation),
-            ..used.clone()
-        };
-        let receipt = used.record(self, SecretUseDecision::Used, send, sent)?;
+        let receipt = used.at_sent(sent).record(
+            self,
+            UsePhase::Outcome,
+            Some(intent),
+            SecretUseDecision::Used,
+            send,
+            sent,
+        )?;
         Ok(SecretUseOutcome {
             receipt,
             result,
             failure,
-        })
-    }
-}
-
-/// One use as its Gate record keeps it.
-#[derive(Clone)]
-struct Used<'a> {
-    user: SecretUser,
-    handle: String,
-    secret: EntityId,
-    generation: u32,
-    operation: &'a str,
-    effector: &'a str,
-    /// The grant a lease-aware use redeemed (FIX 4313), if any.
-    grant: Option<EntityId>,
-}
-
-impl Used<'_> {
-    /// This use's Gate record and receipt; `presented` is what its send
-    /// actually presented, when it said.
-    fn record(
-        &self,
-        vault: &Vault,
-        decision: SecretUseDecision,
-        send: SecretUseSend,
-        presented: Option<SentPresentation>,
-    ) -> Result<SecretUseReceipt> {
-        let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
-        let generation = self.generation.to_be_bytes();
-        let parts: [&[u8]; 5] = [
-            USE_DIFF_DOMAIN,
-            self.secret.as_bytes(),
-            &generation,
-            self.operation.as_bytes(),
-            self.effector.as_bytes(),
-        ];
-        let mut digest = blake3::Hasher::new();
-        for part in parts {
-            digest.update(&(part.len() as u64).to_be_bytes());
-            digest.update(part);
-        }
-        let mut details = vec![
-            format!("use:{}", self.operation),
-            format!("handle:{}", self.handle),
-            format!("generation:{}", self.generation),
-            format!("effector:{}", self.effector),
-            format!("decision:{}", decision.as_str()),
-            format!("send:{}", send.as_str()),
-        ];
-        if let Some(grant) = self.grant {
-            details.push(format!("grant:{}", grant.to_hex()));
-        }
-        if let Some(presented) = presented {
-            details.push(format!("presented:{}", presented.custody.to_hex()));
-            details.push(format!("presented_generation:{}", presented.generation));
-        }
-        let used_at = vault.with_write_txn_grouped(|txn| {
-            let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let record = GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id,
-                created_at,
-                outcome: match decision {
-                    SecretUseDecision::Used => "approved",
-                    SecretUseDecision::Refused => "denied",
-                }
-                .into(),
-                reason_codes: vec![SECRET_USE_REASON.into()],
-                receipt_reasons: Vec::new(),
-                system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                    SECRET_USE_CONTENT_KIND,
-                    details,
-                ),
-                actor_class: self.user.actor_class.gate_actor_class().into(),
-                actor_ref: Some(self.user.actor.to_hex()),
-                content_kind: SECRET_USE_CONTENT_KIND.into(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: digest.finalize().as_bytes().to_vec(),
-                read_frontier_hash: [0; 32],
-                context: Default::default(),
-                redacted_at: None,
-            };
-            vault.store.append_gate_decision_in_txn(txn, &record)?;
-            Ok(created_at)
-        })?;
-        Ok(SecretUseReceipt {
-            handle: self.handle.clone(),
-            generation: self.generation,
-            presented,
-            effector: self.effector.to_owned(),
-            operation: self.operation.to_owned(),
-            decision,
-            send,
-            receipt: decision_id,
-            used_at,
         })
     }
 }

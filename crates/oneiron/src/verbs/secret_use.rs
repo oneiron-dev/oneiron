@@ -381,7 +381,11 @@ fn answer(outcome: SecretUseOutcome) -> SecretUseAnswer {
         status: match receipt.send {
             SecretUseSend::Answered => SecretUseStatus::Answered,
             SecretUseSend::Withheld => SecretUseStatus::Withheld,
-            SecretUseSend::Failed | SecretUseSend::NotSent => SecretUseStatus::Failed,
+            // A use answers from its outcome; an intent alone never comes
+            // back (FIX 2622).
+            SecretUseSend::Failed | SecretUseSend::NotSent | SecretUseSend::Pending => {
+                SecretUseStatus::Failed
+            }
         },
         result: outcome.result,
         failure: outcome.failure,
