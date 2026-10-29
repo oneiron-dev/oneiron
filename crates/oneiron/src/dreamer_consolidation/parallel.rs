@@ -33,6 +33,13 @@ impl ConsolidationExecutor<'_> {
         run_id: Option<String>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<PartitionRun> {
+        // A drain's pause parks the attempt before its preparation burns
+        // more of the pass: its checkpoint exit resumes it. Only the pause
+        // parks here: an expired deadline still runs its memoized steps
+        // below, so a finished partition can land in its grace (FIX 11570).
+        if ctx.cancel_requested() {
+            return Ok(PartitionRun::Checkpoint);
+        }
         let branch = decode_partition_payload(payload_input)?;
         let turn_ids = branch.turn_ids();
         let axes = branch.axes();
@@ -195,7 +202,7 @@ impl ConsolidationExecutor<'_> {
         if trapped {
             return Ok(PartitionRun::Trapped);
         }
-        if checkpoint || ctx.deadline.expired() {
+        if checkpoint || ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
         }
         if let Some(reason) = refused {
@@ -252,7 +259,7 @@ impl ConsolidationExecutor<'_> {
             parsed.extend(taken);
             skipped += missed;
             resources.require_output(resources.scope())?;
-            if ctx.deadline.expired() {
+            if ctx.deadline.expired() || ctx.cancel_requested() {
                 return Ok(PartitionRun::Checkpoint);
             }
             #[cfg(test)]
@@ -270,7 +277,7 @@ impl ConsolidationExecutor<'_> {
                 Some(ctx.deadline),
                 Some(&resources.write_fence()),
             ) {
-                if ctx.deadline.expired() {
+                if ctx.deadline.expired() || ctx.cancel_requested() {
                     return Ok(PartitionRun::Checkpoint);
                 }
                 return Err(error.into());
@@ -303,7 +310,7 @@ impl ConsolidationExecutor<'_> {
                 });
             }
         };
-        if ctx.deadline.expired() {
+        if ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);
         }
         let (candidates, waiting) = Self::build_candidates(
