@@ -18,7 +18,9 @@
 //! They are the TASK's its `task_ref` names. The same pass leaves them out of
 //! the task's rows, out of the original request record a row of the task
 //! names, and out of every row that pins one of the task's staged jobs, whose
-//! artifacts go with them. Every other payload member and row field stays.
+//! artifacts go with them. Every other payload member stays, as does every
+//! row field but the task's own failure text, which becomes one fixed
+//! marker (FIX 7618); `task_ref` stays for the late-write fence.
 //! The same pass drops the library-program pins of the task's tries (CUA
 //! E4), which hold its arguments and goal.
 //!
@@ -41,14 +43,15 @@ use crate::agent_dispatch::{
 use crate::browser_library::{PROGRAM_ADMISSION_KIND, admission_payload_actor};
 use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
 use crate::dispatch_byoa::{
-    BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, RunnerTaskSource, StagedInputPin,
-    decode_byoa_attempt_payload, encode_byoa_attempt_payload,
+    BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, ERASED_TASK_FAILURE_REASON,
+    RunnerTaskSource, StagedInputPin, decode_byoa_attempt_payload, encode_byoa_attempt_payload,
 };
 use crate::dreamer_runner::{
     DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload, encode_dreamer_attempt_payload,
 };
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::federation::RepoAccessRefusal;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
@@ -383,13 +386,16 @@ impl ByoaRows {
             .task_ref
             .as_ref()
             .is_some_and(|task| tasks.contains(task));
+        let typed = payload
+            .as_ref()
+            .is_some_and(|payload| dev_refs_match(payload, tasks));
         let refers = payload
             .as_ref()
             .is_some_and(|payload| payload.work.is_some() || pins(payload).next().is_some());
-        if !task && !refers {
+        if !task && !typed && !refers {
             return;
         }
-        if task {
+        if task || typed {
             self.tasks.insert(record.id);
         }
         let id = record.id;
@@ -450,9 +456,13 @@ impl ByoaRows {
             let own = owned.contains(&id);
             match payload {
                 Some(mut payload) => {
-                    if erase_byoa_payload(&mut payload, own, &jobs) {
+                    let changed = erase_byoa_payload(&mut payload, own, &jobs);
+                    let scrubbed = own && scrub_erased_task_failure_reason(&mut record.last_error);
+                    if changed {
                         record.payload =
                             encode_byoa_attempt_payload(&payload).map_err(|_| unrewritable())?;
+                    }
+                    if changed || scrubbed {
                         rewrites.push((raw, record));
                     }
                 }
@@ -465,6 +475,7 @@ impl ByoaRows {
                         "attempt payload erase: an erased task's undecodable payload was emptied"
                     );
                     record.payload.clear();
+                    scrub_erased_task_failure_reason(&mut record.last_error);
                     rewrites.push((raw, record));
                 }
                 None => {}
@@ -494,6 +505,18 @@ fn read_byoa_row(store: &Store, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<
     }))
 }
 
+/// Whether a dev-runner payload names an erased actor, diagnostic or evidence
+/// row by a typed reference (FIX 7621). No staged job text enters this match.
+fn dev_refs_match(payload: &ByoaAttemptPayload, erased: &BTreeSet<String>) -> bool {
+    let Some(refs) = payload.dev_refs.as_ref() else {
+        return false;
+    };
+    std::iter::once(&refs.actor)
+        .chain(refs.diagnostics.iter())
+        .chain(refs.evidence.iter())
+        .any(|id| erased.contains(&bytes_to_hex_lower(id)))
+}
+
 /// The staged jobs `payload` pins: its CLI connector's and its bound work's.
 fn pins(payload: &ByoaAttemptPayload) -> impl Iterator<Item = &StagedInputPin> {
     let cli = match &payload.connector {
@@ -505,6 +528,23 @@ fn pins(payload: &ByoaAttemptPayload) -> impl Iterator<Item = &StagedInputPin> {
         .as_ref()
         .and_then(|work| work.staged_input.as_ref());
     cli.into_iter().chain(work)
+}
+
+/// Replaces an erased task's failure text with the fixed marker (FIX 7618):
+/// a scrubbed row carries no reason that may quote the task. `None` stays
+/// absent, so Completed/Cancelled rows keep their shape, and the stale-lease
+/// code stays, already content-free and driving `StaleCheckout` truth.
+/// Answers whether `last_error` changed, so an erased row is not written again.
+fn scrub_erased_task_failure_reason(last_error: &mut Option<String>) -> bool {
+    let Some(reason) = last_error.as_deref() else {
+        return false;
+    };
+    if reason == ERASED_TASK_FAILURE_REASON || reason == RepoAccessRefusal::StaleLease.public_code()
+    {
+        return false;
+    }
+    *last_error = Some(ERASED_TASK_FAILURE_REASON.to_owned());
+    true
 }
 
 /// Leaves `payload` holding no copy of an erased task (FIX 7502). A row of
@@ -623,45 +663,87 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
     }
 }
 
-/// The fence for a BYOA row (FIX 7502): when the TASK its `task_ref` names
-/// bears the permanent hard-delete marker, the task's copies leave the row
-/// before it is encoded, as the pass leaves them: its argv and its staged
-/// pins, or a payload that does not decode, whole. Logged without content,
-/// never failing the write, as the fence above.
+/// The fence for a BYOA row (FIX 7502, 7621): when the TASK its `task_ref`
+/// names, or any actor, diagnostic or evidence row its typed refs name, bears
+/// the permanent hard-delete marker, the row's copies leave before it is
+/// encoded, as the pass leaves them: its argv and its staged pins, or a payload
+/// that does not decode, whole, and its failure text becomes the fixed marker
+/// (FIX 7618). Logged without content, never failing the write, as the fence
+/// above.
 fn scrub_hard_erased_task_copy_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     record: &mut AttemptRecord,
 ) {
-    let Some(task) = record
+    let task = record
         .task_ref
         .as_deref()
-        .and_then(|task| EntityId::from_hex(task).ok())
-    else {
-        return;
+        .and_then(|task| EntityId::from_hex(task).ok());
+    let mut erased = match task {
+        Some(task) => match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &task) {
+            Ok(erased) => erased,
+            Err(_) => {
+                tracing::warn!(
+                    attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                    "attempt payload fence: the task's hard-delete marker could not be read"
+                );
+                return;
+            }
+        },
+        None => false,
     };
-    match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &task) {
-        Ok(false) => {}
-        Ok(true) => match decode_byoa_attempt_payload(&record.payload) {
-            Ok(mut payload) => {
-                if !erase_byoa_payload(&mut payload, true, &BTreeSet::new()) {
+    let decoded = decode_byoa_attempt_payload(&record.payload);
+    if !erased
+        && let Ok(payload) = &decoded
+        && let Some(refs) = payload.dev_refs.as_ref()
+    {
+        for id in std::iter::once(&refs.actor)
+            .chain(refs.diagnostics.iter())
+            .chain(refs.evidence.iter())
+        {
+            let Ok(id) = EntityId::from_bytes(*id) else {
+                continue;
+            };
+            match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &id) {
+                Ok(true) => {
+                    erased = true;
+                    break;
+                }
+                Ok(false) => {}
+                Err(_) => {
+                    tracing::warn!(
+                        attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                        "attempt payload fence: a typed ref's hard-delete marker could not be read"
+                    );
                     return;
                 }
-                match encode_byoa_attempt_payload(&payload) {
-                    Ok(bytes) => record.payload = bytes,
-                    Err(_) => tracing::warn!(
-                        attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
-                        "attempt payload fence: an erased task's copies could not be removed"
-                    ),
-                }
             }
-            Err(_) => record.payload.clear(),
-        },
+        }
+    }
+    if !erased {
+        return;
+    }
+    match decoded {
+        Ok(mut payload) => {
+            let changed = erase_byoa_payload(&mut payload, true, &BTreeSet::new());
+            // The fence defends the pass's marker too: a late copy read
+            // before the erase writes back no failure text quoting the
+            // task, even when its payload holds no copy to scrub.
+            scrub_erased_task_failure_reason(&mut record.last_error);
+            if !changed {
+                return;
+            }
+            match encode_byoa_attempt_payload(&payload) {
+                Ok(bytes) => record.payload = bytes,
+                Err(_) => tracing::warn!(
+                    attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                    "attempt payload fence: an erased task's copies could not be removed"
+                ),
+            }
+        }
         Err(_) => {
-            tracing::warn!(
-                attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
-                "attempt payload fence: the task's hard-delete marker could not be read"
-            );
+            record.payload.clear();
+            scrub_erased_task_failure_reason(&mut record.last_error);
         }
     }
 }

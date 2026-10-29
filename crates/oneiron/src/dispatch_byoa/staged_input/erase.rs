@@ -1,13 +1,18 @@
-//! A staged job's artifact erased with its TASK (FIX 7502, 7614).
+//! A staged job's artifact erased with its TASK (FIX 7502, 7614, 7612).
 
 use std::collections::BTreeSet;
 
 use crate::codebase::entity_id_from_hash_material;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
 use super::BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN;
+
+/// Staged-job digests whose artifact erase a legal hold still owes. Key: hash32 (job).
+const OWED_STAGED_ERASES: SideTable<[u8; 32], (), Raw> =
+    SideTable::new(&side_table::BYOA_STAGED_INPUT_ERASE);
 
 /// Erases each staged job `jobs` names by its digest, in the erase's
 /// transaction (FIX 7502, 7614): the bodies its artifact owns retire as an
@@ -17,10 +22,10 @@ use super::BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN;
 /// and its row, whose name holds the job's digest, with them. Its graph,
 /// vector and neighbor indexes are invalidated. No hard-delete marker is
 /// written for the content-addressed id, so the same job staged again later
-/// stages afresh. A legal hold on the artifact keeps it whole, as every
-/// erase door keeps a held row's bodies: the refusal goes to the hold's log
-/// and the rest of the erase goes on. An id that holds no artifact here is
-/// left alone. The attempt payload pass erases the pins themselves.
+/// stages afresh. A legal hold on the artifact keeps it whole and owes its
+/// erase to the next due legal-hold pass that finds no hold on it (FIX 7612).
+/// An id that holds no artifact here clears any stale owe and is left alone.
+/// The attempt payload pass erases the pins themselves.
 ///
 /// # Errors
 ///
@@ -40,12 +45,14 @@ pub(crate) fn erase_staged_input_in_txn(
             .and_then(crate::batch::EntityMetadataHeader::parse)
             .map(|header| header.entity_type);
         if stored != Some(crate::registry::ENTITY_TYPE_BLOB_ARTIFACT) {
+            OWED_STAGED_ERASES.delete(store, txn, digest)?;
             continue;
         }
         if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
             if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
                 return Err(error);
             }
+            OWED_STAGED_ERASES.put(store, txn, digest, &())?;
             tracing::warn!(
                 artifact = %artifact.to_hex(),
                 "staged job erase: a legal hold keeps the job's artifact; its pins are erased"
@@ -63,6 +70,40 @@ pub(crate) fn erase_staged_input_in_txn(
         if vector {
             crate::hnsw::increment_vector_version(store, txn)?;
         }
+        OWED_STAGED_ERASES.delete(store, txn, digest)?;
     }
     Ok(())
+}
+
+/// A successful re-stage cancels the erase its old artifact owed: the live
+/// row's new pin keeps those bytes (FIX 7612).
+pub(super) fn drop_owed_staged_erase_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<()> {
+    OWED_STAGED_ERASES.delete(store, txn, digest)?;
+    Ok(())
+}
+
+impl Store {
+    /// Settles every staged-artifact erase whose legal hold has lifted, in
+    /// the due pass's writer. A still-held digest keeps its owe and bytes.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors from the hold read or the ordinary whole-artifact erase.
+    pub(crate) fn settle_owed_staged_erases_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        let mut due = BTreeSet::new();
+        for digest in OWED_STAGED_ERASES.scan_keys(self, &*txn, &[])? {
+            let artifact = entity_id_from_hash_material(
+                BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN,
+                &[digest.as_slice()],
+            )?;
+            if !crate::store::legal_hold::held_in_txn(self, txn, artifact.as_bytes())? {
+                due.insert(digest);
+            }
+        }
+        erase_staged_input_in_txn(self, txn, &due)
+    }
 }
