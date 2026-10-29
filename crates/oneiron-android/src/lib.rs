@@ -7,7 +7,8 @@
 //! run the core's raw caller doors (`Memory::raw_*`). Every other vault
 //! writes as the host. Reads are the same on every vault: the context pack,
 //! text search and graph reads (`reads`) lower to the core reads the C ABI
-//! runs.
+//! runs. A bound vault's `get` and `edges` read its session's room over base
+//! while its session is live (FIX 8119).
 use jni::{
     JNIEnv,
     objects::{JByteArray, JFloatArray, JObject, JString, JValue},
@@ -79,6 +80,14 @@ impl NativeVault {
             }
         })
     }
+    /// The bound caller's memory surface when it names a session; `None`
+    /// reads through the bare vault.
+    fn session_memory(&self) -> Option<Memory<'_>> {
+        self.binding
+            .as_ref()
+            .filter(|binding| binding.session.is_some())
+            .and_then(|_| self.bound_memory())
+    }
     /// Opens `path` as the class its Kotlin host declared, set before the
     /// install enrols (FIX 3833; CALLS: HOST_OPEN_DEVICE_CLASS =
     /// ExplicitHostInput): never read off the operating system.
@@ -113,10 +122,13 @@ impl NativeVault {
                 .map_err(display),
         }
     }
+    /// `id`'s body, as `Vault::get` reads it.
     fn get(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
-        self.vault
-            .get(&EntityId::from_hex(id).map_err(display)?)
-            .map_err(display)
+        let id = EntityId::from_hex(id).map_err(display)?;
+        match self.session_memory() {
+            Some(memory) => memory.raw_get_entity(&id).map_err(display),
+            None => self.vault.get(&id).map_err(display),
+        }
     }
     /// Deletes `id`, answering whether a record was there. A bound vault
     /// deletes as its caller through the `vault.delete` door: owner-only,
@@ -148,12 +160,12 @@ impl NativeVault {
     }
     /// The edges out of `id`, or into it when `inbound`.
     fn edges(&self, id: &EntityId, inbound: bool) -> Result<Vec<EdgeInfo>, String> {
-        let edges = if inbound {
-            self.vault.edges_in(id)
-        } else {
-            self.vault.edges_out(id)
-        };
-        edges.map_err(display)
+        match (self.session_memory(), inbound) {
+            (Some(memory), false) => memory.raw_edges_out(id).map_err(display),
+            (Some(memory), true) => memory.raw_edges_in(id).map_err(display),
+            (None, true) => self.vault.edges_in(id).map_err(display),
+            (None, false) => self.vault.edges_out(id).map_err(display),
+        }
     }
     /// Puts `id`'s vector; the vault refuses one of another width.
     fn put_vector(&self, id: &str, vector: &[f32]) -> Result<(), String> {
