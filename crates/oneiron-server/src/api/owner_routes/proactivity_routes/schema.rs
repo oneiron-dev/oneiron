@@ -61,6 +61,8 @@ pub(crate) fn decline_representation_body_schema() -> serde_json::Value {
 /// (FIX 11611): `null`.
 pub(crate) fn representation_declined_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<()>()
+}
+
 /// The OpenAPI schema of `POST /v1/owner/stewardship`'s body (FIX 11611):
 /// [`SetStewardship`].
 pub(crate) fn set_stewardship_body_schema() -> serde_json::Value {
@@ -71,6 +73,8 @@ pub(crate) fn set_stewardship_body_schema() -> serde_json::Value {
 /// [`StewardshipRules`].
 pub(crate) fn stewardship_rules_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<StewardshipRules>()
+}
+
 /// The OpenAPI schema of `POST /v1/owner/self-heal/findings/label`'s body (FIX 11611):
 /// [`LabelFinding`].
 pub(crate) fn label_finding_body_schema() -> serde_json::Value {
