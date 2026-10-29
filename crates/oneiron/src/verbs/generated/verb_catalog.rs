@@ -1087,6 +1087,7 @@ pub enum AgentVerb {
     VaultSieveLeaseRefill,
     VaultFreeTimePolicyGet,
     VaultFreeTimePolicySet,
+    VaultFreeTimePolicySetAs,
     VaultFreeTimeCycles,
     VaultFreeTimeCycle,
     VaultClaimsVet,
@@ -2292,6 +2293,7 @@ impl AgentVerb {
         Self::VaultSieveLeaseRefill,
         Self::VaultFreeTimePolicyGet,
         Self::VaultFreeTimePolicySet,
+        Self::VaultFreeTimePolicySetAs,
         Self::VaultFreeTimeCycles,
         Self::VaultFreeTimeCycle,
         Self::VaultClaimsVet,
@@ -3524,6 +3526,7 @@ impl AgentVerb {
             Self::VaultSieveLeaseRefill => "vault.sieve.lease.refill",
             Self::VaultFreeTimePolicyGet => "vault.free_time.policy.get",
             Self::VaultFreeTimePolicySet => "vault.free_time.policy.set",
+            Self::VaultFreeTimePolicySetAs => "vault.free_time.policy.set_as",
             Self::VaultFreeTimeCycles => "vault.free_time.cycles",
             Self::VaultFreeTimeCycle => "vault.free_time.cycle",
             Self::VaultClaimsVet => "vault.claims.vet",
@@ -4713,6 +4716,7 @@ impl AgentVerb {
                 | Self::VaultSieveLeaseRefill
                 | Self::VaultFreeTimePolicyGet
                 | Self::VaultFreeTimePolicySet
+                | Self::VaultFreeTimePolicySetAs
                 | Self::VaultFreeTimeCycles
                 | Self::VaultFreeTimeCycle
                 | Self::VaultClaimsVet
@@ -5947,6 +5951,7 @@ impl AgentVerb {
                 | Self::VaultSieveLeaseRefill
                 | Self::VaultFreeTimePolicyGet
                 | Self::VaultFreeTimePolicySet
+                | Self::VaultFreeTimePolicySetAs
                 | Self::VaultFreeTimeCycles
                 | Self::VaultFreeTimeCycle
                 | Self::VaultClaimsVet
@@ -7275,6 +7280,7 @@ impl AgentVerb {
                 | Self::VaultSieveLeaseRefill
                 | Self::VaultFreeTimePolicyGet
                 | Self::VaultFreeTimePolicySet
+                | Self::VaultFreeTimePolicySetAs
                 | Self::VaultFreeTimeCycles
                 | Self::VaultFreeTimeCycle
                 | Self::VaultClaimsVet
@@ -8018,6 +8024,7 @@ impl AgentVerb {
                 | Self::VaultSieveRecipePolicySet
                 | Self::VaultSieveLeaseRefill
                 | Self::VaultFreeTimePolicySet
+                | Self::VaultFreeTimePolicySetAs
                 | Self::VaultClaimsVet
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
@@ -9228,6 +9235,7 @@ impl AgentVerb {
             Self::VaultSieveLeaseRefill => &["spec"],
             Self::VaultFreeTimePolicyGet => &["spec"],
             Self::VaultFreeTimePolicySet => &["spec"],
+            Self::VaultFreeTimePolicySetAs => &["spec"],
             Self::VaultFreeTimeCycles => &["spec"],
             Self::VaultFreeTimeCycle => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -10434,6 +10442,7 @@ impl AgentVerb {
             Self::VaultSieveLeaseRefill => &["spec"],
             Self::VaultFreeTimePolicyGet => &["spec"],
             Self::VaultFreeTimePolicySet => &["spec"],
+            Self::VaultFreeTimePolicySetAs => &["spec"],
             Self::VaultFreeTimeCycles => &["spec"],
             Self::VaultFreeTimeCycle => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -13714,6 +13723,9 @@ impl AgentVerb {
             }
             Self::VaultFreeTimePolicySet => {
                 "The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming."
+            }
+            Self::VaultFreeTimePolicySetAs => {
+                "An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming."
             }
             Self::VaultFreeTimeCycles => {
                 "The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page."
