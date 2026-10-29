@@ -153,6 +153,7 @@ both bindings and their export-census tests in one change.
 - `vault.export.transfer.read`
 - `vault.export.transfer.release`
 - `self.credential.attenuate`
+- `self.actor`
 - `vault.scope.position`
 - `vault.scope.ceiling`
 - `vault.export.scoped`

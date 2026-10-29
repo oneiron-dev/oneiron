@@ -29,6 +29,7 @@ mod actions;
 mod list;
 mod model;
 mod notification;
+mod outbox_ask;
 mod projection;
 mod resolve;
 mod root_group;

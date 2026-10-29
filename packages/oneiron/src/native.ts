@@ -181,6 +181,7 @@ vaultExport(input: unknown): unknown
 vaultExportTransferRead(input: unknown): unknown
 vaultExportTransferRelease(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+selfActor(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown

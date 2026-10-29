@@ -167,6 +167,7 @@ mod secret_custody_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
+mod self_actor_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;

@@ -1215,6 +1215,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_actor(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.actor", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_scope_position(
         &self,
         input: serde_json::Value,

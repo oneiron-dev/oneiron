@@ -48,6 +48,10 @@ pub(crate) struct Restored {
     /// handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the restore did not carry of its source's current pad objects
+    /// (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -312,6 +316,11 @@ fn restore_over_with(
             .iter()
             .map(ToString::to_string)
             .collect(),
+        pad_object_notes: report
+            .pad_object_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
     })
 }
 
@@ -351,6 +360,10 @@ pub(crate) struct RestoredFresh {
     /// handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the restore did not carry of its source's current pad objects
+    /// (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// Why a new-host restore of a backup that names no custody head left a
@@ -422,6 +435,11 @@ pub(crate) fn restore_fresh(
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
+            pad_object_notes: report
+                .pad_object_notes
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
         },
     ))
 }
@@ -460,6 +478,10 @@ pub(crate) struct Activated {
     /// by handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the activation did not carry of its source's current pad
+    /// objects (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// Activates the archived vault a restore over `vault_path` set aside at
@@ -493,6 +515,11 @@ pub(crate) fn activate(
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         credential_notes: report
             .credential_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        pad_object_notes: report
+            .pad_object_notes
             .iter()
             .map(ToString::to_string)
             .collect(),
