@@ -12,6 +12,7 @@ use oneiron::persona_snapshot::{
     PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCopyRequest,
 };
 use oneiron::settings::ReadDestination;
+use oneiron::share_travel::CopyTravelChoice;
 use oneiron::{ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,11 @@ pub(crate) struct ExportRequest {
     /// Default-struck row ids to let in.
     #[serde(default)]
     pub(crate) unstrike: Vec<String>,
+    /// Whether the copy carries its vault refs (FIX 10289): `{"refs":
+    /// "omit"}` drops them; absent, `{}` or `{"refs": "preserve"}` is
+    /// today's copy.
+    #[serde(default)]
+    pub(crate) travel: Option<CopyTravelChoice>,
 }
 
 /// The exported card.
@@ -114,7 +120,7 @@ pub(crate) fn export(
         stamp: request.stamp.clone(),
         strike: request.strike.iter().cloned().collect(),
         unstrike: request.unstrike.iter().cloned().collect(),
-        travel: None,
+        travel: request.travel,
     };
     let artifact = vault
         .export_persona_snapshot_copy_as(owner, &copy, destination)
