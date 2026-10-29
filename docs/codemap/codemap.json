@@ -4123,6 +4123,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/machine_write/history_anchor.rs",
+     "purpose": "The host history handoff's causal anchor (FIX 11241, ported from the bel build: 9f46db33fa, then…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/machine_write/successor.rs",
      "purpose": "Re-signing a MACHINE claim's successor with its writer's retained signer",
      "surface": {
@@ -80784,7 +80794,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 224,
+     "files": 225,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82256,7 +82266,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5488,
+   "source_files": 5489,
    "test_files": 902
   },
   "oneiron-android": {
