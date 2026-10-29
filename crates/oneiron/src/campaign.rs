@@ -34,6 +34,11 @@ pub mod judgments;
 /// legs that turn a detected SAVED_QUERY transition into durable effects.
 pub mod enrollment;
 
+/// FIX 11513's filed step bodies: one BLOB artifact per outbound
+/// (program, step, call_seq), written at program-write time and pinned by
+/// the enrollment leg's envelope. Vault methods only — no rows of its own.
+pub mod step_body;
+
 /// CA-06's compliance pack: the versioned, vault-resident legal rule rows, the
 /// hydrated-evidence dispatch evaluator the external-effect gate enforces, and
 /// the tighten-auto / loosen-owner-stamp amendment transaction. Law lives in
