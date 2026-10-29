@@ -15,6 +15,9 @@
 //! - [`holder_continues`]: owner work rebinds only to a live slip of the
 //!   same owner EntityId, and a member's or guest's work only to one whose
 //!   holder and class are the work's;
+//! - [`keeps_grant`]: the successor names the Grant the work's slip named,
+//!   or neither names one, so every read the work makes stays clamped by the
+//!   same Grant and pact;
 //! - [`keeps_bounds`]: the successor never widens the work. Its effective
 //!   scope, records, channels, comm reach, pact and delegation sit within
 //!   what the work's slip and its caveats signed.
@@ -39,6 +42,10 @@ pub const REBIND_HOLDER: &str = "a rebind takes a live credential of the work's 
 /// The successor reaches past what the work's slip signed.
 pub const REBIND_WIDENS: &str =
     "the new credential reaches past what the work's credential signed; a rebind never widens";
+/// The successor names another Grant than the work's slip, or only one of
+/// them names a Grant.
+pub const REBIND_GRANT: &str = "a rebind keeps the work under the Grant its credential named: the \
+                                new credential must name the same Grant, or neither names one";
 
 /// One rebind, as its door answers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,19 +94,34 @@ fn holder_continues(facts: &RebindFacts<'_>) -> bool {
     }
 }
 
+/// Policy hook (FIX 6108, lead fix round 1): the successor names the very
+/// Grant the work's slip named, or neither names one (owner work). The
+/// work's reads stay clamped by that Grant's current scope and pact as
+/// before; a successor under another Grant, or under none where the work
+/// had one, is refused, however its own scope reads.
+fn keeps_grant(predecessor: &SlipClaims, successor: &VerifiedSlip) -> bool {
+    successor.claims().grant_ref == predecessor.grant_ref
+}
+
 /// Policy hook (FIX 6108): the successor keeps the work within what its
-/// slip signed. A named record or channel set holds the successor to a
-/// named subset of it; a pact bound to the same grant, within the scope it
-/// requested; and the delegation and org stay the work's. A later expiry, a
-/// new grant or a new invitation is the point of a rebind, so none of those
-/// is compared.
+/// slip signed. Records and channels are held apart: each set the work's
+/// slip named holds the successor to a named subset of it, and a set it
+/// left open stays open. A slip whose caveats met its sets to nothing
+/// admitted no record, so no successor keeps it. A pact bound holds the
+/// successor to the same grant, within the scope it requested; and the
+/// delegation and org stay the work's. A later expiry or a new invitation
+/// is the point of a rebind, so neither is compared.
 fn keeps_bounds(successor: &VerifiedSlip, signed: &SignedBounds) -> bool {
     let now = successor.claims();
     let was = &signed.claims;
-    let records = !signed.records_bound
-        || ((!now.records.is_empty() || !now.channels.is_empty())
-            && now.records.is_subset(&was.records)
-            && now.channels.is_subset(&was.channels));
+    let within = |now: &std::collections::BTreeSet<String>,
+                  was: &std::collections::BTreeSet<String>| {
+        was.is_empty() || (!now.is_empty() && now.is_subset(was))
+    };
+    let met_to_nothing = signed.records_bound && was.records.is_empty() && was.channels.is_empty();
+    let records = !met_to_nothing
+        && within(&now.records, &was.records)
+        && within(&now.channels, &was.channels);
     let pact = match (&signed.pact, successor.pact()) {
         (None, _) => true,
         (Some((grant, scope)), Some((now_grant, now_scope))) => {
@@ -153,6 +175,9 @@ impl Vault {
         };
         if !holder_continues(&facts) {
             return Err(authority_refused(REBIND_HOLDER));
+        }
+        if !keeps_grant(facts.predecessor, &proof) {
+            return Err(authority_refused(REBIND_GRANT));
         }
         if !keeps_bounds(&proof, &signed) {
             return Err(authority_refused(REBIND_WIDENS));

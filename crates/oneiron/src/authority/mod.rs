@@ -138,13 +138,13 @@ mod task_actor;
 mod vault_api;
 mod weave_admin;
 mod withdrawn_grant;
+mod work_rebind;
 mod world_key_fold;
 mod world_key_support;
 mod world_privacy;
 mod world_privacy_door;
 mod world_refold;
 mod world_strength;
-mod work_rebind;
 mod write_authorization;
 
 #[cfg(test)]
@@ -329,9 +329,6 @@ pub use support_grant::{
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
 };
 pub use task_actor::AdmittedTaskGrant;
-pub use work_rebind::{
-    InstrumentRebind, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS, REBIND_WIDENS,
-};
 pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
@@ -340,6 +337,10 @@ pub use weave_admin::{
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
     mark_if_withdrawn_grant_in_txn, mark_withdrawn_grant_in_txn,
+};
+pub use work_rebind::{
+    InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,
+    REBIND_WIDENS,
 };
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
