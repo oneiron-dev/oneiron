@@ -557,8 +557,8 @@ impl Vault {
 
     /// Where an actor's apply leaves `item`: a new grant it carries the bound
     /// of is filed to the owner's widen inbox under `credential`, as an
-    /// action or a disclosure widening, for the vault's embedded owner to
-    /// answer. Anything else rests where any actor's item rests, waiting for
+    /// action or a disclosure widening, for the owner who accepts to answer
+    /// (FIX 2503). Anything else rests where any actor's item rests, waiting for
     /// the owner; a filing the inbox refuses waits there with its reason.
     fn file_shape_grant(
         &self,
@@ -578,7 +578,7 @@ impl Vault {
             return held(item);
         };
         let filed = bound.bound().and_then(|grant| {
-            let owner_ref = crate::vault::embedded_owner_actor_id()?.to_hex();
+            let owner_ref = self.shape_filing_owner_ref()?;
             let expires_at = self.store.clock.peek_recorded_at() + SHAPE_GRANT_PROPOSAL_SECS;
             if bound.is_action() {
                 self.propose_action_widen(credential, grant, &owner_ref, expires_at)
