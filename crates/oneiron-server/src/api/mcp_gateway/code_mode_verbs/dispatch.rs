@@ -18,6 +18,7 @@ impl McpCodeModeVerbs {
             served: std::sync::Mutex::new(Vec::new()),
             run_id,
             guests: RunGuests::new(server, run_id),
+            collector: crate::api::call_receipt::attempt_collector(),
         }
     }
 
@@ -158,13 +159,19 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         };
         // What the answer holds (a deck preview's renderer) comes back with
         // it, kept until the answer is handed to the run (FIX 8238).
-        self.runtime.spawn(HELD_IMAGE.scope(held, async move {
+        let answered = HELD_IMAGE.scope(held, async move {
             let executed = crate::api::answer_hold::keeping(execute_code_mode_verb(
                 &server, &actor, verb, input, run,
             ))
             .await;
             let _ = sender.send(executed);
-        }));
+        });
+        // A live-run hold the verb makes names its attempt on the
+        // `execute_code` call's receipt (FIX 10938).
+        self.runtime.spawn(crate::api::call_receipt::with_attempt_collector(
+            self.collector.clone(),
+            answered,
+        ));
         let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: "engine_error".to_owned(),
