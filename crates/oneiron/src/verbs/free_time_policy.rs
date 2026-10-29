@@ -10,13 +10,13 @@
 //! again in its own write. Only an explicit verb listing names the act: a
 //! Grant over every verb names none, as the sibling's Grant rule holds.
 
+use crate::EdgeActorClass;
 use crate::authority::{
     ActAuthority, NoStanding, OwnerActKind, PACT_STANDING_LAPSED,
     principal_standing_or_lapse_in_txn,
 };
 use crate::dreamer_runner::{FreeTimePolicySetRequest, FreeTimePolicyView};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::EdgeActorClass;
 
 /// The verb a Grant lists to name an agent's free-time policy act: the
 /// `OwnerActKind::FreeTimePolicy` grant verb L02's door judges by
@@ -38,11 +38,7 @@ pub fn free_time_policy_set_as_agent(
     let agent = memory.actor();
     let vault = memory.vault();
     let grant = {
-        let txn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::Error::from)?;
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         match principal_standing_or_lapse_in_txn(
             vault,
             &txn,
@@ -52,7 +48,9 @@ pub fn free_time_policy_set_as_agent(
         )
         .map_err(MemoryError::from)?
         {
-            Ok(standing) => standing.grant.ok_or_else(|| refused("no live Grant names the act"))?,
+            Ok(standing) => standing
+                .grant
+                .ok_or_else(|| refused("no live Grant names the act"))?,
             Err(NoStanding::PactStandingLapsed) => return Err(refused(PACT_STANDING_LAPSED)),
             Err(NoStanding::NotStanding) => {
                 return Err(refused(

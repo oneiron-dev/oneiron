@@ -177,6 +177,7 @@ pub use claims::{
     CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
 };
+pub use conflict_settle::DreamerDecidedCandidateView;
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diagnostics::{
     BlockedReportView, CoachInspectRequest, CoachInspectionView, CoachProposalView,
@@ -192,7 +193,6 @@ pub use dreamer::{
     ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView, DreamerParkCauseView,
     DreamerParkedAttemptView,
 };
-pub use conflict_settle::DreamerDecidedCandidateView;
 pub use dreamer_wake_read::{
     ConsolidationWakeStatusRequest, DreamerWakeCallEndView, DreamerWakeCallStateView,
     DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeClaimAuthoringFallbackView,

@@ -432,10 +432,7 @@ pub(super) struct HeldActionFeedback {
 /// carries, before its answer is released: the owner's read of one step's
 /// feedback, a run's history, or a session-bound run's entry. `None` when
 /// the outcome carries no row output, or none with feedback in it.
-pub(super) fn hold_action_feedback(
-    verb: &str,
-    output: &mut Value,
-) -> Option<HeldActionFeedback> {
+pub(super) fn hold_action_feedback(verb: &str, output: &mut Value) -> Option<HeldActionFeedback> {
     let Value::String(text) = output.pointer_mut("/outcome/output")? else {
         return None;
     };
