@@ -57,7 +57,8 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
   Claude Code shows as a hook error and then goes on. No hook ever exits 2, so
   none can block a compaction or keep a reply from ending.
 - **No hook reads or prints a credential.** `oneiron mcp` reads the credential
-  file itself.
+  file itself: `--credential-file` for a pinned or local vault, and the one
+  the hosted selection names for the hosted vault it selected (below).
 
 ## Which vault a session uses
 
@@ -78,12 +79,16 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    hook asks each with `GET /.well-known/oneiron`, which needs no credential,
    and binds the one that answers. When several answer it binds the newest,
    says so, and prints the one command that pins it.
-3. **The hosted vault your cloud login selected.** Hosted login discovery is
-   not integrated yet, so this step binds nothing (it does not mean you are
-   not logged in). When the hook then binds a local vault at step 4, the
-   session prints one more line: "hosted login discovery is not integrated;
-   started local; pin a hosted vault with --url, ONEIRON_URL or hook config".
-   To use a hosted vault today, pin it (step 1).
+3. **The hosted vault your sign-in selected**, as `oneiron hosted` recorded it
+   ([below](#the-hosted-selection)), when its origin answers the same one
+   probe. Its recalls run as the credential the selection names for that
+   vault, in its own mode (a paired slip, or your owner sign-in's upgrade
+   headers); that credential goes to no other vault, and `--credential-file`
+   does not go to it. When this step binds nothing and the hook then binds a
+   local vault at step 4, the session prints one more line saying why: no
+   hosted vault is signed in to here, none is selected, the selection could
+   not be read, or the selected vault is not answering. None of these signs
+   you out or changes the selection; the next session looks again.
 4. **A local server it starts.** The hook runs `oneiron serve --host
    127.0.0.1` with the config every command reads when none is named
    (`ONEIRON_CONFIG`, else the default `oneiron.toml`), in a process of its
@@ -97,7 +102,7 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    vault to start: the line says to set one up with `oneiron init`.
 
 `prompt` binds the same way, by the same choice of steps 1 to 3, but never
-starts a server and prints no line of its own. A pinned vault that does not answer one probe gets no recall, so a
+starts a server and prints no line of its own. A pinned or selected vault that does not answer one probe gets no recall, so a
 vault that is down costs a prompt at most 2 seconds. `hand-over` queues into the queue of `--config` if you give it;
 else, with a pin, of the running local vault at the pin; with no pin, of the
 newest running local vault; else of the default config. A pin is never
@@ -110,6 +115,45 @@ credential where they point.
 
 Starting a server never creates a vault: the hook starts one only when the
 config's `vault_path` holds an initialized vault.
+
+### The hosted selection
+
+`oneiron hosted` records the hosted vaults you signed in to on this machine
+and the one selected, in `hosted.json` in your oneiron config folder, beside
+`hook.toml`. The surface you signed in on (the cloud console, the app) runs
+these commands to export its selection; you can run them too. Each prints
+where the selection stands as one JSON line.
+
+```bash
+# A paired slip: its own vault id is read from the slip.
+oneiron hosted login --origin https://<vault-origin> --credential-file <file>
+# Your owner sign-in: the surface that wrote the headers file names the vault.
+oneiron hosted login --origin https://<vault-origin> --auth-mode owner \
+  --owner-upgrade-headers-file <file> --vault-id <vault-id>
+oneiron hosted select <vault-id>     # or: --none
+oneiron hosted logout [--vault-id <vault-id>]
+oneiron hosted status
+```
+
+- `login` records the vault only once its origin admits the credential over
+  `oneiron mcp`, the transport a recall uses (`--timeout-secs`, 30 by
+  default), and then selects it. A slip names its own vault, which must match
+  `--vault-id` when you give one. Nothing is recorded when the origin refuses
+  or does not answer; the bridge's own refusal is printed on stderr.
+- `select` takes a recorded vault id, or its first characters when no other
+  recorded id begins with them; `--none` selects none. `logout` forgets one
+  recorded vault, or every one. Neither deletes a credential file: the
+  surface that wrote it keeps it.
+- `status` prints `state` (`not_logged_in`, `no_selection`, `selected` or
+  `unavailable`), the selected vault id and every recorded vault: its
+  `origin`, `vault_id`, `auth_mode` (`slip` or `owner`), `credential_file` and
+  `verified_at_ms`, when its origin last admitted the credential (a record,
+  never an expiry). It names credential files, never what is in them.
+
+The file is written whole, readable and writable by you alone (0600), in one
+rename, and only these commands write it. A hook only reads it, and counts it
+only on the pin's terms above: the session sends the credential it names to
+the origin it names.
 
 `oneiron hook --host hermes bind [--url <origin>]` binds in the same order and
 prints the result as one JSON line, `{"url": <origin or null>, "lines": [...]}`.

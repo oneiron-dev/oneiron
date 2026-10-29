@@ -203,8 +203,9 @@ pub enum Command {
     /// sign-in an authenticated surface issued (`--auth-mode owner`).
     Mcp(McpArgs),
     /// Run one agent-harness hook: read the host's event on stdin, bind a
-    /// vault (a pin, a running local vault, else start one), recall for the
-    /// session or the prompt, or queue the session's log. Always exits 0
+    /// vault (a pin, a running local vault, the selected hosted vault, else
+    /// start one), recall for the session or the prompt, or queue the
+    /// session's log. Always exits 0
     /// once parsed; a mistyped command exits 1, never 2.
     Hook(HookArgs),
     /// The hosted vaults this machine's hooks may bind: record one the
