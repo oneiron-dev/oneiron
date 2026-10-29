@@ -42,8 +42,7 @@ pub fn create_root_doc(_user_id: &str, vault_id: &str, windows: &[WindowKey]) ->
     let meta = doc.get_map("meta");
 
     // Native Loro String and I64 values (FIX 7956), not binary payloads.
-    meta.insert("vault_id", vault_id)
-        .expect("fresh root doc meta map accepts inserts");
+    meta.insert("vault_id", vault_id).expect("fresh root doc meta map accepts inserts");
     insert_root_schema_version(&meta).expect("fresh root doc meta map accepts inserts");
     init_window_list(&doc, windows);
 
