@@ -67,10 +67,9 @@ impl Vault {
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         // Its scope outlives the row, for the tombstone's export (FIX 10161).
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, request_id);
-        // An erased pack source halts the catalog routes bound to it (FIX 6034).
-        if erase {
-            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
-        }
+        // A deleted or erased pack source halts the catalog routes bound to
+        // it (FIX 6034, 6086).
+        self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased world takes its keys with it (fix 7); a deleted one
         // keeps them, so it restores from old bundles.
         if erase {
@@ -225,11 +224,12 @@ impl Vault {
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         // Its scope outlives the body (see the purge); its tombstone's capture binds it.
         crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
-        // An erased pack source halts the catalog routes bound to it (FIX 6034).
+        // A deleted or erased pack source halts the catalog routes bound to
+        // it (FIX 6034, 6086).
+        self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased custody record is fenced before its body is scrubbed (KS-6
         // part 2).
         if erase {
-            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
             self.fence_erased_credential_in_txn(wtxn, id)?;
             crate::runtime_hooks::scrub_hook_source_in_txn(
                 self,

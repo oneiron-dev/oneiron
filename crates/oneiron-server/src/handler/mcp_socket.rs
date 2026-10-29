@@ -203,8 +203,14 @@ impl Caller {
         }
         // The slip a slip socket's upgrade verified (FIX 11525): a
         // deferred clock repair runs as it, judged in the repair's writer.
-        if let Credential::Slip { verified: Some(verified), .. } = &self.credential {
-            extensions.insert(crate::api::clock_ingress::McpSocketSlip::of(verified.clone()));
+        if let Credential::Slip {
+            verified: Some(verified),
+            ..
+        } = &self.credential
+        {
+            extensions.insert(crate::api::clock_ingress::McpSocketSlip::of(
+                verified.clone(),
+            ));
         }
         if let Some(managed) = &self.managed {
             managed.carry(&mut request);

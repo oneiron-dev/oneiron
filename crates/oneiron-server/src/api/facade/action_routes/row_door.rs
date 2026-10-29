@@ -225,14 +225,15 @@ impl FacadeRowDoor {
                     (request_digest, inputs, attempt),
                     &answer,
                 );
-                let answer = answer
-                    .map(|answer| answer.value)
-                    .map_err(|error| AgentVerbRefusalWords {
-                        code: error.body.error.code,
-                        message: error.body.error.message,
-                        suggestions: error.body.error.suggestions,
-                        reason_codes: error.body.error.reason_codes,
-                    });
+                let answer =
+                    answer
+                        .map(|answer| answer.value)
+                        .map_err(|error| AgentVerbRefusalWords {
+                            code: error.body.error.code,
+                            message: error.body.error.message,
+                            suggestions: error.body.error.suggestions,
+                            reason_codes: error.body.error.reason_codes,
+                        });
                 let _ = sender.send((stamp, answer));
             };
             self.runtime.spawn(with_attempt_collector(

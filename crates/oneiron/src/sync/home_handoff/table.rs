@@ -7,13 +7,22 @@
 //! On the wire a section names its table by the declaration's name and
 //! carries the rows as the table's named MessagePack DTO, whatever codec the
 //! table stores them in.
+//!
+//! FIX 8875: a table exports its rows split in two ([`Partitioned`]): the
+//! content-free facts every copy keeps, and each actor's content apart, which
+//! the carrier seals under that actor's erasable key (`super::actor_content`).
+//! On adoption a table gets the facts and the content of each actor whose key
+//! opened here and who is not erased here; a row whose actor's content did
+//! not open lands as its facts alone, never as a Conflict.
 
 use heed::{RoTxn, RwTxn};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use zeroize::Zeroizing;
 
 use super::{HomeFence, HomeMove, refused};
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{Named, SideCodec, SideDb, SideTableDecl};
 
@@ -31,10 +40,29 @@ pub(crate) enum TableAdopt {
     Conflict,
 }
 
+/// One actor's content among a table's rows (FIX 8875): sealed apart under
+/// that actor's erasable key, never beside the facts, so the actor's erase
+/// leaves it unreadable wherever a copy went.
+pub(crate) trait ActorContent: Serialize + DeserializeOwned {
+    /// The actor whose key seals it: a PERSON, MACHINE or AGENT_DEF, whose
+    /// erase retires that key.
+    fn actor(&self) -> EntityId;
+}
+
+/// A table's rows as a move carries them (FIX 8875): the content-free facts,
+/// and each actor's content apart.
+pub(crate) struct Partitioned<F, A> {
+    pub(crate) facts: F,
+    pub(crate) actors: Vec<A>,
+}
+
 /// One node-local table that follows the vault's home.
 pub(crate) trait HomeTable: Send + Sync + 'static {
-    /// The rows a move carries: a typed DTO the domain owns, never raw rows.
+    /// The facts a move carries: a typed DTO the domain owns, never raw
+    /// rows, that names no actor and holds no actor's words.
     type Rows: Serialize + DeserializeOwned;
+    /// One actor's content among the rows (FIX 8875).
+    type Actor: ActorContent;
     /// The table's declaration; its name is the section's id on the wire.
     const TABLE: &'static SideTableDecl;
     /// The version of [`Self::Rows`]. A target adopts only the version it
@@ -45,16 +73,24 @@ pub(crate) trait HomeTable: Send + Sync + 'static {
     /// so its rows can freeze.
     fn quiescent(vault: &Vault, txn: &RoTxn<'_>, movement: &HomeMove) -> Result<bool>;
 
-    /// The rows the move carries, read in the source's final writer.
-    fn export(vault: &Vault, txn: &RoTxn<'_>, fence: &HomeFence) -> Result<Self::Rows>;
+    /// The rows the move carries, read in the source's final writer: the
+    /// facts, and each actor's content apart.
+    fn export(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        fence: &HomeFence,
+    ) -> Result<Partitioned<Self::Rows, Self::Actor>>;
 
-    /// Lands `rows` in the target's one adopting transaction. An error or a
-    /// [`TableAdopt::Conflict`] drops that transaction, earlier sections too.
+    /// Lands `rows` in the target's one adopting transaction: the facts, and
+    /// the content of each actor whose key opened here and who is not erased
+    /// here. A row whose actor's content is not among them lands as its facts
+    /// alone, never as a Conflict. An error or a [`TableAdopt::Conflict`]
+    /// drops that transaction, earlier sections too.
     fn adopt(
         vault: &Vault,
         txn: &mut RwTxn<'_>,
         fence: &HomeFence,
-        rows: Self::Rows,
+        rows: Partitioned<Self::Rows, Self::Actor>,
     ) -> Result<TableAdopt>;
 
     /// The full stored keys of every row this table manages now, deletion
@@ -76,10 +112,18 @@ pub(crate) trait HomeTable: Send + Sync + 'static {
     }
 }
 
+/// One table's export as the carrier seals it (FIX 8875): the encoded facts,
+/// and each actor's encoded content beside the actor whose key seals it.
+pub(super) struct ExportedRows {
+    pub(super) facts: Vec<u8>,
+    pub(super) actors: Vec<(EntityId, Zeroizing<Vec<u8>>)>,
+}
+
 type QuiescentFn = fn(&Vault, &RoTxn<'_>, &HomeMove) -> Result<bool>;
-type ExportFn = fn(&Vault, &RoTxn<'_>, &HomeFence) -> Result<Vec<u8>>;
+type ExportFn = fn(&Vault, &RoTxn<'_>, &HomeFence) -> Result<ExportedRows>;
 type CheckFn = fn(&[u8]) -> Result<()>;
-type AdoptFn = fn(&Vault, &mut RwTxn<'_>, &HomeFence, &[u8]) -> Result<TableAdopt>;
+type AdoptFn =
+    fn(&Vault, &mut RwTxn<'_>, &HomeFence, &[u8], Vec<Zeroizing<Vec<u8>>>) -> Result<TableAdopt>;
 type LiveKeysFn = fn(&Vault, &RoTxn<'_>) -> Result<Vec<Vec<u8>>>;
 type ManagesFn = fn(&Vault, &RoTxn<'_>, &ImageRows) -> Result<Vec<Vec<u8>>>;
 
@@ -155,7 +199,7 @@ impl HomeTableRegistration {
         vault: &Vault,
         txn: &RoTxn<'_>,
         fence: &HomeFence,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<ExportedRows> {
         (self.export)(vault, txn, fence)
     }
 
@@ -164,14 +208,17 @@ impl HomeTableRegistration {
         (self.check)(rows)
     }
 
+    /// Lands the encoded facts `rows` with `actors`, the content of each
+    /// actor part whose key opened here.
     pub(super) fn adopt(
         &self,
         vault: &Vault,
         txn: &mut RwTxn<'_>,
         fence: &HomeFence,
         rows: &[u8],
+        actors: Vec<Zeroizing<Vec<u8>>>,
     ) -> Result<TableAdopt> {
-        (self.adopt)(vault, txn, fence, rows)
+        (self.adopt)(vault, txn, fence, rows, actors)
     }
 }
 
@@ -188,10 +235,23 @@ pub(super) fn check_registry(tables: &[HomeTableRegistration]) -> Result<()> {
     Ok(())
 }
 
-fn export_rows<T: HomeTable>(vault: &Vault, txn: &RoTxn<'_>, fence: &HomeFence) -> Result<Vec<u8>> {
-    let rows = T::export(vault, txn, fence)?;
-    <Named as SideCodec<T::Rows>>::encode(&rows)
-        .map_err(|_| refused("a table's rows do not encode"))
+fn export_rows<T: HomeTable>(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    fence: &HomeFence,
+) -> Result<ExportedRows> {
+    let Partitioned { facts, actors } = T::export(vault, txn, fence)?;
+    let facts = <Named as SideCodec<T::Rows>>::encode(&facts)
+        .map_err(|_| refused("a table's rows do not encode"))?;
+    let actors = actors
+        .iter()
+        .map(|content| {
+            <Named as SideCodec<T::Actor>>::encode(content)
+                .map(|bytes| (content.actor(), Zeroizing::new(bytes)))
+                .map_err(|_| refused("an actor's content does not encode"))
+        })
+        .collect::<Result<_>>()?;
+    Ok(ExportedRows { facts, actors })
 }
 
 fn decode_rows<T: HomeTable>(rows: &[u8]) -> Result<T::Rows> {
@@ -203,11 +263,32 @@ fn check_rows<T: HomeTable>(rows: &[u8]) -> Result<()> {
     decode_rows::<T>(rows).map(drop)
 }
 
+/// FIX 10764: an actor erased here gives none of its content, whatever its
+/// key still opens, so a carried row never lands the erased actor again.
 fn adopt_rows<T: HomeTable>(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     fence: &HomeFence,
     rows: &[u8],
+    actors: Vec<Zeroizing<Vec<u8>>>,
 ) -> Result<TableAdopt> {
-    T::adopt(vault, txn, fence, decode_rows::<T>(rows)?)
+    let facts = decode_rows::<T>(rows)?;
+    let mut opened = Vec::with_capacity(actors.len());
+    for plain in actors {
+        let content = <Named as SideCodec<T::Actor>>::decode(&plain)
+            .map_err(|_| refused("an actor's content does not decode"))?;
+        if crate::ports::removed_in_txn(&vault.store, txn, &content.actor())? {
+            continue;
+        }
+        opened.push(content);
+    }
+    T::adopt(
+        vault,
+        txn,
+        fence,
+        Partitioned {
+            facts,
+            actors: opened,
+        },
+    )
 }

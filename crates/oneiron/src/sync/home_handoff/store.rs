@@ -124,6 +124,10 @@ pub(super) struct HandoffTransfer {
     /// The route the source delivers to, captured with the move; none on a
     /// target.
     pub(super) route: Option<HandoffRoute>,
+    /// FIX 8875: the refs (64 lowercase hex) of the erasable keys its actors'
+    /// content is sealed under, which the source sends its target; none on a
+    /// target. Refs only, never a key.
+    pub(super) keys: Vec<String>,
 }
 
 /// One part of a handoff's sealed bytes.
@@ -149,6 +153,14 @@ pub(super) fn transfer_in_txn(
     id: &HandoffId,
 ) -> Result<Option<HandoffTransfer>> {
     TRANSFER.get(dbs, txn, id)
+}
+
+/// Every handoff this node took part in, with its status here.
+pub(super) fn transfers_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+) -> Result<Vec<(HandoffId, HandoffTransfer)>> {
+    TRANSFER.scan(dbs, txn)
 }
 
 pub(super) fn put_transfer_in_txn(
