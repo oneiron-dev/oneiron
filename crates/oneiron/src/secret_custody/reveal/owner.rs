@@ -220,6 +220,7 @@ impl Vault {
                 delivered_at: Some(now),
                 file: None,
                 notices: Vec::new(),
+                closed: None,
             };
             row.decision = Some(append_reveal_decision_in_txn(
                 self,
