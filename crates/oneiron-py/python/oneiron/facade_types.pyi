@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1190 facade rows, 4311 declarations.
+Census: 1190 facade rows, 4312 declarations.
 Inputs: 1119 of 1190 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1035 of 1190 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -5597,6 +5597,9 @@ class SlatePackSource(TypedDict):
     source_ref: str
     content_hash: str
 SlateDataClass = Literal["public", "personal", "secret", "header"]
+class ConnectorSpendEstimate(TypedDict):
+    unit: str
+    minor_units: int
 class SlateToolManifest(TypedDict):
     name: str
     data_class: SlateDataClass
@@ -5609,6 +5612,7 @@ class SlateToolManifest(TypedDict):
     legacy_ask: bool
     read_only: NotRequired[bool]
     idempotent: NotRequired[bool]
+    price: NotRequired[ConnectorSpendEstimate | None]
 class SlateElicitationManifest(TypedDict):
     legacy_ask_tools: list[str]
 class SlateManifest(TypedDict):
@@ -16277,6 +16281,7 @@ class ConnectorCallReplyDelivered(TypedDict):
     outcome: Literal["delivered"]
     result: NotRequired[ConnectorToolResult | None]
     reasons: NotRequired[list[str]]
+    budget_steering: NotRequired[list[str]]
 class ConnectorCallReplyHeld(TypedDict):
     outcome: Literal["held"]
     call_ref: str
@@ -21458,6 +21463,7 @@ class FieldSpec(TypedDict):
     instruction: NotRequired[str | None]
     enum_values: NotRequired[list[str] | None]
     secret: NotRequired[str | None]
+    secret_is_text: NotRequired[bool]
 class ReplayActionOpen(TypedDict):
     action: Literal["open"]
     url: str
@@ -21585,6 +21591,15 @@ class WorkflowSeed(TypedDict):
     path: str
     digest: str
     license: str
+class SecretArgHandle(TypedDict):
+    handle: str
+class SecretArgText(TypedDict):
+    text: str
+SecretArg = SecretArgHandle | SecretArgText
+class SnapshotBounds(TypedDict):
+    read_chars: NotRequired[int | None]
+    snapshot_origins: NotRequired[int | None]
+    snapshot_bytes: NotRequired[int | None]
 class ProposeInput(TypedDict):
     subgoal: NotRequired[str]
     params: NotRequired[list[str]]
@@ -21595,6 +21610,8 @@ class ProposeInput(TypedDict):
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
     candidate: NotRequired[str | None]
+    secret_args: NotRequired[dict[str, SecretArg]]
+    snapshot_bounds: NotRequired[SnapshotBounds | None]
 SlotField = Literal["text", "option"]
 class SlotCandidate(TypedDict):
     step: int
@@ -22118,11 +22135,6 @@ class LibraryRetiredOutput(TypedDict):
     retired: list[RetiredCard]
 BrowserLibraryRetiredOutput = BrowserAnswer
 LibraryRunMode = Literal["strict", "assisted"]
-class SecretArgHandle(TypedDict):
-    handle: str
-class SecretArgText(TypedDict):
-    text: str
-SecretArg = SecretArgHandle | SecretArgText
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
@@ -22145,10 +22157,6 @@ class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
 BrowserHandoverOutput = BrowserAnswer
-class SnapshotBounds(TypedDict):
-    read_chars: NotRequired[int | None]
-    snapshot_origins: NotRequired[int | None]
-    snapshot_bytes: NotRequired[int | None]
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str

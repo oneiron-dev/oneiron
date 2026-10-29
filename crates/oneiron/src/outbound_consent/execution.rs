@@ -49,9 +49,20 @@ pub struct ScopedMcpDispatchResult {
     /// charge, never a second delivery lane; `None` when no key governed or
     /// a replay charged nothing.
     pub budget_charge: Option<EffectorBudgetCharge>,
+    /// A full count-bound budget window paced the call until this engine
+    /// instant, Unix seconds (FIX 8686): it was not sent, recorded or
+    /// charged, and goes again once its windows open.
+    paced_until: Option<u64>,
 }
 
 impl ScopedMcpDispatchResult {
+    /// When a full count-bound budget window paced this call, the instant
+    /// (Unix seconds) its windows all open again (FIX 8686).
+    #[must_use]
+    pub fn paced_until(&self) -> Option<u64> {
+        self.paced_until
+    }
+
     /// FIX 6424 part 3: the approve-once digest (64 lower-hex) the Gate
     /// decision that held this call names, copied from it: the owner's press
     /// on it releases exactly this prepared call. `None` for any other
@@ -115,6 +126,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("held_ask", &self.held_ask)
             .field("delivery_unresolved", &self.delivery_unresolved)
             .field("budget_charge", &self.budget_charge)
+            .field("paced_until", &self.paced_until)
             .finish()
     }
 }
@@ -318,6 +330,7 @@ fn dispatch_result<S>(
         held_ask: None,
         delivery_unresolved,
         budget_charge: effect.budget_charge,
+        paced_until: effect.paced_until,
     }
 }
 

@@ -10,8 +10,8 @@ use crate::{Error, Result, Vault};
 
 use super::codec::evidence_after;
 use super::credit_join::{
-    credit_cell, credit_evidence, credit_shares_in_txn, joined_fields_in_txn, record_credit_in_txn,
-    seal_decay_in_txn,
+    credit_cell, credit_evidence, credit_shares_in_txn, effective_observation_in_txn,
+    joined_fields_in_txn, record_credit_in_txn, seal_decay_in_txn,
 };
 use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, credit_decay_in_txn, receipt_id};
 use super::{
@@ -252,6 +252,9 @@ fn project(
         }
         for (subject, (success, weight)) in observations {
             let cell = credit_cell(&fields, &outcome.axis, subject);
+            let (success, weight) = effective_observation_in_txn(
+                vault, txn, &credit, &fields, &subject, success, weight,
+            )?;
             let learning = credit_evidence(&credit, &fields, success, weight);
             record_credit_in_txn(vault, txn, &fields, &cell, &learning, now)?;
         }

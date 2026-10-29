@@ -284,3 +284,28 @@ pub(super) fn refuse_foreign_world_for_agent(world: EntityId) -> Result<()> {
     }
     Ok(())
 }
+
+impl Vault {
+    /// Refuses `actor`'s change of `world` to `settings` when it widens the
+    /// world while "widen needs every owner" puts it to another owner too:
+    /// the settings door's rule at a door that takes only a receipt, such as
+    /// a world key re-assertion (FIX 8205). The owner opens it as an ask at
+    /// the settings door instead.
+    pub(crate) fn refuse_unanimous_widen_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        world: EntityId,
+        settings: &WorldPrivacy,
+    ) -> Result<()> {
+        let (direction, _) = direction_in_txn(self, txn, world, settings, None)?;
+        if direction == PrivacyDirection::Widen
+            && unanimity::widen_needs_in_txn(self, txn, world)?
+                .iter()
+                .any(|needed| *needed != actor)
+        {
+            return Err(Error::InvalidConfig(NEEDS_EVERY_OWNER.to_owned()));
+        }
+        Ok(())
+    }
+}
