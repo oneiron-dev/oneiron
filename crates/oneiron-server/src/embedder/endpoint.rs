@@ -288,9 +288,15 @@ pub(crate) struct HttpEmbedder {
     /// once it is set. The primary endpoint's is set before its probe
     /// ([`super::build_slot`]), a remote rung's when it is built.
     paid: OnceLock<Arc<dyn PaidRequests>>,
+    /// The pods' paid door: a pod document batch is admitted on it, not the
+    /// endpoint's, once it is set ([`Self::pay_pods_through`]).
+    pod_paid: OnceLock<Arc<dyn PaidRequests>>,
     /// The serve host's GPU pool, once set: document batches lease a pod
     /// from it ([`Self::route_batches_through`]).
     pods: OnceLock<PodRoute>,
+    /// Where the paid doors write their rows, kept so the pods' door, built
+    /// when the pool binds later, writes to the same sink.
+    receipts: OnceLock<Arc<dyn oneiron::llm::run_admission::RunReceiptSink>>,
 }
 
 /// The pool document batches lease a pod from (ARCH-0019 §5, the batch
@@ -400,7 +406,9 @@ impl HttpEmbedder {
             client,
             truncations: AtomicU64::new(0),
             paid: OnceLock::new(),
+            pod_paid: OnceLock::new(),
             pods: OnceLock::new(),
+            receipts: OnceLock::new(),
         }))
     }
 
@@ -421,6 +429,7 @@ impl HttpEmbedder {
             bound = scope.is_some(),
             "embedder batches route through the GPU pool"
         );
+        let pool_clone = pool.clone();
         if self
             .pods
             .set(PodRoute {
@@ -433,6 +442,21 @@ impl HttpEmbedder {
             .is_err()
         {
             tracing::warn!(endpoint = %self.endpoint, "an endpoint embedder's GPU pool is set once");
+        } else if let Some(receipts) = self.receipts.get() {
+            // The pods' batches are admitted on their own door; when it
+            // cannot be built they ride the endpoint's door instead.
+            if let Err(error) = super::admitted::pay_pod_batches(
+                self,
+                &pool_clone,
+                &self.model_key,
+                Arc::clone(receipts),
+            ) {
+                tracing::warn!(
+                    endpoint = %self.endpoint,
+                    %error,
+                    "the pods' paid door was not built; pod batches ride the endpoint's door"
+                );
+            }
         }
         Ok(())
     }
@@ -534,6 +558,26 @@ impl HttpEmbedder {
         }
     }
 
+    /// Keeps `receipts`, where the paid doors write their rows: the pods'
+    /// door is built when the pool binds later, and writes there too. Kept
+    /// once.
+    pub(crate) fn keep_receipts(
+        &self,
+        receipts: Arc<dyn oneiron::llm::run_admission::RunReceiptSink>,
+    ) {
+        if self.receipts.set(receipts).is_err() {
+            tracing::warn!(endpoint = %self.endpoint, "a remote embedder's receipts are kept once");
+        }
+    }
+
+    /// Sends this remote's pod document batches through `door`, from now
+    /// on. A door set once stays.
+    pub(crate) fn pay_pods_through(&self, door: Arc<dyn PaidRequests>) {
+        if self.pod_paid.set(door).is_err() {
+            tracing::warn!(endpoint = %self.endpoint, "a remote embedder's pods' paid door is set once");
+        }
+    }
+
     /// Reads the remote's `/models` listing and keeps it. A listing that does
     /// not answer, or answers with a failure, is an error and keeps nothing:
     /// it is asked again next time. A remote with no listing route, or one
@@ -583,19 +627,27 @@ impl HttpEmbedder {
 
     /// Posts `texts` as one request to `destination`, through the paid door
     /// when this remote has one; the answer is held to what the vault
-    /// admitted.
+    /// admitted. A pod batch is admitted on the pods' own door.
     fn post_embeddings(
         &self,
         texts: &[&str],
         side: Side<'_>,
         destination: &EmbeddingDestination,
     ) -> oneiron::Result<Answer> {
-        let Some(door) = self.paid.get() else {
+        let (door, client) = match destination {
+            // The pods' door, or the endpoint's until the pool binds.
+            EmbeddingDestination::Pod(_) => (
+                self.pod_paid.get().or_else(|| self.paid.get()),
+                self.pods.get().map(|pods| &pods.client).unwrap_or(&self.client),
+            ),
+            EmbeddingDestination::Primary => (self.paid.get(), &self.client),
+        };
+        let Some(door) = door else {
             return self.post_once(texts, side, destination);
         };
         // A broker or key that is not there refuses the request before its
         // permit starts.
-        self.client.preflight()?;
+        client.preflight()?;
         // The door settles on the vectors; the mark rides beside them.
         let mut mark = None;
         let vectors = door.send(texts, &mut || {
