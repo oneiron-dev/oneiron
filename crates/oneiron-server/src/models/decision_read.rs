@@ -33,9 +33,9 @@ use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
-    BudgetLease, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
-    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
-    LlmUsage, RetryableLlmError,
+    BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
+    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage,
+    LlmResult, LlmUsage, RetryableLlmError,
 };
 use oneiron::{ModelId, ModelLocality};
 use serde_json::{Value as JsonValue, json};
@@ -43,7 +43,7 @@ use serde_json::{Value as JsonValue, json};
 use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
 use super::catalog::engine_model_id;
 use super::http::{HttpFailure, KeyStyle, ProviderHttp};
-use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver};
+use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use crate::config::models::{
     DecisionReadRecipe, DecisionReadSettings, ModelsConfig, ProbeQuestions, ProviderConfig,
     ReadPrompt, RenderRefusal,
@@ -397,8 +397,14 @@ impl DecisionReader {
 
     /// One completion of `prompt` (one prompt, or an array of them) forced
     /// to end at once, listing the top `n_probs` tokens. Any free slot takes
-    /// each prompt, and each slot's prompt cache keeps what it last read.
-    async fn complete(&self, prompt: JsonValue, eos: u64, n_probs: u64) -> LlmResult<JsonValue> {
+    /// each prompt, and each slot's prompt cache keeps what it last read. The
+    /// answer comes with the execution mode of what was sent (FIX 8329).
+    async fn complete(
+        &self,
+        prompt: JsonValue,
+        eos: u64,
+        n_probs: u64,
+    ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
         let body = json!({
             "prompt": prompt,
             "n_predict": 1,
@@ -411,6 +417,7 @@ impl DecisionReader {
             "post_sampling_probs": false,
             "logit_bias": [[eos, EOS_BIAS]],
         });
+        let execution = execution_mode(&body);
         let reply = self
             .http
             .post_json_within(
@@ -422,7 +429,7 @@ impl DecisionReader {
             .await
             .map_err(transport)?;
         status(reply.status)?;
-        Ok(reply.body)
+        Ok((reply.body, execution))
     }
 
     /// The pack's prompts in one completion, each answer read over its own
@@ -436,13 +443,14 @@ impl DecisionReader {
     ) -> LlmResult<LabelReadResponse> {
         let ids = self.ids().await?;
         let prompt_array = JsonValue::from(prompts.to_vec());
-        let first = self
+        let (first, first_mode) = self
             .complete(prompt_array, ids.eos, self.recipe.n_probs())
             .await?;
         let replies = answers(first, prompts.len())?;
         let mut readouts = Vec::with_capacity(prompts.len());
         let mut reads = Vec::with_capacity(prompts.len());
         for ((prompt, question), mut reply) in prompts.iter().zip(questions).zip(replies) {
+            let mut mode = first_mode.clone();
             let count = question.width();
             let (labels, tokens) = (&ids.labels[..count], &self.recipe.tokens()[..count]);
             let mut logprobs = label_logprobs(&reply, labels, tokens);
@@ -450,8 +458,9 @@ impl DecisionReader {
             if let Some(full) = self.recipe.n_probs_full()
                 && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
             {
-                spent = Some(usage(&reply, self.answering(&reply).await.as_ref())?);
-                reply = self.complete(json!(prompt), ids.eos, full).await?;
+                let answering = self.answering(&reply).await;
+                spent = Some(usage(&reply, answering.as_ref(), mode.as_ref())?);
+                (reply, mode) = self.complete(json!(prompt), ids.eos, full).await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
             let mut readout = normalized(&logprobs?);
@@ -464,7 +473,8 @@ impl DecisionReader {
                 readout.reverse();
             }
             readouts.push(readout);
-            let usage = usage(&reply, self.answering(&reply).await.as_ref())?;
+            let answering = self.answering(&reply).await;
+            let usage = usage(&reply, answering.as_ref(), mode.as_ref())?;
             reads.push(match spent {
                 Some(first) => retried(first, usage),
                 None => usage,
@@ -659,14 +669,18 @@ fn normalized(logprobs: &[f64]) -> Vec<f64> {
 /// counts is refused, so its caller charges the read's reservation. Its
 /// cache read is llama.cpp's own `timings.cache_n` when the answer's counts
 /// agree, beside the answer's inference receipt (FIX 6567, 8314) with the
-/// identity its own alias names, `answering`.
-fn usage(body: &JsonValue, answering: Option<&AnsweringIdentity>) -> LlmResult<LlmUsage> {
+/// identity its own alias names, `answering`, and the mode it was sent in.
+fn usage(
+    body: &JsonValue,
+    answering: Option<&AnsweringIdentity>,
+    execution: Option<&CacheDigest>,
+) -> LlmResult<LlmUsage> {
     let count = |key: &str| {
         body.get(key)
             .and_then(JsonValue::as_u64)
             .ok_or_else(|| failed(LabelReadFailure::Malformed))
     };
-    let (cache_read, raw_provider) = label_read(body, answering);
+    let (cache_read, raw_provider) = label_read(body, answering, execution);
     Ok(LlmUsage {
         input: LlmInputUsage {
             total: count("tokens_evaluated")?,

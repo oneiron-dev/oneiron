@@ -18,7 +18,9 @@
 //!
 //! A manifest attests the launch, not each call: per-call settings (template
 //! arguments, reasoning, samplers, a request's own cache options) are not in
-//! it, so no record's `execution_mode` comes from it.
+//! it, so no record's `execution_mode` comes from it. A record's mode is the
+//! engine's own normalization of what it sent on that call
+//! ([`execution_mode`], FIX 8329).
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -26,6 +28,7 @@ use oneiron::llm::{
     CacheDigest, CacheEpoch, CacheIdentity, LlamaAlias, WorkerBuildEvidence, parse_llama_alias,
 };
 use serde::Deserialize;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 
@@ -35,6 +38,51 @@ use super::http::{MAX_REPLY_BYTES, ProviderHttp};
 const SCHEMA_VERSION: u64 = 1;
 /// The backend a llama.cpp manifest names.
 const BACKEND: &str = "llama_cpp";
+/// The request keys that set how one llama.cpp call runs (FIX 8329): its
+/// chat template's arguments, its reasoning settings, its sampler chain, the
+/// constraints on what it may sample and its seed, and its own prompt-cache
+/// options. Any other key sets what the call reads or returns, not how it
+/// runs.
+const EXECUTION_SETTING_KEYS: &[&str] = &[
+    "chat_template_kwargs",
+    "reasoning_format",
+    "reasoning_budget",
+    "reasoning_effort",
+    "thinking_forced_open",
+    "temperature",
+    "dynatemp_range",
+    "dynatemp_exponent",
+    "top_k",
+    "top_p",
+    "min_p",
+    "typical_p",
+    "top_n_sigma",
+    "xtc_probability",
+    "xtc_threshold",
+    "repeat_last_n",
+    "repeat_penalty",
+    "presence_penalty",
+    "frequency_penalty",
+    "dry_multiplier",
+    "dry_base",
+    "dry_allowed_length",
+    "dry_penalty_last_n",
+    "dry_sequence_breakers",
+    "mirostat",
+    "mirostat_tau",
+    "mirostat_eta",
+    "samplers",
+    "logit_bias",
+    "ignore_eos",
+    "grammar",
+    "json_schema",
+    "response_format",
+    "seed",
+    "cache_prompt",
+    "n_cache_reuse",
+];
+/// The domain a call's execution-mode digest is taken under.
+const EXECUTION_MODE_DOMAIN: &[u8] = b"oneiron.llama.execution_mode.v1\0";
 
 /// Every manifest this server has looked up, by where and for what. One per
 /// llama.cpp launch a route has answered from.
@@ -154,6 +202,48 @@ impl AnsweringIdentity {
             template: None,
             ..self.for_chat()
         }
+    }
+}
+
+/// One llama.cpp call's execution mode (FIX 8329): each
+/// [`EXECUTION_SETTING_KEYS`] key `sent`, the body the engine sent, set to a
+/// value, as JSON with its keys sorted, under its own domain. A key the call left out runs
+/// on the launch's default, which the answering launch's own identity (its
+/// epoch and manifest) pins beside this mode; so the mode is what the engine
+/// sent, never the launch's configuration. `None` only for a body with no
+/// canonical form.
+pub(super) fn execution_mode(sent: &JsonValue) -> Option<CacheDigest> {
+    let mut keys = EXECUTION_SETTING_KEYS.to_vec();
+    keys.sort_unstable();
+    let settings: JsonMap<String, JsonValue> = keys
+        .into_iter()
+        .filter_map(|key| {
+            let value = sent.get(key).filter(|value| !value.is_null())?;
+            Some((key.to_owned(), canonical(value)))
+        })
+        .collect();
+    let bytes = serde_json::to_vec(&settings).ok()?;
+    let mut hasher = Sha256::new();
+    hasher.update(EXECUTION_MODE_DOMAIN);
+    hasher.update(&bytes);
+    CacheDigest::new(format!("{:x}", hasher.finalize())).ok()
+}
+
+/// `value` with every object's keys in sorted order, so equal settings
+/// digest equal whatever order they were sent in.
+fn canonical(value: &JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Array(values) => JsonValue::Array(values.iter().map(canonical).collect()),
+        JsonValue::Object(entries) => {
+            let mut keys: Vec<&String> = entries.keys().collect();
+            keys.sort_unstable();
+            JsonValue::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), canonical(&entries[key])))
+                    .collect(),
+            )
+        }
+        other => other.clone(),
     }
 }
 
