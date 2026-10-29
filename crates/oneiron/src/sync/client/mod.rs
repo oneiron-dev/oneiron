@@ -59,6 +59,7 @@ mod window_pads;
 
 pub use self::base::SyncClient;
 pub use self::federated::ImportTier;
+pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
 pub(crate) use self::residence::home_handoff::{HandoffLane, TargetCancel, TargetStanding};
 pub use self::residence::{
