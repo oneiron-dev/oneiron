@@ -21,6 +21,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 
 use super::cell::{LearningCell, LearningPredicate};
+use super::conversion_chain;
 use super::estimate::{
     ESTIMATOR_VERSION, Estimate, EstimateForm, EstimateLabels, EstimateValue, OwnTally, Window,
     fold_value,
@@ -31,9 +32,6 @@ use super::prior::cell_prior_in_txn;
 
 /// Seconds in a day, for the window setting's unit.
 const DAY_SECS: f64 = 86_400.0;
-
-/// The longest chain of judge conversions a score follows.
-const MAX_CONVERSION_HOPS: usize = 8;
 
 /// The fitted value of a setting cell, cached beside its claim so the hot
 /// readers of [`learning_setting::setting_value`] pay one row read per scope.
@@ -221,12 +219,16 @@ fn fold_evidence_in_txn(
         {
             w /= rate;
         }
-        let (observation, converted) = if row.cell.predicate == LearningPredicate::Reliability
+        // Cyclic lineage folds as unknown.
+        let Some((observation, converted)) = (if row.cell.predicate
+            == LearningPredicate::Reliability
             || ev.observation.form() != EstimateForm::Beta
         {
             convert(&ev.observation, ev.judge.as_deref(), &conversions)
         } else {
-            (ev.observation.clone(), false)
+            Some((ev.observation.clone(), false))
+        }) else {
+            continue;
         };
         match (&mut tally, &observation) {
             (OwnTally::Beta { wins, losses }, Observation::Success(ok)) => {
@@ -321,17 +323,18 @@ fn measurement_version(evidence: &[(String, EvidenceRow)]) -> Option<String> {
         .map(|(_, version)| version.clone())
 }
 
-/// Follows a score through the judge-swap maps. Converted binary scores
-/// become fractional Beta mass while retaining their original run weight.
-fn convert<'a>(
+/// Follows a score through the whole accepted conversion chain; a cyclic
+/// lineage yields `None`. Converted binary scores become fractional Beta
+/// mass while retaining their original run weight.
+fn convert(
     observation: &Observation,
-    judge: Option<&'a str>,
-    conversions: &'a BTreeMap<String, JudgeConversion>,
-) -> (Observation, bool) {
-    let Some(mut judge) = judge else {
-        return (observation.clone(), false);
+    judge: Option<&str>,
+    conversions: &BTreeMap<String, JudgeConversion>,
+) -> Option<(Observation, bool)> {
+    let Some(judge) = judge else {
+        return Some((observation.clone(), false));
     };
-    let mut x = match observation {
+    let x = match observation {
         Observation::Magnitude(x) => *x,
         Observation::Success(ok) => {
             if *ok {
@@ -341,22 +344,13 @@ fn convert<'a>(
             }
         }
         Observation::Category(_) | Observation::CountOnly(_) => {
-            return (observation.clone(), false);
+            return Some((observation.clone(), false));
         }
     };
-    let mut converted = false;
-    for _ in 0..MAX_CONVERSION_HOPS {
-        let Some(conversion) = conversions.get(judge) else {
-            break;
-        };
-        x = conversion.map(x);
-        judge = &conversion.to_judge;
-        converted = true;
-    }
-    if converted {
-        (Observation::Magnitude(x), true)
-    } else {
-        (observation.clone(), false)
+    match conversion_chain::resolve(judge, x, conversions) {
+        conversion_chain::Resolved::Current => Some((observation.clone(), false)),
+        conversion_chain::Resolved::Converted(x) => Some((Observation::Magnitude(x), true)),
+        conversion_chain::Resolved::Invalid => None,
     }
 }
 
