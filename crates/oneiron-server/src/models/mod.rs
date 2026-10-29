@@ -105,7 +105,9 @@ pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
-pub(crate) use rerank::{rerank_request, rerank_scores};
+pub(crate) use rerank::{
+    RerankLine, RerankOutcome, RerankStop, on_line, rerank_outcome, rerank_request,
+};
 pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
