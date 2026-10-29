@@ -369,6 +369,7 @@ pub(crate) fn mark_retained_repo_blob_in_txn(
         let file = FoundFile {
             hash: raw_blake3,
             keys: marked,
+            record: origin,
         };
         put_file_marks_in_txn(store, wtxn, vec![file], &minted, at)?;
     }
