@@ -4,12 +4,14 @@
 //! that names the read. Nothing here opens a pad: every object stays sealed,
 //! and no second index is kept beside the generations, parts and grants.
 //!
-//! A restore or a side copy carries them whole
-//! ([`capture_current_pad_objects_in_txn`], or from the rows a source door
-//! read, [`capture_current_pad_objects_in_rows`]) into a store whose image
-//! kept older objects, installs them over that store's own while it still
-//! holds what the caller saw there ([`install_captured_pad_objects_in_txn`]),
-//! and reads them back after the commit ([`read_back_pad_objects_in_txn`]).
+//! A restore or a side copy carries them whole, with the bundles of the
+//! generations a copy may adopt ([`capture_current_pad_objects_in_txn`], or
+//! from the rows a source door read, [`capture_current_pad_objects_in_rows`])
+//! into a store whose image kept older objects, installs them over that
+//! store's own while it still holds what the caller saw there, the
+//! generations it keeps first brought to the source's ([`membership`],
+//! [`install_captured_pad_objects_in_txn`]), and reads them back after the
+//! commit ([`read_back_pad_objects_in_txn`]).
 //! A kept pad object whose parts are missing takes its bytes again from a
 //! current provider's capture or a machine's upload of that same object
 //! ([`refill_pad_object`]); an erase's rewrite keeps the replace door.
@@ -32,6 +34,10 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::sync::residence::PadAccessState;
 use crate::world_keys::{PadAdmissionTarget, SealedBundleGeneration, SealedKeyPads};
+
+mod membership;
+
+pub(crate) use membership::{PadObjectMembership, generations_an_install_retires_in_txn};
 
 /// The late joiners' grants and the admission outbox (`bundle_access`).
 const ACCESS: SideTable<String, Vec<u8>, Raw> =
@@ -119,6 +125,9 @@ struct CapturedObject {
     /// Each stored part, by its offset, as the home keeps it; a missing part
     /// stays a gap, never certified whole.
     parts: Vec<(u64, Vec<u8>)>,
+    /// Each stored part of its generation's bundle, by its offset, where the
+    /// capture carries it (a copy may adopt the generation); else none.
+    bundle: Vec<(u64, Vec<u8>)>,
     /// Its grant rows, undecoded: the key after the table prefix and the
     /// stored bytes.
     grants: Rows,
@@ -307,20 +316,31 @@ fn part_offset(key: &[u8], prefix: &str) -> Result<u64> {
 /// The pad object parts `read` holds for `generation`, by offset.
 fn pad_parts(
     generation: &SealedBundleGeneration,
+    read: impl FnMut(Family, &[u8]) -> Result<Rows>,
+) -> Result<Vec<(u64, Vec<u8>)>> {
+    object_parts(generation, SealedBundleObject::Pads, read)
+}
+
+/// The parts of `generation`'s `object` `read` holds, by offset.
+fn object_parts(
+    generation: &SealedBundleGeneration,
+    object: SealedBundleObject,
     mut read: impl FnMut(Family, &[u8]) -> Result<Rows>,
 ) -> Result<Vec<(u64, Vec<u8>)>> {
-    let prefix = object_prefix(generation, SealedBundleObject::Pads);
+    let prefix = object_prefix(generation, object);
     read(Family::Parts, prefix.as_bytes())?
         .into_iter()
         .map(|(key, part)| Ok((part_offset(&key, &prefix)?, part)))
         .collect()
 }
 
-/// A capture of what `read` holds.
+/// A capture of what `read` holds, with the bundle of each generation
+/// `bundles` names.
 fn capture_from(
     vault_id: [u8; 32],
     home: EntityId,
     mut read: impl FnMut(Family, &[u8]) -> Result<Rows>,
+    bundles: impl Fn(&SealedBundleGeneration) -> bool,
 ) -> Result<CapturedPadObjects> {
     match PAD_OBJECT_CAPTURE_FORM {
         CaptureForm::OpaqueMetadataPartsGrantsAtOneCurrentRevision => {}
@@ -328,8 +348,15 @@ fn capture_from(
     let (index, grants) = index_from(vault_id, home, &mut read)?;
     let mut objects = Vec::with_capacity(index.entries.len());
     for (meta, grants) in index.entries.iter().zip(grants) {
+        let generation = &meta.entry.generation;
+        let bundle = if bundles(generation) {
+            object_parts(generation, SealedBundleObject::Bundle, &mut read)?
+        } else {
+            Vec::new()
+        };
         objects.push(CapturedObject {
-            parts: pad_parts(&meta.entry.generation, &mut read)?,
+            parts: pad_parts(generation, &mut read)?,
+            bundle,
             grants,
         });
     }
@@ -430,62 +457,77 @@ pub(crate) fn current_pad_objects_in_txn(
 }
 
 /// The home's current pad objects carried whole from `txn`: entries, sealed
-/// parts and grant rows from that one read (PAD_OBJECT_CAPTURE_FORM). The
-/// caller names the vault and the home from the same read.
+/// parts and grant rows from that one read (PAD_OBJECT_CAPTURE_FORM), and
+/// the bundle of each generation `bundles` names. The caller names the vault
+/// and the home from the same read.
 ///
 /// # Errors
 ///
 /// An entry or a part key that does not decode; storage errors.
-#[allow(dead_code, reason = "02A2 wires the object copy (L02)")]
 pub(crate) fn capture_current_pad_objects_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     vault_id: [u8; 32],
     home: EntityId,
+    bundles: impl Fn(&SealedBundleGeneration) -> bool,
 ) -> Result<CapturedPadObjects> {
-    capture_from(vault_id, home, |family, prefix| {
-        txn_rows(store, txn, family, prefix)
-    })
+    capture_from(
+        vault_id,
+        home,
+        |family, prefix| txn_rows(store, txn, family, prefix),
+        bundles,
+    )
 }
 
 /// [`capture_current_pad_objects_in_txn`] from the `sync_state` rows a source
-/// door read in one transaction: full keys, table prefix included. Rows of
-/// other tables are passed over.
+/// door read in one transaction, full keys, table prefix included: its pad
+/// object rows, and apart from them the bundle parts it read, each carried
+/// with its generation. Rows of other tables are passed over.
 ///
 /// # Errors
 ///
 /// An entry or a part key that does not decode.
-#[allow(dead_code, reason = "02A2 wires the object copy (L02)")]
 pub(crate) fn capture_current_pad_objects_in_rows(
     vault_id: [u8; 32],
     home: EntityId,
     sync_state: &[(Vec<u8>, Vec<u8>)],
+    bundle_parts: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<CapturedPadObjects> {
-    capture_from(vault_id, home, |family, prefix| {
-        Ok(source_rows(sync_state, family, prefix))
-    })
+    capture_from(
+        vault_id,
+        home,
+        |family, prefix| {
+            let mut rows = source_rows(sync_state, family, prefix);
+            rows.extend(source_rows(bundle_parts, family, prefix));
+            rows.sort();
+            Ok(rows)
+        },
+        |_| true,
+    )
 }
 
 /// Installs `captured` over the store's current pad objects, while it holds
 /// what the caller saw there: `expected`, its read after the bulk copy (an
-/// empty one included). Each captured object of a generation kept here takes
-/// the place of the one kept, whole, with its grant rows; the admission
-/// outbox's rows land too. A generation not kept here is never brought back,
-/// a bundle is never touched, and every check comes before the first write:
-/// a store that moved, or a capture of another generation under the same
-/// name, writes nothing (`CurrentChanged`), nor does an object not whole
-/// (`Unavailable`). The caller commits, then reads back
+/// empty one included). First the generations kept here are brought to the
+/// capture's as `membership` says: each the capture alone keeps adopted,
+/// each kept here alone retired where proven, the rest left as they are.
+/// Then each captured object of a generation kept here takes the place of
+/// the one kept, whole, with its grant rows; the admission outbox's rows
+/// land too. Every check comes before the first write: a store that moved,
+/// or a capture of another generation under the same name, writes nothing
+/// (`CurrentChanged`), nor does an object not whole of a generation kept
+/// here (`Unavailable`). The caller commits, then reads back
 /// ([`read_back_pad_objects_in_txn`]).
 ///
 /// # Errors
 ///
 /// Storage errors.
-#[allow(dead_code, reason = "02A2 wires the object copy (L02)")]
 pub(crate) fn install_captured_pad_objects_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     expected: &CurrentPadObjects,
     captured: &CapturedPadObjects,
+    membership: PadObjectMembership,
 ) -> Result<PadObjectInstall> {
     let held = current_pad_objects_in_txn(store, wtxn, expected.vault_id, expected.home)?;
     if held.retained_revision != expected.retained_revision
@@ -516,6 +558,8 @@ pub(crate) fn install_captured_pad_objects_in_txn(
             }
         }
     }
+    let change = membership::membership_change(&held, captured, membership);
+    membership::write_membership_change_in_txn(store, wtxn, captured, &change)?;
     for (entry, digest, bytes, grants) in installs {
         put_pads(store, wtxn, entry, digest, &bytes)?;
         for (key, raw) in grants {

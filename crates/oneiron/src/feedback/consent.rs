@@ -419,6 +419,7 @@ pub fn feedback_approval_card(
         channel,
         origin_receipt_ref: Some(preview.content_ref()),
         scope_escalators: Vec::new(),
+        reach_line: None,
     })
 }
 

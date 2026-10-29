@@ -34,12 +34,15 @@ use crate::error::{Error, RecordError, Result};
 /// costs one hash over bytes this function has already decoded.
 ///
 /// The local root, the adopted evidence and the retirement ancestry are all
-/// read in `txn`, from the transaction-bound read-only fold.
+/// read in `txn`, from the transaction-bound read-only fold. Where that fold
+/// needs history, the row is judged on the fold with it and the import's
+/// other authority rows (`beside`) in (FIX 2535, 2989).
 pub(super) fn admit_federated_authority_log(
     vault: &Vault,
     txn: &RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
+    beside: crate::authority::RowsBeside<'_>,
 ) -> Result<()> {
     validate_authority_log_entry_body_bytes(body)?;
     let entry = decode_authority_log_entry_body(body)?;
@@ -56,14 +59,15 @@ pub(super) fn admit_federated_authority_log(
                 "missing authority vault id",
             )))?,
     };
-    // Where the fold needs history this row supplies, the fold with the row
-    // in judges it (FIX 2535).
+    // Where the fold needs history this row, or the rows beside it, supply,
+    // the fold with them in judges it (FIX 2535, 2989).
     let hash = authority_entry_hash(&entry)?;
-    let local = crate::authority::preflight_authority_rows_in_txn(
+    let local = crate::authority::preflight_authority_rows_beside_in_txn(
         &vault.store,
         vault.privacy_posture(),
         txn,
         &[(hash, &entry)],
+        beside,
     )?;
     let local_vault_id =
         local

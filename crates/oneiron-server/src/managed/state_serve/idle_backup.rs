@@ -378,7 +378,15 @@ impl ManagedState {
         // A wait the deadline cut short leaves the vault busy: no lease drain
         // starts past it, and the export answers at once (FIX 6955).
         let waited_out = owner_idle && !background_drained;
-        let prepared = match self.drain_export(at_freeze, !waited_out).await {
+        // The deadline may have passed while the last pass ended: no lease
+        // drain starts past it either (FIX 11066).
+        let waited_out = waited_out
+            || (background_drained && idle.deadline(id).is_some_and(|at| Instant::now() >= at));
+        // A drain under way is not cut at the deadline: dropping it mid-way
+        // would strand its lease-expiry job and skip every later sweep
+        // (FIX 11066, FIX line).
+        let outcome = self.drain_export(at_freeze, !waited_out).await;
+        let prepared = match outcome {
             Ok(prepared) => prepared,
             Err(error) => {
                 idle.drop_failed(id);
