@@ -115,9 +115,7 @@ impl DescriptionDecisions<'_> {
             &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
         Ok(DescriptionFitnessReadings::of(
-            candidates,
-            decisions,
-            type_ref,
+            candidates, decisions, type_ref,
         ))
     }
 }
