@@ -232,9 +232,8 @@ pub(super) fn mcp_board_sections(
     // admits or withholds below; any other child is judged by its own
     // evidence ([`mcp_child_admitted`], FIX 1052).
     let mut rows = rows;
-    let children =
-        oneiron::context_board::child_states_for_actor(&server.vault, actor.actor_ref)
-            .map_err(|error| mcp_engine_error("board children failed", error))?;
+    let children = oneiron::context_board::child_states_for_actor(&server.vault, actor.actor_ref)
+        .map_err(|error| mcp_engine_error("board children failed", error))?;
     let read = mcp_scoped_read(&server.vault, actor)?;
     let people = {
         let now = std::time::SystemTime::now()

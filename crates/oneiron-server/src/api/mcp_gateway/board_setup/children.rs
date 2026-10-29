@@ -45,7 +45,10 @@ pub(super) fn mcp_child_admitted(
     match narrowed_child_admitted(server, actor, memory, read, task, child) {
         Ok(admitted) => Ok(admitted),
         Err(error) => {
-            tracing::debug!(kind = error.kind, "mcp board child omitted: its evidence did not read");
+            tracing::debug!(
+                kind = error.kind,
+                "mcp board child omitted: its evidence did not read"
+            );
             Ok(false)
         }
     }
@@ -74,11 +77,18 @@ fn narrowed_child_admitted(
     else {
         return Ok(false);
     };
-    if actor.scope.world_ref.is_some_and(|world| scope.world != Some(world)) {
+    if actor
+        .scope
+        .world_ref
+        .is_some_and(|world| scope.world != Some(world))
+    {
         return Ok(false);
     }
     let facet_inside = match scope.facet {
-        Some(facet) => actor.scope.facets.contains(&oneiron::federation::ScopeId(facet)),
+        Some(facet) => actor
+            .scope
+            .facets
+            .contains(&oneiron::federation::ScopeId(facet)),
         None => matches!(actor.scope.facets, oneiron::federation::ScopeAxis::All),
     };
     if !facet_inside {

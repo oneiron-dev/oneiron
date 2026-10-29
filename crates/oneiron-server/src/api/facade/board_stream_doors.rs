@@ -135,7 +135,15 @@ pub(crate) async fn self_focus_unsubscribe(
     _invocation: Option<InvocationId>,
     input: LiveRunRequest<BoardSubscriptionRequest>,
 ) -> MemoryResult<BoardSubscriptionReply> {
-    subscription(server, auth, session, "self.focus.unsubscribe", input, false).await
+    subscription(
+        server,
+        auth,
+        session,
+        "self.focus.unsubscribe",
+        input,
+        false,
+    )
+    .await
 }
 
 /// The subscription scope one wake was minted under, from its envelope id
