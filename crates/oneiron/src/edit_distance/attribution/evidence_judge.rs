@@ -1,5 +1,6 @@
 //! Amendment evidence doors and the judging pass.
 
+use super::origin::evidence_origin;
 use super::stored::{
     EVIDENCE, EVIDENCE_ROW_LABEL, JUDGMENT, JUDGMENT_ROW_LABEL, PREFERENCE, ROW_VERSION,
     StoredAttempt, StoredEvidence, StoredHunk, StoredJudgment, StoredPreference, StoredShare,
@@ -7,7 +8,7 @@ use super::stored::{
 };
 use super::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    HunkLabel, PreferenceProposal, class_subject, classify_amendment, cost_predicate,
+    HunkLabel, PreferenceProposal, charges_edit_cost, class_subject, classify_amendment_traced,
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
@@ -15,9 +16,9 @@ use crate::edit_distance::delta::amendment_delta;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill_attribution::{
-    AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, UnclearAttribution,
-    delete_unclear_in_txn, draw_proposal_sequence_in_txn, ground_attempt_receipt,
-    mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
+    AttributionDecisions, AttributionJudgment, AttributionLane, EditHunk, JudgeTrace,
+    UnclearAttribution, delete_unclear_in_txn, draw_proposal_sequence_in_txn,
+    ground_attempt_receipt, mint_edit_proposal_in_txn, put_unclear_in_txn, unclear_floor_sourced,
     withdraw_edit_proposal_in_txn,
 };
 
@@ -40,6 +41,11 @@ use crate::skill_attribution::{
 /// receipt, bound to this actor, whose pack loaded the named skill. That join
 /// is what lets a `skill_defect` share replace the attempt's own outcome in
 /// `skill.reliability`, so an attempt it cannot vouch for is refused here.
+/// The attempt also names who drafted the proposal: its executor stamp, task
+/// type and the project its run counted in are recorded over any the host
+/// gave (FIX 9812, 6038). With no attempt stamp, the amended proposal's birth
+/// receipt names the model that concluded it. A stamp that does not read as
+/// one is recorded as unknown, never refused.
 ///
 /// The actor check is the DOWNSTREAM door's own (`require_actor_entity`, the
 /// D13 matrix), asked here rather than three passes later: an
@@ -53,9 +59,9 @@ use crate::skill_attribution::{
 /// entity that cannot act, or the scope is unusable; storage errors.
 pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) -> Result<()> {
     let scope = normalized_scope(&evidence.scope)?.to_owned();
-    if amendment_delta(vault, &evidence.receipt_id)?.is_none() {
+    let Some(delta) = amendment_delta(vault, &evidence.receipt_id)? else {
         return Err(invalid("amendment evidence cites an unmeasured receipt"));
-    }
+    };
     require_actor_entity(vault, &evidence.actor)?;
     if let Some(skill) = evidence.skill
         && vault.get_skill_record(&skill)?.is_none()
@@ -65,11 +71,22 @@ pub fn record_amendment_evidence(vault: &Vault, evidence: &AmendmentEvidence) ->
     if let Some(attempt) = evidence.attempt_receipt.as_deref() {
         ground_attempt_receipt(vault, attempt, &evidence.actor, evidence.skill)?;
     }
+    let origin = evidence_origin(
+        vault,
+        evidence.attempt_receipt.as_deref(),
+        delta.proposed_ref.proposal_artifact(),
+        evidence.executor.as_deref(),
+        evidence.type_ref.as_ref(),
+        evidence.project,
+    )?;
     let row = StoredEvidence {
         v: ROW_VERSION,
         actor: evidence.actor.to_hex(),
         skill: evidence.skill.map(|id| id.to_hex()),
         attempt: evidence.attempt_receipt.clone(),
+        executor: origin.executor,
+        type_ref: origin.type_ref,
+        project: origin.project.map(|id| id.to_hex()),
         scope,
         cause: evidence.cause.map(|cause| cause.as_str().to_owned()),
         followed_skill: evidence.followed_skill,
@@ -111,6 +128,13 @@ pub(in crate::edit_distance) fn amendment_evidence_in_txn(
             .map(|hex| hex_entity(hex, EVIDENCE_ROW_LABEL))
             .transpose()?,
         attempt_receipt: row.attempt,
+        executor: row.executor,
+        type_ref: row.type_ref,
+        project: row
+            .project
+            .as_deref()
+            .map(|hex| hex_entity(hex, EVIDENCE_ROW_LABEL))
+            .transpose()?,
         scope: row.scope,
         cause: row
             .cause
@@ -203,10 +227,19 @@ pub fn judge_amendment_hunks(
     };
     // The floor where the amended attempt ran, when one is named (FIX 2957).
     let (floor, _) = unclear_floor_sourced(vault, evidence.attempt_receipt.as_deref())?;
-    let Some(split) = classify_amendment(&evidence, decisions, hunks, floor)? else {
+    let (split, trace) = classify_amendment_traced(&evidence, decisions, hunks, floor)?;
+    let Some(split) = split else {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     };
-    persist_amendment_split(vault, receipt_id, &evidence, &delta, split, hunks)
+    persist_amendment_split(
+        vault,
+        receipt_id,
+        &evidence,
+        &delta,
+        split,
+        hunks,
+        Some(&trace),
+    )
 }
 
 /// Judges the amendment recorded against `receipt_id` from explicitly
@@ -270,7 +303,7 @@ pub fn judge_amendment_verdicts(
     if !computed.is_empty() {
         super::taxonomy::validate_share_vector(&computed)?;
     }
-    persist_amendment_split(vault, receipt_id, &evidence, &delta, split, hunks)
+    persist_amendment_split(vault, receipt_id, &evidence, &delta, split, hunks, None)
 }
 
 /// Persists one judged split for `receipt_id`: the judgment row, its
@@ -279,6 +312,9 @@ pub fn judge_amendment_verdicts(
 ///
 /// Each of `hunks` keeps its own label beside its substitution's identity, so
 /// the miner can take a clear hunk and leave an unclear one held (FIX 9808).
+/// The evidence's executor stamp, task type and project, and the revision
+/// and answering model of `judge`, the trace that answered, freeze on the
+/// judgment (FIX 9812, 6038).
 fn persist_amendment_split(
     vault: &Vault,
     receipt_id: &str,
@@ -286,6 +322,7 @@ fn persist_amendment_split(
     delta: &crate::edit_distance::delta::AmendmentDelta,
     split: crate::skill_attribution::AttributionSplit,
     hunks: &[EditHunk<'_>],
+    judge: Option<&JudgeTrace>,
 ) -> Result<Option<AmendmentJudgment>> {
     let shares: Vec<AmendmentShare> = split
         .shares
@@ -300,7 +337,7 @@ fn persist_amendment_split(
     // routing bug wearing one. Recorded as an abstention rather than landed.
     if shares
         .iter()
-        .any(|share| cost_predicate(share.class).is_some() && share.subject.is_none())
+        .any(|share| charges_edit_cost(share.class) && share.subject.is_none())
     {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     }
@@ -323,46 +360,18 @@ fn persist_amendment_split(
                 ),
             })
             .collect(),
+        executor: evidence.executor.clone(),
+        type_ref: evidence.type_ref.clone(),
+        project: evidence.project,
+        attempt_receipt: evidence.attempt_receipt.clone(),
+        judge: judge.and_then(|trace| trace.revision.clone()),
+        judge_model: judge.and_then(|trace| trace.model.clone()),
+        actor: Some(evidence.actor),
+        skill: evidence.skill,
+        rejected: false,
     };
 
-    // The join this judgment is made with rides its row, so a later correction
-    // of the evidence moves nothing until the amendment is judged again.
-    let attempt = match (&evidence.attempt_receipt, evidence.skill) {
-        (Some(receipt), Some(skill)) => Some(StoredAttempt {
-            receipt: receipt.clone(),
-            skill: skill.to_hex(),
-        }),
-        _ => None,
-    };
-    let row = StoredJudgment {
-        v: ROW_VERSION,
-        class: None,
-        subject: None,
-        split: judgment
-            .split
-            .iter()
-            .map(|share| StoredShare {
-                class: share.class.as_str().to_owned(),
-                share: share.share,
-                subject: share.subject.map(|id| id.to_hex()),
-            })
-            .collect(),
-        scope: judgment.scope.clone(),
-        evidence_receipts: judgment.evidence_receipts.clone(),
-        d_norm: judgment.d_norm,
-        engine_ver: judgment.engine_ver.clone(),
-        at: judgment.at,
-        proposal: None,
-        attempt,
-        hunks: judgment
-            .hunks
-            .iter()
-            .map(|hunk| StoredHunk {
-                class: hunk.class.as_str().to_owned(),
-                substitutions: hunk.substitution_refs.clone(),
-            })
-            .collect(),
-    };
+    let row = judgment_row(&judgment);
     let preference_share = judgment.share_of(AmendmentClass::PreferenceShift);
     let preference_row = (preference_share > 0.0).then(|| StoredPreference {
         v: ROW_VERSION,
@@ -404,6 +413,58 @@ fn persist_amendment_split(
         Ok(())
     })?;
     Ok(Some(judgment))
+}
+
+/// The stored row of `judgment`; the discovery proposal's sequence is settled
+/// in the writer.
+///
+/// The attempt join rides the row, so a later correction of the evidence moves
+/// nothing until the amendment is judged again. The judgment's skill is kept
+/// beside the attempt it came from.
+pub(super) fn judgment_row(judgment: &AmendmentJudgment) -> StoredJudgment {
+    StoredJudgment {
+        v: ROW_VERSION,
+        class: None,
+        subject: None,
+        split: judgment
+            .split
+            .iter()
+            .map(|share| StoredShare {
+                class: share.class.as_str().to_owned(),
+                share: share.share,
+                subject: share.subject.map(|id| id.to_hex()),
+            })
+            .collect(),
+        scope: judgment.scope.clone(),
+        evidence_receipts: judgment.evidence_receipts.clone(),
+        d_norm: judgment.d_norm,
+        engine_ver: judgment.engine_ver.clone(),
+        at: judgment.at,
+        proposal: None,
+        attempt: judgment
+            .attempt_receipt
+            .clone()
+            .map(|receipt| StoredAttempt {
+                receipt,
+                skill: judgment.skill.map(|id| id.to_hex()),
+            }),
+        hunks: judgment
+            .hunks
+            .iter()
+            .map(|hunk| StoredHunk {
+                class: hunk.class.as_str().to_owned(),
+                substitutions: hunk.substitution_refs.clone(),
+            })
+            .collect(),
+        executor: judgment.executor.clone(),
+        type_ref: judgment.type_ref.clone(),
+        project: judgment.project.map(|id| id.to_hex()),
+        judge: judgment.judge.clone(),
+        judge_model: judgment.judge_model.clone(),
+        actor: judgment.actor.map(|id| id.to_hex()),
+        skill: judgment.skill.map(|id| id.to_hex()),
+        rejected: judgment.rejected,
+    }
 }
 
 /// Mints, re-mints or withdraws the one skill edit proposal `judgment`'s
@@ -456,9 +517,9 @@ fn settle_edit_proposal_in_txn(
 /// and, with it, any preference note, unclear row or edit proposal that
 /// judgment filed.
 ///
-/// The withdrawal is the whole correction on this side: the cost head the row
-/// was holding up loses its ledger support, and the next
-/// [`project_edit_cost_claims`] pass retracts it.
+/// The withdrawal is the whole correction on this side: the cell rows the
+/// judgment was holding up lose their ledger support, and the next
+/// [`project_edit_cost_claims`] pass withdraws them.
 fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
     let receipt_id = receipt_id.to_owned();
     {
@@ -532,12 +593,14 @@ fn judgment_from_row(
     receipt_id: String,
     row: StoredJudgment,
 ) -> Result<(AmendmentJudgment, Option<AttemptJoin>)> {
+    // Only an attempt joined with the skill its pack loaded is a reliability
+    // join; an attempt alone still names the run the proposal came from.
     let attempt = match &row.attempt {
-        Some(join) => Some((
-            join.receipt.clone(),
-            hex_entity(&join.skill, JUDGMENT_ROW_LABEL)?,
-        )),
-        None => None,
+        Some(StoredAttempt {
+            receipt,
+            skill: Some(skill),
+        }) => Some((receipt.clone(), hex_entity(skill, JUDGMENT_ROW_LABEL)?)),
+        _ => None,
     };
     let hunks: Vec<HunkLabel> = row
         .hunks
@@ -559,8 +622,23 @@ fn judgment_from_row(
         engine_ver: row.engine_ver,
         at: row.at,
         hunks,
+        executor: row.executor,
+        type_ref: row.type_ref,
+        project: optional_entity(row.project.as_deref())?,
+        attempt_receipt: row.attempt.map(|join| join.receipt),
+        judge: row.judge,
+        judge_model: row.judge_model,
+        actor: optional_entity(row.actor.as_deref())?,
+        skill: optional_entity(row.skill.as_deref())?,
+        rejected: row.rejected,
     };
     Ok((judgment, attempt))
+}
+
+/// A stored hex id, when the row keeps one.
+fn optional_entity(hex: Option<&str>) -> Result<Option<EntityId>> {
+    hex.map(|hex| hex_entity(hex, JUDGMENT_ROW_LABEL))
+        .transpose()
 }
 
 /// A stored row's split; a row written before split verdicts reads back as

@@ -32188,6 +32188,8 @@ pub enum Observation {
     Magnitude(f64),
     #[serde(rename = "category")]
     Category(String),
+    #[serde(rename = "count_only")]
+    CountOnly(String),
 }
 
 /// `oneiron::receipt::pack_attribution::ContributionCheck`.
@@ -32305,6 +32307,12 @@ pub struct EvidenceRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub goal_revision: Option<String>,
+    #[serde(
+        rename = "measurement_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub measurement_version: Option<String>,
 }
 
 /// `oneiron::learning::doors::LearningEvidenceView`.

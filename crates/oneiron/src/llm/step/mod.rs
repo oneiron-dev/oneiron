@@ -73,8 +73,8 @@ pub(crate) use self::settled::{
     CallerSettledStep, committed_steps_in_txn, settled_step_for_caller, settled_step_usage_in_txn,
 };
 pub(crate) use self::step_claim::{
-    deindex_dreamer_step_claim, forget_step_memo, index_dreamer_step_claim_for_put,
-    terminal_step_identity,
+    deindex_dreamer_step_claim, forget_step_memo, forget_step_memo_in_txn,
+    index_dreamer_step_claim_for_put, terminal_step_identity,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use self::response_bodies::{

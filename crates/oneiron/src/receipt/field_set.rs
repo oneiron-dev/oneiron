@@ -423,6 +423,13 @@ impl ReceiptRecord {
         }
     }
 
+    /// The executor model the attempt behind this receipt was stamped with,
+    /// `id@revision` as recorded. `None` when no model was stamped.
+    #[must_use]
+    pub fn executor_model(&self) -> Option<&str> {
+        self.fields.get(FIELD_MODEL).map(String::as_str)
+    }
+
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never
     /// untyped. Returns the stamp, or refuses the receipt.
     pub fn require_task_type_ref(&self) -> Result<crate::task_type::TaskTypeRef> {
