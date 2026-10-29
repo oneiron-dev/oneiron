@@ -146,6 +146,9 @@ impl TaggingReconciler {
                 if record.kind != TAGGING_MARKER_KIND || record.state != AttemptState::Scheduled {
                     continue;
                 }
+                if !crate::attempt_queue::owner_retained_id(&id) {
+                    continue;
+                }
                 waiting.push(id);
             }
             waiting

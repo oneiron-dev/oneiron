@@ -112,6 +112,12 @@ pub(super) struct Coordinator {
     /// When the pacing slice ends while a hold parks the loop: its expiry
     /// probes the tagger, without ending the round.
     probe_slice: Option<Instant>,
+    /// The pacing slice's own delay: the next slice lands this long after
+    /// the last arming. It doubles while holds park the loop, capped, and
+    /// returns to the first backoff once no hold is left or the tagger
+    /// answers again, so the first slice of an outage lands before any
+    /// hold longer than the first backoff expires.
+    probe_slice_delay: Duration,
     /// The earliest retry a settled marker was given that no read has
     /// reached since.
     next_retry: Option<u64>,
@@ -173,6 +179,7 @@ impl Coordinator {
             paused_until: None,
             idle_until: None,
             probe_slice: None,
+            probe_slice_delay: FIRST_BACKOFF,
             next_retry: None,
             dirty: true,
             // The first round starts with the upkeep a pass starts with.
@@ -516,6 +523,7 @@ impl Coordinator {
                 self.store_backoff.until = None;
                 self.store_backoff.delay = FIRST_BACKOFF;
                 self.probe_slice = None;
+                self.probe_slice_delay = FIRST_BACKOFF;
                 self.dirty = true;
                 let reconciler = Arc::clone(&self.reconciler);
                 let now = reconciler.now();
@@ -584,9 +592,14 @@ impl Coordinator {
     /// loop.
     fn on_timer(&mut self) {
         let now = Instant::now();
-        if passed(&mut self.probe_slice, now) && self.holds_pending() {
-            self.probe_due = true;
-            self.probe_slice = Some(now + self.probe_slice_len());
+        if passed(&mut self.probe_slice, now) {
+            if self.holds_pending() {
+                self.probe_due = true;
+                self.probe_slice_delay = (self.probe_slice_delay * 2).min(MAX_BACKOFF);
+                self.probe_slice = Some(now + self.probe_slice_delay);
+            } else {
+                self.probe_slice_delay = FIRST_BACKOFF;
+            }
         }
         if passed(&mut self.idle_until, now) {
             self.end_round();
@@ -678,7 +691,9 @@ impl Coordinator {
             let bulk = &mut self.backoff[lane(ExtractionWork::Bulk)];
             bulk.until = Some(bulk.until.map_or(until, |held| held.max(until)));
         }
-        self.probe_slice = Some(now + self.probe_slice_len());
+        if self.probe_slice.is_none() {
+            self.probe_slice = Some(now + self.probe_slice_delay);
+        }
         true
     }
 
@@ -694,7 +709,9 @@ impl Coordinator {
         }
         store.until = Some(now + store.delay);
         store.delay = (store.delay * 2).min(MAX_BACKOFF);
-        self.probe_slice = Some(now + self.probe_slice_len());
+        if self.probe_slice.is_none() {
+            self.probe_slice = Some(now + self.probe_slice_delay);
+        }
         true
     }
 
@@ -731,23 +748,6 @@ impl Coordinator {
     /// only probes while one does.
     fn holds_pending(&self) -> bool {
         self.held(ExtractionWork::Live) || self.held(ExtractionWork::Bulk)
-    }
-
-    /// The pacing slice while holds park the loop: the largest live
-    /// backoff delay, at least one first backoff.
-    fn probe_slice_len(&self) -> Duration {
-        let now = Instant::now();
-        let mut len = FIRST_BACKOFF;
-        for backoff in self
-            .backoff
-            .iter()
-            .chain(std::iter::once(&self.store_backoff))
-        {
-            if backoff.until.is_some_and(|until| now < until) {
-                len = len.max(backoff.delay);
-            }
-        }
-        len
     }
 
     /// When the loop wakes with no event: the end of a hold, of the pacing
