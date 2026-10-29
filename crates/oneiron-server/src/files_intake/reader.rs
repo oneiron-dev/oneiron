@@ -267,7 +267,7 @@ pub(super) enum TextKind {
 
 impl TextKind {
     /// The media type a file read this way keeps its original under.
-    fn media_type(self) -> &'static str {
+    pub(super) fn media_type(self) -> &'static str {
         match self {
             Self::Markdown => "text/markdown",
             Self::Pdf => "application/pdf",
