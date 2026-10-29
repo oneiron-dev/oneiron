@@ -38,9 +38,12 @@ pub(crate) enum Fault {
     /// It crashed: Failed, and restarted after its backoff. The reason is a
     /// fixed name (`worker_exited`, `call_timeout`, ...).
     Crash(&'static str),
-    /// It is not the pinned worker (`identity_mismatch:<field>`), or its
-    /// answers do not clear here (`parity_failed`): Unavailable until a new
-    /// process.
+    /// It is not the pinned worker (`identity_mismatch:<field>`), its answers
+    /// do not clear here (`parity_failed`), its Core ML row is not one this
+    /// build runs (`coreml_unsupported_port`, `coreml_unsupported_heads`),
+    /// its model did not load (`coreml_load_failed:<part>`,
+    /// `coreml_io_mismatch:<tensor>`), or its in-process calibration failed
+    /// (`calibration_failed:<detail>`): Unavailable until a new process.
     Down(String),
     /// The dispatcher closed.
     Stopped,
