@@ -228,43 +228,19 @@ impl MediaCall {
         Ok(state)
     }
 
-    /// The media of one call under `dial`. Each image is checked against its ref and
-    /// rides as a named image when `first_taking` finds a rung from the dial's first to
-    /// its ceiling that takes them, the dial then starting there; otherwise every image
-    /// is listed as not served, and the call stands on the rest of its state. Audio is
-    /// checked and listed as not served: this caller does not hear it.
+    /// The media of one call under `dial`. Each image and clip is checked against its ref.
+    /// A WAV or MP3 clip rides as named audio beside the images; a clip of another type is
+    /// listed as not served. The dial starts at the first rung `first_taking` finds, from
+    /// the dial's first to its ceiling, that reads every medium; when none reads both
+    /// images and audio, the images ride alone if a rung reads them, else the audio alone,
+    /// and what no rung reads is listed as not served. The call stands on the rest of its
+    /// state.
     pub fn of(
-        dial: DecisionDial,
-        media: Vec<ResolvedMedia>,
-        first_taking: impl FnOnce(&[DecisionImage]) -> Option<DecisionRung>,
-    ) -> LlmResult<Self> {
-        let (mut entries, mut images, _) = Self::checked(media, false)?;
-        let mut dial = dial;
-        if !images.is_empty() {
-            match first_taking(&images) {
-                Some(first) => dial.first = first,
-                None => unserve_images(&mut entries, &mut images),
-            }
-        }
-        Ok(Self {
-            entries,
-            images,
-            audio: Vec::new(),
-            dial,
-        })
-    }
-
-    /// [`MediaCall::of`] for a caller that hears audio. A WAV or MP3 clip rides as named
-    /// audio beside the images; a clip of another type is listed as not served. The
-    /// dial starts at the first rung `first_taking` finds for every medium; when none
-    /// reads both images and audio, the images ride alone if a rung reads them, else
-    /// the audio alone, and what no rung reads is listed as not served.
-    pub fn hearing(
         dial: DecisionDial,
         media: Vec<ResolvedMedia>,
         first_taking: impl Fn(&[DecisionImage], &[DecisionAudio]) -> Option<DecisionRung>,
     ) -> LlmResult<Self> {
-        let (mut entries, mut images, mut audio) = Self::checked(media, true)?;
+        let (mut entries, mut images, mut audio) = Self::checked(media)?;
         DecisionAudio::validate_all(&audio)?;
         if audio
             .iter()
@@ -307,11 +283,10 @@ impl MediaCall {
         })
     }
 
-    /// Each medium checked against its ref: its entry, and the images and, when the
-    /// caller hears audio, the clips of a type a rung takes, all as served.
+    /// Each medium checked against its ref: its entry, and the images and the clips of a
+    /// type a rung takes, all as served.
     fn checked(
         media: Vec<ResolvedMedia>,
-        hears_audio: bool,
     ) -> LlmResult<(Vec<DecisionMedia>, Vec<DecisionImage>, Vec<DecisionAudio>)> {
         let mut entries = Vec::with_capacity(media.len());
         let mut images = Vec::new();
@@ -347,7 +322,7 @@ impl MediaCall {
                     {
                         return Err(FatalLlmError::InvalidRequest.into());
                     }
-                    let served = if hears_audio && audio_format(&reference.media_type).is_some() {
+                    let served = if audio_format(&reference.media_type).is_some() {
                         audio.push(DecisionAudio {
                             name: name.clone(),
                             evidence: reference.evidence.clone(),
@@ -394,7 +369,7 @@ fn unserve_audio(entries: &mut [DecisionMedia], audio: &mut Vec<DecisionAudio>) 
 }
 
 impl DecisionLadder<'_> {
-    /// The media of one call of `question` under `dial` ([`MediaCall::hearing`]): its
+    /// The media of one call of `question` under `dial` ([`MediaCall::of`]): its
     /// images and audio ride from the first rung of this ladder, from the dial's first to
     /// its ceiling, whose provider takes `question` over them.
     pub fn media_call(
@@ -403,7 +378,7 @@ impl DecisionLadder<'_> {
         dial: DecisionDial,
         media: Vec<ResolvedMedia>,
     ) -> LlmResult<MediaCall> {
-        MediaCall::hearing(dial, media, |images, audio| {
+        MediaCall::of(dial, media, |images, audio| {
             self.first_taking_media(question, dial, images, audio)
         })
     }
