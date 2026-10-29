@@ -1,3 +1,4 @@
+use super::access_gate::HeldAuthority;
 use super::*;
 
 /// The rows a bounded search's plan refused that its key's own ceiling
@@ -437,5 +438,60 @@ impl ScopedRead<'_> {
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
         Ok(ScopedReadResult { value, receipt })
+    }
+}
+
+/// A recall's candidate admission (FIX 11648): the same predicate as
+/// [`ScopedRead::recall_candidate_in`], with one relationship authority held
+/// for each retrieval transaction its channels admit candidates in, so
+/// `AccessContext::load`, which reads every grant and relationship claim,
+/// runs once per transaction and not once per candidate. A transaction is
+/// known by its address: a later transaction of the same recall at a freed
+/// address reuses the authority read moments before in that recall, as the
+/// recall admits every channel under one plan policy.
+pub(crate) struct RecallCandidateGate<'r, 'v> {
+    read: &'r ScopedRead<'v>,
+    held: Mutex<Vec<(usize, HeldAuthority<'v>)>>,
+}
+
+impl<'v> ScopedRead<'v> {
+    /// A recall's candidate admission that holds one relationship authority
+    /// per retrieval transaction (FIX 11648).
+    pub(crate) fn recall_candidate_gate(&self) -> RecallCandidateGate<'_, 'v> {
+        RecallCandidateGate {
+            read: self,
+            held: Mutex::default(),
+        }
+    }
+}
+
+impl RecallCandidateGate<'_, '_> {
+    /// Admit one candidate in `txn` under the query plan.
+    pub(crate) fn admits_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+    ) -> Result<bool> {
+        let key = std::ptr::from_ref(txn) as usize;
+        let held = {
+            let mut slots = self
+                .held
+                .lock()
+                .map_err(|_| Error::InvariantViolation("recall candidate gate lock"))?;
+            match slots.iter().position(|(at, _)| *at == key) {
+                Some(index) => slots.swap_remove(index).1,
+                None => HeldAuthority::default(),
+            }
+        };
+        let admitted = self
+            .read
+            .is_entity_retrievable_held_in(txn, policy, filter, id, &held);
+        self.held
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall candidate gate lock"))?
+            .push((key, held));
+        admitted
     }
 }

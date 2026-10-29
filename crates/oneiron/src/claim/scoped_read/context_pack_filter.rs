@@ -1,4 +1,5 @@
 //! Final actor-bound context-pack filtering before rendering and telemetry.
+use super::access_gate::HeldAuthority;
 use super::*;
 use crate::context_pack::{ContextPack, EmptyContext, EmptyReason};
 
@@ -49,10 +50,12 @@ impl ScopedRead<'_> {
             }
             let had_capabilities = !pack.capabilities.is_empty();
             let mut capabilities = Vec::new();
+            // One relationship authority for every hit of this read (FIX 11648).
+            let held = HeldAuthority::default();
             for hit in std::mem::take(&mut pack.capabilities) {
                 let item = self.admit_in(&rtxn, &hit.id, || {
                     if !self
-                        .is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, &hit.id)?
+                        .is_entity_retrievable_held_in(&rtxn, &policy, &filter, &hit.id, &held)?
                     {
                         return Ok(None);
                     }
@@ -133,11 +136,13 @@ impl ScopedRead<'_> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;
         let mut suppressed = 0;
+        // One relationship authority for every entity of this read (FIX 11648).
+        let held = HeldAuthority::default();
         for mut entity in entities {
             let admission =
                 self.admit_in(rtxn, &entity.id, || {
                     Ok((self
-                        .is_entity_retrievable_with_policy_in(rtxn, policy, filter, &entity.id)?
+                        .is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, &held)?
                         && self.context_entity_revision_is_readable_in(
                             rtxn, policy, filter, &entity,
                         )?)
