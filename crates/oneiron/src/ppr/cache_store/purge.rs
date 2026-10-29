@@ -7,7 +7,7 @@ use heed::RwTxn;
 use super::{CACHE_DEP_KEY_LEN, SEED_HASH_LEN, delete_dep_rows_for_seed_hash};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 
 /// Deletes every payload that depends on an erased id or an incident neighbor,
 /// together with every dependency key to that payload. Ordinary edge changes
