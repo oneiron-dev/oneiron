@@ -13,7 +13,7 @@
 
 use super::cells::{charge_judgment_in_txn, learning_scope};
 use super::evidence_judge::judgment_row;
-use super::stored::{JUDGMENT, normalized_scope};
+use super::stored::{EVIDENCE, JUDGMENT, ROW_VERSION, StoredEvidence, normalized_scope};
 use super::taxonomy::{
     AmendmentEvidence, AmendmentJudgment, AmendmentShare, charges_edit_cost, class_subject,
     classify_amendment_traced,
@@ -92,6 +92,24 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
     {
         return Ok(None);
     }
+    // A rejection keeps the routing facts the inbox truthfully has, in the same
+    // row and under the same key the amendment door writes (FIX 11633): no
+    // cause was observed, and the decision names no attempt, executor or task
+    // type, so those stay unset.
+    let evidence_row = StoredEvidence {
+        v: ROW_VERSION,
+        actor: rejection.actor.to_hex(),
+        skill: rejection.skill.map(|id| id.to_hex()),
+        attempt: None,
+        executor: None,
+        type_ref: None,
+        project: rejection.project.map(|id| id.to_hex()),
+        scope: scope.clone(),
+        cause: None,
+        followed_skill: None,
+        skill_covered_step: None,
+        at: rejection.at,
+    };
     let judgment = AmendmentJudgment {
         receipt_id: rejection.receipt.to_owned(),
         split: shares,
@@ -111,6 +129,7 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
         skill: rejection.skill,
         rejected: true,
     };
+    EVIDENCE.put(&vault.store, wtxn, &judgment.receipt_id, &evidence_row)?;
     JUDGMENT.put(
         &vault.store,
         wtxn,
