@@ -47,12 +47,17 @@ pub struct CreditOptions {
 /// the lease is live. Every model string is an id pinned as `id@revision`.
 /// The judge is unknown until the model whose answer to the run's Done stands
 /// is recorded, once, under the live lease (FIX 1877); a run no model judged
-/// keeps it unknown.
+/// keeps it unknown. The agent definition is stamped once with the execution
+/// context, pinned the same way; a run no agent definition started keeps it
+/// absent (FIX 11637).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackAttributionFields {
     #[serde(rename = "typeRef")]
     pub type_ref: TypeRef,
     pub executor: String,
+    /// The agent definition that started the run, pinned as `id@revision`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_definition: Option<String>,
     pub judge: Option<String>,
     pub pattern: EntityId,
     pub team_shape: Vec<String>,
