@@ -56,11 +56,12 @@ pub(crate) fn caller_options(
     }
     let runtime = server.ai.model_runtime();
     let media_left = runtime.media().units_left();
-    // A text row is called through the raw routes, on their meter.
+    // A text row is called through the raw routes, on their meter; an
+    // uncapped meter reports none (FIX 10593).
     let raw_left = server
         .llm
         .as_ref()
-        .map(|raw| raw.meter().read().remaining_units);
+        .and_then(|raw| raw.meter().read().capped_remaining_units());
     let options = runtime
         .ai_options(operation, inputs)
         .into_iter()
