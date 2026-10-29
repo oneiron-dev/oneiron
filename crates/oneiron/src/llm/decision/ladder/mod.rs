@@ -12,6 +12,7 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
 
+mod ask_consent;
 mod providers;
 mod roles;
 mod runner;
@@ -23,6 +24,7 @@ pub use providers::{
     MAX_SCORE_LEVEL_BYTES, ModelDecisionProvider, PairedAnswer, ProviderCapability,
     ProviderDecision, RuleDecisionProvider, SCORE_LEVELS_FIELD, level_score, score_levels_in,
 };
+pub use ask_consent::{AskConsent, AskEffect, AskUndoFidelity, ConsentAskQueue};
 pub use roles::{
     AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
     ResolvedRole, RoleHolder, RoleRank,

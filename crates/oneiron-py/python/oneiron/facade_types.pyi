@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1165 facade rows, 4187 declarations.
+Census: 1165 facade rows, 4191 declarations.
 Inputs: 1098 of 1165 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1039 of 1165 fully typed, 126 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -16546,6 +16546,15 @@ class RoleHolder(TypedDict):
 class ResolvedRole(TypedDict):
     role: AskRole
     holders: list[RoleHolder]
+class AskGrantDraftProposed(TypedDict):
+    state: Literal["proposed"]
+    grant_ref: str
+class AskGrantDraftConfirmed(TypedDict):
+    state: Literal["confirmed"]
+    grant_ref: str
+    receipt: str
+    rule: str
+AskGrantDraft = AskGrantDraftProposed | AskGrantDraftConfirmed
 class AskAnswer(TypedDict):
     answer: DecisionAnswer
     answered_at: int
@@ -16555,6 +16564,24 @@ class AskAnswer(TypedDict):
     changed: bool
     reason: NotRequired[str | None]
     rule: NotRequired[HostRuleRef | None]
+    grant: NotRequired[AskGrantDraft | None]
+AskUndoFidelity = Literal["full", "partial", "none", "unknown"]
+class AskEffect(TypedDict):
+    operation_kind: str
+    fires_hooks: bool
+    triggers_publish: bool
+    external_observers: bool
+    undo_fidelity: AskUndoFidelity
+    blast_radius: int
+    catastrophe: NotRequired[CatastropheClass | None]
+    project: NotRequired[str | None]
+    thread: NotRequired[str | None]
+    erase: NotRequired[bool]
+    action: NotRequired[ShapeGrantBound | None]
+    disclosure: NotRequired[ShapeGrantBound | None]
+class AskConsent(TypedDict):
+    effect: AskEffect
+    bound: ShapeGrantBound
 class DecisionAsk(TypedDict):
     seq: int
     id: str
@@ -16571,6 +16598,8 @@ class DecisionAsk(TypedDict):
     answer: NotRequired[AskAnswer | None]
     withdrawn_at: NotRequired[int | None]
     pack_state: NotRequired[Any | None]
+    consent: NotRequired[AskConsent | None]
+    prefilled_reason: NotRequired[str | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
 class ConnectorListRequest(TypedDict):

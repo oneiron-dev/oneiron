@@ -13,8 +13,11 @@
 //! The ask carries what the ladder hands the queue and nothing more; the host renders its
 //! own text from the question's.
 
+mod grant_draft;
 mod queue;
 mod signal;
+
+pub use grant_draft::AskGrantDraft;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::ops::Bound;
@@ -23,8 +26,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::ladder::{
-    AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
-    PairedAnswer, ProviderDecision, ResolvedRole, RoleHolder, RoleRank,
+    AskAct, AskConsent, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue,
+    HumanDecisionRequest, PairedAnswer, ProviderDecision, ResolvedRole, RoleHolder, RoleRank,
 };
 use super::rules::rule_reason;
 use super::types::invalid;
@@ -91,6 +94,14 @@ pub struct DecisionAsk {
     /// model read. `None` when the caller handed the queue none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_state: Option<serde_json::Value>,
+    /// The consent effect the ask is about and the bound an owner's reason drafts a
+    /// standing grant of (FIX 2975), as its caller bound it; none for an ask about none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consent: Option<AskConsent>,
+    /// The owner's nearest reason on record for that effect, read when the ask was queued:
+    /// the card's reason, pre-filled. None when no reason on record is near it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefilled_reason: Option<String>,
 }
 
 /// The answer the ladder held when it asked, and the provider that read it.
@@ -127,6 +138,10 @@ pub struct AskAnswer {
     /// it wrote none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<HostRuleRef>,
+    /// The standing grant that reason drafted from the ask's consent effect (FIX 2975),
+    /// Proposed until the owner confirms it; none when it drafted none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<AskGrantDraft>,
 }
 
 impl DecisionAsk {
@@ -453,6 +468,7 @@ impl Vault {
                 }
                 _ => None,
             };
+            let grant = grant_draft::drafted(&held, reason, &role);
             held.answer = Some(AskAnswer {
                 answer,
                 answered_at,
@@ -462,6 +478,7 @@ impl Vault {
                 changed: changed.is_some(),
                 reason: reason.map(str::to_owned),
                 rule,
+                grant,
             });
             ASKS.put(&self.store, txn, &seq, &held)?;
             Ok(held)
@@ -500,6 +517,7 @@ impl Vault {
             changed: false,
             reason: None,
             rule: None,
+            grant: None,
         });
         ASKS.put(&self.store, txn, &seq, &ask)?;
         Ok(Some(seq))
@@ -888,6 +906,17 @@ impl HumanDecisionQueue for DecisionAsks {
     ) -> Result<Option<u64>> {
         self.vault
             .queue_decision_ask_with_state(&request, Some(state))
+            .map(Some)
+    }
+
+    fn queue_with_consent(
+        &self,
+        request: HumanDecisionRequest,
+        state: Option<&serde_json::Value>,
+        consent: &AskConsent,
+    ) -> Result<Option<u64>> {
+        self.vault
+            .queue_decision_ask_with_consent(&request, state, consent)
             .map(Some)
     }
 }

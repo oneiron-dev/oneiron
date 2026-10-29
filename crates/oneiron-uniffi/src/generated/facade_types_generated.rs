@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1165 facade rows, 4170 generated types.
+// UniFFI census: 1165 facade rows, 4174 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1117.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -51720,6 +51720,26 @@ pub struct ResolvedRole {
     pub holders: Vec<RoleHolder>,
 }
 
+/// `oneiron::llm::decision::asks::grant_draft::AskGrantDraft`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum AskGrantDraft {
+    #[serde(rename = "proposed")]
+    Proposed {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+    },
+    #[serde(rename = "confirmed")]
+    Confirmed {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+        #[serde(rename = "receipt")]
+        receipt: String,
+        #[serde(rename = "rule")]
+        rule: String,
+    },
+}
+
 /// `oneiron::llm::decision::asks::AskAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -51740,6 +51760,69 @@ pub struct AskAnswer {
     pub reason: Option<String>,
     #[serde(rename = "rule", default, skip_serializing_if = "Option::is_none")]
     pub rule: Option<HostRuleRef>,
+    #[serde(rename = "grant", default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<AskGrantDraft>,
+}
+
+/// `oneiron::llm::decision::ladder::ask_consent::AskUndoFidelity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AskUndoFidelity {
+    #[serde(rename = "full")]
+    Full,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+/// `oneiron::llm::decision::ladder::ask_consent::AskEffect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AskEffect {
+    #[serde(rename = "operation_kind")]
+    pub operation_kind: String,
+    #[serde(rename = "fires_hooks")]
+    pub fires_hooks: bool,
+    #[serde(rename = "triggers_publish")]
+    pub triggers_publish: bool,
+    #[serde(rename = "external_observers")]
+    pub external_observers: bool,
+    #[serde(rename = "undo_fidelity")]
+    pub undo_fidelity: AskUndoFidelity,
+    #[serde(rename = "blast_radius")]
+    pub blast_radius: u64,
+    #[serde(
+        rename = "catastrophe",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub catastrophe: Option<CatastropheClass>,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(rename = "thread", default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    #[serde(rename = "erase", default, skip_serializing_if = "Option::is_none")]
+    pub erase: Option<bool>,
+    #[serde(rename = "action", default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<ShapeGrantBound>,
+    #[serde(
+        rename = "disclosure",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disclosure: Option<ShapeGrantBound>,
+}
+
+/// `oneiron::llm::decision::ladder::ask_consent::AskConsent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AskConsent {
+    #[serde(rename = "effect")]
+    pub effect: AskEffect,
+    #[serde(rename = "bound")]
+    pub bound: ShapeGrantBound,
 }
 
 /// `oneiron::llm::decision::asks::DecisionAsk`.
@@ -51784,6 +51867,14 @@ pub struct DecisionAsk {
         skip_serializing_if = "Option::is_none"
     )]
     pub pack_state: Option<crate::WireJson>,
+    #[serde(rename = "consent", default, skip_serializing_if = "Option::is_none")]
+    pub consent: Option<AskConsent>,
+    #[serde(
+        rename = "prefilled_reason",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub prefilled_reason: Option<String>,
 }
 
 /// `oneiron::receipt::decision_asks::DecisionAskClimbRequest`.

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1216 code-mode rows (1176 host rows, 40 run rows), 4247 declarations.
+// Census: 1216 code-mode rows (1176 host rows, 40 run rows), 4251 declarations.
 // Replies: 1087 fully typed, 128 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: none.
@@ -3279,8 +3279,12 @@ declare namespace Sdk {
   type AskTo = { role: AskRole; ceiling: RoleRank; act: AskAct };
   type RoleHolder = { actor: string; kind: HolderKind };
   type ResolvedRole = { role: AskRole; holders: RoleHolder[] };
-  type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null };
-  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null; pack_state?: unknown | null };
+  type AskGrantDraft = { state: "proposed"; grant_ref: string } | { state: "confirmed"; grant_ref: string; receipt: string; rule: string };
+  type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null; grant?: AskGrantDraft | null };
+  type AskUndoFidelity = "full" | "partial" | "none" | "unknown";
+  type AskEffect = { operation_kind: string; fires_hooks: boolean; triggers_publish: boolean; external_observers: boolean; undo_fidelity: AskUndoFidelity; blast_radius: number; catastrophe?: CatastropheClass | null; project?: string | null; thread?: string | null; erase?: boolean; action?: ShapeGrantBound | null; disclosure?: ShapeGrantBound | null };
+  type AskConsent = { effect: AskEffect; bound: ShapeGrantBound };
+  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null; pack_state?: unknown | null; consent?: AskConsent | null; prefilled_reason?: string | null };
   type DecisionAskClimbRequest = { seq: number };
   type ConnectorListRequest = { query?: string | null };
   type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
