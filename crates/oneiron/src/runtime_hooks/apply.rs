@@ -7,7 +7,7 @@ use rmpv::Value;
 use crate::memory::HostWriteOrigin;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::skill_hub::pack_catalog::PackHookBinding;
-use crate::task_verb::{TaskAssignee, TaskCreateSpec};
+use crate::task_verb::{TaskAssignee, TaskCreateReceipt, TaskCreateSpec};
 use crate::{
     ClaimApprovalStatus, ClaimInput, ClaimSource, DreamerConsolidationScope, DreamerRunnerStore,
     EdgeActorClass, EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt, EntityId,
@@ -19,7 +19,8 @@ use super::outcome::{EnqueuedDreamer, EnqueuedTask, HookOutcome, ProposedClaim};
 use super::runner::HookPassReport;
 use super::store::{HookIntent, HookIntentState, INTENTS, RunKey};
 
-/// Intents the startup drain reads.
+/// Pending intents one startup-recovery scheduling batch reads. Another
+/// batch follows in the next pass until no Pending row remains (FIX 10070).
 const MAX_DRAIN: usize = 10_000;
 /// The predicates an edge or note proposal lands under: there is no gated
 /// edge or note proposal door for a Generated write.
@@ -35,28 +36,29 @@ struct Landed {
 }
 
 /// Applies every Pending intent, once, at runner start.
-pub(super) fn drain_pending(vault: &Vault, report: &mut HookPassReport) -> Result<()> {
-    let pending: Vec<(RunKey, HookIntent)> = {
+pub(super) fn drain_pending(vault: &Vault, report: &mut HookPassReport) -> Result<bool> {
+    let mut pending: Vec<(RunKey, HookIntent)> = {
         let rtxn = vault.store.env.read_txn()?;
-        let rows: Vec<(RunKey, HookIntent)> = INTENTS
+        INTENTS
             .iter_from(&vault.store, &rtxn, &[])?
             .filter(|row| {
                 row.as_ref()
                     .map_or(true, |(_, intent)| intent.state == HookIntentState::Pending)
             })
-            .take(MAX_DRAIN)
-            .collect::<Result<_>>()?;
-        rows
+            .take(MAX_DRAIN + 1)
+            .collect::<Result<_>>()?
     };
+    let more = pending.len() > MAX_DRAIN;
+    pending.truncate(MAX_DRAIN);
     if pending.is_empty() {
-        return Ok(());
+        return Ok(false);
     }
     let bindings = vault.pack_hook_bindings()?;
     let enabled = vault.hooks_enabled()?;
     for (key, intent) in pending {
         apply_intent(vault, &bindings, enabled, &key, intent, report)?;
     }
-    Ok(())
+    Ok(more)
 }
 
 /// Applies the intent one run just saved, if it is still Pending.
@@ -321,12 +323,19 @@ fn enqueue_task(
     if let Some(assignee) = task.assignee.as_deref() {
         spec = spec.with_assignee(assignee_for(vault, assignee)?);
     }
-    let receipt = memory.tasks_create(&spec).map_err(refusal_text)?;
-    let row = receipt.task_ref.or(receipt.proposal_ref);
-    Ok(Landed {
-        row: row.map(|id| *id.as_bytes()),
-        reference: row.map_or_else(|| "task:parked".to_owned(), |id| id.to_hex()),
-    })
+    let landed = |receipt: &TaskCreateReceipt| {
+        let row = receipt.task_ref.or(receipt.proposal_ref);
+        Landed {
+            row: row.map(|id| *id.as_bytes()),
+            reference: row.map_or_else(|| "task:parked".to_owned(), |id| id.to_hex()),
+        }
+    };
+    let receipt = memory
+        .tasks_create_briefless_with_effect(&spec, |txn, receipt| {
+            settle_in_txn(vault, txn, key, Ok(landed(receipt))).map_err(MemoryError::from)
+        })
+        .map_err(refusal_text)?;
+    Ok(landed(&receipt))
 }
 
 fn assignee_for(vault: &Vault, assignee: &str) -> std::result::Result<TaskAssignee, String> {
