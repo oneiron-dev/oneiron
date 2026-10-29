@@ -15,7 +15,11 @@ pub(super) enum PolicyValueKey {
     ProviderCooldownDefaultSeconds,
     ProviderCooldownMaxSeconds,
     ProviderCooldownMaxWaitSeconds,
+    ResidentRunMaxTries,
     ScopePrecedence,
+    SessionIdleFloorSeconds,
+    SessionLifetimeCeilingSeconds,
+    WorkflowStepMaxTries,
 }
 impl PolicyValueKey {
     fn parse(value: &str) -> Option<Self> {
@@ -30,7 +34,11 @@ impl PolicyValueKey {
             "provider_cooldown_default_seconds" => Some(Self::ProviderCooldownDefaultSeconds),
             "provider_cooldown_max_seconds" => Some(Self::ProviderCooldownMaxSeconds),
             "provider_cooldown_max_wait_seconds" => Some(Self::ProviderCooldownMaxWaitSeconds),
+            "resident_run_max_tries" => Some(Self::ResidentRunMaxTries),
             "scope_precedence" => Some(Self::ScopePrecedence),
+            "session_idle_floor_seconds" => Some(Self::SessionIdleFloorSeconds),
+            "session_lifetime_ceiling_seconds" => Some(Self::SessionLifetimeCeilingSeconds),
+            "workflow_step_max_tries" => Some(Self::WorkflowStepMaxTries),
             _ => None,
         }
     }
@@ -46,7 +54,11 @@ impl PolicyValueKey {
             Self::ProviderCooldownDefaultSeconds => "provider_cooldown_default_seconds",
             Self::ProviderCooldownMaxSeconds => "provider_cooldown_max_seconds",
             Self::ProviderCooldownMaxWaitSeconds => "provider_cooldown_max_wait_seconds",
+            Self::ResidentRunMaxTries => "resident_run_max_tries",
             Self::ScopePrecedence => "scope_precedence",
+            Self::SessionIdleFloorSeconds => "session_idle_floor_seconds",
+            Self::SessionLifetimeCeilingSeconds => "session_lifetime_ceiling_seconds",
+            Self::WorkflowStepMaxTries => "workflow_step_max_tries",
         }
     }
 
@@ -66,7 +78,9 @@ impl PolicyValueKey {
             // A held answer's proposer is woken on the vault's clock, and a
             // Dreamer Retry park resumes on it (FIX 8716). The edit-distance
             // ledger and miner read their thresholds with no world or project
-            // (FIX 9802, 9809).
+            // (FIX 9802, 9809). A sitting closes on the vault's clock until
+            // trusted session axes exist (FIX 8600), and the served runners read
+            // their try caps on the vault's rows (FIX 7748).
             Self::ArtifactAnswerQuietSeconds
             | Self::CommOptOutPosture
             | Self::DreamerRetryParkSeconds
@@ -76,7 +90,11 @@ impl PolicyValueKey {
             | Self::ProviderCooldownDefaultSeconds
             | Self::ProviderCooldownMaxSeconds
             | Self::ProviderCooldownMaxWaitSeconds
-            | Self::ScopePrecedence => scope == PolicyRowScope::Vault,
+            | Self::ResidentRunMaxTries
+            | Self::ScopePrecedence
+            | Self::SessionIdleFloorSeconds
+            | Self::SessionLifetimeCeilingSeconds
+            | Self::WorkflowStepMaxTries => scope == PolicyRowScope::Vault,
         }
     }
 }
@@ -114,7 +132,11 @@ pub(super) enum PolicyValue {
     ProviderCooldownDefaultSeconds(u64),
     ProviderCooldownMaxSeconds(u64),
     ProviderCooldownMaxWaitSeconds(u64),
+    ResidentRunMaxTries(u64),
     ScopePrecedence(PolicyPrecedence),
+    SessionIdleFloorSeconds(u64),
+    SessionLifetimeCeilingSeconds(u64),
+    WorkflowStepMaxTries(u64),
 }
 impl PolicyValue {
     fn restrict(self, other: Self) -> Self {
@@ -160,6 +182,21 @@ impl PolicyValue {
             (Self::ProviderCooldownMaxWaitSeconds(a), Self::ProviderCooldownMaxWaitSeconds(b)) => {
                 Self::ProviderCooldownMaxWaitSeconds(a.min(b))
             }
+            // A shorter idle floor or lifetime ceiling never keeps a sitting
+            // open longer than any trusted row allows.
+            (Self::SessionIdleFloorSeconds(a), Self::SessionIdleFloorSeconds(b)) => {
+                Self::SessionIdleFloorSeconds(a.min(b))
+            }
+            (Self::SessionLifetimeCeilingSeconds(a), Self::SessionLifetimeCeilingSeconds(b)) => {
+                Self::SessionLifetimeCeilingSeconds(a.min(b))
+            }
+            // A lower cap never retries past what any trusted row allows.
+            (Self::ResidentRunMaxTries(a), Self::ResidentRunMaxTries(b)) => {
+                Self::ResidentRunMaxTries(a.min(b))
+            }
+            (Self::WorkflowStepMaxTries(a), Self::WorkflowStepMaxTries(b)) => {
+                Self::WorkflowStepMaxTries(a.min(b))
+            }
             _ => unreachable!("policy values for different keys never compose"),
         }
     }
@@ -175,7 +212,11 @@ impl PolicyValue {
             | Self::ProposalCheckThreshold(value)
             | Self::ProviderCooldownDefaultSeconds(value)
             | Self::ProviderCooldownMaxSeconds(value)
-            | Self::ProviderCooldownMaxWaitSeconds(value) => value.to_string(),
+            | Self::ProviderCooldownMaxWaitSeconds(value)
+            | Self::ResidentRunMaxTries(value)
+            | Self::SessionIdleFloorSeconds(value)
+            | Self::SessionLifetimeCeilingSeconds(value)
+            | Self::WorkflowStepMaxTries(value) => value.to_string(),
             Self::ScopePrecedence(value) => value.as_str().to_owned(),
         }
     }
@@ -395,8 +436,24 @@ pub(super) fn parse_policy_values(value: &Value) -> Option<Vec<PolicyValueRow>> 
                                 |seconds| *seconds <= PROVIDER_COOLDOWN_WAIT_CEILING_SECONDS,
                             )?)
                         }
+                        // A cap of zero tries runs nothing: each runner gets
+                        // at least one try.
+                        PolicyValueKey::ResidentRunMaxTries => {
+                            PolicyValue::ResidentRunMaxTries(raw.as_u64().filter(|v| *v > 0)?)
+                        }
                         PolicyValueKey::ScopePrecedence => {
                             PolicyValue::ScopePrecedence(PolicyPrecedence::parse(raw.as_str()?)?)
+                        }
+                        // A zero floor or ceiling would end every sitting at once.
+                        PolicyValueKey::SessionIdleFloorSeconds => {
+                            PolicyValue::SessionIdleFloorSeconds(raw.as_u64().filter(|v| *v > 0)?)
+                        }
+                        PolicyValueKey::SessionLifetimeCeilingSeconds => {
+                            let seconds = raw.as_u64().filter(|v| *v > 0)?;
+                            PolicyValue::SessionLifetimeCeilingSeconds(seconds)
+                        }
+                        PolicyValueKey::WorkflowStepMaxTries => {
+                            PolicyValue::WorkflowStepMaxTries(raw.as_u64().filter(|v| *v > 0)?)
                         }
                     };
                 let Value::Map(scope_entries) = field(entries, "scope")? else {
@@ -557,6 +614,22 @@ fn shipped_default_dreamer_retry_park_seconds() -> u64 {
         .and_then(|row| row["value"].as_u64())
         .filter(|value| *value > 0)
         .expect("shipped Dreamer retry park pause")
+}
+
+/// The shipped consecutive-try cap for a try-cap `key` (FIX 7748): three
+/// resident-run tries, five workflow-step tries.
+pub(super) fn shipped_default_max_tries(key: &str) -> u64 {
+    let defaults: serde_json::Value =
+        serde_json::from_str(include_str!("policy_value_defaults.json"))
+            .expect("valid shipped policy defaults");
+    defaults
+        .as_array()
+        .expect("shipped policy rows")
+        .iter()
+        .find(|row| row["key"] == key && row["scope"]["level"] == "vault")
+        .and_then(|row| row["value"].as_u64())
+        .filter(|value| *value > 0)
+        .expect("shipped consecutive-try cap")
 }
 
 impl super::resolution::PolicyManifestResolution {

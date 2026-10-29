@@ -20,6 +20,9 @@ use crate::work_line::{LinePermit, WorkLine};
 use crate::write_envelope::SourceLineage;
 use crate::{EntityId, Result};
 
+mod verdict_cache;
+use verdict_cache::VerdictCache;
+
 // ---------------------------------------------------------------------------
 // Auto-check seam (ONE-1296).
 //
@@ -394,6 +397,9 @@ impl BoundedAutoChecker {
         let worker = std::thread::Builder::new()
             .name("oneiron-auto-check".to_owned())
             .spawn(move || {
+                // The worker's decided verdicts, reused for the same candidate
+                // under the same effective policy within their TTL (FIX 7816).
+                let mut verdicts = VerdictCache::default();
                 while let Ok(job) = receiver.recv() {
                     let AutoCheckJob {
                         candidate,
@@ -402,9 +408,13 @@ impl BoundedAutoChecker {
                         turn,
                     } = job;
                     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        decisions.check(&candidate.borrowed(), due).normalized()
+                        verdicts.check(&decisions, &candidate.borrowed(), due)
                     }))
-                    .unwrap_or(AutoCheckOutcome::Unavailable);
+                    .unwrap_or_else(|_| {
+                        // A host that unwound mid-check leaves no half-kept verdict.
+                        verdicts = VerdictCache::default();
+                        AutoCheckOutcome::Unavailable
+                    });
                     drop(candidate);
                     // Only the worker releases an admitted call's capacity,
                     // after the host has returned or unwound, never on timeout:

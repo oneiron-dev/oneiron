@@ -27,6 +27,7 @@
 //!   its holders: one holder's erase owes its retirement to the final
 //!   holder's release ([`shared_wait`], FIX 6588).
 
+mod replay;
 mod shared_wait;
 
 use std::collections::BTreeMap;

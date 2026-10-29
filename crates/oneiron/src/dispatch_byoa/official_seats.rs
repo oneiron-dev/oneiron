@@ -42,7 +42,8 @@ use super::connector::{
     ByoEndpointProtocol, ByoEndpointSpec, ByoaConnectorSpec, ByoaDispatchOutcome, CliSandboxSpec,
 };
 use super::error::{
-    ByoaError, ByoaResult, ERR_PKCE_VERIFIER, ERR_SEAT_ROUTE, ERR_SEAT_SPEC, invalid,
+    ANTHROPIC_AGENT_SDK_LOGIN, ANTHROPIC_UNMODIFIED_BINARY, ByoaError, ByoaResult,
+    ERR_PKCE_VERIFIER, ERR_SEAT_ROUTE, ERR_SEAT_SPEC, invalid,
 };
 use super::seat::{SeatIdentity, hosted_seat_bound};
 
@@ -214,11 +215,17 @@ pub fn check_seat_placement(
         // The unmodified binary, signed in by the person, runs anywhere —
         // cloud included. A modified binary voids that permission.
         OfficialSeatRoute::ClaudeCodeBinary if !unmodified_binary => {
-            Err(ByoaError::SeatModifiedBinaryRefused)
+            Err(ByoaError::SeatModifiedBinaryRefused {
+                term: ANTHROPIC_UNMODIFIED_BINARY,
+            })
         }
-        // "Unless previously approved", no Claude.ai login through the SDK.
+        // "Unless previously approved", no Claude.ai login through the SDK, on
+        // any runtime.
         OfficialSeatRoute::ClaudeAgentSdkSubscription if !approvals.anthropic_agent_sdk => {
-            Err(ByoaError::SeatLoginNotApproved(route.as_str().to_owned()))
+            Err(ByoaError::SeatLoginNotApproved {
+                route: route.as_str().to_owned(),
+                term: ANTHROPIC_AGENT_SDK_LOGIN,
+            })
         }
         // An API key runs on any runtime; it is not a login seat. ChatGPT-plan
         // logins stay off a hosted node until OpenAI approves hosted plan use.
@@ -582,9 +589,10 @@ impl OfficialSeatAdapter for ClaudeAgentSdkSeatAdapter {
         input: OfficialSeatInput,
     ) -> ByoaResult<ByoaConnectorSpec> {
         if !seat.approvals.anthropic_agent_sdk {
-            return Err(ByoaError::SeatLoginNotApproved(
-                self.route().as_str().to_owned(),
-            ));
+            return Err(ByoaError::SeatLoginNotApproved {
+                route: self.route().as_str().to_owned(),
+                term: ANTHROPIC_AGENT_SDK_LOGIN,
+            });
         }
         endpoint_connector(
             seat,

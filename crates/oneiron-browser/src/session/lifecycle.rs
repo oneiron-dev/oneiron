@@ -71,6 +71,7 @@ impl BrowserSession {
             fresh: None,
             secrets,
             demos: demonstration::Demonstrations::default(),
+            sites: site::SiteSkills::default(),
         })
     }
 

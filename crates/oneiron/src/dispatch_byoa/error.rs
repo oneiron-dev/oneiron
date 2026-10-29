@@ -114,6 +114,58 @@ pub(super) const ERR_STAGED_INPUT_COLLISION: &str =
 
 pub(super) const ERR_RUNNER_RECORD: &str = "byoa runner seat record failed to encode or decode";
 
+/// A provider's term that keeps an official seat off every runtime, self-hosted
+/// included, until the provider approves it, and the person's own seat that
+/// runs meanwhile (K21). Unlike a hosted-only bound ([`HostedSeatBound`]) it
+/// promises no self-hosted bypass: the term holds wherever the seat runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeatProviderTerm {
+    pub vendor: &'static str,
+    pub terms_ref: &'static str,
+    /// The approval that lifts it; none when no approval the host holds does.
+    pub approval_ref: Option<&'static str>,
+    /// The person's own seat that runs instead.
+    pub alternative: &'static str,
+}
+
+impl std::fmt::Display for SeatProviderTerm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}'s provider terms refuse this seat on every runtime ({})",
+            self.vendor, self.terms_ref
+        )?;
+        if let Some(approval) = self.approval_ref {
+            write!(f, "; required approval: {approval}")?;
+        }
+        write!(f, ". {}", self.alternative)
+    }
+}
+
+/// Anthropic's Agent SDK overview (RESEARCH-0382 A2): "Unless previously
+/// approved, Anthropic does not allow third party developers to offer
+/// claude.ai login or rate limits for their products, including agents built
+/// on the Claude Agent SDK."
+pub(super) const ANTHROPIC_AGENT_SDK_LOGIN: SeatProviderTerm = SeatProviderTerm {
+    vendor: "Anthropic",
+    terms_ref: "Claude Agent SDK overview, no claude.ai login in a third-party product unless \
+                previously approved, RESEARCH-0382 A2",
+    approval_ref: Some("Anthropic's prior approval (anthropic_agent_sdk)"),
+    alternative: "The person's own Anthropic API key seat, or the unmodified Claude Code binary \
+                  signed in with their own plan, runs meanwhile.",
+};
+
+/// Claude Code's legal and compliance page, condition 1 (RESEARCH-0382 A6):
+/// "The Claude Code binary must not be modified."
+pub(super) const ANTHROPIC_UNMODIFIED_BINARY: SeatProviderTerm = SeatProviderTerm {
+    vendor: "Anthropic",
+    terms_ref: "Claude Code legal and compliance, condition 1, the binary must not be modified, \
+                RESEARCH-0382 A6",
+    approval_ref: None,
+    alternative: "The unmodified Claude Code binary, or the person's own Anthropic API key seat, \
+                  runs instead.",
+};
+
 /// Every way a foreign-agent door can refuse.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -128,10 +180,18 @@ pub enum ByoaError {
     UnknownProvider(String),
     #[error("official seat route is not supported: {0}")]
     SeatRouteUnsupported(String),
-    #[error("official seat login needs vendor approval first: {0}")]
-    SeatLoginNotApproved(String),
-    #[error("official seat refuses a modified vendor binary")]
-    SeatModifiedBinaryRefused,
+    /// An official seat login a provider's term refuses on every runtime
+    /// until the provider approves it; the term names itself and the
+    /// person's own seat that runs meanwhile (K21).
+    #[error("official seat {route}: {term}")]
+    SeatLoginNotApproved {
+        route: String,
+        term: SeatProviderTerm,
+    },
+    /// A modified vendor binary, which the provider's term refuses on every
+    /// runtime (K21).
+    #[error("official seat refuses a modified vendor binary: {term}")]
+    SeatModifiedBinaryRefused { term: SeatProviderTerm },
     #[error("duplicate official seat adapter: {0}")]
     DuplicateSeatAdapter(String),
     #[error("unknown official seat adapter: {0}")]

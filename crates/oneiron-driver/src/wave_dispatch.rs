@@ -6,6 +6,7 @@ use std::time::Duration;
 use oneiron::agent_dispatch::FanoutStatement;
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use oneiron::task_verb::WaveDispatchGeneration;
+use oneiron::wave_orchestration::WaveApplyOutcome;
 use oneiron::{EntityId, Result, Vault, WavePlanner, WriteActor};
 use tokio::time::Instant;
 
@@ -196,11 +197,25 @@ impl WaveDispatchPump {
         let mut pass = WaveDispatchPass::default();
         if self.plan_pending {
             self.plan_pending = false;
-            match host.run_plan_once(lease_owner, now) {
-                Ok(Some(receipt)) => {
+            match host.run_plan_once(&*factory, lease_owner, now) {
+                Ok(Some(WaveApplyOutcome::Applied(receipt))) => {
                     self.notify();
                     pass.progressed = true;
                     pass.statement = receipt.statement;
+                }
+                // The owner's launch mode held the cut (FIX 8599): the door
+                // froze it and parked its planning attempt in its own
+                // transaction, so nothing was minted and nothing dispatches.
+                // The owner's ruling launches that exact cut on the existing
+                // resume path, and the scan its commit wakes hands its TASKs
+                // off. Another queued plan may still be claimed.
+                Ok(Some(WaveApplyOutcome::Paused(launch))) => {
+                    self.plan_pending = true;
+                    pass.progressed = true;
+                    tracing::info!(
+                        launch = %launch.launch_ref.to_hex(),
+                        "wave cut held for fan-out approval"
+                    );
                 }
                 Ok(None) => {}
                 // The planning attempt stays queued; its lease expiry retries it.
@@ -210,14 +225,18 @@ impl WaveDispatchPump {
             pass.earliest_retry = self.next_delay(now);
             return Ok(pass);
         }
-        let due: Vec<_> = self
+        // FIX 8601: the longest-due deferred handoffs go first, a quantum at
+        // a time. Each one retried is rescheduled behind those still waiting,
+        // so every deferred TASK gets its turn and none is dropped.
+        let retry_now = Instant::now();
+        let mut due: Vec<_> = self
             .failed
             .iter()
-            .filter(|(_, retry)| retry.due <= Instant::now())
-            .take(self.limits.retry_quantum)
-            .map(|(&candidate, _)| candidate)
+            .filter(|(_, retry)| retry.due <= retry_now)
+            .map(|(&candidate, retry)| (retry.due, candidate))
             .collect();
-        for candidate in due {
+        due.sort_by_key(|(at, _)| *at);
+        for (_, candidate) in due.into_iter().take(self.limits.retry_quantum) {
             match self.handoff(vault, factory, &host, candidate, now) {
                 Ok(accepted) => pass.progressed |= accepted,
                 Err(failure) => pass.item_failures.push(failure),
