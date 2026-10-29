@@ -104,7 +104,7 @@ pub(in crate::api::ai::chat) fn witness_through_row(
 ) -> Result<Result<Value, VerbHookStop>, MemoryError> {
     let args = serde_json::to_value(turn)
         .map_err(|_| MemoryError::bad_request("witness turn does not encode"))?;
-    verb_hook_boundary::verb_hooks_in(
+    let ended = verb_hook_boundary::verb_hooks_in(
         vault,
         session,
         VerbCall::for_memory(hooked, WITNESS_ROW, VerbDomain::Write)?,
@@ -118,7 +118,16 @@ pub(in crate::api::ai::chat) fn witness_through_row(
             serde_json::to_value(receipt)
                 .map_err(|_| MemoryError::bad_request("witness receipt does not encode"))
         },
-    )
+    )?;
+    // A turn that resumes a settled ask never runs the witness closure above:
+    // its sources come from the stored receipt instead.
+    if written.is_none()
+        && let Ok(value) = &ended
+        && let Some(receipt) = verb_hook_boundary::resumed_witness_receipt(value)
+    {
+        *written = sources::witnessed(&receipt);
+    }
+    Ok(ended)
 }
 
 /// A turn a verb hook stopped (ARCH-0080 §3): a skip is a conflict, an ask
