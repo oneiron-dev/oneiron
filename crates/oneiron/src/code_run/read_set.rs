@@ -2,7 +2,7 @@
 
 use super::payload::decode_self_dispatch_outcome;
 use super::replay::CodeRunReplayRecord;
-use super::types::{SelfDispatchOutcome, SelfDurableWaitReason, SelfEffect};
+use super::types::{SelfDispatchOutcome, SelfDurableWaitReason};
 use super::wait_rows::wait_rows;
 use crate::EntityId;
 
@@ -24,13 +24,13 @@ pub fn resident_tool_answer_rows(
             SelfDispatchOutcome::DurableWait(wait) => {
                 let current_peer_wait = Some(wait.wait_id) == current_wait
                     && wait.reason == SelfDurableWaitReason::PeerResult;
-                if !current_peer_wait && wait_rows(&call.outcome).is_none() {
-                    return None;
+                match wait_rows(&call.outcome) {
+                    Some(listed) => rows.extend(listed),
+                    None if !current_peer_wait => return None,
+                    None => {}
                 }
             }
-            SelfDispatchOutcome::MemorySearch(search)
-                if call.effect == SelfEffect::MemorySearch =>
-            {
+            SelfDispatchOutcome::MemorySearch(search) => {
                 rows.extend(search.results.into_iter().map(|hit| hit.id));
             }
             _ => {}
