@@ -251,6 +251,8 @@ pub(super) fn compact_all_windows(
             }
         }
     }
+    let scrub_sends = !withdrawn.due.is_empty() || full_carriers;
+    super::corrupt::settle_unlabelled_sends(vault, scrub_sends, &mut state)?;
     Ok(state)
 }
 
