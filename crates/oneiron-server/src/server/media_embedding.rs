@@ -130,6 +130,7 @@ impl MediaEmbedRefusal {
                 | Self::Malformed
                 | Self::Call(LlmError::Fatal(
                     FatalLlmError::InvalidRequest
+                        | FatalLlmError::InvalidRequestDetail { .. }
                         | FatalLlmError::ContentFiltered
                         | FatalLlmError::EmptyResponse
                 ))

@@ -77,6 +77,7 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
                 true
             }
             FatalLlmError::InvalidRequest
+            | FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContentFiltered
             | FatalLlmError::EmptyResponse
             | FatalLlmError::LabelRead(_) => false,

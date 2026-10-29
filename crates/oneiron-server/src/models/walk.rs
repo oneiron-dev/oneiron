@@ -291,6 +291,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Retryable(RetryableLlmError::StreamCut) => "stream_cut",
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => "kept_on_device",
         LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
+        LlmError::Fatal(FatalLlmError::InvalidRequestDetail { .. }) => "invalid_request",
         LlmError::Fatal(FatalLlmError::Auth) => "auth",
         LlmError::Fatal(FatalLlmError::ContentFiltered) => "content_filtered",
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
@@ -321,6 +322,7 @@ pub(super) fn ends_call(error: &LlmError) -> bool {
         error,
         LlmError::Fatal(
             FatalLlmError::InvalidRequest
+                | FatalLlmError::InvalidRequestDetail { .. }
                 | FatalLlmError::ContentFiltered
                 | FatalLlmError::Unsupported(_)
                 | FatalLlmError::ResponseErased

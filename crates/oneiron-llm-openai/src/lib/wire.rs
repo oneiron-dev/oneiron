@@ -17,6 +17,9 @@ use std::collections::BTreeMap;
 /// (the house EXL3 server, INF 1).
 pub(crate) const SOLO_FIELD: &str = "oneiron_solo";
 
+/// The most error text a 400 refusal keeps, in bytes.
+const MAX_REFUSAL_MESSAGE_BYTES: usize = 2048;
+
 pub fn build_openai_chat_request(
     config: &OpenAiCompatConfig,
     request: &LlmRequest,
@@ -434,10 +437,38 @@ pub fn classify_openai_status(
         408 | 504 => RetryableLlmError::Timeout.into(),
         500..=599 => RetryableLlmError::ServerError.into(),
         401 | 403 => FatalLlmError::Auth.into(),
-        400 | 404 | 409 | 413 | 422 => FatalLlmError::InvalidRequest.into(),
+        400 => refusal_message(body).map_or_else(
+            || FatalLlmError::InvalidRequest.into(),
+            |message| FatalLlmError::InvalidRequestDetail { message }.into(),
+        ),
+        404 | 409 | 413 | 422 => FatalLlmError::InvalidRequest.into(),
         _ if status >= 500 => RetryableLlmError::ServerError.into(),
         _ => FatalLlmError::InvalidRequest.into(),
     }
+}
+
+/// A 400's error text, bounded: the error's message, or the error itself
+/// when it is a bare string. None when it names none.
+fn refusal_message(body: &JsonValue) -> Option<String> {
+    let error = body.get("error").unwrap_or(body);
+    let message = match error {
+        JsonValue::String(message) => message.as_str(),
+        JsonValue::Object(_) => error.get("message")?.as_str()?,
+        _ => return None,
+    };
+    if message.is_empty() {
+        return None;
+    }
+    let message = if message.len() <= MAX_REFUSAL_MESSAGE_BYTES {
+        message
+    } else {
+        let mut end = MAX_REFUSAL_MESSAGE_BYTES;
+        while end > 0 && !message.is_char_boundary(end) {
+            end -= 1;
+        }
+        &message[..end]
+    };
+    Some(message.to_owned())
 }
 
 fn is_content_filter_error(body: &JsonValue) -> bool {

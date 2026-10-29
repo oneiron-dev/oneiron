@@ -175,6 +175,10 @@ impl SpentKind {
 pub enum FatalLlmError {
     #[error("invalid request")]
     InvalidRequest,
+    /// A request the provider refused, with its message: an HTTP 400's
+    /// error text, bounded.
+    #[error("invalid request: {message}")]
+    InvalidRequestDetail { message: String },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]
