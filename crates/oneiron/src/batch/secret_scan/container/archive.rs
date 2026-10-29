@@ -87,9 +87,8 @@ fn open(bytes: &[u8]) -> Walked<ZipArchive<Cursor<&[u8]>>> {
     // The reader sizes its tables by the declared count: a count the bytes
     // cannot hold is a malformed archive, never a bound.
     let declared = declared_entries(bytes).ok_or_else(unreadable)?;
-    if usize::try_from(declared).map_or(true, |declared| {
-        declared > bytes.len() / CENTRAL_ENTRY_LEN
-    }) {
+    if usize::try_from(declared).map_or(true, |declared| declared > bytes.len() / CENTRAL_ENTRY_LEN)
+    {
         return Err(unreadable());
     }
     let archive = ZipArchive::new(Cursor::new(bytes)).map_err(|_| unreadable())?;

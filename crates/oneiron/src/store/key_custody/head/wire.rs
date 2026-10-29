@@ -293,10 +293,12 @@ impl Bodies {
     pub(super) fn body(&mut self, scope: CompartmentScope, bytes: usize) -> &mut BodyWire {
         let bytes = bytes.saturating_add(ROW_OVERHEAD);
         let chunks = self.scopes.entry(scope).or_default();
-        let full = chunks.last().is_none_or(|(body, used)| match scope.world() {
-            Some(_) => !body.live.is_empty() || !body.retired.is_empty(),
-            None => *used > 0 && used.saturating_add(bytes) > COMPARTMENT_BYTES,
-        });
+        let full = chunks
+            .last()
+            .is_none_or(|(body, used)| match scope.world() {
+                Some(_) => !body.live.is_empty() || !body.retired.is_empty(),
+                None => *used > 0 && used.saturating_add(bytes) > COMPARTMENT_BYTES,
+            });
         if full {
             chunks.push((BodyWire::default(), 0));
         }

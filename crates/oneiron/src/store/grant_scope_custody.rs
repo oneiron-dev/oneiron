@@ -19,8 +19,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyKind, CustodySecret, EntryState, ErasableItem, ErasablePurpose,
-    erasable_refs_of_in_txn, put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
+    CustodyKind, CustodySecret, EntryState, ErasableItem, ErasablePurpose, erasable_refs_of_in_txn,
+    put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
 };
 
 /// The context a pact id and epoch derive a key incarnation under.
@@ -78,8 +78,7 @@ pub(crate) fn install_scope_key(
     s.core.key_custody.pin_in_txn(s, w)?;
     let custody = s.core.key_custody.bind_in_txn(s, &*w)?;
     let incarnation = incarnation(pact_id, epoch);
-    let committed =
-        erasable_refs_of_in_txn(s, &*w, ErasablePurpose::GrantScope, grant.as_bytes())?;
+    let committed = erasable_refs_of_in_txn(s, &*w, ErasablePurpose::GrantScope, grant.as_bytes())?;
     let secret = CustodySecret::from_bytes(Zeroizing::new(key.to_vec()));
     let mut held = None;
     for item in custody.erasable_keys_of(ErasablePurpose::GrantScope, grant.as_bytes())? {
@@ -87,8 +86,8 @@ pub(crate) fn install_scope_key(
             continue;
         }
         let state = custody.erasable_state(&item)?;
-        let same = state == EntryState::Live
-            && custody.read_erasable(&item)?.expose() == secret.expose();
+        let same =
+            state == EntryState::Live && custody.read_erasable(&item)?.expose() == secret.expose();
         if committed.contains(&item) {
             match state {
                 EntryState::Live if !same => return Err(unknown_key()),
