@@ -4441,6 +4441,74 @@ async fn vault_export(
         rows: Some(rows),
     })
 }
+async fn vault_export_transfer_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.export.transfer.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.export.transfer.read", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.export.transfer.read", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_export_transfer_read(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_export_transfer_release(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.export.transfer.release")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.export.transfer.release", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.export.transfer.release", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_export_transfer_release(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn self_credential_attenuate(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38324,6 +38392,8 @@ async fn call_verb_row(
         "vault.retrieval.policy.admit" => vault_retrieval_policy_admit(server, call, input).await,
         "vault.retrieval.policy.update" => vault_retrieval_policy_update(server, call, input).await,
         "vault.export" => vault_export(server, call, input).await,
+        "vault.export.transfer.read" => vault_export_transfer_read(server, call, input).await,
+        "vault.export.transfer.release" => vault_export_transfer_release(server, call, input).await,
         "self.credential.attenuate" => self_credential_attenuate(server, call, input).await,
         "vault.scope.position" => vault_scope_position(server, call, input).await,
         "vault.scope.ceiling" => vault_scope_ceiling(server, call, input).await,
