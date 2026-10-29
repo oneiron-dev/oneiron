@@ -93,7 +93,7 @@ pub struct ConnectorToolConsent {
 }
 
 /// One tool's grant and the per-grant key that governs its calls.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct ConnectorToolGrant {
     pub tool: String,
     pub grant_id: String,

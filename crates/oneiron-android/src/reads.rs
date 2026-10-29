@@ -1,7 +1,8 @@
 //! The Kotlin `EmbeddedVault`'s context pack, text search and graph reads,
 //! lowered to the same core reads the C ABI's `oneiron_vault_context_pack`,
 //! `_search_text`, `_targets`, `_sources`, `_subtree` and `_ancestors` run.
-//! Reads are the same on every vault, bound or not.
+//! Reads are the same on every vault, bound or not, except `peers`, which
+//! reads a session-bound vault's room over base (FIX 11586).
 
 use std::sync::MutexGuard;
 
@@ -62,12 +63,12 @@ impl NativeVault {
         let peer_type = peer_type
             .map(|peer_type| u8::try_from(peer_type).map_err(display))
             .transpose()?;
-        let peers = if inbound {
-            self.vault.sources(&id, kind, peer_type)
-        } else {
-            self.vault.targets(&id, kind, peer_type)
-        };
-        peers.map_err(display)
+        match (self.session_memory(), inbound) {
+            (Some(memory), true) => memory.raw_sources(&id, kind, peer_type).map_err(display),
+            (Some(memory), false) => memory.raw_targets(&id, kind, peer_type).map_err(display),
+            (None, true) => self.vault.sources(&id, kind, peer_type).map_err(display),
+            (None, false) => self.vault.targets(&id, kind, peer_type).map_err(display),
+        }
     }
 
     /// The `ChildOf` descendants of `root` to `max_depth`, each with its depth.

@@ -580,6 +580,7 @@ impl From<oneiron::SurfaceEventHandoffStatus> for SurfaceEventStatusResponse {
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read or core:write. A submitter needs core:read on the identity it addresses: the receiving identity resolves under the submitter's own read, and its acknowledgement points at a status read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 422, description = "Identity routing refused the event without queueing. The body is the typed route receipt, naming which of the four rejection reasons applied. An identity the submitter cannot read is refused as `unknown_receiving_identity`, as a missing one is.", body = SurfaceEventRejectionResponse, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Admission failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]

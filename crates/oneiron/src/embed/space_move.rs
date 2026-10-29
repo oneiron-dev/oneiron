@@ -62,7 +62,7 @@ const EMBEDDING_MOVE: SideTable<String, SpaceMove, Named> =
     SideTable::new(&side_table::EMBEDDING_MOVE);
 
 /// Where a kind slot's vectors are searched.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpaceRef {
     /// The vault's own text vector index: the unbound text slot.
@@ -98,7 +98,7 @@ impl std::fmt::Display for SpaceRef {
 }
 
 /// A paired comparison's reading (NOT-WORSE = A).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum NotWorse {
     /// The interval's low end is at or above minus the tolerance.
@@ -110,7 +110,7 @@ pub enum NotWorse {
 }
 
 /// A family-grouped mean paired difference and its two-sided 95% interval.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PairedInterval {
     pub mean: f32,
     pub low: f32,
@@ -118,7 +118,7 @@ pub struct PairedInterval {
 }
 
 /// One kind's paired probe run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct KindProbeCheck {
     pub kind: InputKind,
     /// Probes that ran: those of this kind with a live target.
@@ -157,7 +157,7 @@ pub struct KindProbeCheck {
 }
 
 /// One probe a check ran whose date window had ended: a member of a cut cohort.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CohortProbe {
     /// 32 hex.
     pub probe: String,
@@ -169,7 +169,7 @@ pub struct CohortProbe {
 }
 
 /// One paired probe run over every kind a move carries.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpaceMoveCheck {
     /// Vault seconds.
     pub checked_at: u64,
@@ -183,7 +183,7 @@ pub struct SpaceMoveCheck {
 }
 
 /// Where a move stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpaceMoveState {
     /// The candidate fills beside the incumbent, which serves.
@@ -199,7 +199,7 @@ pub enum SpaceMoveState {
 }
 
 /// A kind slot version move: every kind slot the incumbent served, moving to the candidate.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpaceMove {
     pub candidate: String,
     pub incumbent: SpaceRef,

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::{OwnerError, OwnerResult, entity_id};
 
 /// One imported claim on the wire. `claim_id` may be left out of a preview.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ImportClaim {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,7 +31,7 @@ pub(crate) struct ImportClaim {
     pub(crate) learned_at: u64,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Span {
     pub(crate) start: u64,
@@ -39,7 +39,7 @@ pub(crate) struct Span {
 }
 
 /// A batch on the wire. `request_id` may be left out of a preview.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ImportBatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,7 +50,7 @@ pub(crate) struct ImportBatch {
 }
 
 /// What the owner is asked to approve.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ImportPreview {
     /// Send this back with the batch to approve or decline it.
     pub(crate) digest: String,
@@ -61,7 +61,7 @@ pub(crate) struct ImportPreview {
 }
 
 /// An approved batch.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ImportApproved {
     pub(crate) digest: String,
     pub(crate) approval: &'static str,
@@ -69,7 +69,7 @@ pub(crate) struct ImportApproved {
 }
 
 /// A declined batch: one receipt, nothing admitted.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ImportDeclined {
     pub(crate) digest: String,
     pub(crate) decision_id: String,
