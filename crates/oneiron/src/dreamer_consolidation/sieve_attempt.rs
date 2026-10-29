@@ -157,9 +157,12 @@ impl ConsolidationExecutor<'_> {
                 })
                 .await;
             // Every generation that finished is spent, whatever the rung's
-            // outcome.
+            // outcome. A tally the record cannot take settles with that
+            // error instead of leaving the attempt uncharged (FIX 11554).
             for (hash, usage) in &read.steps {
-                charges.record_terminal(ctx.vault, attempt_id, *hash, usage)?;
+                if let Err(error) = charges.record_terminal(ctx.vault, attempt_id, *hash, usage) {
+                    return super::residency::spent_or_deferred(error, ctx, &charges);
+                }
             }
             let decisions = match read.outcome {
                 Ok(SieveRungOutcome::Decided(decisions)) => decisions,
@@ -211,7 +214,11 @@ impl ConsolidationExecutor<'_> {
                 // receipts stay.
                 None => {
                     for (hash, _) in &read.steps {
-                        crate::llm::forget_step_memo(ctx.vault, attempt_id, hash)?;
+                        if let Err(error) =
+                            crate::llm::forget_step_memo(ctx.vault, attempt_id, hash)
+                        {
+                            return super::residency::spent_or_deferred(error, ctx, &charges);
+                        }
                     }
                     return Ok(charges.park_for(SIEVE_UNREAD, DreamerParkCause::Retry));
                 }
