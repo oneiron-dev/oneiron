@@ -397,24 +397,25 @@ pub(super) fn escalation_held_in_txn(
             ..NotificationSource::default()
         };
         let id = crate::inbox::notification_id(&source)?;
-        let LiveEntityRow::Live { entity_type, body } =
-            live_entity_row_in_txn(&vault.store, txn, &id)?
-        else {
-            return Ok(false);
-        };
-        if entity_type != ENTITY_TYPE_NOTIFICATION {
-            continue;
+        match live_entity_row_in_txn(&vault.store, txn, &id)? {
+            LiveEntityRow::Absent => return Ok(false),
+            LiveEntityRow::DeletedShell => continue,
+            LiveEntityRow::Live { entity_type, body } => {
+                if entity_type != ENTITY_TYPE_NOTIFICATION {
+                    continue;
+                }
+                let body = decode_notification_body(&body)?;
+                let held = body
+                    .source
+                    .detail
+                    .as_deref()
+                    .and_then(|held| serde_json::from_str::<TriagePacket>(held).ok());
+                if held.is_some_and(|held| held.signal.trigger() == signal.trigger()) {
+                    continue;
+                }
+                return Ok(false);
+            }
         }
-        let body = decode_notification_body(&body)?;
-        let held = body
-            .source
-            .detail
-            .as_deref()
-            .and_then(|held| serde_json::from_str::<TriagePacket>(held).ok());
-        if held.is_some_and(|held| held.signal.trigger() == signal.trigger()) {
-            continue;
-        }
-        return Ok(false);
     }
     Ok(true)
 }
