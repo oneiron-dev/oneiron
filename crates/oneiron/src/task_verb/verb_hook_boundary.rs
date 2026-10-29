@@ -390,6 +390,7 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
     // A call serving a room NOTE keeps its hooks' records for its session
     // (FIX 4280, 10344), judged on the call's own input.
+    let _restriction = restriction_clock_for_call(memory, verb, &args);
     let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     row_pre_resumable(
         memory,
@@ -407,6 +408,7 @@ pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<Ver
 /// not the facade's credential-bound live-run wrapper. All other hooks and
 /// rewrite admission stay the same as [`row_pre`].
 pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
+    let _restriction = restriction_clock_for_call(memory, verb, &args);
     let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     row_pre_resumable(
         memory,
@@ -418,6 +420,21 @@ pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryRe
         session.as_ref(),
     )?
     .map_err(|stop| stop_refusal(stop, session.as_ref()))
+}
+
+/// The restriction-only clock for a call that is wholly an owner's erase or
+/// revoke on the caller's own `args` ([`revoke_lands::restriction_only_call`]),
+/// held over its hooks' pre chain, so over a damaged clock floor they read
+/// what its run reads (FIX 11522). A classification read that fails enters
+/// none, as before.
+fn restriction_clock_for_call(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: &Value,
+) -> Option<crate::authority::RestrictionOnlyClock> {
+    revoke_lands::restriction_only_call(memory.vault(), verb, args)
+        .unwrap_or(false)
+        .then(crate::authority::restriction_only_clock)
 }
 
 /// [`row_pre`] with the stop as it is. `resume` is how settlement runs the
@@ -544,6 +561,7 @@ pub fn row(
         .plain_resume()
         .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
         .map(VerbResume::Row);
+    let pre_restriction = restriction_clock_for_call(memory, verb, &args);
     let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     let pre = match row_pre_resumable(
         memory,
@@ -557,6 +575,7 @@ pub fn row(
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop, session.as_ref()),
     };
+    drop(pre_restriction);
     // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
     let restriction = pre
         .landing
@@ -618,6 +637,7 @@ where
     let args = encode(&input)?;
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
+    let pre_restriction = restriction_clock_for_call(memory, verb, &args);
     let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     let mut pre = match row_pre_resumable(
         memory,
@@ -631,6 +651,7 @@ where
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop, session.as_ref()),
     };
+    drop(pre_restriction);
     revoke_lands::settle(&mut pre, &revoke_lands::decodes::<I>);
     let ran = (|| -> MemoryResult<(O, Value)> {
         let input = if pre.args == args {
