@@ -85,7 +85,15 @@ pub(super) fn answer(
     let mut listed = Some(Vec::new());
     let output = verb_hook_boundary::row(&memory, name, input, |input| {
         sdk::validate_input(name, &input)?;
-        owner_row(server, owner, actor.entity_ref(), line, verb, input, &mut listed)
+        owner_row(
+            server,
+            owner,
+            actor.entity_ref(),
+            line,
+            verb,
+            input,
+            &mut listed,
+        )
     })?;
     let rows = listed.map(|mut listed| {
         let mut rows = producers.take();
@@ -155,9 +163,12 @@ fn owner_row(
         AgentVerb::AiVideo => {
             let input = decode(input)?;
             let ticket = match line {
-                Some(line) => {
-                    runtime.block_on(crate::api::ai_video_for_run(server, line, input, Some(actor)))
-                }
+                Some(line) => runtime.block_on(crate::api::ai_video_for_run(
+                    server,
+                    line,
+                    input,
+                    Some(actor),
+                )),
                 None => runtime.block_on(crate::api::ai_video_as_owner(server, input, Some(actor))),
             };
             encode(ticket?)

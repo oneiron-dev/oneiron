@@ -89,10 +89,7 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
     ),
     // A served form: the ASSET it served, and the ASSET_TEXT it read in
     // place of the body. (FIX 4848)
-    (
-        ReceiptKind::ServedForm,
-        &["asset_ref", "asset_text_ref"],
-    ),
+    (ReceiptKind::ServedForm, &["asset_ref", "asset_text_ref"]),
     // A task-highway call: its parked proposal, the TASK a copy redid and
     // the parent it dropped, its stale brief pins, and its composer's
     // lens rows. (FIX 4848)

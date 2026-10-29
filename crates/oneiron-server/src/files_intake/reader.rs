@@ -32,8 +32,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use oneiron::ingest::{PdfText, pdf_text};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::note::{
-    FileFacts, ImportedNoteLink, ImportedNoteStanding, NameOnlyFile, NameOnlyReason,
-    OriginalBytes,
+    FileFacts, ImportedNoteLink, ImportedNoteStanding, NameOnlyFile, NameOnlyReason, OriginalBytes,
 };
 use serde::Serialize;
 
