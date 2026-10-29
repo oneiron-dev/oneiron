@@ -7,8 +7,8 @@
 //! run the core's raw caller doors (`Memory::raw_*`). Every other vault
 //! writes as the host. Reads are the same on every vault: the context pack,
 //! text search and graph reads (`reads`) lower to the core reads the C ABI
-//! runs. A bound vault's `get` and `edges` read its session's room over base
-//! while its session is live (FIX 8119).
+//! runs. A bound vault's `get`, `edges` and `peers` read its session's room
+//! over base while its session is live (FIX 8119, FIX 11586).
 use jni::{
     JNIEnv,
     objects::{JByteArray, JFloatArray, JObject, JString, JValue},

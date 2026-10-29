@@ -823,16 +823,25 @@ class TaskAskPersonEvidence(TypedDict):
 # OF-181: a host-rendered lens card's event and close. These keep the wire's
 # camelCase keys: they are the server route's bodies, not snake_case DTOs.
 # `selectedContext` (FIX 3268): the clicker's selectionRefs on this card,
-# context for a model round trip only; empty when absent.
+# context for a model round trip only; empty when absent. `stream`
+# (FIX 11399): the profile the answer is framed in; a patch-profile caller
+# takes the card's refinement beside a local action's `$state`.
 LensFrameEventRequest = TypedDict(
     "LensFrameEventRequest",
     {
         "event": Facade.GeneratedUiActionEvent,
         "idempotencyKey": str,
         "selectedContext": NotRequired[list[str]],
+        "stream": NotRequired[Facade.GeneratedUiStreamProfile],
     },
 )
-LensFrameLocalReply = TypedDict("LensFrameLocalReply", {"$state": Facade.GeneratedUiStateSnapshot})
+LensFrameLocalReply = TypedDict(
+    "LensFrameLocalReply",
+    {
+        "$state": Facade.GeneratedUiStateSnapshot,
+        "refinement": NotRequired[Facade.GeneratedUiSegment | None],
+    },
+)
 LensFrameToolReply = TypedDict(
     "LensFrameToolReply",
     {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
@@ -3210,7 +3219,7 @@ class Oneiron:
             """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
     class _VaultAgentsGrantsVerbs:
         def mint(self, spec: Facade.AgentGrantMintRequest) -> Facade.AgentGrantMinted:
-            """The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant."""
+            """The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."""
         def revoke(self, spec: Facade.AgentGrantRevokeRequest) -> Facade.AgentGrantRevoked:
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""
     class _VaultAgentsSpawnVerbs:
@@ -4264,15 +4273,15 @@ class Oneiron:
         def anonymous_chat(self, spec: Facade.AnonymousChatRequest) -> Facade.AnonymousChatResponse:
             """One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."""
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
-            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
+            """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."""
+            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. The owner calls it, or an agent whose Grant names ai.image, as his call."""
         def speech(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."""
+            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. The owner calls it, or an agent whose Grant names ai.speech, as his call."""
         def transcribe(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."""
+            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. The owner calls it, or an agent whose Grant names ai.transcribe, as his call."""
         def embed(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."""
+            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. The owner calls it, or an agent whose Grant names ai.embed, as his call."""
         @property
         def video(self) -> "Oneiron._AiVideoVerbs": ...
         def ask_image(self, spec: Facade.AskImageRequest) -> Facade.AskImageAnswer:
@@ -4313,7 +4322,7 @@ class Oneiron:
             """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
         def usage(self, spec: Facade.LiveVoiceUsageRequest) -> Facade.LiveVoiceUsage:
             """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
-        def tool(self, spec: Facade.LiveVoiceToolRequest) -> Facade.LiveVoiceToolReply:
+        def tool(self, spec: Facade.LiveVoiceToolRequest) -> Facade.ActAnswer[Facade.LiveVoiceToolReply]:
             """Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards."""
         def end(self, spec: Facade.LiveVoiceSessionRequest) -> Facade.LiveVoiceProcessed:
             """Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."""
@@ -4330,11 +4339,11 @@ class Oneiron:
             """Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
-            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."""
+            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. The owner calls it, or an agent whose Grant names ai.video, as his call."""
         def poll(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoJob:
-            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
+            """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. The owner polls every job; an agent whose owner agent Grant names ai.video polls only the jobs it asked for."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
-            """Stops a video job at its provider."""
+            """Stops a video job at its provider. The owner cancels any job; an agent whose owner agent Grant names ai.video cancels only the jobs it asked for."""
     class _RevealVerbs:
         def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
             """Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""

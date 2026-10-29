@@ -101,7 +101,7 @@ pub struct ConcernMoveBasis {
 }
 
 /// A move's answer: the card's ask, or the receipt of a note or a steer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConcernMoveOutcome {
     /// The card's ask after `ask_coach`: a new one, or the one already
@@ -123,7 +123,7 @@ pub enum ConcernMoveOutcome {
 
 /// One note or steer taken through a card, kept on it oldest first. It is
 /// no evidence and never reopens the card.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConcernMoveReceipt {
     /// Who took the move: the agent door's verified caller, or the actor the
@@ -155,7 +155,7 @@ pub struct ConcernMoveReceipt {
 }
 
 /// The native receipt a move's door answered, by the move's kind.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConcernMoveLink {
     /// `self.message`'s receipt: the room and the witness ids. The text stays

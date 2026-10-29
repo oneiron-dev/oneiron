@@ -107,7 +107,11 @@ agent's own config.
 
 Each request gets 120 seconds, answer included (`--request-timeout-secs`), and
 an answer that starts arriving and then stalls for 30 seconds is given up on
-(`--idle-timeout-secs`).
+(`--idle-timeout-secs`). A tool whose work runs longer gets its own deadline
+without raising every request's: `--tool-timeout-secs TOOL=SECS`, repeatable
+once per tool, gives a `tools/call` naming that tool in `params.name` its
+entry (for example `vault.embedding_spaces.move_check=600`) while every other
+request keeps the global value.
 
 `oneiron mcp` also has an owner mode, for the vault's owner himself rather
 than an agent: `--auth-mode owner --owner-upgrade-headers-file <file>` sends

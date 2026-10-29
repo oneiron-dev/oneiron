@@ -35,7 +35,7 @@ pub const LEGAL_HOLD_DEFERRAL: &str = "delete deferred: completion pending";
 pub const LEGAL_HOLD_LOG_RETENTION_MONTHS: u32 = 24;
 
 /// Who placed a hold, and so who may lift it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldKind {
     /// The vault owner's hold. The owner lifts it only through the one
@@ -83,7 +83,7 @@ impl LegalHoldTarget {
 }
 
 /// Who acted, in the hold log (C3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldActorKind {
     Owner,
@@ -97,7 +97,7 @@ pub enum LegalHoldActorKind {
 }
 
 /// One hold row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHold {
     pub hold_id: EntityId,
@@ -160,7 +160,7 @@ impl LegalHold {
 }
 
 /// The seven hold events (C3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldEventKind {
     Placed,
@@ -176,7 +176,7 @@ pub enum LegalHoldEventKind {
 }
 
 /// The reason code of one hold event. Never free text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldReason {
     /// The owner placed a customer hold.
@@ -214,7 +214,7 @@ pub enum LegalHoldReason {
 }
 
 /// One row of a hold log: ids, times and codes only (C3).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldEvent {
     pub hold_id: EntityId,
@@ -284,7 +284,7 @@ pub enum LiftAndEraseStatus {
 }
 
 /// What an erase that ran still waits on (C4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ErasePendingReason {
     /// Its historical sweep is queued: the receipt has no linked sweep row

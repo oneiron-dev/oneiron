@@ -143,6 +143,36 @@ fn hash_sorted(value: &Value, hasher: &mut blake3::Hasher) {
     }
 }
 
+/// Parses `--tool-timeout-secs` entries, each `TOOL=SECS` with `SECS` at
+/// least 1, into one deadline per tool. A repeated tool keeps its last
+/// entry.
+fn tool_deadlines(entries: &[String]) -> anyhow::Result<HashMap<String, Duration>> {
+    let mut deadlines = HashMap::new();
+    for entry in entries {
+        let (tool, secs) = entry.split_once('=').unwrap_or(("", ""));
+        let secs = secs.parse::<u64>().unwrap_or(0);
+        if tool.is_empty() || secs == 0 {
+            return Err(anyhow::anyhow!(
+                "--tool-timeout-secs {entry:?} is not TOOL=SECS with SECS at least 1"
+            ));
+        }
+        deadlines.insert(tool.to_owned(), Duration::from_secs(secs));
+    }
+    Ok(deadlines)
+}
+
+/// The tool a `tools/call` names in `params.name`, if it names one. `None`
+/// for any other message.
+fn called_tool(message: &Value) -> Option<&str> {
+    if message.get("method").and_then(Value::as_str) != Some("tools/call") {
+        return None;
+    }
+    message
+        .get("params")
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+}
+
 /// The invocation a server answer names as pending on an ask: a tool-first
 /// hook stop's `result.structuredContent.hook`, or a gateway refusal's
 /// `error.data.hook`, with `status` `pending`. `None` for any other answer.
@@ -372,6 +402,10 @@ struct Bridge {
     /// How long one request may take, and how long its answer may stall.
     deadline: Duration,
     idle: Duration,
+    /// One tool's own deadline, by the name a `tools/call` sends in
+    /// `params.name`, from `--tool-timeout-secs`. A request naming no
+    /// listed tool keeps `deadline`.
+    tool_deadlines: HashMap<String, Duration>,
     /// The two variables the operator named for the credential, which no
     /// wake adapter the bridge runs inherits.
     named_env: Vec<String>,
@@ -399,6 +433,7 @@ impl Bridge {
             auth,
             deadline: Duration::from_secs(args.request_timeout_secs),
             idle: Duration::from_secs(args.idle_timeout_secs),
+            tool_deadlines: tool_deadlines(&args.tool_timeout_secs)?,
             // The credential stays in this process: the server gets the slip
             // and a proof signed for each request, or the owner's upgrade
             // headers, and no variable a slip or seed may be in reaches a
@@ -435,8 +470,11 @@ impl Bridge {
                 None,
             ));
         }
-        // One deadline for the whole request, the endpoint probe included.
-        let until = Instant::now() + self.deadline;
+        // One deadline for the whole request, the endpoint probe included:
+        // the called tool's own entry when `--tool-timeout-secs` names it,
+        // else the global one.
+        let (deadline, tool) = self.deadline_for(&message);
+        let until = Instant::now() + deadline;
         let key = pending_call_key(&message);
         let offered = ClientSession::offered(&message);
         let named = self.client_session.name_on_call(&mut message);
@@ -454,7 +492,7 @@ impl Bridge {
             .and_then(|meta| meta.get(INVOCATION_META))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let reply = self.post(body, until);
+        let reply = self.post(body, until, deadline, tool);
         let id = message.get("id").cloned()?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
             Ok(answer) => {
@@ -505,13 +543,33 @@ impl Bridge {
         }
     }
 
+    /// This request's deadline: the called tool's own entry when
+    /// `--tool-timeout-secs` names it, else the global one; and the tool
+    /// whose entry it is, if one, so the deadline's error names its flag.
+    fn deadline_for(&self, message: &Value) -> (Duration, Option<&str>) {
+        let entry = called_tool(message).and_then(|tool| {
+            self.tool_deadlines
+                .get_key_value(tool)
+                .map(|(tool, deadline)| (tool.as_str(), *deadline))
+        });
+        match entry {
+            Some((tool, deadline)) => (deadline, Some(tool)),
+            None => (self.deadline, None),
+        }
+    }
+
     /// The endpoint this bridge forwards to. With no `--surface`, a request
     /// asks `/mcp` to `initialize`, within the request's own deadline, and
     /// the answer picks the endpoint for the bridge's life. Calls that arrive
     /// meanwhile wait for that one probe, each no longer than its own
     /// deadline. A probe that gets no result picks nothing: the calls that
     /// waited on it share its answer, and the next request asks again.
-    fn endpoint(&self, until: Instant) -> Result<McpSurface, Refusal> {
+    fn endpoint(
+        &self,
+        until: Instant,
+        deadline: Duration,
+        tool: Option<&str>,
+    ) -> Result<McpSurface, Refusal> {
         let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
         let joined = pick.failures;
         loop {
@@ -528,7 +586,12 @@ impl Bridge {
             }
             let left = until.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Err(self.refusal_for(McpSurface::Primary, link::Cut::Deadline));
+                return Err(self.refusal_for(
+                    McpSurface::Primary,
+                    link::Cut::Deadline,
+                    deadline,
+                    tool,
+                ));
             }
             pick = self
                 .probed
@@ -539,7 +602,7 @@ impl Bridge {
         // No lock is held while the probe runs.
         pick.probing = true;
         drop(pick);
-        let probed = self.probe(until);
+        let probed = self.probe(until, deadline, tool);
         let mut pick = self.pick.lock().unwrap_or_else(PoisonError::into_inner);
         pick.probing = false;
         let outcome = match probed {
@@ -559,12 +622,19 @@ impl Bridge {
 
     /// `/mcp` when its `initialize` says this credential may run code there;
     /// `/mcp/tool-first` otherwise, as for a server too old to say.
-    fn probe(&self, until: Instant) -> Result<McpSurface, Refusal> {
+    fn probe(
+        &self,
+        until: Instant,
+        deadline: Duration,
+        tool: Option<&str>,
+    ) -> Result<McpSurface, Refusal> {
         let answer = self
             .post_to(
                 McpSurface::Primary,
                 SURFACE_PROBE.as_bytes().to_vec(),
                 until,
+                deadline,
+                tool,
             )?
             .answer_to(&json!(SURFACE_PROBE_ID))?;
         let Some(result) = answer.get("result").and_then(Value::as_object) else {
@@ -592,8 +662,10 @@ impl Bridge {
             "params": { "instance_key": instance_key },
         });
         let until = Instant::now() + self.deadline.min(WAKE_POLL_TIMEOUT);
+        // The wake poll's own cap is inside the global deadline; its error
+        // keeps naming that one, as before.
         let answer = self
-            .post(body.to_string().into_bytes(), until)?
+            .post(body.to_string().into_bytes(), until, self.deadline, None)?
             .answer_to(&id)?;
         let Some(delivery) = answer.get("result").cloned() else {
             return Err(Refusal::Refused(answer));
@@ -602,9 +674,15 @@ impl Bridge {
             .map_err(|error| Refusal::Server(format!("invalid wake handoff: {error}"), answer))
     }
 
-    fn post(&self, body: Vec<u8>, until: Instant) -> Result<Reply, Refusal> {
-        let surface = self.endpoint(until)?;
-        self.post_to(surface, body, until)
+    fn post(
+        &self,
+        body: Vec<u8>,
+        until: Instant,
+        deadline: Duration,
+        tool: Option<&str>,
+    ) -> Result<Reply, Refusal> {
+        let surface = self.endpoint(until, deadline, tool)?;
+        self.post_to(surface, body, until, deadline, tool)
     }
 
     /// One request to `surface` over the bridge's connection, signed for this
@@ -615,9 +693,11 @@ impl Bridge {
         surface: McpSurface,
         body: Vec<u8>,
         until: Instant,
+        deadline: Duration,
+        tool: Option<&str>,
     ) -> Result<Reply, Refusal> {
         if until.saturating_duration_since(Instant::now()).is_zero() {
-            return Err(self.refusal_for(surface, link::Cut::Deadline));
+            return Err(self.refusal_for(surface, link::Cut::Deadline, deadline, tool));
         }
         let sign;
         let credential = match &self.auth {
@@ -640,7 +720,7 @@ impl Bridge {
         let exchange = self
             .link
             .exchange(surface, &credential, body, &bounds)
-            .map_err(|cut| self.refusal_for(surface, cut))?;
+            .map_err(|cut| self.refusal_for(surface, cut, deadline, tool))?;
         Ok(Reply {
             status: exchange.status,
             body: exchange.body,
@@ -648,14 +728,27 @@ impl Bridge {
     }
 
     /// The request's error when its exchange was cut short.
-    fn refusal_for(&self, surface: McpSurface, cut: link::Cut) -> Refusal {
+    fn refusal_for(
+        &self,
+        surface: McpSurface,
+        cut: link::Cut,
+        deadline: Duration,
+        tool: Option<&str>,
+    ) -> Refusal {
         let endpoint = self.link.endpoint(surface);
         match cut {
             link::Cut::Failed(error) => Refusal::Unreachable(error),
-            link::Cut::Deadline => Refusal::Unreachable(format!(
-                "{endpoint} gave no whole answer within {}s (--request-timeout-secs)",
-                self.deadline.as_secs()
-            )),
+            link::Cut::Deadline => Refusal::Unreachable(match tool {
+                Some(tool) => format!(
+                    "{endpoint} gave no whole answer within {}s (--tool-timeout-secs {tool}={})",
+                    deadline.as_secs(),
+                    deadline.as_secs()
+                ),
+                None => format!(
+                    "{endpoint} gave no whole answer within {}s (--request-timeout-secs)",
+                    deadline.as_secs()
+                ),
+            }),
             link::Cut::Idle => Refusal::Unreachable(format!(
                 "{endpoint}'s answer stalled for {}s (--idle-timeout-secs)",
                 self.idle.as_secs()

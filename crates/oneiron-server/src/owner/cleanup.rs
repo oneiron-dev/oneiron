@@ -33,7 +33,7 @@ const RECORD: &str = "record";
 const ERASED: &str = "erased";
 
 /// Everything the owner reviews about cleanup.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct CleanupReview {
     /// `propose_first` or `auto_with_digest`.
     pub(crate) posture: &'static str,
@@ -58,7 +58,7 @@ pub(crate) struct CleanupReview {
 }
 
 /// One cleanup run that archived something.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Run {
     /// The run's attempt id: what `/cleanup/revert-run` takes.
     pub(crate) attempt: String,
@@ -74,7 +74,7 @@ pub(crate) struct Run {
 }
 
 /// One entry a run archived.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct RunEntry {
     pub(crate) entity: String,
     pub(crate) kind: &'static str,
@@ -92,14 +92,14 @@ pub(crate) struct RunEntry {
 }
 
 /// A run's revert, as stored.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Reverted {
     pub(crate) at: String,
     pub(crate) entries: Vec<Slot<RevertEntry>>,
 }
 
 /// What reverting a whole run did.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct RunReverted {
     pub(crate) attempt: String,
     pub(crate) reverted_at: String,
@@ -109,7 +109,7 @@ pub(crate) struct RunReverted {
 }
 
 /// What reverting a run did to one entry.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct RevertEntry {
     pub(crate) entity: String,
     pub(crate) kind: &'static str,
@@ -126,7 +126,7 @@ pub(crate) struct RevertEntry {
 /// One slot of a listing: what it names, or its erased form once an erase
 /// reached what it named (FIX 7517). The slot keeps its place, so each list
 /// keeps its count.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub(crate) enum Slot<T> {
     Live(T),
@@ -135,7 +135,7 @@ pub(crate) enum Slot<T> {
 
 /// An erased slot: `{"erased": true}`, with no id, kind, hash or mark. A
 /// revert's entry also answers `"outcome": "erased"`: nothing was lifted.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ErasedSlot {
     pub(crate) erased: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -154,7 +154,7 @@ impl<T> Slot<T> {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Proposal {
     pub(crate) id: String,
     pub(crate) attempt: String,
@@ -164,20 +164,20 @@ pub(crate) struct Proposal {
     pub(crate) impact: Impact,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Candidate {
     pub(crate) entity: String,
     pub(crate) kind: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Impact {
     pub(crate) total: usize,
     pub(crate) claimless_persons: usize,
     pub(crate) empty_summaries: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Digest {
     pub(crate) id: String,
     pub(crate) attempt: Option<String>,
@@ -198,7 +198,7 @@ pub(crate) struct Digest {
     pub(crate) rejected: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Archived {
     /// Send this and `kind` to `/cleanup/restore` to bring it back.
     pub(crate) entity: String,
@@ -210,7 +210,7 @@ pub(crate) struct Archived {
 }
 
 /// What accepting a proposal did.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Accepted {
     pub(crate) proposal: String,
     pub(crate) archived: Vec<String>,
@@ -223,7 +223,7 @@ pub(crate) struct Accepted {
 }
 
 /// The owner's cleanup settings; an absent field is left as it is.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CleanupSettings {
     /// `propose_first` or `auto_with_digest`.
