@@ -26,6 +26,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use super::cache::{CacheIdentity, CachePassUsage};
 use super::media::MediaUsage;
+use super::scheduling::SchedulingReceipt;
 use super::{LlmUsage, ModelId};
 
 /// The key in a provider's usage object that holds its inference receipts.
@@ -159,6 +160,9 @@ pub struct InferenceCallReceipt {
     /// Draft tokens accepted over the request's passes, as `drafts_proposed`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drafts_accepted: Option<u64>,
+    /// The worker's scheduling context and executor rounds at this call's end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduling: Option<SchedulingReceipt>,
 }
 
 impl InferenceCallReceipt {
@@ -177,6 +181,7 @@ impl InferenceCallReceipt {
             output_tokens: None,
             drafts_proposed: None,
             drafts_accepted: None,
+            scheduling: None,
         }
     }
 }

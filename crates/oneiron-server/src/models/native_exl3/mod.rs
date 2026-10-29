@@ -44,7 +44,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use oneiron::BudgetLease;
 use oneiron::llm::run_admission::WorkContext;
 use oneiron::llm::{
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, SegmentManifest, WorkerBuildEvidence, WorkerFailure,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, SchedulingReceipt, SegmentManifest,
+    WorkerBuildEvidence, WorkerFailure,
 };
 use oneiron_driver::WorkerActivity;
 use oneiron_llm_openai::{
@@ -481,6 +482,9 @@ fn activity_of(stats: &JsonValue) -> Option<WorkerActivity> {
 
 /// Retains the physical receipt a terminal carried, with its launch epoch.
 fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
+    let scheduling = last
+        .get("scheduling")
+        .and_then(|value| serde_json::from_value::<SchedulingReceipt>(value.clone()).ok());
     let receipt = last
         .get("usage")
         .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
@@ -490,7 +494,8 @@ fn record_receipt(route: &NativeRoute, sent: &Sent, last: &JsonValue) {
                 .iter()
                 .find_map(|call| serde_json::from_value::<InferenceCallReceipt>(call.clone()).ok())
         });
-    if let Some(receipt) = receipt {
+    if let Some(mut receipt) = receipt {
+        receipt.scheduling = scheduling;
         worker_host::report_receipt(&route.worker.spec().worker_id, &sent.tie.epoch, receipt);
     }
 }
