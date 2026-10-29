@@ -243,7 +243,6 @@ impl AgentVerbDoor for RunHostDoor {
                     &origin,
                     invocation,
                     &board,
-                    line.as_ref(),
                     input,
                 )
                 .map(|(output, rows)| (output, Some(rows))),
