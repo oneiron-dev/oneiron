@@ -136,7 +136,8 @@ impl WeaveLensCaller {
     /// Where the caller reads from: a credential's locality; a run's own
     /// door is on this device.
     fn locality(&self) -> CallerLocality {
-        self.auth().map_or(CallerLocality::OnDevice, CoreAuth::locality)
+        self.auth()
+            .map_or(CallerLocality::OnDevice, CoreAuth::locality)
     }
 
     /// Runs `read` on the caller's own handle, reading at `reads_at` and

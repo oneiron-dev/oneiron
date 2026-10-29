@@ -38,6 +38,7 @@ pub use self::genui_fingerprint::{
     LensAtomInventoryChange, LensBehaviorDiff, LensBehaviorFingerprint, LensBehaviorHandle,
     LensHandleRoleChange,
 };
+pub use self::genui_json_patch::GeneratedUiJsonPatchOperation;
 pub use self::genui_regen::{
     LensEvaluatedRevision, LensRegenFailure, LensRegenFailurePhase, LensRegenOutcome,
     LensRegenRequest, LensRegenerator, regenerate_lens,
@@ -46,18 +47,17 @@ pub use self::genui_render::{
     GeneratedUiCardElement, GeneratedUiCardStart, GeneratedUiCardStateUpdate, GeneratedUiDataModel,
     GeneratedUiNode, GeneratedUiRender, GeneratedUiSegment,
 };
-pub use self::genui_json_patch::GeneratedUiJsonPatchOperation;
 pub use self::genui_state::{
     GeneratedUiActionDeclaration, GeneratedUiActionEvent, GeneratedUiActionTier,
     GeneratedUiArchiveReason, GeneratedUiCardLifecycle, GeneratedUiCardPhase,
     GeneratedUiStatePatch, GeneratedUiStateSnapshot, SelfUiBindableProperty, SelfUiBinding,
     SelfUiStateValue,
 };
+pub(in crate::lens) use self::genui_state::{
+    LensElementRef, apply_generated_ui_state_patch, validate_generated_ui_state_bindings,
+};
 pub use self::genui_stream::{
     GeneratedUiCardReady, GeneratedUiCardStatePatch, GeneratedUiCardStateSnapshot,
     GeneratedUiPartialNode, GeneratedUiPartialTree, GeneratedUiStream, GeneratedUiStreamOutcome,
     GeneratedUiStreamProfile,
-};
-pub(in crate::lens) use self::genui_state::{
-    LensElementRef, apply_generated_ui_state_patch, validate_generated_ui_state_bindings,
 };

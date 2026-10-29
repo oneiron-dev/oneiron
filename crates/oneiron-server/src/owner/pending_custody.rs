@@ -179,10 +179,7 @@ impl OwnerCard {
 
 /// Each restore batch whose credentials wait on their source's evidence, by
 /// handle, and each batch an owner kept, with its receipt and its card.
-pub(crate) fn page(
-    vault: &oneiron::Vault,
-    owner: &AuthenticatedOwner,
-) -> OwnerResult<PendingPage> {
+pub(crate) fn page(vault: &oneiron::Vault, owner: &AuthenticatedOwner) -> OwnerResult<PendingPage> {
     let batches = vault.pending_credential_batches_as_owner(owner)?;
     Ok(PendingPage {
         batches: batches.into_iter().map(BatchView::from).collect(),

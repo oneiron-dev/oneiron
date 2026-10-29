@@ -508,7 +508,10 @@ pub enum ObservationIssue {
     /// engine-native executor to run it (FIX 4929): it stays as the queue
     /// holds it, and runs where an executor serves the vault. Status only:
     /// the host adds it to its read; nothing is refused or held.
-    NoExecutor { attempt_ref: EntityId, state: String },
+    NoExecutor {
+        attempt_ref: EntityId,
+        state: String,
+    },
 }
 
 /// What the stores hold for one spawned agent. Each list is what was found;

@@ -34,12 +34,12 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{ImageViewRequest, PulledImage};
 use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::task_verb::sdk::{AskImageAnswer, AskImageReceipt, AskImageRequest};
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
     EntityId, ImageContent, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
     TierPrecedence, WriteActor,
 };
-use oneiron::task_verb::sdk::{AskImageAnswer, AskImageReceipt, AskImageRequest};
 use serde_json::json;
 
 use super::refusal;
