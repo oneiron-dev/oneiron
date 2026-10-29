@@ -1,26 +1,14 @@
 //! Snapshot-then-update recovery and transactional text-plane persistence.
+//! A NOTE's text plane is its NOTE storage; every other record's is its
+//! entity document's (`entity_doc::sync`), which writes its own rows.
 
 use crate::error::{Error, Result};
-use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::{EntityId, Vault};
 use loro::VersionVector;
 
 pub(crate) use crate::note::storage::{
     import_complete, load, load_for_erasure, snapshot, state_copy,
 };
-
-/// Appends one update at the entity's next sequence. The cached state vector is marked stale by
-/// its absence; recovery never trusts it.
-pub(crate) fn append(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    id: EntityId,
-    bytes: &[u8],
-) -> Result<u32> {
-    vault
-        .store
-        .port_document_update_append(txn, DocumentSlot::of(id), bytes)
-}
 
 pub(crate) fn decode_vv(bytes: &[u8]) -> Result<VersionVector> {
     VersionVector::decode(bytes).map_err(|source| {
