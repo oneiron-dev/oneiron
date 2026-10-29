@@ -101,8 +101,10 @@ fn session_start(args: &HookRecallArgs) -> Vec<String> {
     said
 }
 
-/// The vault a session binds, as `{"url", "lines"}`: `url` is null when none
-/// answers, and `lines` are what the session is told, the first naming it.
+/// The vault a session binds, as `{"url", "lines", "hosted"}`: `url` is null
+/// when none answers, `lines` are what the session is told, the first naming
+/// it, and `hosted` is the selected hosted vault step 3 bound (its origin,
+/// vault id, auth mode and credential file, never a value in it), else null.
 fn bind_json(args: &HookBindArgs) -> String {
     let deadline = deadline(args.common.timeout);
     let oneiron = oneiron(args.common.oneiron.as_deref());
@@ -112,7 +114,8 @@ fn bind_json(args: &HookBindArgs) -> String {
         args.common.settings_file.as_deref(),
         deadline,
     );
-    serde_json::json!({ "url": bound.url, "lines": bound.lines }).to_string()
+    serde_json::json!({ "url": bound.url, "lines": bound.lines, "hosted": bound.hosted })
+        .to_string()
 }
 
 fn prompt(args: &HookRecallArgs) -> Vec<String> {
