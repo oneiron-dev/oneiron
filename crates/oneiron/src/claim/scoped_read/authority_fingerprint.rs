@@ -22,16 +22,20 @@ use std::collections::BTreeSet;
 
 use sha2::{Digest, Sha256};
 
-use super::ScopedReadActorKey;
+use super::{RoomTurnCeiling, ScopedReadActorKey};
+use crate::authority::{HostActionGuard, PeerMachine, VerifiedSlip};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSubject, claim_surfaceable, decode_claim_body};
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::federation::Scope;
+use crate::pipeline::WorldAuthoritySet;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
     ENTITY_TYPE_RELATIONSHIP,
 };
+use crate::settings::ReadDestination;
 use crate::{EntityId, Vault};
 
 impl ScopedReadActorKey {
@@ -239,4 +243,227 @@ fn fold_id(hasher: &mut Sha256, id: Option<EntityId>) {
 
 fn fold_len(hasher: &mut Sha256, len: usize) {
     hasher.update((len as u64).to_be_bytes());
+}
+
+impl ScopedReadActorKey {
+    /// A stable fingerprint of this key's own material, for session keying:
+    /// BLAKE3-256 over every field in declaration order under
+    /// `oneiron.scoped_read.actor_key_fingerprint.v1`. Key material only: it
+    /// reads no vault state, unlike [`Self::read_authority_fingerprint`], so
+    /// a key that cannot reach its vault still fingerprints. Two keys
+    /// fingerprint alike only when their material matches field for field;
+    /// the owner-proof fold below renders Debug only because that proof
+    /// exposes no vault-free typed accessor, and a rendering change there
+    /// only costs a cold turn.
+    #[must_use]
+    pub fn key_fingerprint(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(KEY_FINGERPRINT_DOMAIN);
+        key_fold_str(&mut hasher, self.actor_ref());
+        key_fold_opt_str(&mut hasher, self.actor_class());
+        key_fold_id(&mut hasher, self.principal_ref);
+        hasher.update([
+            u8::from(self.enforce_access_grants),
+            u8::from(self.unscoped_rows_open),
+        ]);
+        key_fold_proof(&mut hasher, self.proof.as_ref());
+        key_fold_json_opt(&mut hasher, self.authority_scope());
+        key_fold_opt_str(&mut hasher, self.channel.as_deref());
+        key_fold_id(&mut hasher, self.vault_owner_ref());
+        key_fold_id(&mut hasher, self.owner_exemption);
+        key_fold_room_turn(&mut hasher, self.room_turn());
+        key_fold_id(&mut hasher, self.room_facets);
+        key_fold_worlds(&mut hasher, self.worlds.as_ref());
+        key_fold_destination(&mut hasher, self.destination());
+        key_fold_host_action(&mut hasher, self.host_action_guard());
+        key_fold_owner_proof(&mut hasher, self.owner_proof_guard());
+        hasher.update([u8::from(self.owner_by_census())]);
+        *hasher.finalize().as_bytes()
+    }
+}
+
+/// Domain tag for [`ScopedReadActorKey::key_fingerprint`].
+const KEY_FINGERPRINT_DOMAIN: &[u8] = b"oneiron.scoped_read.actor_key_fingerprint.v1";
+
+fn key_fold_len(hasher: &mut blake3::Hasher, len: usize) {
+    hasher.update(&(len as u64).to_be_bytes());
+}
+
+fn key_fold_str(hasher: &mut blake3::Hasher, value: &str) {
+    key_fold_len(hasher, value.len());
+    hasher.update(value.as_bytes());
+}
+
+fn key_fold_opt_str(hasher: &mut blake3::Hasher, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hasher.update([1u8]);
+            key_fold_str(hasher, value);
+        }
+        None => hasher.update([0u8]),
+    }
+}
+
+fn key_fold_id(hasher: &mut blake3::Hasher, id: Option<EntityId>) {
+    match id {
+        Some(id) => {
+            hasher.update([1u8]);
+            hasher.update(id.as_bytes());
+        }
+        None => hasher.update([0u8]),
+    }
+}
+
+/// A typed value's canonical bytes: its serde form, whose set axes are
+/// ordered (as [`fold_scope`]); the Debug rendering only when that cannot
+/// encode, so the fold stays total.
+fn key_fold_json(hasher: &mut blake3::Hasher, value: &(impl serde::Serialize + std::fmt::Debug)) {
+    let bytes = serde_json::to_vec(value).unwrap_or_else(|_| format!("{value:?}").into_bytes());
+    key_fold_len(hasher, bytes.len());
+    hasher.update(&bytes);
+}
+
+/// [`key_fold_json`], presence-tagged, for an optional typed value.
+fn key_fold_json_opt(
+    hasher: &mut blake3::Hasher,
+    value: Option<&(impl serde::Serialize + std::fmt::Debug)>,
+) {
+    match value {
+        Some(value) => {
+            hasher.update([1u8]);
+            key_fold_json(hasher, value);
+        }
+        None => hasher.update([0u8]),
+    }
+}
+
+/// A verified proof's key material: its claims, its pact bound, and whether
+/// it is unattenuated or transferred.
+fn key_fold_proof(hasher: &mut blake3::Hasher, proof: Option<&VerifiedSlip>) {
+    let Some(proof) = proof else {
+        hasher.update([0u8]);
+        return;
+    };
+    hasher.update([1u8]);
+    key_fold_json(hasher, proof.claims());
+    match proof.pact() {
+        Some((grant, scope)) => {
+            hasher.update([1u8]);
+            hasher.update(grant.as_bytes());
+            key_fold_json(hasher, scope);
+        }
+        None => hasher.update([0u8]),
+    }
+    hasher.update([
+        u8::from(proof.is_unattenuated()),
+        u8::from(proof.is_transferred()),
+    ]);
+}
+
+/// A bound room turn's ceiling: the room, the caller, the terms the turn
+/// holds now, its roster and peer keys (each fingerprinted, sorted, so
+/// order never moves the digest), its thread and whether it is personal.
+fn key_fold_room_turn(hasher: &mut blake3::Hasher, ceiling: Option<&RoomTurnCeiling>) {
+    let Some(ceiling) = ceiling else {
+        hasher.update([0u8]);
+        return;
+    };
+    hasher.update([1u8]);
+    hasher.update(ceiling.room.as_bytes());
+    hasher.update(ceiling.caller.as_bytes());
+    let terms = ceiling.terms.get();
+    key_fold_json(hasher, &terms.worlds);
+    key_fold_json(hasher, &terms.facets);
+    key_fold_json_opt(hasher, terms.clearance.as_ref());
+    hasher.update([u8::from(terms.p7)]);
+    let mut roster = ceiling.roster.clone();
+    roster.sort_unstable();
+    key_fold_len(hasher, roster.len());
+    for member in &roster {
+        hasher.update(member.as_bytes());
+    }
+    let mut peers: Vec<[u8; 32]> = ceiling
+        .peers
+        .iter()
+        .map(ScopedReadActorKey::key_fingerprint)
+        .collect();
+    peers.sort_unstable();
+    key_fold_len(hasher, peers.len());
+    for peer in &peers {
+        hasher.update(peer);
+    }
+    key_fold_id(hasher, ceiling.branch);
+    hasher.update([u8::from(ceiling.personal)]);
+}
+
+/// The asked-worlds ceiling: whether base reality reads, and each world in
+/// sorted order.
+fn key_fold_worlds(hasher: &mut blake3::Hasher, worlds: Option<&WorldAuthoritySet>) {
+    let Some(worlds) = worlds else {
+        hasher.update([0u8]);
+        return;
+    };
+    hasher.update([1u8, u8::from(worlds.include_base())]);
+    key_fold_len(hasher, worlds.worlds().len());
+    for world in worlds.worlds() {
+        hasher.update(world.as_bytes());
+    }
+}
+
+/// Where the key's rows go: off this device or not, and each machine a
+/// connection proved beside that, sorted, so order never moves the digest.
+/// The effective destination the reads judge, not latent proof state.
+fn key_fold_destination(hasher: &mut blake3::Hasher, destination: &ReadDestination) {
+    hasher.update([u8::from(destination.is_off_device())]);
+    let mut peers: Vec<Vec<u8>> = destination
+        .peers()
+        .iter()
+        .map(|peer| match peer {
+            PeerMachine::Proven { machine, key } => {
+                let mut bytes = vec![1u8];
+                bytes.extend_from_slice(machine.as_bytes());
+                bytes.extend_from_slice(key);
+                bytes
+            }
+            PeerMachine::Unknown => vec![0u8],
+        })
+        .collect();
+    peers.sort_unstable();
+    key_fold_len(hasher, peers.len());
+    for peer in &peers {
+        key_fold_len(hasher, peer.len());
+        hasher.update(peer);
+    }
+}
+
+/// A host action's guard: that one is bound, the owner it acts as, and the
+/// root it acts under by slip id (`None` for the dev mode).
+fn key_fold_host_action(hasher: &mut blake3::Hasher, guard: Option<&HostActionGuard>) {
+    let Some(guard) = guard else {
+        hasher.update([0u8]);
+        return;
+    };
+    hasher.update([1u8]);
+    hasher.update(guard.owner().as_bytes());
+    match guard.root_slip_id() {
+        Some(id) => {
+            hasher.update([1u8]);
+            hasher.update(id);
+        }
+        None => hasher.update([0u8]),
+    }
+}
+
+/// An owner proof's binding: that one is held, and its Debug rendering over
+/// key material. The proof exposes no vault-free typed accessor, so this
+/// field alone renders; the rendering is deterministic for identical
+/// material, and a rendering change only costs a cold turn.
+fn key_fold_owner_proof(hasher: &mut blake3::Hasher, proof: Option<&AuthenticatedOwner>) {
+    match proof {
+        Some(proof) => {
+            hasher.update([1u8]);
+            key_fold_str(hasher, &format!("{proof:?}"));
+        }
+        None => hasher.update([0u8]),
+    }
 }
