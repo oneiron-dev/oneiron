@@ -12,7 +12,9 @@
 //! person's input as the agent's), at a successful engine switch, or when
 //! the guest is lost or abandoned. One that ended so waits on the session,
 //! outside its engine, and the next stop naming it, or else the session's
-//! next answer, gives it once; neither needs the guest.
+//! next answer, gives it once; neither needs the guest. What the
+//! session's own close leaves - a span still recording, ended ones never
+//! given - goes to the seat's end instead (FIX 9409).
 //!
 //! A person's span records only where the agent's ask opted in (CUA E9b):
 //! the take of that ask starts it, through the same listeners, and the
@@ -318,6 +320,37 @@ impl BrowserSession {
             .position(|ended| Some(ended.recording.id.as_str()) != held)?;
         let ended = self.demos.ended.remove(at);
         self.demonstration_delivery_policy(ended, None).ok()
+    }
+
+    /// Every demonstration this session's close leaves (FIX 9409): a span
+    /// still recording ends as [`DemonstrationStopCause::SessionClosed`],
+    /// and each ended one never given is drafted as
+    /// [`Self::take_demonstration`] drafts it, for the seat's end to land.
+    /// A person's span still held is left to the takeover's own end, as
+    /// there, so each is given once, here or there, never both.
+    pub fn take_closed_demonstrations(&mut self) -> Vec<DemonstrationOutput> {
+        let held = self.demos.takeover.as_ref().map(|span| span.id.as_str());
+        let runs_held = self
+            .demos
+            .active
+            .as_ref()
+            .is_some_and(|running| Some(running.id.as_str()) == held);
+        if !runs_held {
+            self.recording_close(DemonstrationStopCause::SessionClosed);
+        }
+        let mut closed = Vec::new();
+        while let Some(at) = self
+            .demos
+            .ended
+            .iter()
+            .position(|ended| Some(ended.recording.id.as_str()) != held)
+        {
+            let ended = self.demos.ended.remove(at);
+            if let Ok(output) = self.demonstration_delivery_policy(ended, None) {
+                closed.push(output);
+            }
+        }
+        closed
     }
 
     /// Ends the running recording for `cause`: its capture's last events
