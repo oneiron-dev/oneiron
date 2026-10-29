@@ -1095,7 +1095,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "mod": 2,
       "re-export": 24
      }
@@ -1130,7 +1130,7 @@
      "purpose": "The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
@@ -1144,7 +1144,7 @@
      "path": "src/agent_dispatch/planner/budget_resolution.rs",
      "purpose": "The budget a plan is fitted to and launched under (FIX 9561)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -15925,7 +15925,7 @@
      "path": "src/code_run/shadow_runner/admit.rs",
      "purpose": "A shadow arm's writes, masked at write (FIX 5718 part 3; shadow items 2 and 5; CALLS C5718-21)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -15997,7 +15997,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ShadowBodyStore",
@@ -16006,8 +16006,8 @@
      "path": "src/code_run/shadow_runner/store.rs",
      "purpose": "A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named…",
      "surface": {
-      "crate-vis": 7,
-      "fn": 9,
+      "crate-vis": 8,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -16334,7 +16334,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 35
      }
     },
     {
@@ -16355,6 +16355,16 @@
      "purpose": "A bound session's replay append, on the run's one route, in one routed transaction: the record compared…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/routing/type_feedback.rs",
+     "purpose": "A run's type feedback rows on its own route (FIX 10389, CALLS \"session feedback lives on the session route…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -16394,7 +16404,7 @@
      "path": "src/code_run/storage/type_diagnostics.rs",
      "purpose": "The late-result store of code-mode type feedback (FIX 8277): one row per program step, keyed by its run…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -31251,9 +31261,29 @@
      "path": "src/engine_executor/code_check.rs",
      "purpose": "Feedback mode (FIX 8277, owner ruling CODE-MODE-TS rule 4): each generated program is type-checked as its…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/code_check/door.rs",
+     "purpose": "A program a door other than a run's own step runs, checked as a step's program is (FIX 10389): a callable…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/code_check/publication.rs",
+     "purpose": "Where a check that lands after its step keeps its result (FIX 10389): its run's own route, the vault's rows…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -31369,7 +31399,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "The recording JS host, its state and its runtime adapter",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -31436,10 +31466,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/engine_executor/host/type_feedback.rs",
+     "purpose": "The type checks of the callable skills a run's program calls (FIX 10389): each admitted once, at the call's…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 3,
       "re-export": 8
      }
@@ -31522,12 +31562,15 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ArmTypeFeedback"
+     ],
      "path": "src/engine_executor/shadow_step.rs",
      "purpose": "One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured…",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -31648,6 +31691,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CallableProgram",
       "EngineExecutorConfig",
       "EngineExecutorError",
       "EngineExecutorLimits",
@@ -31675,7 +31719,7 @@
       "crate-vis": 3,
       "enum": 5,
       "fn": 8,
-      "struct": 12,
+      "struct": 13,
       "trait": 2,
       "type": 1
      }
@@ -43617,6 +43661,7 @@
      "notable": [
       "ForeignCodeApproval",
       "ForeignCodeEffect",
+      "ForeignCodeFailure",
       "ForeignCodeIsolation",
       "ForeignCodeOutput",
       "ForeignCodeProposal",
@@ -43631,7 +43676,7 @@
      "surface": {
       "enum": 4,
       "fn": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -47491,6 +47536,16 @@
       "crate-vis": 39,
       "fn": 12,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/session/type_feedback.rs",
+     "purpose": "The stretch instance a session-bound run's late type feedback lands on (FIX 10389, CALLS \"session feedback…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -62237,7 +62292,7 @@
      "path": "src/skill_hub/pack_catalog/script_plan.rs",
      "purpose": "One qualified execution shape for both pack admission and foreign launch",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -79814,7 +79869,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 165,
+     "files": 166,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80136,7 +80191,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 44,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80451,7 +80506,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81111,7 +81166,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5398,
+   "source_files": 5403,
    "test_files": 902
   },
   "oneiron-android": {
@@ -96766,7 +96821,7 @@
      "path": "src/ai_host/shadow_runner/mod.rs",
      "purpose": "The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1,
       "type": 1
      }
@@ -99046,7 +99101,7 @@
      "path": "src/api/facade/errors.rs",
      "purpose": "The facade's error envelope: an engine `MemoryError` or an `ApiError` as one HTTP reply",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -99376,7 +99431,7 @@
      "path": "src/api/facade/host_doors/support.rs",
      "purpose": "The host doors' shared vocabulary: listings, refusals, proofs, the calling origin and askers",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -100998,7 +101053,7 @@
      "path": "src/api/mcp_gateway/type_feedback_release.rs",
      "purpose": "Type feedback leaves an MCP answer on its own release (FIX 10390, CALLS \"feedback released apart from its…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -102899,6 +102954,16 @@
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
       "crate-vis": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/type_feedback_release.rs",
+     "purpose": "One program step's type feedback, released for one destination apart from the answer it rides with (FIX…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -112211,7 +112276,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 591,
+     "files": 592,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112703,7 +112768,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1352,
+   "source_files": 1353,
    "test_files": 182
   },
   "oneiron-spawn": {
