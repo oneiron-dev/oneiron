@@ -17,9 +17,9 @@ mod tests;
 const MAX_CACHE_ENTRIES: usize = 32;
 const MAX_CACHE_BYTES: usize = 2 * 1024 * 1024;
 
-/// A score-free JSON prefix, ordered by full claim id, with its evidence digest.
-/// The shared body allocation is reused on a cache hit. It never contains query
-/// scores, relative time, or read-time delta items.
+/// A score-free JSON prefix, ordered by full claim id, with its evidence and
+/// resolved-handle digest. The shared body allocation is reused on a cache hit.
+/// It never contains query scores, relative time, or read-time delta items.
 #[derive(Debug, Clone)]
 pub struct L2BaseSummary {
     pub content_hash: [u8; 32],
@@ -160,7 +160,12 @@ pub(super) fn produce_l2_base(
         return Ok(None);
     }
     let subjects: BTreeSet<_> = subjects.iter().copied().collect();
-    let content_hash = evidence_hash(subjects.iter().copied(), &admitted)?;
+    let rendered = render_l2_rows_with_handles(&pipeline.store_read(), &txn, &admitted)?;
+    let content_hash = evidence_hash(
+        subjects.iter().copied(),
+        &admitted,
+        &rendered.handle_spellings,
+    )?;
     if cache_enabled {
         let cache = vault
             .store
@@ -171,37 +176,14 @@ pub(super) fn produce_l2_base(
             return Ok(Some(summary.clone()));
         }
     }
-    let rows: Vec<_> = admitted
+    let max_field_chars = rendered
+        .rows
         .iter()
-        .map(|(id, body)| {
-            let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
-                return Err(Error::InvariantViolation("L2 non-entity subject"));
-            };
-            // Parts that read as a secret together, before the projection
-            // drops a float's width, render as null.
-            let secret = crate::batch::export::claim_reads_as_secret(body);
-            let mut value = if secret {
-                serde_json::Value::Null
-            } else {
-                crate::serialize::null_credentials(
-                    "val",
-                    &super::hydration::rmpv_to_json(&body.value),
-                )
-            };
-            // Provider codecs apply a second, stricter credential scrub to
-            // ranked rows. Apply it before caching so every L2 format shares
-            // one stable safe prefix, including keys such as `ssh_key`.
-            crate::serialize::scrub_provider_credential("val", &mut value);
-            Ok(serde_json::json!({
-                "id": id.to_hex(), "subj": subject.to_hex(),
-                "pred": (!secret).then_some(&body.predicate), "val": value,
-                "world": body.world.map(|world| world.to_hex()),
-            }))
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let max_field_chars = rows.iter().map(max_string_chars).max().unwrap_or(0);
-    let body =
-        serde_json::to_string(&rows).map_err(|_| Error::InvariantViolation("L2 JSON render"))?;
+        .map(max_string_chars)
+        .max()
+        .unwrap_or(0);
+    let body = serde_json::to_string(&rendered.rows)
+        .map_err(|_| Error::InvariantViolation("L2 JSON render"))?;
     let summary = L2BaseSummary {
         content_hash,
         body: Arc::from(body),
@@ -230,8 +212,8 @@ pub(super) fn produce_l2_base(
 }
 
 /// Re-admit through the producer's retrieval gates on the hydration snapshot.
-/// A changed evidence set, body, authority, world or temporal admission drops
-/// the entire optional prefix.
+/// A changed evidence set, body, handle, authority, world or temporal admission
+/// drops the entire optional prefix.
 pub(super) fn revalidate_l2_base(
     vault: &Vault,
     pipeline: &PipelineBuilder<'_>,
@@ -241,7 +223,12 @@ pub(super) fn revalidate_l2_base(
     reader: Option<&ScopedRead<'_>>,
 ) -> Result<bool> {
     let admitted = admitted_l2_evidence(vault, pipeline, txn, &summary.subjects, clamp, reader)?;
-    Ok(evidence_hash(summary.subjects.iter().copied(), &admitted)? == summary.content_hash)
+    let rendered = render_l2_rows_with_handles(&pipeline.store_read(), txn, &admitted)?;
+    Ok(evidence_hash(
+        summary.subjects.iter().copied(),
+        &admitted,
+        &rendered.handle_spellings,
+    )? == summary.content_hash)
 }
 
 fn admitted_l2_evidence(
@@ -291,9 +278,82 @@ fn admitted_l2_evidence(
     Ok(admitted)
 }
 
+struct RenderedL2Rows {
+    rows: Vec<serde_json::Value>,
+    handle_spellings: Vec<String>,
+}
+
+fn render_l2_rows_with_handles(
+    content: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    admitted: &[(EntityId, crate::claim::ClaimBody)],
+) -> Result<RenderedL2Rows> {
+    let mut rows = Vec::with_capacity(admitted.len());
+    let mut handle_spellings = Vec::new();
+    let mut unresolved_short_handles = 0usize;
+    for (id, body) in admitted {
+        let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
+            return Err(Error::InvariantViolation("L2 non-entity subject"));
+        };
+        let (id_handle, unresolved) = read_l2_handle(content, txn, id)?;
+        unresolved_short_handles += unresolved as usize;
+        handle_spellings.push(id_handle.clone());
+        let (subject_handle, unresolved) = read_l2_handle(content, txn, &subject)?;
+        unresolved_short_handles += unresolved as usize;
+        handle_spellings.push(subject_handle.clone());
+        let world_handle = match body.world {
+            Some(world) => {
+                let (handle, unresolved) = read_l2_handle(content, txn, &world)?;
+                unresolved_short_handles += unresolved as usize;
+                handle_spellings.push(handle.clone());
+                Some(handle)
+            }
+            None => None,
+        };
+        // Parts that read as a secret together, before the projection drops a
+        // float's width, render as null.
+        let secret = crate::batch::export::claim_reads_as_secret(body);
+        let mut value = if secret {
+            serde_json::Value::Null
+        } else {
+            crate::serialize::null_credentials("val", &super::hydration::rmpv_to_json(&body.value))
+        };
+        // Every L2 format shares the same cached, credential-safe projection.
+        crate::serialize::scrub_provider_credential("val", &mut value);
+        rows.push(serde_json::json!({
+            "id": id_handle, "subj": subject_handle,
+            "pred": (!secret).then_some(&body.predicate), "val": value,
+            "world": world_handle,
+        }));
+    }
+    if unresolved_short_handles > 0 {
+        tracing::debug!(
+            unresolved_short_handles,
+            "L2 prefix kept full ids for unresolved short handles"
+        );
+    }
+    Ok(RenderedL2Rows {
+        rows,
+        handle_spellings,
+    })
+}
+
+fn read_l2_handle(
+    content: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<(String, bool)> {
+    match crate::ports::ShortIdStoreRead::port_short_id_reference(content, txn, id) {
+        Ok(Some((handle, _))) => Ok((handle, false)),
+        Ok(None) | Err(Error::CorruptedIndex(_)) => Ok((id.to_hex(), true)),
+        Err(error) => Err(error),
+    }
+}
+
 fn evidence_hash(
     subjects: impl ExactSizeIterator<Item = EntityId>,
     admitted: &[(EntityId, crate::claim::ClaimBody)],
+    handle_spellings: &[String],
 ) -> Result<[u8; 32]> {
     let mut digest = blake3::Hasher::new();
     digest.update(b"oneiron:l2-base:v1");
@@ -306,6 +366,12 @@ fn evidence_hash(
         digest.update(id.as_bytes());
         digest.update(&(raw.len() as u64).to_be_bytes());
         digest.update(&raw);
+    }
+    digest.update(b"oneiron:l2-handles:v1");
+    digest.update(&(handle_spellings.len() as u64).to_be_bytes());
+    for handle in handle_spellings {
+        digest.update(&(handle.len() as u64).to_be_bytes());
+        digest.update(handle.as_bytes());
     }
     Ok(*digest.finalize().as_bytes())
 }
