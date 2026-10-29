@@ -537,6 +537,38 @@ impl super::AgentDispatcher<'_> {
             .collect())
     }
 
+    /// Brings each open workflow's waiting step retry forward to `now` (FIX
+    /// 1112): when a model seat comes back, the step its failure ladder put on
+    /// a backoff runs at once. The ladder's tries and its escalation stay as
+    /// they were. A workflow whose retry lineage does not read is left to its
+    /// own pass. Returns how many steps woke.
+    pub fn wake_workflow_retries(&self, now: u64) -> Result<usize> {
+        let queue = AttemptQueue::new(self.vault);
+        let roots = self.open_workflow_roots()?;
+        let mut txn = self.vault.store.env.write_txn()?;
+        let mut woke = 0;
+        for root in roots {
+            let Some(wrapper) = queue.get_in_write_txn(&txn, root)? else {
+                continue;
+            };
+            if wrapper.state != AttemptState::Paused {
+                continue;
+            }
+            let Ok(record) = self.read_workflow(&txn, &wrapper) else {
+                continue;
+            };
+            let Ok(active) = queue.retry_tip_in_txn(&txn, record.active) else {
+                continue;
+            };
+            woke += usize::from(queue.advance_retry_in_txn(&mut txn, active.id, now)?);
+        }
+        if woke > 0 {
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+        }
+        Ok(woke)
+    }
+
     /// Reads the durable workflow result report, including after completion.
     pub fn workflow_status(&self, root: AttemptId) -> Result<WorkflowDispatchStatus> {
         let row = crate::attempt_queue::AttemptQueue::new(self.vault)

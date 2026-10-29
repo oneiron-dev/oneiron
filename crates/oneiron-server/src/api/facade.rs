@@ -198,7 +198,9 @@ pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
-pub(crate) use connector_call_doors::{connector_answer_as, connector_call_listing_as};
+pub(crate) use connector_call_doors::{
+    connector_answer_as, connector_call_listing_as, connector_call_listing_on,
+};
 pub(crate) use export_transfer::ExportTransfers;
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;

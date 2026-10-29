@@ -188,7 +188,7 @@ fn companion_grant_issuer<'a>(server: &SyncServer, auth: &'a CoreAuth) -> Compan
         (status = 400, description = "Malformed grant request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Token lacks companion:access-grant:write or core:auth, or is a hosted operator's root.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "AccessGrant id already exists.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "AccessGrant id already exists. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant write failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -258,6 +258,7 @@ pub(crate) async fn create_companion_access_grant(
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Token lacks companion:access-grant:write or core:auth, carries record caveats, or is a hosted operator's root.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "AccessGrant was not found, or is not a companion grant this caller may revoke.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant revoke failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]

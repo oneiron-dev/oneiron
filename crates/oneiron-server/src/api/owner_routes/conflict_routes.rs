@@ -91,7 +91,7 @@ struct AlternativeView {
     confidence: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SettleConflict {
     /// The open marker, as 32 hex.
@@ -104,11 +104,23 @@ struct SettleConflict {
     keep: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/settle`'s body (FIX 11611):
+/// [`SettleConflict`].
+pub(crate) fn settle_conflict_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SettleConflict>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertSettlement {
     /// The settlement's `conflict.resolved` answer, as 32 hex.
     resolved: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/conflicts/revert`'s body (FIX 11611):
+/// [`RevertSettlement`].
+pub(crate) fn revert_settlement_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertSettlement>()
 }
 
 #[derive(Debug, Serialize)]
@@ -123,7 +135,7 @@ struct SettledView {
     by_dreamer: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SettlementReverted {
     resolved: String,
     /// The marker, open again for the owner.
@@ -139,7 +151,13 @@ struct SettlementReverted {
     receipt_ref: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/revert`'s answer (FIX 11611):
+/// [`SettlementReverted`].
+pub(crate) fn settlement_reverted_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SettlementReverted>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReviewScope {
     /// `subject` or `vault`.
@@ -149,18 +167,36 @@ struct ReviewScope {
     subject: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/review`'s body (FIX 11611),
+/// shared with `POST /v1/owner/conflicts/review/revoke`: [`ReviewScope`].
+pub(crate) fn review_scope_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewScope>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReviewResumed {
     /// False when no such hold was live.
     resumed: bool,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/review`'s answer (FIX 11611):
+/// [`ReviewResumed`].
+pub(crate) fn review_resumed_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewResumed>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReviewHeld {
     hold_ref: String,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/review/revoke`'s answer
+/// (FIX 11611): [`ReviewHeld`].
+pub(crate) fn review_held_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewHeld>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ConflictSettled {
     marker: String,
     settlement: &'static str,
@@ -181,7 +217,7 @@ struct ConflictSettled {
     approval_ref: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PendingReviewView {
     /// The retained alternative the Keep named.
     kept: String,
@@ -190,6 +226,12 @@ struct PendingReviewView {
     /// The import review it waits in; absent when it waits with its round.
     #[serde(skip_serializing_if = "Option::is_none")]
     review: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/conflicts/settle`'s answer (FIX 11611):
+/// [`ConflictSettled`].
+pub(crate) fn conflict_settled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConflictSettled>()
 }
 
 fn view(vault: &oneiron::Vault, conflict: OpenConflict) -> OwnerResult<ConflictView> {

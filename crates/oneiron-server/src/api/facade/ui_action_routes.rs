@@ -57,8 +57,8 @@ use oneiron::EntityId;
 use oneiron::claim::ScopedReadResult;
 use oneiron::code_run::live_run::is_live_run_verb;
 use oneiron::lens::{
-    GeneratedUiActionEvent, GeneratedUiSurfaceCapabilities, GeneratedUiValidatedAction,
-    LensDefaultRequest, LensFrameCard, LensRenderId,
+    GeneratedUiActionEvent, GeneratedUiStreamProfile, GeneratedUiSurfaceCapabilities,
+    GeneratedUiValidatedAction, LensDefaultRequest, LensFrameCard, LensRenderId,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
@@ -145,8 +145,9 @@ pub(crate) async fn vault_lenses_default(
 }
 
 /// One event's body: the client's event, the key its dispatch replays
-/// under, and the selections the clicker made on the card, by the
-/// `selectionRef` each `vault.lenses.select` answered (FIX 3268).
+/// under, the selections the clicker made on the card, by the
+/// `selectionRef` each `vault.lenses.select` answered (FIX 3268), and the
+/// stream profile its answer is framed in (FIX 11399).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct UiEventRequest {
@@ -154,6 +155,11 @@ struct UiEventRequest {
     idempotency_key: String,
     #[serde(default)]
     selected_context: Vec<String>,
+    /// The stream profile this event's answer is framed in: a
+    /// patch-profile caller takes the card's refinement beside a local
+    /// action's `$state`. Omitted, the answer is today's plain JSON.
+    #[serde(default)]
+    stream: GeneratedUiStreamProfile,
 }
 
 /// One event on a held card. A deterministic tool's reply states its
@@ -206,6 +212,9 @@ async fn event_answer(
         .ok_or_else(rerender)?;
     // One event on a card at a time, from its validation to its effect.
     let mut state = held.state.lock().await;
+    // The stream profile this event's caller asked its answer framed in
+    // (FIX 11399): a patch-profile caller takes its refinement beside it.
+    let stream = request.stream;
     let validated = {
         let server = Arc::clone(&server);
         let auth = auth.clone();
@@ -250,7 +259,28 @@ async fn event_answer(
             if !server.lens_frames.restate(&held, &next) {
                 return Err(rerender());
             }
-            let answer = serde_json::json!({ "$state": &next });
+            // A patch-profile caller (FIX 11399) also takes the refinement
+            // its held card needs: the whole card with its moved `$state` on
+            // the card's first change, a patch from the render its last
+            // answer left it holding after that. Every other caller answers
+            // as today.
+            let refinement = (stream == GeneratedUiStreamProfile::Patch).then(|| {
+                let mut new = held.render.clone();
+                new.state = next.clone();
+                if *state == held.render.state {
+                    return new.state_snapshot_segment();
+                }
+                let mut previous = held.render.clone();
+                previous.state = state.clone();
+                new.state_patch_segment(&previous)
+                    .unwrap_or_else(|_| new.state_snapshot_segment())
+            });
+            let answer = match &refinement {
+                Some(refinement) => {
+                    serde_json::json!({ "$state": &next, "refinement": refinement })
+                }
+                None => serde_json::json!({ "$state": &next }),
+            };
             *state = next;
             answer
         }

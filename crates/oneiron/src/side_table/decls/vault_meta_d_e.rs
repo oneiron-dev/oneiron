@@ -250,6 +250,9 @@ side_tables! {
     /// OF-490: what a resident's dreaming has read so far: newest receipt and INBOX times, last
     /// dreaming, entries written. Key: id16 (resident).
     DREAMER_RESIDENT_PROGRESS: VaultMeta b"dreamer:resident:progress:v1:" Named;
+    /// FIX 7753: the rows and revisions one resident dreaming read, keyed by the diary entry it
+    /// landed. Key: id16 (entry).
+    DREAMER_RESIDENT_READ: VaultMeta b"dreamer:resident:read:v1:" Named;
     /// Parent/child attempt-tree edge row (parent_attempt, created_at) keyed by attempt id. Key:
     /// id16.
     DREAMER_RUN_TREE: VaultMeta b"dreamer:run_tree:" Raw;
