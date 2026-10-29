@@ -137,8 +137,7 @@ impl<T> DesktopAnswer<T> {
 /// What a guest session proved about its fence, as the run's door names it
 /// on every answer (FIX 5705): the container's own session manifest, as it
 /// reads on the wire. The door sends that manifest; this is its shape. Its
-/// guest-image release evidence (FIX 8253) rides beside these fields,
-/// undeclared here.
+/// guest-image release evidence (FIX 8253) rides as `image_release`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionManifest {
     pub backend: String,
@@ -155,6 +154,11 @@ pub struct SessionManifest {
     /// Non-Linux or explicitly unfenced sessions never claim isolation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fence_unproven: bool,
+    /// The guest-image release this launch saw (FIX 8253), as
+    /// `oneiron_container::image_release::ImageReleaseObservation` reads on
+    /// the wire; untyped here so the mirror needs no container dependency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_release: Option<serde_json::Value>,
 }
 
 /// Evidence the session verified before its guest made its first network
