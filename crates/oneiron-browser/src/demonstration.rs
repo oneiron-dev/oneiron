@@ -27,7 +27,7 @@ use crate::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A demonstration's id within its session: `dm1`, `dm2`, ...
 pub type DemonstrationId = String;
@@ -338,6 +338,10 @@ pub(crate) struct Recording {
     /// Whether an act was recorded since the last page loaded (FIX 9413);
     /// the page the recording began on counts as acted on.
     acted: bool,
+    /// The tabs whose run's own act loaded a page whose document had sent
+    /// nothing by that act's drain: the tab's next document is the act's
+    /// own (FIX 10429).
+    awaited: BTreeSet<String>,
 }
 
 impl Recording {
@@ -361,6 +365,7 @@ impl Recording {
             awaiting_submit: None,
             pages: BTreeMap::new(),
             acted: true,
+            awaited: BTreeSet::new(),
         }
     }
 
@@ -402,6 +407,7 @@ impl Recording {
         }
         if !matches!(saw, Saw::Document | Saw::Gap(_)) {
             self.acted = true;
+            self.awaited.remove(&tab);
         }
         // A form field's change, and the submit, follow its Enter.
         if !matches!(saw, Saw::Submit(_) | Saw::Commit { .. }) {
@@ -440,8 +446,9 @@ impl Recording {
             }
             Saw::Document => {
                 self.flush();
-                // A page no recorded act led to (FIX 9413).
-                if !std::mem::take(&mut self.acted) {
+                // A page no recorded act led to (FIX 9413); the late
+                // document of the run's own act is that act's (FIX 10429).
+                if !self.awaited.remove(&tab) && !std::mem::take(&mut self.acted) {
                     let gap = RecordingGapKind::UnrecordedNavigation;
                     self.gap(None, Some(tab.clone()), gap);
                 }
@@ -519,6 +526,14 @@ impl Recording {
             self.pages.insert(tab.clone(), url.clone());
         }
         self.push(step);
+    }
+
+    /// The run's own act in tab `tab` loaded a page whose document had sent
+    /// nothing by that act's drain (FIX 10429): the tab's next document is
+    /// that act's own, and a script's redirect after it still follows an
+    /// act.
+    pub(crate) fn awaits_document(&mut self, tab: String) {
+        self.awaited.insert(tab);
     }
 
     /// Ends the span: the open edit becomes its step, an Enter that

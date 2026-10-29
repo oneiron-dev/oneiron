@@ -54,7 +54,7 @@ const READS: &[&str] = &[
 ];
 
 /// Roles whose name, when they have one, joins the ref of every row inside.
-const SCOPES: &[&str] = &[
+pub(crate) const SCOPES: &[&str] = &[
     "dialog",
     "alertdialog",
     "form",
@@ -299,16 +299,10 @@ impl<'a> Walk<'a> {
     }
 
     fn emit(&mut self, node: &Node<'_>, frame: Option<&str>) {
-        let mut key = self.scope.join(" > ");
-        key.push_str(&format!(" > {} \"{}\"", node.role, node.key()));
-        // Identical twins (same role, name and named ancestors) are told apart
-        // by their order among themselves alone.
+        let key = row_key(&self.scope, node.role, node.key());
         let twin = self.seen.entry(key.clone()).or_insert(0);
         *twin += 1;
-        if *twin > 1 {
-            key.push_str(&format!(" ~{twin}"));
-        }
-        let hash = blake3::hash(key.as_bytes()).to_hex();
+        let locator = locator_of(&key, *twin);
         let states = STATES
             .iter()
             .filter_map(|&name| match state(node.raw, name).as_deref() {
@@ -337,7 +331,7 @@ impl<'a> Walk<'a> {
         };
         let row = Row {
             target: String::new(),
-            locator: format!("e{}", &hash[..12]),
+            locator,
             role: node.role.to_owned(),
             name: node.name.clone(),
             value,
@@ -374,6 +368,26 @@ impl<'a> Walk<'a> {
             original,
         });
     }
+}
+
+/// A row's key: its named ancestors' scopes, each `role "name"`, outermost
+/// first, then its own role and name.
+pub(crate) fn row_key(scopes: &[String], role: &str, name: &str) -> String {
+    let mut key = scopes.join(" > ");
+    key.push_str(&format!(" > {role} \"{name}\""));
+    key
+}
+
+/// The locator of the row `key` names, at `twin` among its identical twins
+/// (same role, name and named ancestors) from 1: twins are told apart by
+/// their order among themselves alone.
+pub(crate) fn locator_of(key: &str, twin: u32) -> String {
+    let hash = if twin > 1 {
+        blake3::hash(format!("{key} ~{twin}").as_bytes())
+    } else {
+        blake3::hash(key.as_bytes())
+    };
+    format!("e{}", &hash.to_hex()[..12])
 }
 
 /// An accessibility node's `name`, `value`, `description` or `role` text,

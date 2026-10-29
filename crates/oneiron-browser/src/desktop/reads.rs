@@ -258,6 +258,7 @@ impl DesktopSession {
                 .unwrap_or(snapshot.title),
             rows: snapshot.lines.into_iter().map(|line| line.row).collect(),
             no_tree: snapshot.no_tree,
+            at: None,
             partial: snapshot.partial,
         };
         self.pages.observe(read, base)

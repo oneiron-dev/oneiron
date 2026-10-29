@@ -80,6 +80,13 @@ pub(super) struct Pages {
     /// out-of-process frame), by its own session: the session of the page
     /// it is in, and its frame (FIX 8336).
     oopifs: HashMap<String, (String, String)>,
+    /// Each page the browser attached as its own target (a popup, a tab a
+    /// link opened), by the session it attached it on: its target (FIX
+    /// 9410).
+    attached: HashMap<String, String>,
+    /// The top-level documents each watched page committed so far, and
+    /// its moves within one, by page target (FIX 9412).
+    commits: HashMap<String, u64>,
 }
 
 /// An armed seed document.
@@ -106,6 +113,7 @@ impl Pipe {
         let params = &event["params"];
         match event["method"].as_str() {
             Some("Page.frameNavigated") => self.visit(event),
+            Some("Page.navigatedWithinDocument") => self.moved_within(event),
             Some("Target.attachedToTarget") => self.note_oopif(event),
             Some("Target.detachedFromTarget") => {
                 if let Some(session) = params["sessionId"].as_str() {
@@ -145,6 +153,9 @@ impl Pipe {
         let Some(target) = pages.bound.get(session).cloned() else {
             return;
         };
+        if !inner {
+            *pages.commits.entry(target.clone()).or_default() += 1;
+        }
         let (named, reason) = match origin {
             Some(origin) if inner => {
                 let other = pages.tops.get(&target) != Some(&origin);
@@ -174,15 +185,31 @@ impl Pipe {
         }
     }
 
+    /// Counts a watched page's move within its top-level document (a
+    /// history move, a fragment) as one of its commits (FIX 9412): its
+    /// main frame's id is its page target's.
+    fn moved_within(&self, event: &Value) {
+        let (Some(session), Some(frame)) = (
+            event["sessionId"].as_str(),
+            event.pointer("/params/frameId").and_then(Value::as_str),
+        ) else {
+            return;
+        };
+        if let Ok(mut pages) = self.pages.lock()
+            && let Some(target) = pages.bound.get(session).cloned()
+            && target == frame
+        {
+            *pages.commits.entry(target).or_default() += 1;
+        }
+    }
+
     /// Keeps an in-page frame the browser attached as its own target, by
-    /// its own session, under its page's session.
+    /// its own session, under its page's session; and a page it attached,
+    /// by the session it attached it on (FIX 9410).
     fn note_oopif(&self, event: &Value) {
         let params = &event["params"];
-        if params.pointer("/targetInfo/type").and_then(Value::as_str) != Some("iframe") {
-            return;
-        }
-        let (Some(parent), Some(session), Some(frame)) = (
-            event["sessionId"].as_str(),
+        let kind = params.pointer("/targetInfo/type").and_then(Value::as_str);
+        let (Some(session), Some(target)) = (
             params["sessionId"].as_str(),
             params
                 .pointer("/targetInfo/targetId")
@@ -190,9 +217,18 @@ impl Pipe {
         ) else {
             return;
         };
-        if let Ok(mut pages) = self.pages.lock() {
-            let at = (parent.to_owned(), frame.to_owned());
-            pages.oopifs.insert(session.to_owned(), at);
+        let Ok(mut pages) = self.pages.lock() else {
+            return;
+        };
+        match (kind, event["sessionId"].as_str()) {
+            (Some("iframe"), Some(parent)) => {
+                let at = (parent.to_owned(), target.to_owned());
+                pages.oopifs.insert(session.to_owned(), at);
+            }
+            (Some("page"), _) => {
+                pages.attached.insert(session.to_owned(), target.to_owned());
+            }
+            _ => {}
         }
     }
 
@@ -208,6 +244,54 @@ impl Pipe {
             .filter(|(_, (page, _))| page == parent)
             .map(|(session, (_, frame))| (frame.clone(), session.clone()))
             .collect()
+    }
+
+    /// Every out-of-process frame the browser attached: its own session,
+    /// the session it was attached under, and its frame.
+    pub(super) fn frame_sessions(&self) -> Vec<(String, String, String)> {
+        let Ok(pages) = self.pages.lock() else {
+            return Vec::new();
+        };
+        pages
+            .oopifs
+            .iter()
+            .map(|(session, (parent, frame))| (session.clone(), parent.clone(), frame.clone()))
+            .collect()
+    }
+
+    /// The pages the browser attached as their own targets, each by the
+    /// session it attached it on: that session and the page's target.
+    pub(crate) fn attached_pages(&self) -> Vec<(String, String)> {
+        let Ok(pages) = self.pages.lock() else {
+            return Vec::new();
+        };
+        pages
+            .attached
+            .iter()
+            .map(|(session, target)| (session.clone(), target.clone()))
+            .collect()
+    }
+
+    /// The page target `session` drives: a watched session's, or one the
+    /// browser attached a page on.
+    pub(super) fn page_target(&self, session: &str) -> Option<String> {
+        let pages = self.pages.lock().ok()?;
+        pages
+            .bound
+            .get(session)
+            .or_else(|| pages.attached.get(session))
+            .cloned()
+    }
+
+    /// The top-level documents page `tab` committed so far, its moves
+    /// within one counted with them (FIX 9412): two reads with the same
+    /// count read one document.
+    pub(crate) fn top_commits(&self, tab: &str) -> u64 {
+        self.pages
+            .lock()
+            .ok()
+            .and_then(|pages| pages.commits.get(tab).copied())
+            .unwrap_or(0)
     }
 
     /// The page target watched session `session` drives.
@@ -237,6 +321,7 @@ impl Pipe {
         self.forget_documents(session);
         if let Ok(mut pages) = self.pages.lock() {
             pages.frames.remove(session);
+            pages.attached.remove(session);
             pages.oopifs.remove(session);
             pages.oopifs.retain(|_, (parent, _)| parent != session);
         }
@@ -265,6 +350,8 @@ impl Pipe {
         if let Ok(mut pages) = self.pages.lock() {
             pages.visits.remove(target);
             pages.tops.remove(target);
+            pages.commits.remove(target);
+            pages.attached.retain(|_, attached| attached != target);
         }
     }
 

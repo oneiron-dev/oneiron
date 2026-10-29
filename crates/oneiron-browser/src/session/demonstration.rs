@@ -390,12 +390,28 @@ impl BrowserSession {
             return;
         }
         let mut edited: Option<Edited> = last_edit(&cues);
+        // The tabs whose page sent its document by this drain; an own act
+        // that loaded another page in a tab whose document had not is
+        // followed by that document later (FIX 10429).
+        let loaded: Vec<&str> = cues
+            .iter()
+            .filter(|cue| cue.k == "doc" && cue.top)
+            .map(|cue| cue.tab.as_str())
+            .collect();
         for step in own {
             let typed = matches!(
                 step.action,
                 Some(ReplayAction::Type { .. } | ReplayAction::Fill { .. })
             );
+            let moved = step.verb == "open" || step.result_url != step.source_url;
+            let late = step
+                .result_tab
+                .clone()
+                .filter(|tab| moved && !loaded.contains(&tab.as_str()));
             recording.own(step, if typed { edited.take() } else { None });
+            if let Some(tab) = late {
+                recording.awaits_document(tab);
+            }
         }
     }
 

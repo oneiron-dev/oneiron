@@ -11,18 +11,26 @@
 //! a secret-looking card number in a name reads as `[secret]`.
 //!
 //! An act's target is described as the page computes it: its role and
-//! accessible name, its input type and autocomplete tokens, and its place
-//! among the targets of its document with the same role and name. The host
-//! matches that against the outline the session already read of the page
-//! (its last whole observation at that URL), and only on a miss against
-//! the front tab's outline read now; a target neither shows once is a
-//! named gap. A replay locator is always an outline row's own.
+//! accessible name, its input type and autocomplete tokens, its place
+//! among the targets of its document with the same role and name, and its
+//! named ancestor scopes (FIX 9411). The host matches that against the
+//! outline the session already read of the page (its last whole
+//! observation of that tab's document, at that URL as the browser holds it,
+//! FIX 9412), and only on a miss against the front tab's outline read now;
+//! several rows of its role and name are told apart by its scopes, then by
+//! its place. A target neither shows once is a named gap. A replay locator
+//! is always an outline row's own; admission's fresh replay checks it.
+//!
+//! The recording listens on every tab the driver follows, every page the
+//! browser attached on its own (a popup opened before the start), and
+//! every out-of-process frame already attached under them, nested ones
+//! included (FIX 9410); only a frame no session reaches is named uncovered.
 
 use super::{CALL, CdpDriver, Tab};
 use crate::cdp::recorder::{Cue, Descriptor, Live, REC_BINDING, uninstall};
 use crate::demonstration::{Edited, KeyFacts, LocatorGap, Mapped, RecordingGapKind, Saw, Seen};
 use crate::driver::pages::session_token;
-use crate::outline::{self, CONTROLS, Masks, clip};
+use crate::outline::{self, CONTROLS, Masks, SCOPES, clip, locator_of, row_key};
 use crate::secret_fields::page_predicate;
 use crate::session::{effect_class_on, receipt_class};
 use crate::{BrowserError, Row};
@@ -31,15 +39,21 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
 /// The script each document of a recorded session runs in the recorder's
-/// world. `__BINDING__`, `__DISARM__`, `__CONTROLS__` and `__SECRETS__` are
-/// the recording's binding, the event that disarms it, the outline's
-/// control roles and the secret classifier's page twin.
+/// world. `__BINDING__`, `__DISARM__`, `__CONTROLS__`, `__SCOPES__` and
+/// `__SECRETS__` are the recording's binding, the event that disarms it,
+/// the outline's control and scope roles and the secret classifier's page
+/// twin.
 const PRELOAD: &str = r##"(() => {
   const w = window;
   const send = w["__BINDING__"];
   if (typeof send !== "function") return;
   const SECRETS = __SECRETS__;
   const CONTROLS = __CONTROLS__;
+  const SCOPES = __SCOPES__;
+  const LANDMARKS = {nav: "navigation", main: "main", aside: "complementary", search: "search",
+    ul: "list", ol: "list", menu: "list", li: "listitem", tr: "row", table: "table",
+    fieldset: "group", dialog: "dialog", article: "article", form: "form", section: "region"};
+  const SECTIONS = "article,aside,main,nav,section";
   const FROM_CONTENT = ["button", "link", "option", "menuitem", "menuitemcheckbox",
     "menuitemradio", "tab", "treeitem", "checkbox", "radio", "switch"];
   const ACTIVATES = ["button", "link", "checkbox", "radio", "switch", "menuitem",
@@ -126,6 +140,37 @@ const PRELOAD: &str = r##"(() => {
     return clean(el.getAttribute("title")) || clean(el.getAttribute("placeholder"));
   };
   const named = (el, role) => SECRETS.text(nameOf(el, role));
+  const scopeRole = (el) => {
+    const explicit = clean(el.getAttribute && el.getAttribute("role")).split(" ")[0];
+    if (explicit) return explicit;
+    const tag = tagOf(el);
+    if (tag === "header") return el.closest(SECTIONS) ? "" : "banner";
+    if (tag === "footer") return el.closest(SECTIONS) ? "" : "contentinfo";
+    return LANDMARKS[tag] || "";
+  };
+  const scopeName = (el, role) => {
+    const by = el.getAttribute("aria-labelledby");
+    if (by && clean(textOf(el, by))) return clean(textOf(el, by));
+    if (clean(el.getAttribute("aria-label"))) return clean(el.getAttribute("aria-label"));
+    const tag = tagOf(el);
+    const legend = tag === "fieldset" ? el.querySelector(":scope > legend") : null;
+    if (legend && clean(legend.textContent)) return clean(legend.textContent);
+    if (tag === "table" && el.caption && clean(el.caption.textContent)) {
+      return clean(el.caption.textContent);
+    }
+    if (role === "row") return clean(el.innerText || el.textContent);
+    return clean(el.getAttribute("title"));
+  };
+  const scopesOf = (el) => {
+    const out = [];
+    for (let at = up(el); at && at.nodeType === 1; at = up(at)) {
+      const role = scopeRole(at);
+      if (!SCOPES.includes(role)) continue;
+      const name = SECRETS.text(scopeName(at, role));
+      if (name) out.push([role, name]);
+    }
+    return out.reverse();
+  };
   const twins = (el, role, name) => {
     let at = -1;
     let of = 0;
@@ -141,7 +186,8 @@ const PRELOAD: &str = r##"(() => {
     const name = named(el, role);
     const by = el.getAttribute("aria-describedby");
     return {r: role, n: name, ty: typeOf(el) || null, ac: el.getAttribute("autocomplete"),
-      ds: SECRETS.text(by ? clean(textOf(el, by)) : ""), i: twins(el, role, name)};
+      ds: SECRETS.text(by ? clean(textOf(el, by)) : ""), i: twins(el, role, name),
+      sc: scopesOf(el)};
   };
   const isText = (c) => !!c && !!c.el && (c.role === "textbox" || c.role === "searchbox"
     || c.role === "spinbutton" || (c.role === "combobox" && tagOf(c.el) !== "select"));
@@ -226,10 +272,11 @@ const PRELOAD: &str = r##"(() => {
 })()"##;
 
 impl CdpDriver {
-    /// Starts a recording's capture in every tab the driver follows, and in
-    /// each page or frame the browser attaches from now on; the frames
-    /// already out of process, which no session of the recorder reaches,
-    /// by their URLs. Chromium only.
+    /// Starts a recording's capture in every tab the driver follows, every
+    /// page the browser attached on its own, the out-of-process frames
+    /// already attached under them, and each page or frame the browser
+    /// attaches from now on; the frames out of process that no session of
+    /// the recorder reaches, by their URLs (FIX 9410). Chromium only.
     pub(crate) fn record_start(&mut self) -> Result<Vec<String>, BrowserError> {
         self.chromium_only("a demonstration recording")?;
         let token = session_token();
@@ -239,6 +286,7 @@ impl CdpDriver {
             .replace("__BINDING__", &binding)
             .replace("__DISARM__", &disarm)
             .replace("__CONTROLS__", &json!(CONTROLS).to_string())
+            .replace("__SCOPES__", &json!(SCOPES).to_string())
             .replace("__SECRETS__", &page_predicate());
         self.pipe.recording_on(Live {
             binding,
@@ -254,6 +302,13 @@ impl CdpDriver {
             self.pipe
                 .record_on(session, target, target, Instant::now() + CALL);
         }
+        for (session, target) in self.pipe.attached_pages() {
+            if !self.ignored.contains(&target) {
+                self.pipe
+                    .record_on(&session, &target, &target, Instant::now() + CALL);
+            }
+        }
+        self.pipe.record_frames(Instant::now() + CALL);
         let listed = self
             .pipe
             .call(None, "Target.getTargets", json!({}), Instant::now() + CALL);
@@ -264,6 +319,10 @@ impl CdpDriver {
             .into_iter()
             .flatten()
             .filter(|info| info.get("type").and_then(Value::as_str) == Some("iframe"))
+            .filter(|info| {
+                let target = info.get("targetId").and_then(Value::as_str);
+                !target.is_some_and(|target| self.pipe.recording_listens(target))
+            })
             .filter_map(|info| info.get("url").and_then(Value::as_str).map(str::to_owned))
             .collect())
     }
@@ -327,6 +386,7 @@ impl CdpDriver {
                 let place = Place {
                     tab: &cue.tab,
                     url: page.as_deref(),
+                    commits: cue.commits,
                     gone,
                     read,
                 };
@@ -355,7 +415,9 @@ impl CdpDriver {
         now: &mut Option<Result<(String, Vec<Row>), LocatorGap>>,
     ) -> Result<Mapped, LocatorGap> {
         let descriptor = descriptor.ok_or(LocatorGap::NoTarget)?;
-        let held = place.url.and_then(|url| self.pages.held_rows_at(url));
+        let held = place
+            .url
+            .and_then(|url| self.pages.held_rows_at(place.tab, url, place.commits));
         if let Some(Ok(row)) = held.map(|rows| pick(rows.iter(), descriptor)) {
             return Ok(mapped(row, place.url));
         }
@@ -393,17 +455,20 @@ impl CdpDriver {
     }
 }
 
-/// Where a cue's act happened: its tab, its top page, whether its document
-/// is gone, and whether the page may be read now.
+/// Where a cue's act happened: its tab, its top page as the browser holds
+/// its URL, its tab's top-level commits then, whether its document is gone,
+/// and whether the page may be read now.
 struct Place<'a> {
     tab: &'a str,
     url: Option<&'a str>,
+    commits: u64,
     gone: bool,
     read: bool,
 }
 
 /// The one row with the descriptor's role and name; among several, the one
-/// at its place when the page counted as many.
+/// its named ancestor scopes give (FIX 9411), else the one at its place
+/// when the page counted as many.
 fn pick<'a>(
     rows: impl Iterator<Item = &'a Row>,
     descriptor: &Descriptor,
@@ -412,6 +477,9 @@ fn pick<'a>(
     let named: Vec<&Row> = rows
         .filter(|row| row.role == descriptor.r && row.name == name)
         .collect();
+    if let [one] = scoped(&named, descriptor, &name).as_slice() {
+        return Ok(*one);
+    }
     match (named.as_slice(), descriptor.i) {
         ([], _) => Err(LocatorGap::NoMatch),
         ([row], _) => Ok(*row),
@@ -420,6 +488,29 @@ fn pick<'a>(
         }
         _ => Err(LocatorGap::Ambiguous),
     }
+}
+
+/// Of several rows of one role and name, those whose locator the target's
+/// named ancestor scopes build, as an outline builds a row's: under the
+/// same scopes, at any place among its twins. None for one row or none.
+fn scoped<'a>(named: &[&'a Row], descriptor: &Descriptor, name: &str) -> Vec<&'a Row> {
+    if named.len() < 2 {
+        return Vec::new();
+    }
+    let scopes: Vec<String> = descriptor
+        .sc
+        .iter()
+        .map(|(role, name)| format!("{role} \"{}\"", clip(name)))
+        .collect();
+    let key = row_key(&scopes, &descriptor.r, name);
+    let twins: Vec<String> = (1..=u32::try_from(named.len()).unwrap_or(u32::MAX))
+        .map(|twin| locator_of(&key, twin))
+        .collect();
+    named
+        .iter()
+        .copied()
+        .filter(|row| twins.contains(&row.locator))
+        .collect()
 }
 
 /// A matched row as a recorded target: its locator, its name, and the
@@ -448,7 +539,7 @@ fn saw_of(
         )
     };
     Some(match cue.k.as_str() {
-        "doc" if cue.top => Saw::Document,
+        "doc" | "nav" if cue.top => Saw::Document,
         "click" => Saw::Click(target(cue.d.as_ref())),
         "edit" => {
             let value = match (cue.s, &cue.v) {

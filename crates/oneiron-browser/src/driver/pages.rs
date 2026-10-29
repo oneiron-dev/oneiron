@@ -78,6 +78,20 @@ pub(crate) struct Read {
     pub(crate) rows: Vec<Row>,
     pub(crate) no_tree: bool,
     pub(crate) partial: Option<PartialTree>,
+    /// Where a page read was taken, for a recorder's lookup; none for a
+    /// window's.
+    pub(crate) at: Option<ReadAt>,
+}
+
+/// Where a page read was taken (CUA E9, FIX 9412): its tab, its URL as the
+/// browser holds it (never the masked one an observation shows), and its
+/// tab's top-level commits before the read, so two reads of one URL in two
+/// tabs, or across a reload, are never taken for one document.
+#[derive(Clone)]
+pub(crate) struct ReadAt {
+    pub(crate) tab: String,
+    pub(crate) url: String,
+    pub(crate) commits: u64,
 }
 
 /// One observation's ordered rows, kept for a later one to edit.
@@ -88,6 +102,7 @@ struct Snapshot {
     url: String,
     rows: Vec<Row>,
     partial: bool,
+    at: Option<ReadAt>,
 }
 
 /// The observations a later one may edit, and the answers held for their
@@ -185,6 +200,7 @@ impl Observations {
             url: whole.url.clone(),
             rows: read.rows,
             partial,
+            at: read.at,
         };
         if self.hiding {
             self.hidden = Some(snapshot);
@@ -240,15 +256,22 @@ impl Observations {
         (!partial && !held.partial && held.scope == scope).then_some(held)
     }
 
-    /// The rows of the newest whole observation read at `url`, as the
-    /// session holds them (CUA E9): what a recorder matches an act's target
-    /// against before it reads the page again.
-    pub(crate) fn held_rows_at(&self, url: &str) -> Option<&[Row]> {
+    /// The rows of the newest whole observation read in tab `tab` at `url`,
+    /// as the browser holds it, after the tab's `commits` top-level commits
+    /// and before another (CUA E9, FIX 9412): what a recorder matches an
+    /// act's target against before it reads the page again. Its seq orders
+    /// the reads of one document.
+    pub(crate) fn held_rows_at(&self, tab: &str, url: &str, commits: u64) -> Option<&[Row]> {
         self.history
             .iter()
             .chain(&self.hidden)
             .chain(&self.delivered)
-            .filter(|held| !held.partial && held.url == url)
+            .filter(|held| !held.partial)
+            .filter(|held| {
+                held.at
+                    .as_ref()
+                    .is_some_and(|at| at.tab == tab && at.url == url && at.commits == commits)
+            })
             .max_by_key(|held| held.seq)
             .map(|held| held.rows.as_slice())
     }
