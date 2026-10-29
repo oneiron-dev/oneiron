@@ -200,13 +200,53 @@ pub(crate) fn fork_revision(
         return Ok(doc.doc);
     }
     let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
-    let doc = load_doc(store, txn, id)?
-        .fork_at(&frontier)
-        .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?;
+    let loaded = load_doc(store, txn, id)?;
+    // A revision at the live frontier is the loaded document itself: no
+    // snapshot export and import (FIX 11647).
+    let doc = if loaded.oplog_frontiers() == frontier {
+        loaded
+    } else {
+        loaded
+            .fork_at(&frontier)
+            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?
+    };
     if reference(id, &raw) != revision && reference(id, &doc_raw(&doc)?) != revision {
         return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
     }
     Ok(doc)
+}
+
+/// The record bytes of `id` at `revision`, as [`fork_revision`]'s document
+/// holds them, read on the private copy [`load_doc`] loads for this read: at
+/// the live frontier as loaded, at an older one checked out there, so a read
+/// exports and imports no snapshot (FIX 11647). A shallow document, whose
+/// checkout may not reach a retained frontier, reads through the fork.
+fn revision_raw(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    revision: RevisionRef,
+) -> Result<Vec<u8>> {
+    let raw = FRONTIER
+        .get(store, txn, &(*id, revision.0))?
+        .ok_or(Error::EntityNotFound)?;
+    if let Some(doc) = crate::entity_doc::record_document(store, txn, id, Some(&raw))? {
+        return doc_raw(&doc.doc);
+    }
+    let frontier = Frontiers::decode(&raw).map_err(|_| Error::CorruptedIndex("entity frontier"))?;
+    let doc = load_doc(store, txn, id)?;
+    if doc.oplog_frontiers() != frontier {
+        if doc.is_shallow() {
+            return doc_raw(&fork_revision(store, txn, id, revision)?);
+        }
+        doc.checkout(&frontier)
+            .map_err(|_| Error::CorruptedIndex("retained entity frontier"))?;
+    }
+    let bytes = doc_raw(&doc)?;
+    if reference(id, &raw) != revision && reference(id, &bytes) != revision {
+        return Err(Error::CorruptedIndex("entity frontier reference mismatch"));
+    }
+    Ok(bytes)
 }
 
 pub(super) fn doc_raw(doc: &LoroDoc) -> Result<Vec<u8>> {
@@ -415,7 +455,7 @@ fn raw_for_revision(
         return Ok(projected);
     }
     match revision {
-        Some(revision) => doc_raw(&fork_revision(store, txn, id, revision)?),
+        Some(revision) => revision_raw(store, txn, id, revision),
         None => Ok(raw.to_vec()),
     }
 }
