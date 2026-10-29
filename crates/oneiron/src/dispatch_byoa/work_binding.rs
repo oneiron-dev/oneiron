@@ -281,8 +281,9 @@ pub(super) struct SpentCapture {
     pub(super) receipt: ByoaTerminalReceipt,
     /// The spend read from it.
     pub(super) spent: SeatSpent,
-    /// The seat it ran on.
-    pub(super) seat: usize,
+    /// The seat it ran on, or `None` to search fresh from the first seat
+    /// when its stored index names a different quota identity (FIX 11650).
+    pub(super) seat: Option<usize>,
     /// The capture's time.
     pub(super) now: u64,
 }
@@ -305,46 +306,75 @@ pub(super) fn head_hop(
 }
 
 /// The current-policy index of `hop`'s quota identity when exactly one seat
-/// has it, else `fallback` (FIX 9239). A removed or duplicated seat never
-/// becomes a new refusal.
+/// has it. Otherwise use `fallback` only when that seat has the same quota
+/// identity; `None` when it differs, so no other seat is charged (FIX 11650).
 pub(super) fn remap_seat(
     policy: &RunnerSeatPolicy,
     hop: &RunnerWorkHop,
     fallback: usize,
-) -> ByoaResult<usize> {
+) -> ByoaResult<Option<usize>> {
     let mut matched = None;
+    let mut duplicated = false;
     for (index, seat) in policy.seats.iter().enumerate() {
         if seat_quota_id(seat)?.as_bytes() == &hop.quota {
             if matched.is_some() {
-                return Ok(fallback);
+                duplicated = true;
             }
             matched = Some(index);
         }
     }
-    Ok(matched.unwrap_or(fallback))
+    let candidate = if duplicated {
+        fallback
+    } else {
+        matched.unwrap_or(fallback)
+    };
+    let Some(seat) = policy.seats.get(candidate) else {
+        return Ok(None);
+    };
+    Ok((seat_quota_id(seat)?.as_bytes() == &hop.quota).then_some(candidate))
 }
 
 /// The seat a capture's own head hop maps to in the current policy. An
-/// unbound capture, a missing or later head, or an ambiguous map keeps the
-/// caller's index, exactly as before FIX 9239.
+/// unbound capture, a missing or later head keeps the caller's index. A
+/// quota-differing stored seat returns `None` (FIX 11650).
 pub(super) fn capture_seat_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     policy: &RunnerSeatPolicy,
     receipt: &ByoaTerminalReceipt,
     fallback: usize,
-) -> ByoaResult<usize> {
+) -> ByoaResult<Option<usize>> {
     let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
-        return Ok(fallback);
+        return Ok(Some(fallback));
     };
     let binding = RunnerWorkBindingId::from_bytes(work.binding)?;
     let Some(head) = head_hop(vault, txn, binding)? else {
-        return Ok(fallback);
+        return Ok(Some(fallback));
     };
     if head.attempt != *receipt.attempt.id.as_bytes() {
-        return Ok(fallback);
+        return Ok(Some(fallback));
     }
     remap_seat(policy, &head, fallback)
+}
+
+/// The quota identity stamped on the capture's own head hop. Only a
+/// quota-differing capture path needs this read (FIX 11650).
+pub(super) fn capture_hop_quota_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &ByoaTerminalReceipt,
+) -> ByoaResult<[u8; 16]> {
+    let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
+        return Err(Error::InvariantViolation("capture hop quota missing").into());
+    };
+    let binding = RunnerWorkBindingId::from_bytes(work.binding)?;
+    let Some(head) = head_hop(vault, txn, binding)? else {
+        return Err(Error::InvariantViolation("capture hop quota missing").into());
+    };
+    if head.attempt != *receipt.attempt.id.as_bytes() {
+        return Err(Error::InvariantViolation("capture hop quota changed").into());
+    }
+    Ok(head.quota)
 }
 
 /// Appends `hop` to `binding`'s record when its head names `from`: the
