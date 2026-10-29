@@ -17,7 +17,9 @@ pub use files_args::{
 };
 mod graph_fs_args;
 mod hook_args;
+mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
+pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
@@ -205,6 +207,12 @@ pub enum Command {
     /// session or the prompt, or queue the session's log. Always exits 0
     /// once parsed; a mistyped command exits 1, never 2.
     Hook(HookArgs),
+    /// The hosted vaults this machine's hooks may bind: record one the
+    /// surface the owner signed in on exported (origin, vault id, auth mode,
+    /// credential file), select one, or sign out. `oneiron hook` binds the
+    /// selected one at its step 3.
+    #[command(subcommand)]
+    Hosted(HostedCommand),
     /// Read or acknowledge a host instance wake inbox.
     Wake(WakeArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
@@ -1025,6 +1033,10 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Wake(args) => crate::wake_adapters::command(args),
         Command::Hook(args) => {
             crate::logging::off_runtime("hook", move || commands::hook(args)).await
+        }
+        // Blocking: a login asks its origin through a spawned `oneiron mcp`.
+        Command::Hosted(command) => {
+            crate::logging::off_runtime("hosted", move || commands::hosted(command)).await?
         }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
