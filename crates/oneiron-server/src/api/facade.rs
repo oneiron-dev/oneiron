@@ -407,6 +407,11 @@ struct FacadeErrorBody {
     /// named any (FIX 7398).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     reason_codes: Vec<String>,
+    /// A failed run's program type feedback (FIX 10389), beside the refusal
+    /// and never among its words: each item released whole, or withheld
+    /// with none of its text when its own release check holds it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    program_steps: Vec<oneiron::code_run::ProgramStepFeedbackRelease>,
 }
 
 /// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
@@ -439,4 +444,6 @@ pub(crate) struct MemoryErrorBodySchema {
     retry_after: Option<u64>,
     resets_at: Option<Vec<u64>>,
     reason_codes: Option<Vec<String>>,
+    #[schema(value_type = Option<Vec<Object>>)]
+    program_steps: Option<Vec<serde_json::Value>>,
 }

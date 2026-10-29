@@ -77,8 +77,9 @@ impl ConsolidationExecutor<'_> {
     /// decisions, each round read as its pack was: on the pack's step and
     /// pass clock, branch, route `to`, `correlation` and `evidence`. Each
     /// round reads the `state` its caller builds over its shortlisted ids and
-    /// questions, each by the label the round's map assigns it. None when the
-    /// step trapped.
+    /// questions, each by the label the round's map assigns it, and sends
+    /// under the `sources` its caller builds over the same shortlist and the
+    /// round's map. None when the step trapped.
     #[expect(
         clippy::too_many_arguments,
         reason = "the pack's step, clock, branch, route and evidence join the choice and the charge tally"
@@ -96,6 +97,7 @@ impl ConsolidationExecutor<'_> {
         state: &(
              dyn Fn(&[EntityId], &[DecisionQuestion], &mut CallLabelMap) -> serde_json::Value + Sync
          ),
+        sources: &(dyn Fn(&[EntityId], &CallLabelMap) -> Option<Vec<EntityId>> + Sync),
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<Chosen>> {
         let mut shortlist = named_ids(groups);
@@ -125,6 +127,7 @@ impl ConsolidationExecutor<'_> {
             self.label_questions(&mut labels, &questions);
             let read = state(&shortlist, &questions, &mut labels);
             measure_state(step_ctx.vault, &read);
+            let round_sources = sources(&shortlist, &labels);
             let Some(decided) = self
                 .decide(
                     step_ctx,
@@ -136,6 +139,7 @@ impl ConsolidationExecutor<'_> {
                     evidence,
                     &read,
                     &labels,
+                    round_sources,
                     charges,
                 )
                 .await?

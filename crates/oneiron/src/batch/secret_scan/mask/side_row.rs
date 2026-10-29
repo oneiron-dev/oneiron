@@ -5,9 +5,10 @@
 //! and notes, an intake event. A secret the mask places goes to custody in the
 //! writer's own transaction, and the row keeps its handle where the secret
 //! was. A hit the mask cannot place refuses the write with the scan's error:
-//! a recovery phrase, a key split over members, bytes no reading takes (an
-//! opaque codec), a masked copy the row's own codec refuses, or a writer whose
-//! target holds no custody door. With the owner's switch off the row is
+//! a recovery phrase, a key split over members, a key in a container's
+//! member (FIX 2312), bytes no reading takes (an opaque codec), a masked copy
+//! the row's own codec refuses, or a writer whose target holds no custody
+//! door. With the owner's switch off the row is
 //! written as given, as the batch door skips its scan.
 //!
 //! The custody records a mask mints go through their own door, into tables
@@ -32,7 +33,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
+use super::super::{SecretScanMode, scan_write_tree, secret_scan_mode_in_txn};
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
@@ -56,15 +57,15 @@ pub(crate) enum SidePart {
 }
 
 impl SidePart {
-    /// The door's scan of this part; a tree's encoded copy is wiped once
-    /// read (FIX 1101).
+    /// The door's scan of this part, a container's members included (FIX
+    /// 2312); a tree's encoded copy is wiped once read (FIX 1101).
     fn scan(&self) -> Result<()> {
         let scanned: Cow<'_, [u8]> = match self {
             Self::Body(bytes) => Cow::Borrowed(bytes.as_slice()),
             Self::Text(text) => Cow::Borrowed(text.as_bytes()),
             Self::Value(value) => Cow::Owned(encoded(value)?),
         };
-        let scan = scan_payload(&scanned).map(drop);
+        let scan = scan_write_tree(&scanned);
         if let Cow::Owned(mut copy) = scanned {
             copy.zeroize();
         }

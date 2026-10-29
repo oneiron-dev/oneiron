@@ -7287,6 +7287,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_conversations_turn_rebind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.rebind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_messages_react(
         &self,
         input: serde_json::Value,

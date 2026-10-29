@@ -313,6 +313,11 @@ CALL_HOME_DOORS = {'vault.search.bm25': ('super::search_home_doors::vault_search
 # FIX 10425: the facade host-door rows whose answer counts its hooks' verdict
 # decisions among its own (`model_free`), as their code-mode door does.
 HOOK_DECISION_ROWS = {'self.browser.batch', 'self.browser.library.run'}
+# FIX 10389: a host door that runs its caller's program answers a failure
+# that keeps the program's type feedback beside its typed refusal (its door
+# returns `SourceListed`); each surface converts it with today's status,
+# code and retry, and releases the feedback apart.
+SOURCE_FEEDBACK_DOORS = {'execute_code'}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -850,12 +855,16 @@ def mcp_input_dispatch(row):
         door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
+        # A source door's failure keeps its program's feedback beside its
+        # refusal, released apart by the rows the call served (FIX 10389).
+        door_error = ('|failure| crate::api::mcp_gateway::type_feedback_release::source_run_error(server, actor, served.rows(), failure)'
+                      if name in SOURCE_FEEDBACK_DOORS else 'mcp_facade_error')
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode +
                  (f'let (output, listed) = {door};\n'
                   '// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\n'
                   'served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));\n'
-                  'let output = output.map_err(mcp_facade_error)?;\n' if row.get('host_door_lists') else
+                  f'let output = output.map_err({door_error})?;\n' if row.get('host_door_lists') else
                   f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
@@ -1468,9 +1477,13 @@ def facade_dispatch(facade_rows):
                          else f'let mut hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;')
             post_hooks = (f'facade_hooks_post_counted(server, hooks, {json.dumps(name)}, output, decided)' if counted
                           else 'facade_hooks_post(server, hooks, output)')
+            # A source door's failure keeps its program's feedback beside
+            # its refusal, released apart by the rows it read (FIX 10389).
+            door_output = ('output.map_err(|failure| super::host_doors::source_run_refusal(server, auth, Some(listed.as_slice()), failure))?'
+                           if name in SOURCE_FEEDBACK_DOORS else 'output?')
             answer = (f'''let ran = async {{
                     let (output, listed) = {door};
-                    Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+                    Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
                 Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else

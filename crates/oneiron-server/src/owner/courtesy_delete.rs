@@ -219,12 +219,10 @@ pub(crate) fn answer(
             if let Err(refusal) = vault.recheck_owner(owner) {
                 return OwnerError::from(refusal);
             }
-            // A legal order's refusal keeps its typed notice and bound (FIX
-            // 2926); any other refusal reads as before.
-            match error {
-                oneiron::Error::LegalHold(_) => OwnerError::from(error),
-                error => OwnerError::Invalid(error.to_string()),
-            }
+            // Every engine refusal keeps its type (FIX 2923): a legal order's
+            // names its bound (FIX 2926), a hold on a partition an erase took
+            // names that state, and a malformed answer stays a bad request.
+            OwnerError::from(error)
         })?;
     if let Some(destination) = destination {
         let reply = with_issuer(server, |issuer| {

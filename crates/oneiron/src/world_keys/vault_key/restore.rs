@@ -44,8 +44,10 @@ pub(crate) enum RecipientCustody {
 /// The authority a cold managed restore holds over the restored key's
 /// managed escrow wraps: no `Clone`, `Serialize` or `Default`, spent once
 /// by [`Vault::spend_restore_capability`]. Only
-/// [`Vault::restore_checkpoint_admitted`] mints one, after verification and
-/// the takeover fence, before keep.
+/// [`Vault::restore_checkpoint_admitted`] mints one, after verification, on
+/// the restore's own unpublished copy at its destination, in the landed
+/// lineage at the takeover epoch, before that takeover's fence publishes
+/// and before keep (FIX 6782).
 pub(crate) struct RestoreAdmissionCapability {
     source: [u8; 32],
     restore_id: String,

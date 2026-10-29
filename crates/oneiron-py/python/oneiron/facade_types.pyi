@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1179 facade rows, 4245 declarations.
-Inputs: 1110 of 1179 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1050 of 1179 fully typed, 129 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1180 facade rows, 4268 declarations.
+Inputs: 1111 of 1180 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1051 of 1180 fully typed, 129 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 115; unread shapes: 0.
 """
 
@@ -1609,6 +1609,7 @@ TaskAssignee = Literal["dreamer"] | TaskAssigneeAgentDef | TaskAssigneePeer | Ta
 class TaskAskGuest(TypedDict):
     companion_ref: EntityId
     disclosure_grant_ref: str
+    holder_key: NotRequired[str | None]
 class TaskAskTargetAuthority(TypedDict):
     authority: AskAuthorityScope
 class TaskAskTargetResponder(TypedDict):
@@ -2253,6 +2254,8 @@ class LocalRunnerBudgetCounter(TypedDict):
     remaining_units: int
     reserved_units: int
     spent_units: int
+    overdraft_units: int
+    owed_calls: int
     updated_at: int
 class LocalRunnerBudgetView(TypedDict):
     budget_id: str
@@ -2264,6 +2267,7 @@ class RunnerBudgetReservationsRequest(TypedDict):
 class RunnerBudgetReservation(TypedDict):
     job_ref: str
     reserved_units: int
+    owed_units: int
     created_at: int
     updated_at: int
 class RunnerBudgetReservationsView(TypedDict):
@@ -4790,6 +4794,7 @@ class InboxLensPage(TypedDict):
     concern_groups: list[InboxConcernGroup]
 class InboxRunGroupsRequest(TypedDict):
     limit: NotRequired[int | None]
+    after: NotRequired[str | None]
 InboxExceptionClass = Literal["checker_hedge", "manifest_critical", "supersedes_user_stated", "conflict", "meeting_outcome_check_in", "plugin_install"]
 ReceiptKind = Literal["outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle", "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook", "reference_refusal", "task_lifecycle"]
 class ReceiptRecord(TypedDict):
@@ -4834,6 +4839,9 @@ class InboxGroup(TypedDict):
     new_claim_count: int
     update_count: int
     conflict_count: int
+class InboxGroupPage(TypedDict):
+    groups: list[InboxGroup]
+    next: NotRequired[str | None]
 class HubPinSemver(TypedDict):
     type: Literal["semver"]
     value: str
@@ -6953,7 +6961,7 @@ class OfferConnect(TypedDict):
 class FederationPactScope(TypedDict):
     lo_to_hi: FederationDirectionScope
     hi_to_lo: FederationDirectionScope
-Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str, "key": str})
 class AcceptConnect(TypedDict):
     offer: Offer
     grant: str
@@ -6978,7 +6986,7 @@ class RescopeConnect(TypedDict):
     epoch: int
     outbound: FederationDirectionScope
     inbound: FederationDirectionScope
-RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str, "key": str})
 class AcceptRescopeConnect(TypedDict):
     offer: RescopeOffer
 class ConnectRescoped(TypedDict):
@@ -7195,7 +7203,7 @@ class GuestRevokeResponse(TypedDict):
     courtesy_skipped: NotRequired[str | None]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
-    holder_key: str
+    holder_key: NotRequired[str | None]
     expires_at: int
     comm: NotRequired[CommReach | None]
 class GuestSlipMinted(TypedDict):
@@ -7497,6 +7505,81 @@ class OffRecordExecuteRequest(TypedDict):
     run_ref: str
     task: str
 OffRecordRunStatus = Literal["complete", "waiting", "yielded", "window_full"]
+class ProgramStepIdentity(TypedDict):
+    run: str
+    program_seq: int
+    invocation: int
+class ProgramPreparationNote(TypedDict):
+    code: str
+    detail: NotRequired[str | None]
+class TypeCheckFacts(TypedDict):
+    language: str
+    file: str
+    backend: str
+    pin: str
+    action_digest: NotRequired[str | None]
+    elapsed_us: NotRequired[int | None]
+    peak_memory_bytes: NotRequired[int | None]
+class DiagnosticMeasures(TypedDict):
+    count: int
+    bytes: int
+class TypeDiagnostic(TypedDict):
+    file: NotRequired[str | None]
+    line: int
+    column: int
+    category: str
+    code: int
+    message: str
+    message_bytes: int
+class DiagnosticCollectionInline(TypedDict):
+    form: Literal["inline"]
+    diagnostics: list[TypeDiagnostic]
+class DiagnosticCollectionStored(TypedDict):
+    form: Literal["stored"]
+    handle: str
+    occurrence: str
+    byte_len: int
+DiagnosticCollection = DiagnosticCollectionInline | DiagnosticCollectionStored
+class TypeDiagnosticsComplete(TypedDict):
+    state: Literal["complete"]
+    check: TypeCheckFacts
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsPending(TypedDict):
+    state: Literal["pending"]
+    check: TypeCheckFacts
+class TypeDiagnosticsFailed(TypedDict):
+    state: Literal["failed"]
+    check: TypeCheckFacts
+    failure: str
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsUnavailable(TypedDict):
+    state: Literal["unavailable"]
+    reason: str
+    detail: NotRequired[str | None]
+TypeDiagnostics = TypeDiagnosticsComplete | TypeDiagnosticsPending | TypeDiagnosticsFailed | TypeDiagnosticsUnavailable
+class ProgramStepFeedback(TypedDict):
+    step: ProgramStepIdentity
+    check_ref: str
+    preparation_note: NotRequired[ProgramPreparationNote | None]
+    type_diagnostics: TypeDiagnostics
+TypeCheckState = Literal["complete", "pending", "failed", "unavailable"]
+FeedbackWithheldReason = Literal["recipient", "placement", "producers_unknown", "conflicted_root", "release_check_failed"]
+class ProgramStepFeedbackReleaseReleased(ProgramStepFeedback):
+    release: Literal["released"]
+class ProgramStepFeedbackReleaseWithheld(TypedDict):
+    release: Literal["withheld"]
+    step: ProgramStepIdentity
+    check_ref: str
+    state: TypeCheckState
+    check: NotRequired[TypeCheckFacts | None]
+    failure: NotRequired[str | None]
+    unavailable: NotRequired[str | None]
+    measures: NotRequired[DiagnosticMeasures | None]
+    preparation_code: NotRequired[str | None]
+    reason: FeedbackWithheldReason
+ProgramStepFeedbackRelease = ProgramStepFeedbackReleaseReleased | ProgramStepFeedbackReleaseWithheld
 class OffRecordExecuted(TypedDict):
     run_ref: str
     run_id: str
@@ -7504,6 +7587,7 @@ class OffRecordExecuted(TypedDict):
     next_step_seq: NotRequired[int | None]
     steps_run: int
     bridge_calls: int
+    program_steps: NotRequired[list[ProgramStepFeedbackRelease]]
 class OffRecordResultsRequest(TypedDict):
     session_ref: str
     run_ref: str
@@ -9298,12 +9382,134 @@ class SpaceMove(TypedDict):
     started_at: int
     state: SpaceMoveState
     last_check: NotRequired[SpaceMoveCheck | None]
+SwitchOwner = str
+TrainingOwner = str
+ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
+ModelTierRef = str
+ModelDisposition = Literal["offline", "served"]
+class ModelBinding(TypedDict):
+    model: ModelId
+    slot: ModelSlot
+    tier: ModelTierRef
+    route_models: NotRequired[dict[str, ModelId]]
+    disposition: NotRequired[ModelDisposition | None]
+    reads_audio: NotRequired[bool]
+CheckpointFileKind = Literal["weights", "tokenizer", "config", "template", "adapter_config"]
+class SourcePin(TypedDict):
+    repository: str
+    revision: str
+class ArtifactPin(TypedDict):
+    artifact: EntityId
+    version: int
+    blake3: list[int]
+    bytes: int
+class CheckpointFilePin(TypedDict):
+    name: str
+    kind: CheckpointFileKind
+    source: SourcePin
+    content: ArtifactPin
+    declared_blake3: list[int]
+class PinnedCheckpoint(TypedDict):
+    model: ModelId
+    files: list[CheckpointFilePin]
+class CalibrationResult(TypedDict):
+    temperature: float
+    brier_score: float
+    calibration_error: float
+class HeldOutResult(TypedDict):
+    exposure: EntityId
+    checkpoint_blake3: list[int]
+    held_out_blake3: list[int]
+    harness: SourcePin
+    cases: int
+    metrics: dict[str, float]
+    calibration: NotRequired[CalibrationResult | None]
+    verifier_logs: list[ArtifactPin]
+    passed: bool
+class QuestionExportCheck(TypedDict):
+    finite: bool
+    tokens_match: bool
+    passed: bool
+class ExportCheck(TypedDict):
+    hash_mismatches: list[str]
+    probe_coverage_matches: bool
+    probe_checkpoints_match: bool
+    settings_match: bool
+    harness_matches: bool
+    argmax_flips: int
+    max_logit_difference: float
+    tolerance: float
+    question_check: NotRequired[QuestionExportCheck | None]
+class SwapChoiceEvaluated(TypedDict):
+    kind: Literal["evaluated"]
+class SwapChoiceExplicitOverride(TypedDict):
+    kind: Literal["explicit_override"]
+    reason: str
+SwapChoice = SwapChoiceEvaluated | SwapChoiceExplicitOverride
+class RoleSwapReceipt(TypedDict):
+    id: EntityId
+    run: EntityId
+    owner: TrainingOwner
+    at: int
+    role: ModelRole
+    previous: NotRequired[ModelBinding | None]
+    binding: ModelBinding
+    checkpoint: PinnedCheckpoint
+    evaluation: NotRequired[HeldOutResult | None]
+    checks: ExportCheck
+    exact_hash_overlaps: int
+    promotion_exposure: NotRequired[EvalExposure | None]
+    choice: SwapChoice
+class BindingSourceOffer(TypedDict):
+    kind: Literal["offer"]
+    offer: EntityId
+    owner: SwitchOwner
+class BindingSourceTraining(TypedDict):
+    kind: Literal["training"]
+    receipt: RoleSwapReceipt
+BindingSource = BindingSourceOffer | BindingSourceTraining
+class BindingMoveLink(TypedDict):
+    candidate: str
+    incumbent: SpaceRef
+    started_at: int
+class BindingNotAppliedRefusedBody(TypedDict):
+    reason: str
+class BindingNotAppliedRefused(TypedDict):
+    refused: BindingNotAppliedRefusedBody
+BindingNotApplied = Literal["cancelled", "stale"] | BindingNotAppliedRefused
+class BindingMoveStateWaiting(TypedDict):
+    state: Literal["waiting"]
+class BindingMoveStateFilling(TypedDict):
+    state: Literal["filling"]
+class BindingMoveStateApplied(TypedDict):
+    state: Literal["applied"]
+    at: int
+    verdict: NotRequired[NotWorse | None]
+class BindingMoveStateNotApplied(TypedDict):
+    state: Literal["not_applied"]
+    at: int
+    why: BindingNotApplied
+class BindingMoveStateUndone(TypedDict):
+    state: Literal["undone"]
+    at: int
+    owner: SwitchOwner
+BindingMoveState = BindingMoveStateWaiting | BindingMoveStateFilling | BindingMoveStateApplied | BindingMoveStateNotApplied | BindingMoveStateUndone
+class PendingEmbedderBinding(TypedDict):
+    source: BindingSource
+    previous: NotRequired[ModelBinding | None]
+    binding: ModelBinding
+    staged_at: int
+    link: NotRequired[BindingMoveLink | None]
+    refill: NotRequired[EmbeddingSpace | None]
+    state: BindingMoveState
 class EmbeddingSpacesView(TypedDict):
     spaces: list[EmbeddingSpace]
     text_index: EmbeddingSpace
     slots: dict[str, str]
     moves: list[SpaceMove]
     probes: dict[str, int]
+    refused: dict[str, int]
+    binding_moves: list[PendingEmbedderBinding]
 EmbeddingSpaceDeclareRequest = EmbeddingSpace
 class EmbeddingSpaceBindRequest(TypedDict):
     kind: InputKind
@@ -10144,6 +10350,14 @@ class LearningChoiceValuePattern(TypedDict):
 class LearningChoiceValueBudget(TypedDict):
     budget: int
 LearningChoiceValue = LearningChoiceValueModel | LearningChoiceValueWidth | LearningChoiceValuePattern | LearningChoiceValueBudget
+class LearnedChoiceValueView(TypedDict):
+    choice: LearningChoiceValue
+    runs: float
+    share: float
+class LearnedChoiceView(TypedDict):
+    values: list[LearnedChoiceValueView]
+    own_runs: float
+    origin: PriorOrigin
 class LearningSettingRowView(TypedDict):
     key: str
     mode: LearningSettingMode
@@ -10157,6 +10371,7 @@ class LearningSettingRowView(TypedDict):
     by: str
     at: int
     why: str
+    learned: NotRequired[LearnedChoiceView | None]
 class LearningSettingsView(TypedDict):
     catalog: list[LearningSettingSpecView]
     rows: list[LearningSettingRowView]
@@ -11418,6 +11633,7 @@ class ForeignCodeRunResult(TypedDict):
     proposals: list[ForeignCodeProposal]
     isolation: ForeignCodeIsolation
     receipt_ref: str
+    program_steps: NotRequired[list[ProgramStepFeedbackRelease]]
 class CodeRunModelHealCountRequest(TypedDict):
     model_id: str
 class CodeRunModelHealCountView(TypedDict):
@@ -11425,81 +11641,7 @@ class CodeRunModelHealCountView(TypedDict):
     healed_turns: int
 class CodeRunTypeDiagnosticsRequest(TypedDict):
     check_ref: str
-class ProgramStepIdentity(TypedDict):
-    run: str
-    program_seq: int
-    invocation: int
-class ProgramPreparationNote(TypedDict):
-    code: str
-    detail: NotRequired[str | None]
-class TypeCheckFacts(TypedDict):
-    language: str
-    file: str
-    backend: str
-    pin: str
-    action_digest: NotRequired[str | None]
-    elapsed_us: NotRequired[int | None]
-    peak_memory_bytes: NotRequired[int | None]
-class DiagnosticMeasures(TypedDict):
-    count: int
-    bytes: int
-class TypeDiagnostic(TypedDict):
-    file: NotRequired[str | None]
-    line: int
-    column: int
-    category: str
-    code: int
-    message: str
-    message_bytes: int
-class DiagnosticCollectionInline(TypedDict):
-    form: Literal["inline"]
-    diagnostics: list[TypeDiagnostic]
-class DiagnosticCollectionStored(TypedDict):
-    form: Literal["stored"]
-    handle: str
-    occurrence: str
-    byte_len: int
-DiagnosticCollection = DiagnosticCollectionInline | DiagnosticCollectionStored
-class TypeDiagnosticsComplete(TypedDict):
-    state: Literal["complete"]
-    check: TypeCheckFacts
-    measures: DiagnosticMeasures
-    diagnostics: DiagnosticCollection
-class TypeDiagnosticsPending(TypedDict):
-    state: Literal["pending"]
-    check: TypeCheckFacts
-class TypeDiagnosticsFailed(TypedDict):
-    state: Literal["failed"]
-    check: TypeCheckFacts
-    failure: str
-    measures: DiagnosticMeasures
-    diagnostics: DiagnosticCollection
-class TypeDiagnosticsUnavailable(TypedDict):
-    state: Literal["unavailable"]
-    reason: str
-    detail: NotRequired[str | None]
-TypeDiagnostics = TypeDiagnosticsComplete | TypeDiagnosticsPending | TypeDiagnosticsFailed | TypeDiagnosticsUnavailable
-class ProgramStepFeedback(TypedDict):
-    step: ProgramStepIdentity
-    check_ref: str
-    preparation_note: NotRequired[ProgramPreparationNote | None]
-    type_diagnostics: TypeDiagnostics
-TypeCheckState = Literal["complete", "pending", "failed", "unavailable"]
-FeedbackWithheldReason = Literal["recipient", "placement", "producers_unknown", "conflicted_root", "release_check_failed"]
-class ProgramStepFeedbackReleaseReleased(ProgramStepFeedback):
-    release: Literal["released"]
-class ProgramStepFeedbackReleaseWithheld(TypedDict):
-    release: Literal["withheld"]
-    step: ProgramStepIdentity
-    check_ref: str
-    state: TypeCheckState
-    check: NotRequired[TypeCheckFacts | None]
-    failure: NotRequired[str | None]
-    unavailable: NotRequired[str | None]
-    measures: NotRequired[DiagnosticMeasures | None]
-    preparation_code: NotRequired[str | None]
-    reason: FeedbackWithheldReason
-ProgramStepFeedbackRelease = ProgramStepFeedbackReleaseReleased | ProgramStepFeedbackReleaseWithheld
+    session_ref: NotRequired[str | None]
 class CodeWaitTarget(TypedDict):
     run_id: EntityId
     wait_id: EntityId
@@ -15030,6 +15172,15 @@ class TurnActionReceipt(TypedDict):
     turn_id: str
     message_id: str
     attempt_id: str
+class TurnActionRebindRequest(TypedDict):
+    attempt_id: str
+class TurnActionRebindReceipt(TypedDict):
+    action: TurnAction
+    turn_id: str
+    attempt_id: str
+    predecessor_slip: str
+    successor_slip: str
+    owner_work: bool
 class MessageReactionExternal(TypedDict):
     connector: str
     id: str
@@ -15169,16 +15320,6 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
-ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach", "browser_planner"]
-ModelTierRef = str
-ModelDisposition = Literal["offline", "served"]
-class ModelBinding(TypedDict):
-    model: ModelId
-    slot: ModelSlot
-    tier: ModelTierRef
-    route_models: NotRequired[dict[str, ModelId]]
-    disposition: NotRequired[ModelDisposition | None]
-    reads_audio: NotRequired[bool]
 SeatPrecedence = Literal["narrow_only", "seat_override"]
 DescriptionSource = Literal["owner", "measured", "benchmarks", "vendor"]
 class SeatPolicy(TypedDict):
@@ -15396,7 +15537,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
-    source_turn_ref: NotRequired[EntityId | None]
+    artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
     followed_skill: NotRequired[bool | None]
@@ -15425,13 +15566,14 @@ class AmendmentJudgmentView(TypedDict):
     scope: str
     evidence_receipts: list[str]
     d_norm: float
+    engine_ver: str
     at: int
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
-    artifact_ref: EntityId
+    artifact_ref: NotRequired[EntityId | None]
     proposed_text: str
     final_text: str
-    delta: AmendmentDeltaView
+    delta: NotRequired[AmendmentDeltaView | None]
     hunks: list[SettledHunkView]
     judgment: NotRequired[AmendmentJudgmentView | None]
     edit_cost_claims: list[EntityId]
@@ -15443,14 +15585,14 @@ class ProposalDeltaReadRequest(TypedDict):
 class ProposalOpSpanView(TypedDict):
     actor: NotRequired[EntityId | None]
     trust: str
-    before_text: str
-    after_text: str
+    before_text: NotRequired[str | None]
+    after_text: NotRequired[str | None]
     lamport: int
     timestamp: int
 class ProposalArtifactView(TypedDict):
     artifact_ref: EntityId
-    proposed_text: str
-    final_text: str
+    proposed_text: NotRequired[str | None]
+    final_text: NotRequired[str | None]
     source_turn_ref: NotRequired[EntityId | None]
     spans: list[ProposalOpSpanView]
 class AmendmentEvidenceView(TypedDict):

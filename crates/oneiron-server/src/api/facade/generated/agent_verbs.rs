@@ -902,6 +902,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.projects.route_tradeoff", post(facade_route))
         .route("/vault.conversations.turn.continue", post(facade_route))
         .route("/vault.conversations.turn.retry", post(facade_route))
+        .route("/vault.conversations.turn.rebind", post(facade_route))
         .route("/vault.messages.react", post(facade_route))
         .route("/vault.rooms.host", post(facade_route))
         .route("/vault.rooms.host.pin", post(facade_route))

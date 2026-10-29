@@ -266,7 +266,6 @@ pub(crate) async fn execute_mcp_read_result(
 fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGatewayError {
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
-        | crate::mcp::McpCodeExecutionError::RunBusy
         | crate::mcp::McpCodeExecutionError::RunWaitedOut => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_)
@@ -740,7 +739,8 @@ fn mcp_compaction_value(report: &oneiron::engine_executor::CompactionReport) -> 
 /// verb's wire value and every row the board was derived from. A refresh's
 /// frame is the answer, so the queue behind it is superseded and drained.
 /// Leaves the hook blocks the answer shows in `hooks`, for
-/// [`deliver_run_board_hooks`] once the answer returns to the run.
+/// [`deliver_run_board_hooks`] once the answer returns to the run. A pumped
+/// run's host door binds no session, so its board renders no SCRATCHPAD.
 pub(crate) async fn execute_run_board_verb(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
@@ -748,7 +748,21 @@ pub(crate) async fn execute_run_board_verb(
     call: oneiron::board_verb::BoardVerbCall,
     hooks: &mut Option<super::board_setup::McpBoardHooks>,
 ) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
-    let board = super::board_setup::run_current_board(server, actor, connection)
+    execute_run_board_verb_in_session(server, actor, connection, None, call, hooks).await
+}
+
+/// [`execute_run_board_verb`] over a board bound to `session`, the session
+/// the call's host origin names (FIX 2340): its SCRATCHPAD is that
+/// session's live pad.
+pub(crate) async fn execute_run_board_verb_in_session(
+    server: &Arc<SyncServer>,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+    session: Option<&str>,
+    call: oneiron::board_verb::BoardVerbCall,
+    hooks: &mut Option<super::board_setup::McpBoardHooks>,
+) -> Result<(Value, Vec<oneiron::EntityId>), oneiron::memory::MemoryError> {
+    let board = super::board_setup::run_current_board(server, actor, connection, session)
         .await
         .map_err(run_board_error)?;
     let world = actor.entity_ref();

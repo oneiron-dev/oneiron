@@ -42,7 +42,9 @@ use crate::memory::{
 use crate::workspace_roster::RoomRegenerationPermit;
 use crate::{EntityId, Error, Vault};
 
+mod rebind;
 mod standing;
+pub use rebind::{TurnActionRebindReceipt, TurnActionRebindRequest};
 pub use standing::TurnActionAuthority;
 
 /// The attempt kind a host's turn-action worker claims.
@@ -96,6 +98,10 @@ pub struct TurnActionAttempt {
     pub authority: TurnActionAuthority,
     /// The requester read from off this device; the run reads there too.
     pub off_device: bool,
+    /// The slip ids this action stood on before each rebind of its
+    /// requester's (FIX 6108), oldest first: its lineage. Empty until one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rebound_from: Vec<[u8; 32]>,
 }
 
 /// One earlier line of the conversation, as a chat request carries it.
@@ -478,6 +484,7 @@ impl Memory<'_> {
             actor_class: self.actor_class() as u8,
             authority,
             off_device: self.locality() == CallerLocality::OffDevice,
+            rebound_from: Vec::new(),
         };
         // Queued only while the slip it carries stands for this actor, or
         // its attested owner is the vault's live owner, and a project room's

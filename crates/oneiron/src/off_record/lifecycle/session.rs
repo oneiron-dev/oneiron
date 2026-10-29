@@ -22,6 +22,8 @@ use super::telemetry::SessionRetrievalTelemetry;
 use super::types::{OffRecordBackendClass, OffRecordCloseOutcome, OffRecordMode};
 use crate::error::OffRecordError;
 
+mod type_feedback;
+
 /// Vault-bound factory for explicit off-record session entry.
 pub struct OffRecordSessionVault<'vault> {
     pub(super) vault: &'vault Vault,

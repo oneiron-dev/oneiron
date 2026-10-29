@@ -1,38 +1,75 @@
-//! The host-order legal holds a cold restore installs (FIX 1485, FIX 6598).
+//! The host-order legal holds a cold restore installs (FIX 1485, FIX 6598,
+//! FIX 6817).
 //!
-//! A host order's holds are runtime rows the image does not carry, so the
-//! restored vault lands with none of its source's. The supervisor reads the
-//! source's whole family over the source's ctl under its freeze and hands
-//! it on the input pipe; `begin` admits it, bound to the plan's attempt and
-//! source. `finish` installs one family, whole, in place of the restored
-//! vault's, never a union: the pipe's, else the artifact's, else none,
-//! which is `host_holds_unknown`: logged, said in the receipt, and never a
-//! refusal.
+//! A host order's holds are runtime rows the image's canonical rows do not
+//! carry, so the restored vault lands with none of its source's. The
+//! supervisor reads the source's whole family over the source's ctl under
+//! its freeze, or, where the source cannot answer, its restore worker opens
+//! the family the artifact's host-private member holds, and hands it on the
+//! input pipe; `begin` admits it, bound to the plan's attempt and source,
+//! every row a host-order row. The artifact's family rides the engine's key
+//! with its tag, and the restore passes it on only when the tag names the
+//! member the artifact it opened carries. `finish` installs one family,
+//! whole, in place of the restored vault's, never a union: the pipe's, else
+//! the artifact's, else none, which is `host_holds_unknown`: logged, said in
+//! the receipt, and never a refusal.
 
 use oneiron::recovery::checkpoint::{
-    HostOrderHolds, RestoreAdmissionError, RestoreDestinationState, RestorePhase,
+    ArtifactHostOrderHolds, HostOrderHolds, RestoreAdmissionError, RestoreDestinationState,
+    RestorePhase,
 };
 use oneiron_vault_contract::restore::{
-    ManagedRestoreHostHolds, ManagedRestorePlan, RestoreHostHoldsStatus,
+    HostHoldsOrigin, ManagedRestoreHostHolds, ManagedRestorePlan, RestoreHostHoldsStatus,
 };
 
 use super::receipt;
 
-/// The source's family the input pipe carried, admitted: bound to `plan`'s
-/// attempt and source, its bytes its id's, and one family this engine
-/// reads. `None` when the supervisor sent none, which is never a refusal.
-/// Its rows are checked to be host-order rows when it is installed.
+/// The family the input pipe carried, admitted, by where it came from: the
+/// live source's, or the one the artifact's member held with its tag.
+#[derive(Default)]
+pub(super) struct AdmittedHostOrderHolds {
+    pub(super) pipe: Option<HostOrderHolds>,
+    pub(super) artifact: Option<ArtifactHostOrderHolds>,
+}
+
+/// The family the input pipe carried, admitted: bound to `plan`'s attempt
+/// and source, its bytes its id's, one family this engine reads, and every
+/// row a host-order row (FIX 6818), all before anything is made. None when
+/// the supervisor sent none, which is never a refusal.
 pub(super) fn admit(
     supplied: Option<ManagedRestoreHostHolds>,
     plan: &ManagedRestorePlan,
-) -> Result<Option<HostOrderHolds>, &'static str> {
+) -> Result<AdmittedHostOrderHolds, &'static str> {
     let Some(supplied) = supplied else {
-        return Ok(None);
+        return Ok(AdmittedHostOrderHolds::default());
     };
     supplied.check(plan)?;
-    serde_json::from_slice(&supplied.family.0)
-        .map(Some)
-        .map_err(|_| "its host_holds family is not one host-order family")
+    let family: HostOrderHolds = serde_json::from_slice(&supplied.family.0)
+        .map_err(|_| "its host_holds family is not one host-order family")?;
+    family
+        .validate()
+        .map_err(|_| "its host_holds family carries a row outside the host-order family")?;
+    Ok(match supplied.origin {
+        HostHoldsOrigin::LiveSource => AdmittedHostOrderHolds {
+            pipe: Some(family),
+            artifact: None,
+        },
+        HostHoldsOrigin::CheckpointArtifact {
+            snapshot_id,
+            recipient_id,
+            recipient_epoch,
+            member_blake3,
+        } => AdmittedHostOrderHolds {
+            pipe: None,
+            artifact: Some(ArtifactHostOrderHolds::new(
+                family,
+                snapshot_id,
+                recipient_id,
+                recipient_epoch,
+                member_blake3,
+            )),
+        },
+    })
 }
 
 /// Installs the family the restore carries in place of the restored

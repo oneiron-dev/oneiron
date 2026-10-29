@@ -143,48 +143,54 @@ impl super::Memory<'_> {
         Ok(actor)
     }
 
+    /// Pins every bucket and reference, however many (Rule 5, FIX 8698), in
+    /// this operation's fair task-work turn, at one frozen revision.
     pub fn consolidation_pin_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         input: &ConsolidationPinRequest,
     ) -> super::MemoryResult<ConsolidationRootAccounting> {
-        super::caps::check_batch_len("buckets", input.buckets.len())?;
-        for bucket in &input.buckets {
-            super::caps::check_batch_len("evidence", bucket.evidence.len())?;
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .consolidation_pin_as_owner(owner, input);
         }
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
-        self.vault.try_with_write_txn(|txn| {
-            let actor = self.consolidation_root_owner_in_txn(owner, txn)?;
-            let accounting = crate::dreamer_consolidation::root_evidence::pin_in_txn(
-                self.vault, &read, txn, actor, input,
-            )?;
-            self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(
-                &accounting,
-            )?);
-            Ok(accounting)
-        })
+        let accounting = crate::dreamer_consolidation::root_evidence::pin_frozen(
+            self.vault,
+            &read,
+            input,
+            |txn| self.consolidation_root_owner_in_txn(owner, txn),
+        )?;
+        self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(
+            &accounting,
+        )?);
+        Ok(accounting)
     }
 
+    /// Lands every child and citation, however many (Rule 5, FIX 8698), in
+    /// this operation's fair task-work turn, against the root's own pins.
     pub fn consolidation_frontier_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         input: &ConsolidationFrontierRequest,
     ) -> super::MemoryResult<ConsolidationRootAccounting> {
-        super::caps::check_batch_len("children", input.children.len())?;
-        for child in &input.children {
-            super::caps::check_batch_len("evidence", child.evidence.len())?;
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .consolidation_frontier_as_owner(owner, input);
         }
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
-        self.vault.try_with_write_txn(|txn| {
-            let actor = self.consolidation_root_owner_in_txn(owner, txn)?;
-            let accounting = crate::dreamer_consolidation::root_evidence::frontier_in_txn(
-                self.vault, &read, txn, actor, input,
-            )?;
-            self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(
-                &accounting,
-            )?);
-            Ok(accounting)
-        })
+        let accounting = crate::dreamer_consolidation::root_evidence::frontier_frozen(
+            self.vault,
+            &read,
+            input,
+            |txn| self.consolidation_root_owner_in_txn(owner, txn),
+        )?;
+        self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(
+            &accounting,
+        )?);
+        Ok(accounting)
     }
 
     pub fn consolidation_accounting_as_owner(

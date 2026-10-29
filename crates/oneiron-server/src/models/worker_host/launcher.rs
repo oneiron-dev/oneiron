@@ -10,10 +10,15 @@
 //! checked against the pins before the launch. Either way the launch's
 //! record goes in the probe's slot first, so the probe checks this launch.
 //!
+//! A media worker (VoxCPM2 speech or local ASR, FIX 8318) runs its bundled
+//! script on its own locked environment's interpreter, as
+//! [`super::media_worker`] lays out its launch.
+//!
 //! A worker gets a cleared environment: the variables in
 //! [`WORKER_PASSED_ENV`] from this process, its row's `env`, and
 //! `CUDA_VISIBLE_DEVICES` from its `device`. No key or token of this server
-//! reaches it.
+//! reaches it, but a media worker's own bearer credential, under its
+//! provider's `key_env`.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -27,6 +32,7 @@ use super::install::{self, Exl3Digests, InstalledEnv, InstalledWeights, permanen
 use super::launch_manifest::{
     self, BuildSection, LaunchManifest, LaunchRecord, LaunchSlot, launch_nonce,
 };
+use super::media_worker::StatsRoute;
 use crate::config::models::{ManagedLaunch, WorkerConfig};
 use crate::model_artifacts::install::{ArtifactStore, artifacts_root};
 
@@ -65,21 +71,23 @@ pub(super) type Stores = Mutex<BTreeMap<PathBuf, Arc<ArtifactStore>>>;
 
 /// Everything one install verified, for each launch to bind.
 #[derive(Clone)]
-struct Installation {
-    runtime_root: PathBuf,
-    weights: InstalledWeights,
+pub(super) struct Installation {
+    pub(super) runtime_root: PathBuf,
+    pub(super) weights: InstalledWeights,
     draft: Option<InstalledWeights>,
-    bundle_dir: PathBuf,
-    bundle_sha256: String,
-    env: Option<InstalledEnv>,
+    pub(super) bundle_dir: PathBuf,
+    pub(super) bundle_sha256: String,
+    pub(super) env: Option<InstalledEnv>,
     native_binary_sha256: Option<String>,
     exl3: Option<Exl3Digests>,
+    /// A media worker's weights manifest ([`install::media_manifest`]).
+    pub(super) media_manifest: Option<PathBuf>,
 }
 
 /// One managed worker's launcher.
 pub(super) struct ProcessLauncher {
-    row: WorkerConfig,
-    launch: ManagedLaunch,
+    pub(super) row: WorkerConfig,
+    pub(super) launch: ManagedLaunch,
     stores: Arc<Stores>,
     slot: Arc<LaunchSlot>,
     installed: Mutex<Option<Installation>>,
@@ -127,20 +135,32 @@ impl ProcessLauncher {
             None => None,
         };
         let (bundle_dir, bundle_sha256) = install::bundle(&runtime_root).await?;
-        let (env, exl3) = if kind == WorkerKind::Exl3 {
-            let env = install::environment(
-                &runtime_root,
-                &self.launch.python,
-                self.launch.env_lock.as_deref(),
-                &passed_env(&INSTALL_PASSED_ENV),
-            )
-            .await?;
-            (
-                Some(env),
-                Some(install::exl3_digests(&runtime_root, &weights).await?),
-            )
+        let media = matches!(kind, WorkerKind::VoxCpm2 | WorkerKind::Asr);
+        // A media worker's environment is its row's own lock, never EXL3's.
+        let lock = match self.launch.env_lock.as_deref() {
+            None if media => {
+                return Err(permanent(
+                    WorkerFailure::LoadFailed,
+                    "a media worker names its environment lock (env_lock)".to_owned(),
+                ));
+            }
+            lock => lock,
+        };
+        let env = if kind == WorkerKind::Exl3 || media {
+            let passed = passed_env(&INSTALL_PASSED_ENV);
+            let python = &self.launch.python;
+            Some(install::environment(&runtime_root, python, lock, &passed).await?)
         } else {
-            (None, None)
+            None
+        };
+        let exl3 = match kind {
+            WorkerKind::Exl3 => Some(install::exl3_digests(&runtime_root, &weights).await?),
+            _ => None,
+        };
+        let media_manifest = if media {
+            Some(install::media_manifest(&runtime_root, &weights).await?)
+        } else {
+            None
         };
         let native_binary_sha256 = match &self.launch.server {
             Some(server) => Some(install::native_binary(server).await?),
@@ -155,6 +175,7 @@ impl ProcessLauncher {
             env,
             native_binary_sha256,
             exl3,
+            media_manifest,
         })
     }
 
@@ -177,9 +198,19 @@ impl ProcessLauncher {
         if let Some(device) = &self.launch.device {
             env.push(("CUDA_VISIBLE_DEVICES".to_owned(), device.clone()));
         }
+        // A media worker's activity is read on its bearer `/stats`.
+        let mut stats = None;
         let (program, args) = match self.row.kind {
             WorkerKind::Exl3 => self.exl3_launch(&installation)?,
             WorkerKind::LlamaCpp => self.llama_launch(&installation, &env).await?,
+            WorkerKind::VoxCpm2 | WorkerKind::Asr => {
+                let (name, credential) = super::media_worker::credential(&self.launch)?;
+                let route = super::media_worker::stats_route(self.route("/stats"), &credential)?;
+                stats = Some(route);
+                let command = self.media_launch(&installation, &name)?;
+                env.push((name, credential));
+                command
+            }
             kind => {
                 return Err(permanent(
                     WorkerFailure::KindMismatch,
@@ -200,25 +231,26 @@ impl ProcessLauncher {
             &args,
             &installation.bundle_dir,
             &env,
-            &self.health(),
+            &self.route("/health"),
             native,
+            stats,
         )
     }
 
-    /// The worker's health route on its loopback address.
-    fn health(&self) -> String {
+    /// The worker's route at `path` on its loopback address.
+    fn route(&self, path: &str) -> String {
         let host = &self.launch.listen_host;
         let port = self.launch.listen_port;
         if host.contains(':') {
-            format!("http://[{host}]:{port}/health")
+            format!("http://[{host}]:{port}{path}")
         } else {
-            format!("http://{host}:{port}/health")
+            format!("http://{host}:{port}{path}")
         }
     }
 
     /// Writes the launch manifest and fills the probe's slot, with the
     /// launch's native socket when it has one; returns the manifest's path.
-    fn record(
+    pub(super) fn record(
         &self,
         installation: &Installation,
         manifest: &LaunchManifest<'_>,
@@ -562,7 +594,8 @@ async fn prepare_identity(
 }
 
 /// Starts the worker in the bundle directory with `env` alone; `native` is
-/// its native socket, where its activity is read.
+/// its native socket and `stats` a media worker's stats route, where its
+/// activity is read.
 fn spawn(
     program: &Path,
     args: &[String],
@@ -570,6 +603,7 @@ fn spawn(
     env: &[(String, String)],
     health: &str,
     native: Option<PathBuf>,
+    stats: Option<StatsRoute>,
 ) -> Result<Box<dyn RunningWorker>, LaunchFailure> {
     #[cfg(unix)]
     {
@@ -582,7 +616,8 @@ fn spawn(
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
-        let spawned = super::process::ProcessWorker::spawn(command, health.to_owned(), native);
+        let spawned =
+            super::process::ProcessWorker::spawn(command, health.to_owned(), native, stats);
         let worker = spawned.map_err(|error| {
             transient(
                 WorkerFailure::LoadFailed,
@@ -593,7 +628,7 @@ fn spawn(
     }
     #[cfg(not(unix))]
     {
-        let _ = (program, args, dir, env, health, native);
+        let _ = (program, args, dir, env, health, native, stats);
         Err(permanent(
             WorkerFailure::LoadFailed,
             "managed workers run on Unix only".to_owned(),

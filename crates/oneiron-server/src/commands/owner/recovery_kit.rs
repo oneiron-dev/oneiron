@@ -43,6 +43,7 @@ use crate::owner::vault_key::{WrapView, hex, secret32};
 
 mod custody;
 mod issue;
+mod live;
 
 pub(super) use self::custody::kit_custody_root;
 
@@ -79,6 +80,11 @@ pub fn recovery_kit(command: RecoveryKitCommand) -> anyhow::Result<()> {
         RecoveryKitCommand::IssueVaultKey(args) => issue::issue_vault_key(*args),
         RecoveryKitCommand::Confirm(args) => confirm(*args),
         RecoveryKitCommand::Restore(args) => restore(*args),
+        RecoveryKitCommand::PadAccess(args) => live::pad_access(*args),
+        RecoveryKitCommand::Upkeep(args) => live::upkeep(&args),
+        RecoveryKitCommand::Roots(args) => live::roots(*args),
+        RecoveryKitCommand::Pin(args) => live::pin(*args),
+        RecoveryKitCommand::Anchor(args) => live::anchor(*args),
     }
 }
 

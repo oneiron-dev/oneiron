@@ -366,8 +366,8 @@ side_tables! {
     /// Key: string (setting key "\0" mode).
     LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw
         => crate::learning_setting::erase_setting_actor_in_txn;
-    /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
-    /// (setting key).
+    /// A `learning.setting` fit, cached beside its claim for hot readers. Key: string (setting key,
+    /// then its project, subject and type node as they apply); a project's erase deletes its keys.
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
     /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
     /// deletion receipt completes (OF-470 C4). Key: id16 (record).

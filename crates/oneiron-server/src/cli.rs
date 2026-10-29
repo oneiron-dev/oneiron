@@ -59,8 +59,9 @@ pub use owner_args::{
     VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
 };
 pub use recovery_kit_args::{
-    KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
-    RecoveryKitRestoreArgs, RecoveryKitStatusArgs,
+    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs,
+    RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
+    RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
 pub use secret_control_args::{SecretBindArgs, SecretPendingArgs, SecretRefArgs, SecretUnbindArgs};

@@ -1059,6 +1059,7 @@ fn mcp_agent_verb_input(
         "vault.projects.route_tradeoff" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turn.continue" => a.spec.clone().ok_or_else(invalid),
         "vault.conversations.turn.retry" => a.spec.clone().ok_or_else(invalid),
+        "vault.conversations.turn.rebind" => a.spec.clone().ok_or_else(invalid),
         "vault.messages.react" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.host.pin" => a.spec.clone().ok_or_else(invalid),
@@ -3974,6 +3975,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.conversations.turn.retry" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.conversations.turn.rebind" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.messages.react" => {
@@ -8052,7 +8056,14 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(output.len());
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.groups.len(),
+                0,
+                usize::from(output.next.is_some()),
+                true,
+            )
+            .rows_at("groups")
+            .resumed_within("next", "spec", "after");
             mcp_agent_verb_output(output, source)
         }
         "vault.weave.digest.render" => {
@@ -14550,7 +14561,14 @@ async fn execute_agent_verb_row(
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
-            let output = output.map_err(mcp_facade_error)?;
+            let output = output.map_err(|failure| {
+                crate::api::mcp_gateway::type_feedback_release::source_run_error(
+                    server,
+                    actor,
+                    served.rows(),
+                    failure,
+                )
+            })?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -17273,6 +17291,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::conversation::TurnActionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_conversations_turn_retry(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.conversations.turn.rebind" => {
+            let input: oneiron::conversation::TurnActionRebindRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_conversations_turn_rebind(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
