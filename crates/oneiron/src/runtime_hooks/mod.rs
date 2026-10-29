@@ -30,7 +30,7 @@ mod source;
 mod store;
 pub mod verb;
 
-pub use block::{HookBlock, HookBlockLifetime};
+pub use block::{HookBlock, HookBlockLifetime, HookTurnTarget};
 pub use body::{
     HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookPreparation,
     HookRunContext, HookSettledCallRef, HookVerdict, HookVerdictCall, HookVerdictContext,

@@ -534,6 +534,7 @@ impl Pass<'_> {
                     hex_lower(&key),
                     block,
                     at,
+                    None,
                 )?,
             )),
             _ => None,
@@ -553,11 +554,8 @@ impl Pass<'_> {
         let check = vault.with_write_txn_grouped(|txn| {
             // A body that ran across a permanent erase keeps its content-free
             // run identity, never the erased bytes or a pending effect.
-            let erased = store::dependencies_erased_in_txn(
-                vault,
-                txn,
-                &memo.derivation.dependencies,
-            )?;
+            let erased =
+                store::dependencies_erased_in_txn(vault, txn, &memo.derivation.dependencies)?;
             if erased {
                 store::scrub_memo_payload(&mut memo);
                 queued = false;

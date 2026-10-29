@@ -32,6 +32,7 @@ pub(in crate::api::ai::chat) fn turn_generate_call(
         class: HookActorClass::System,
         scope: room.map(|room| format!("room:{}", room.to_hex())),
         board_epoch: None,
+        turn: None,
         domain: VerbDomain::Write,
         reader,
     }
