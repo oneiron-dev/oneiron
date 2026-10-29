@@ -205,6 +205,21 @@ impl KeptRefusal {
     }
 }
 
+/// A press's refusal, `words`, once its held act is bound to code consent
+/// wait `wait` (FIX 10423): the same code and control, naming the wait the
+/// owner is asked on and the run waits for, so the press is carried as the
+/// bound wait and not as refusal prose alone.
+pub(super) fn bound_words(words: AgentVerbRefusalWords, wait: EntityId) -> AgentVerbRefusalWords {
+    AgentVerbRefusalWords {
+        message: format!(
+            "{}; its owner is asked on code consent wait {}, and the run waits for the answer",
+            words.message,
+            wait.to_hex()
+        ),
+        ..words
+    }
+}
+
 /// A refusal worded by its code alone.
 pub(super) fn code_words(code: String) -> AgentVerbRefusalWords {
     AgentVerbRefusalWords {

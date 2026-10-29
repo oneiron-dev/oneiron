@@ -15,6 +15,12 @@
 //! Serve installs it whatever hooks or models it serves, before the
 //! connector settler starts; the settler drives an answered wait the
 //! answer's own pass left settling.
+//!
+//! A held browser act (FIX 10423) is driven on the run's own live browser
+//! instead, once (`browser`): the same original caller check first, then
+//! the exact act its press held, under one press armed for it alone.
+
+mod browser;
 
 use std::sync::{Arc, Weak};
 
@@ -60,10 +66,11 @@ impl CodeConsentEffectHost for ServerCodeConsentHost {
 
 /// Drives one answered code consent wait's effect on this server: the
 /// original caller's kept instrument checked first, then the effect through
-/// the engine's own gate on this server's connector transport. An
-/// instrument that no longer stands settles the wait refused; one this host
-/// could not check leaves it settling. Blocking: it sends, so call it on a
-/// blocking worker, never under a writer.
+/// the engine's own gate on this server's connector transport, or, for a
+/// held browser act, on the run's own browser (FIX 10423). An instrument
+/// that no longer stands settles the wait refused; one this host could not
+/// check leaves it settling. Blocking: it sends, so call it on a blocking
+/// worker, never under a writer.
 pub(crate) fn resume_answered(
     server: &SyncServer,
     vault: &Vault,
@@ -77,6 +84,9 @@ pub(crate) fn resume_answered(
             .refuse_answered_code_consent_wait(wait_id, refusal)
             .map_err(ledger_error)?;
         return Ok(());
+    }
+    if vault.code_consent_held_browser_action(wait_id)?.is_some() {
+        return browser::resume_answered_browser(server, vault, wait_id);
     }
     let mut host = ServedConnectorCallHost::new(server)?;
     vault
