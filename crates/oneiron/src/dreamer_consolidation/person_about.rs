@@ -543,7 +543,10 @@ impl<E> PersonAboutExecutor<'_, E> {
         let digest = facts_digest(&facts, TOP_BAND);
         // An earlier attempt already wrote from these facts.
         if written == Some(digest) || facts.is_empty() {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let locality = self
             .inference
@@ -713,6 +716,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(FACTS_DRIFT_RETRY_SECS),
+                step_hashes: charges.step_hashes.clone(),
             });
         }
         let at = ctx.now_ms.div_ceil(1_000);
@@ -752,6 +756,7 @@ impl<E> PersonAboutExecutor<'_, E> {
         }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: charges.units,
+            step_hashes: charges.step_hashes.clone(),
         })
     }
 }

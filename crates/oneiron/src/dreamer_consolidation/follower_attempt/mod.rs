@@ -78,6 +78,7 @@ impl Leg<'_> {
                 .now_ms
                 .div_ceil(1_000)
                 .saturating_add(self.policy.rung_retry_secs),
+            step_hashes: charges.step_hashes.clone(),
         }
     }
 
@@ -191,6 +192,7 @@ impl ConsolidationExecutor<'_> {
             if !policy.follower_enabled {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
             let leg = Leg {
@@ -218,6 +220,7 @@ impl ConsolidationExecutor<'_> {
                 Next::Idle => {
                     return Ok(DreamerAttemptExecution::Completed {
                         completed_units: charges.units,
+                        step_hashes: charges.step_hashes.clone(),
                     });
                 }
                 Next::Fold(work) => self.fold(&leg, &work, &mut charges).await?,
@@ -532,6 +535,7 @@ fn hand_back_owed(
             vault.store.notify_attempt_observers();
             Ok(Some(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }))
         }
         Err(error) => engine(charges, error).map(Some),

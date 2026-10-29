@@ -113,12 +113,18 @@ pub async fn run_task_realize(
         return Err(invalid("not a TASK realization"));
     }
     if record.result_ref.is_some() {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     let Some((task, brief)) =
         crate::task_verb::highway_runner::runner_task_brief(ctx.vault, record)?
     else {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     let spec =
         serde_json::to_string_pretty(&crate::msgpack_value_to_json(&attempt.status.payload.input))
@@ -269,6 +275,7 @@ pub async fn run_task_realize(
     )?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }
 

@@ -21,11 +21,12 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_actor};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ReadSetProducer};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::self_heal::audit::ObjectiveConfession;
+use oneiron::skill_optimize::union_source_rows;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
     LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
@@ -45,6 +46,9 @@ use secret_use::StepSecretUse;
 
 /// The purpose a workflow step's calls are metered and routed under.
 const STEP_PURPOSE: &str = "workflow_step";
+
+/// The step's key in its attempt's read set (FIX 6934, 7073).
+const STEP_INPUT: ReadSetProducer = ReadSetProducer::WORKFLOW_STEP_INPUT;
 
 /// The server a step's `self.use` calls the served secret-use door on (FIX
 /// 7016): bound once serve has it, held weakly. Unbound, or once the server
@@ -91,6 +95,15 @@ pub(super) struct StepOutput {
     pub(super) confession: Option<Vec<ObjectiveConfession>>,
     /// The objectives it was asked to confess against (FIX 9466).
     pub(super) objectives: Vec<String>,
+}
+
+/// What a step's model call returned for its attempt's read set (FIX 6934):
+/// its bytes, whether any `self.use` round ran and the planner craft rows it
+/// showed, `None` when those are not known complete.
+pub(super) struct GeneratedStep {
+    pub(super) bytes: Vec<u8>,
+    pub(super) tool_rounds: bool,
+    pub(super) planner_craft_rows: Option<Vec<EntityId>>,
 }
 
 /// The objectives a step is asked to confess against: the caller's, verbatim,
@@ -176,6 +189,30 @@ fn message(role: LlmMessageRole, text: String) -> LlmMessage {
     }
 }
 
+/// Records the rows the step read under its key (FIX 6934, 7073). Capture
+/// only (FIX 7021): a storage error recording them never ends the step. The
+/// attempt's set goes unknown, as an unsourced inlet's, and later reads of
+/// the step record nothing more.
+fn record_step_read(
+    vault: &Vault,
+    attempt: AttemptId,
+    rows: Option<Vec<EntityId>>,
+    lost: &mut bool,
+) {
+    if *lost {
+        return;
+    }
+    if let Err(error) = vault.record_attempt_sources(attempt, STEP_INPUT, rows) {
+        *lost = true;
+        tracing::warn!(
+            attempt = ?attempt,
+            %error,
+            "the workflow step could not record its read set; its pack receipt keeps it unknown"
+        );
+        let _ = vault.record_attempt_sources(attempt, STEP_INPUT, None);
+    }
+}
+
 impl StepRunner {
     /// Drops what a failed try spent once no retry follows it.
     pub(super) fn forget(&self, attempt: AttemptId) {
@@ -195,6 +232,22 @@ impl StepRunner {
         context: ResolvedContextProjection,
     ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
+        // The step and the claim load door that reads its requester craft are
+        // the producers its attempt's read set waits on: declared before any
+        // of its messages are read, the set reads complete only once both
+        // reported, and stays unknown if either never does (FIX 6934, 7073).
+        let mut read_set_lost = false;
+        if let Err(error) = vault.declare_attempt_read_producers(
+            step.attempt.id,
+            &[STEP_INPUT, ReadSetProducer::ACTOR_CLAIM],
+        ) {
+            read_set_lost = true;
+            tracing::warn!(
+                attempt = ?step.attempt.id,
+                %error,
+                "the workflow step could not declare its read set; its pack receipt keeps it unknown"
+            );
+        }
         // FIX 6290: the memory and chat rows the step's context selected, as
         // text read on its run's own lanes. A row that no longer reads is
         // counted left out, never refused.
@@ -241,6 +294,7 @@ impl StepRunner {
         if let Some(chat) = selected.chat_text() {
             messages.push(message(LlmMessageRole::User, chat));
         }
+        let has_earlier = !earlier.is_empty();
         messages.extend(earlier);
         let request = briefing
             .as_deref()
@@ -255,7 +309,7 @@ impl StepRunner {
         // A room-bound step, or a step of a member's bound run, must read
         // its payer (OF-531, FIX 5316).
         let payer_required = requires_payer(vault, step.attempt.id, step.input.room.is_some())?;
-        let bytes = self.generate_in(
+        let generated = self.generate_in(
             runtime,
             vault,
             ModelStep {
@@ -270,6 +324,23 @@ impl StepRunner {
             payer_required,
             true,
         )?;
+        // The step's inputs as one read set (FIX 6934): its definition row,
+        // its rendered memory and chat rows and its planner craft, or unknown
+        // when it carried earlier outputs or ran tool rounds, which are not
+        // rows, or when a saved workflow's composition names no definition
+        // row. A step that ends early before its call records nothing.
+        let definition_row = step.input.target.agent_definition_ref().ok();
+        let rows = if has_earlier || generated.tool_rounds {
+            None
+        } else {
+            union_source_rows([
+                definition_row.map(|id| vec![id]),
+                Some(selected.source_rows().to_vec()),
+                generated.planner_craft_rows,
+            ])
+        };
+        record_step_read(vault, step.attempt.id, rows, &mut read_set_lost);
+        let bytes = generated.bytes;
         let confession = if objectives.is_empty() {
             None
         } else {
@@ -287,7 +358,7 @@ impl StepRunner {
         runtime: &tokio::runtime::Runtime,
         vault: &Vault,
         input: ModelStep<'_>,
-    ) -> Result<Vec<u8>, StepFault> {
+    ) -> Result<GeneratedStep, StepFault> {
         self.generate_in(runtime, vault, input, false, false)
     }
 
@@ -303,7 +374,7 @@ impl StepRunner {
         input: ModelStep<'_>,
         payer_required: bool,
         offers_use: bool,
-    ) -> Result<Vec<u8>, StepFault> {
+    ) -> Result<GeneratedStep, StepFault> {
         let ModelStep {
             definition,
             attempt,
@@ -322,19 +393,30 @@ impl StepRunner {
         // under the requester's receipt (FIX 5912); a stamp that fails
         // withholds nothing.
         let now = super::unix_now();
+        // The planner craft rows the call shows (FIX 6934): kept beside the
+        // joined text for the attempt's read set, `None` when not known
+        // complete. A planner with no craft shows none.
+        let mut planner_craft_rows: Option<Vec<EntityId>> = Some(Vec::new());
         if let Some(planner) = planner
             && let Some(craft) =
                 super::resident_craft::planner_craft(vault, &planner, &actor.entity_ref(), now)
         {
-            super::resident_craft::join_craft(&mut messages, craft.message);
-            if !craft.entries.is_empty() {
+            let message = craft.message;
+            let entries = craft.entries;
+            super::resident_craft::join_craft(&mut messages, message);
+            if !entries.is_empty() {
                 super::resident_craft::stamp_planner_craft_exposure(
                     vault,
                     attempt,
                     &actor.entity_ref(),
-                    &craft.entries,
+                    &entries,
                 );
             }
+            planner_craft_rows = entries
+                .iter()
+                .map(|entry| EntityId::from_hex(&entry.reference))
+                .collect::<Result<Vec<_>, _>>()
+                .ok();
         }
         // OF-490: the step speaks as its resident, so it is shown that
         // resident's craft after its instructions, each note loaded on its
@@ -343,6 +425,20 @@ impl StepRunner {
             super::resident_craft::queue_craft(vault, attempt.id, &actor.entity_ref(), now)
         {
             super::resident_craft::join_craft(&mut messages, craft);
+        }
+        // The requester craft door self-reports each CLAIM it loads (FIX
+        // 7017); this empty report makes it report on every path, even when
+        // no craft loaded. Reports union, so it never hides those. Capture
+        // only: a storage error never ends the step.
+        if let Err(error) =
+            vault.record_attempt_sources(attempt.id, ReadSetProducer::ACTOR_CLAIM, Some(Vec::new()))
+        {
+            tracing::warn!(
+                attempt = ?attempt.id,
+                %error,
+                "the workflow step could not record its craft read set; its pack receipt keeps it unknown"
+            );
+            let _ = vault.record_attempt_sources(attempt.id, ReadSetProducer::ACTOR_CLAIM, None);
         }
         let seat = self
             .models
@@ -500,21 +596,25 @@ impl StepRunner {
             true
         };
         let generated = match &uses {
-            Some(uses) => uses.converse(runtime, &call.ladder, &run, &live, request),
-            None => runtime.block_on(
-                call.ladder
-                    .generate_served_while(&run, request, None, &may_send),
-            ),
+            Some(uses) => uses
+                .converse(runtime, &call.ladder, &run, &live, request)
+                .map(|(response, served, rounds)| ((response, served), rounds)),
+            None => runtime
+                .block_on(
+                    call.ladder
+                        .generate_served_while(&run, request, None, &may_send),
+                )
+                .map(|answered| (answered, false)),
         };
         oneiron::code_run::finalize_step_captures(vault);
         // What this try spent and no call's look booked goes on the lease
         // whatever the call answered; the replayed tries recorded their own.
         live.book_rest()?;
-        let response = match generated {
+        let (response, tool_rounds) = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused
             // stamp leaves the leaf unattributed, not failed.
-            Ok((response, served)) => {
+            Ok(((response, served), rounds)) => {
                 if let Some(owner) = attempt.lease_owner.as_deref()
                     && let Err(error) = AttemptQueue::new(vault).set_executor_model(
                         attempt.id,
@@ -525,7 +625,7 @@ impl StepRunner {
                 {
                     tracing::warn!(kind = ?error.kind(), "workflow step executor not stamped");
                 }
-                response
+                (response, rounds)
             }
             Err(oneiron::llm::LlmError::BudgetDenied(denied)) => return Err(budget(denied)),
             Err(error) => {
@@ -556,6 +656,10 @@ impl StepRunner {
                 _ => None,
             })
             .collect();
-        Ok(text.into_bytes())
+        Ok(GeneratedStep {
+            bytes: text.into_bytes(),
+            tool_rounds,
+            planner_craft_rows,
+        })
     }
 }

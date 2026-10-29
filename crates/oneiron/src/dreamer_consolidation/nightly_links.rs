@@ -133,8 +133,13 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let proposals = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some(completed_units) = landed_units_in_txn(ctx.vault, &txn, attempt_id)? {
-                return Ok(DreamerAttemptExecution::Completed { completed_units });
+            if let Some((completed_units, step_hashes)) =
+                landed_units_in_txn(ctx.vault, &txn, attempt_id)?
+            {
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units,
+                    step_hashes,
+                });
             }
             let merged = merged_snapshot_in_txn(ctx.vault, &txn, input.merge)?;
             match proposals_in_txn(ctx.vault, &txn, &read, &merged.children)? {
@@ -143,6 +148,7 @@ impl ConsolidationExecutor<'_> {
                     return Ok(DreamerAttemptExecution::Deferred {
                         completed_units: 0,
                         retry_at: (ctx.now_ms / 1_000).saturating_add(merged.retry_secs),
+                        step_hashes: Vec::new(),
                     });
                 }
             }
@@ -227,6 +233,7 @@ impl ConsolidationExecutor<'_> {
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             // A proposal that moved before the commit lands again on resume;
             // a gate only an owner act opens keeps the private park.

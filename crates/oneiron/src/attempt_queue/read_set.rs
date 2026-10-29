@@ -52,6 +52,14 @@ impl ReadSetProducer {
     /// shows (FIX 7019).
     pub const DREAMER_EXTRACTION: Self = Self("dreamer.extraction");
 
+    /// The Coach's eval-authoring pass: the inventory it read and the
+    /// authoring skill's body (FIX 7019).
+    pub const COACH_EVAL_AUTHORING: Self = Self("coach.eval_authoring");
+
+    /// A workflow model step's input: its agent definition row, the memory
+    /// and chat rows its context render read and its planner craft (FIX 6934).
+    pub const WORKFLOW_STEP_INPUT: Self = Self("workflow.step_input");
+
     /// The key the record keeps.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

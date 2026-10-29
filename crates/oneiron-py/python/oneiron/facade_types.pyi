@@ -2248,6 +2248,8 @@ class LocalRunnerBudgetCounter(TypedDict):
     remaining_units: int
     reserved_units: int
     spent_units: int
+    overdraft_units: int
+    owed_calls: int
     updated_at: int
 class LocalRunnerBudgetView(TypedDict):
     budget_id: str
@@ -2259,6 +2261,7 @@ class RunnerBudgetReservationsRequest(TypedDict):
 class RunnerBudgetReservation(TypedDict):
     job_ref: str
     reserved_units: int
+    owed_units: int
     created_at: int
     updated_at: int
 class RunnerBudgetReservationsView(TypedDict):

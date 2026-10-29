@@ -6566,6 +6566,10 @@ pub struct LocalRunnerBudgetCounter {
     pub reserved_units: u64,
     #[serde(rename = "spent_units")]
     pub spent_units: u64,
+    #[serde(rename = "overdraft_units")]
+    pub overdraft_units: u64,
+    #[serde(rename = "owed_calls")]
+    pub owed_calls: u64,
     #[serde(rename = "updated_at")]
     pub updated_at: u64,
 }
@@ -6598,6 +6602,8 @@ pub struct RunnerBudgetReservation {
     pub job_ref: String,
     #[serde(rename = "reserved_units")]
     pub reserved_units: u64,
+    #[serde(rename = "owed_units")]
+    pub owed_units: u64,
     #[serde(rename = "created_at")]
     pub created_at: u64,
     #[serde(rename = "updated_at")]

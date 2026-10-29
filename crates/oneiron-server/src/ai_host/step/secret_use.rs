@@ -125,9 +125,10 @@ impl<'a> StepSecretUse<'a> {
     }
 
     /// Asks `ladder` on `run` until an answer calls no tool, answering each
-    /// tool call in between; that answer and the rung that gave it. Each
-    /// round is the step's model call again: its permit, its gate, its
-    /// meter bounded by `lease`'s live room, and the same errors end it.
+    /// tool call in between; that answer, the rung that gave it and whether
+    /// any tool round ran. Each round is the step's model call again: its
+    /// permit, its gate, its meter bounded by `lease`'s live room, and the
+    /// same errors end it.
     pub(super) fn converse(
         &self,
         runtime: &tokio::runtime::Runtime,
@@ -135,7 +136,7 @@ impl<'a> StepSecretUse<'a> {
         run: &RunAdmission,
         lease: &LiveLease<'_>,
         mut request: LlmRequest,
-    ) -> LlmResult<(LlmResponse, ModelId)> {
+    ) -> LlmResult<(LlmResponse, ModelId, bool)> {
         // A rung that cannot read reasoning back is never sent it.
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
         let may_send = || {
@@ -143,6 +144,7 @@ impl<'a> StepSecretUse<'a> {
             true
         };
         let mut uses = 0_u64;
+        let mut rounds = false;
         loop {
             let (response, served) = runtime.block_on(ladder.generate_served_while(
                 run,
@@ -164,8 +166,9 @@ impl<'a> StepSecretUse<'a> {
                 })
                 .collect();
             if calls.is_empty() {
-                return Ok((response, served));
+                return Ok((response, served, rounds));
             }
+            rounds = true;
             // The round's spend goes on the lease before its tools run, so
             // siblings see it meanwhile (FIX 1819).
             lease.book_and_revise();

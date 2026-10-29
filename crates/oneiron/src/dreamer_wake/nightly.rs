@@ -130,6 +130,7 @@ pub(crate) fn continue_nightly(
         return Ok(super::DreamerAttemptExecution::Deferred {
             completed_units: 0,
             retry_at: due,
+            step_hashes: Vec::new(),
         });
     }
     let (left, interval) = ctx.vault.with_write_txn_grouped(|txn| {
@@ -144,9 +145,13 @@ pub(crate) fn continue_nightly(
         Ok(super::DreamerAttemptExecution::Deferred {
             completed_units: 0,
             retry_at: now.saturating_add(interval),
+            step_hashes: Vec::new(),
         })
     } else {
-        Ok(super::DreamerAttemptExecution::Completed { completed_units: 0 })
+        Ok(super::DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        })
     }
 }
 

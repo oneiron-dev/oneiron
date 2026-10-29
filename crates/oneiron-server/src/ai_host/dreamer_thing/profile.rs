@@ -1,17 +1,21 @@
 //! The served agent's own generation and the session its parent waits on
-//! (FIX 7508).
+//! (FIX 7508, 11449).
 //!
 //! The generation's backend is the extraction route's ladder on a run of
-//! the parent's own wake guard: each call it answers is counted, so the
-//! parent charges the child's spend to its attempt once, and once the
-//! parent stops the child no further call is admitted. A call admitted
-//! before that settles after it is charged to the attempt's line when it
-//! settles (FIX 9015). The session reduces the child's one-child wait each
-//! beat and hands the parent each port call as it comes.
+//! the parent's own wake guard: each call it answers, streamed or not, is
+//! counted, so the parent charges the child's spend to its attempt once,
+//! and once the parent stops the child no further call is admitted. A call
+//! admitted before that settles after it is charged to the attempt's line
+//! when it settles (FIX 9015). A session dropped without its close charges
+//! what its count still holds there too. The session reduces the child's
+//! one-child wait each beat and hands the parent each port call as it comes.
 
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
+use futures_util::Stream;
 use oneiron::code_run::{ScopedChildStop, collect_scoped_child, read_scoped_finding};
 use oneiron::dreamer_consolidation::{
     PortFuture, ThingChildEvent, ThingChildSession, ThingChildSettled, ThingPortCall,
@@ -19,7 +23,7 @@ use oneiron::dreamer_consolidation::{
 use oneiron::llm::BudgetDenied;
 use oneiron::{
     BudgetLease, EntityId, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture, LlmRequest,
-    LlmStreamResult, ModelId, Vault,
+    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId, Vault,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -80,12 +84,70 @@ impl LlmBackend for CountedBackend {
     }
 
     fn stream<'a>(&'a self, request: LlmRequest, lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        self.inner.stream(request, lease)
+        if self.stop.code().is_some() || !self.count.admit() {
+            return Err(LlmError::BudgetDenied(BudgetDenied::AdmissionDenied));
+        }
+        // An admitted stream runs to its end, a stop meanwhile included,
+        // and settles once on the count: its terminal usage, or 0 when it
+        // ends in an error, reports none, or drops early (FIX 11449). A
+        // stream the route refuses never starts, so its guard's drop
+        // settles 0.
+        let guard = CountedStreamGuard::new(Arc::clone(&self.count));
+        let inner = self.inner.stream(request, lease)?;
+        Ok(LlmStream::new(CountedStream { inner, guard }))
     }
 }
 
-/// One launched agent as its parent waits on it. Dropped, it forgets the
-/// child's profile.
+/// One counted stream: its terminal usage settles on the count, once.
+struct CountedStream<'a> {
+    inner: LlmStream<'a>,
+    guard: CountedStreamGuard,
+}
+
+impl Stream for CountedStream<'_> {
+    type Item = LlmResult<LlmStreamEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let polled = Pin::new(&mut this.inner).poll_next(cx);
+        match &polled {
+            Poll::Ready(Some(Ok(LlmStreamEvent::Done { usage, .. }))) => {
+                let units = usage.input.total.saturating_add(usage.output.total);
+                this.guard.settle(units);
+            }
+            Poll::Ready(Some(Err(_)) | None) => this.guard.settle(0),
+            Poll::Ready(Some(Ok(_))) | Poll::Pending => {}
+        }
+        polled
+    }
+}
+
+/// A streamed call's settlement, once: at its terminal, or 0 when the
+/// caller drops it early.
+struct CountedStreamGuard {
+    count: Option<Arc<GenerationCount>>,
+}
+
+impl CountedStreamGuard {
+    fn new(count: Arc<GenerationCount>) -> Self {
+        Self { count: Some(count) }
+    }
+
+    fn settle(&mut self, units: u64) {
+        if let Some(count) = self.count.take() {
+            count.settle(units);
+        }
+    }
+}
+
+impl Drop for CountedStreamGuard {
+    fn drop(&mut self) {
+        self.settle(0);
+    }
+}
+
+/// One launched agent as its parent waits on it. Dropped, it charges what
+/// its count still holds and forgets the child's profile.
 pub(super) struct ThingSession {
     vault: Arc<Vault>,
     provider: Arc<dyn McpCodeModeProvider>,
@@ -151,6 +213,10 @@ impl ThingSession {
 
 impl Drop for ThingSession {
     fn drop(&mut self) {
+        // A session dropped without its close still charges its settled
+        // units to the attempt's own line (FIX 11449); a closed one holds
+        // nothing more, so this charges nothing.
+        self.count.close_dropped();
         if let Some(hosts) = self.provider.scoped_child_hosts() {
             hosts.remove(self.task);
         }

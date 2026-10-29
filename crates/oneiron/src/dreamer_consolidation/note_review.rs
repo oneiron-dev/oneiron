@@ -183,6 +183,7 @@ impl ConsolidationExecutor<'_> {
                 crate::note::review_note_tombstones(ctx.vault)?;
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
         }

@@ -52,7 +52,10 @@ pub(crate) fn execute(
             ctx.vault.store.notify_attempt_observers();
         }
     }
-    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    })
 }
 
 /// Continuous: the sieve reads what landed and a due window goes to the

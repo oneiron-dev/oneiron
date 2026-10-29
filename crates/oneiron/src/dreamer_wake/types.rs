@@ -138,6 +138,9 @@ pub struct WakePassReport {
 pub enum DreamerAttemptExecution {
     Completed {
         completed_units: u64,
+        /// Terminal step identities this completion charges for the first time.
+        /// Atomic with wake-budget settlement so replay cannot double debit.
+        step_hashes: Vec<[u8; 32]>,
     },
     /// The try ends Failed with `reason`, terminal and resumed by nothing:
     /// a turn program whose attested owner is no longer the vault's live
@@ -165,6 +168,9 @@ pub enum DreamerAttemptExecution {
     Deferred {
         completed_units: u64,
         retry_at: u64,
+        /// Terminal step identities this deferral charges for the first time.
+        /// Atomic with wake-budget settlement so replay cannot double debit.
+        step_hashes: Vec<[u8; 32]>,
     },
     /// ONE-1896 rung 1, answered: the worker saw a soft request or a typed
     /// runtime warning ([`WakeAttemptContext::landing_request`]) and chose to
