@@ -529,6 +529,9 @@ families! {
     Class::Structure => STORAGE_SCHEMA_VERSION SHORT_ID_GRAMMAR_VERSION SHORT_ID_COUNTER
         STORAGE_ABI_VERSION SECRET_KNOWN_HISTORY SECRET_KNOWN_INDEX SECRET_CUSTODY_ERASE
         SECRET_CUSTODY_RESTORE_RELEASE;
+    // The planned-intent fence's erased-asker selectors: value-free hashes
+    // (FIX 11094).
+    Class::Structure => SPAWN_PLANNED_INTENT_ASKER_ERASED;
     Class::Other(Client::Dispatch(OtherClient::Credential)) => SECRET_CUSTODY_INPUT
         SECRET_CUSTODY_TRANSITION SECRET_CUSTODY_WITNESS SECRET_CUSTODY_RESTORE_PENDING;
     // A centroid verdict's copied vectors and run (FIX 10094), owned by every
