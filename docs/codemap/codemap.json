@@ -1314,7 +1314,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -100729,7 +100729,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -101259,7 +101259,7 @@
      "path": "src/api/facade/host_doors/media.rs",
      "purpose": "The `ai.*` media doors past text: options, image, speech, transcription, embedding and video",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -114290,6 +114290,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/web_connector/charge.rs",
+     "purpose": "The charge of a web call on the deploy's backend key (FIX 11604, ARCH-0053 §10a): the call is admitted as a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/web_connector/keys.rs",
      "purpose": "The provider key for one web call",
      "surface": {
@@ -115265,7 +115275,7 @@
      "purpose": "Endpoint discovery and browser access for an external shared web client"
     },
     "web_connector": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -115288,7 +115298,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1422,
+   "source_files": 1423,
    "test_files": 182
   },
   "oneiron-spawn": {

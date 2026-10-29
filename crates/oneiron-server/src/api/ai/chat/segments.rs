@@ -190,7 +190,7 @@ pub(super) fn admitted(
     let anchor = match (log, &read_key, &sources) {
         (Some(log), Some(key), Some(_)) => Some(ConversationAnchor {
             vault: VaultRef(reader.vault.vault_key_vault_id()),
-            read_scope: scope_digest(reader, key),
+            read_scope: scope_digest(key),
             conversation: log.conversation,
             head: log.branch,
             fold_epoch: log
@@ -395,16 +395,11 @@ fn board_segments(sections: &[BoardSectionSource], index: usize) -> Vec<Segment>
         .collect()
 }
 
-/// The read a session is keyed by: the reader, where it sits, and its whole
+/// The read a session is keyed by: the typed fingerprint of its whole
 /// read key with every ceiling it carries. A digest of this process's own
-/// view of the key, never stored: a key that renders differently only
-/// costs a cold turn.
-fn scope_digest(reader: &Reader, key: &ScopedReadActorKey) -> ScopeDigest {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.chat.session.read_scope.v1\0");
-    hasher.update(reader.actor.as_bytes());
-    hasher.update(format!("{:?}\0{:?}\0{key:?}", reader.class, reader.locality).as_bytes());
-    ScopeDigest(*hasher.finalize().as_bytes())
+/// view of the key, never stored: a different key only costs a cold turn.
+fn scope_digest(key: &ScopedReadActorKey) -> ScopeDigest {
+    ScopeDigest(key.key_fingerprint())
 }
 
 /// What the turn's canonical path was admitted under, rechecked before a
@@ -465,7 +460,7 @@ impl CheckpointAuthority for ChatAuthority {
         let mut sources = self.sources.clone();
         sources.push(commit.message);
         Some(SnapshotScope {
-            read_scope: scope_digest(&self.reader, &self.read_key),
+            read_scope: scope_digest(&self.read_key),
             revocation: self.revocation,
             dependencies: path.read(&self.reader.vault, sources),
         })
@@ -496,8 +491,7 @@ impl CheckpointAuthority for ChatAuthority {
         if claim.fold_epoch != fold_epoch {
             return AuthorityVerdict::Rejects(SessionInvalidation::FoldBeforeFrontier);
         }
-        let scoped = claim.dependencies.precise
-            && scope_digest(&self.reader, &self.read_key) == claim.read_scope;
+        let scoped = claim.dependencies.precise && scope_digest(&self.read_key) == claim.read_scope;
         if !scoped {
             return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
         }

@@ -429,8 +429,9 @@ pub(super) async fn run_code_mode_verb(
     super::served_rows::unknown_act_answer(tool.name, actor, output, served)
 }
 
-/// The `ai.*` media verbs a code-mode run's line pays for (FIX 780).
-const LINE_VERBS: [&str; 8] = [
+/// The `ai.*` media verbs a code-mode run's line pays for (FIX 780), and
+/// `connector.call`, whose web calls on the deploy's key it pays for (FIX 11604).
+const LINE_VERBS: [&str; 9] = [
     "ai.options",
     "ai.image",
     "ai.speech",
@@ -439,6 +440,7 @@ const LINE_VERBS: [&str; 8] = [
     "ai.video",
     "ai.video.poll",
     "ai.video.cancel",
+    "connector.call",
 ];
 
 /// The line a code-mode run's `ai.*` media call spends on (FIX 780): code
