@@ -13,10 +13,11 @@ use std::cell::Cell;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptResumePoint, ClaimAttempt,
-    ClaimOutcome, FailAttempt, HoldAttemptForBudget, SetAttemptResult,
+    ClaimOutcome, FailAttempt, HoldAttemptForBudget, ReadSetProducer, SetAttemptResult,
 };
 use oneiron::compaction::output::{OutputRef, restore_output, store_output};
 use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::skill_optimize::union_source_rows;
 use oneiron::wave_orchestration::{
     PlannedTask, VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WAVE_PLAN_SCHEMA_VERSION,
     WaveApplyOutcome, WaveOrchestrator, WavePlan, WavePlanRequest, WavePlanner,
@@ -37,6 +38,8 @@ const LEASE_OWNER: &str = "oneiron-server-waves";
 const HOLD_RESUME_POINT: &str = "wave-plan:before-model-call";
 /// Why a held plan waits, as its status reads.
 const HOLD_REASON: &str = "wave plan budget ran out during its model call";
+/// The plan's key in its attempt's read set (FIX 6934, 7073).
+const WAVE_INPUT: ReadSetProducer = ReadSetProducer::WORKFLOW_STEP_INPUT;
 
 /// Host-authored metadata around the caller's opaque planning constraints.
 #[derive(Serialize, Deserialize)]
@@ -151,6 +154,23 @@ impl WavePlanner for ModelWavePlanner<'_> {
             // A crash after capture never pays for a second plan or changes its cut.
             restore_output(self.vault, OutputRef::from_handle(reference.as_str())?)?
         } else {
+            // The plan and the claim load door that reads its requester craft
+            // are the producers its attempt's read set waits on: declared
+            // before any of its messages are read, the set reads complete
+            // only once both reported, and stays unknown if either never does
+            // (FIX 6934, 7073).
+            let mut read_set_lost = false;
+            if let Err(error) = self.vault.declare_attempt_read_producers(
+                self.attempt.id,
+                &[WAVE_INPUT, ReadSetProducer::ACTOR_CLAIM],
+            ) {
+                read_set_lost = true;
+                tracing::warn!(
+                    attempt = ?self.attempt.id,
+                    %error,
+                    "the wave plan could not declare its read set; its pack receipt keeps it unknown"
+                );
+            }
             let planner = EntityId::from_hex(&self.context.planner_ref)?;
             let definition = AgentDispatcher::new(self.vault)
                 .dispatchable_definition(&AgentDispatchTarget::Custom(planner))?;
@@ -182,7 +202,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
             // FIX 5777: the plan speaks with its planner's instructions for
             // its requester, so it carries both crafts, each attributed, read
             // when its call is built. Payer and actor stay the requester's.
-            let bytes = self
+            let generated = self
                 .runner
                 .generate(
                     self.runtime,
@@ -203,6 +223,18 @@ impl WavePlanner for ModelWavePlanner<'_> {
                     self.exhausted.set(fault.exhausted);
                     fault.error
                 })?;
+            // The plan's inputs as one read set (FIX 6934): its definition
+            // row and its planner craft, or unknown when those are not known
+            // complete. Its epic, objective and constraints are caller text,
+            // not rows. A plan that ends early before its call records
+            // nothing.
+            let rows = if generated.tool_rounds {
+                None
+            } else {
+                union_source_rows([Some(vec![planner]), generated.planner_craft_rows])
+            };
+            record_wave_read(self.vault, self.attempt.id, rows, &mut read_set_lost);
+            let bytes = generated.bytes;
             let output = store_output(self.vault, &bytes)?;
             AttemptQueue::new(self.vault).set_result(SetAttemptResult {
                 id: self.attempt.id,
@@ -216,6 +248,30 @@ impl WavePlanner for ModelWavePlanner<'_> {
         let output: PlanOutput = serde_json::from_slice(&bytes)
             .map_err(|_| invalid("wave planner returned invalid task data"))?;
         Ok(output.into_plan(request.epic_task_ref, self.attempt)?)
+    }
+}
+
+/// Records the rows the plan read under its key (FIX 6934, 7073). Capture
+/// only (FIX 7021): a storage error recording them never ends the plan. The
+/// attempt's set goes unknown, as an unsourced inlet's, and later reads of
+/// the plan record nothing more.
+fn record_wave_read(
+    vault: &Vault,
+    attempt: AttemptId,
+    rows: Option<Vec<EntityId>>,
+    lost: &mut bool,
+) {
+    if *lost {
+        return;
+    }
+    if let Err(error) = vault.record_attempt_sources(attempt, WAVE_INPUT, rows) {
+        *lost = true;
+        tracing::warn!(
+            attempt = ?attempt,
+            %error,
+            "the wave plan could not record its read set; its pack receipt keeps it unknown"
+        );
+        let _ = vault.record_attempt_sources(attempt, WAVE_INPUT, None);
     }
 }
 

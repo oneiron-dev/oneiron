@@ -27,7 +27,7 @@
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use oneiron::code_run::AgentVerbRefusalWords;
+use oneiron::code_run::{AgentVerbRefusal, AgentVerbRefusalWords};
 use oneiron::code_sandbox::egress::EgressConfig;
 use oneiron::{EntityId, Vault};
 use oneiron_browser::{
@@ -137,6 +137,32 @@ fn guest_argv(engine: BrowserEngine) -> Result<[OsString; 3], BrowserError> {
     Ok(engine.guest_argv(egress.max_response_bytes))
 }
 
+impl super::RunGuests {
+    /// The vault's own admission of a run guest's verb: the browser's
+    /// connector pack installed, and for a browser verb its setup connection
+    /// checked. Every guest call meets it, and so does the act a held press
+    /// runs once its owner answered (FIX 10423).
+    pub(crate) fn guest_admits(vault: &Vault, desktop: bool) -> Result<(), AgentVerbRefusal> {
+        // The browser runs as its connector pack: no installed pack, no browser.
+        if vault.require_builtin_channel_pack("browser").is_err() {
+            return Err(AgentVerbRefusal {
+                code: "browser_pack_not_installed".to_owned(),
+            });
+        }
+        // The browser guest runs only once its setup connection is checked.
+        if !desktop
+            && vault
+                .require_pack_connection_verified("oneiron.browser", "browser-guest")
+                .is_err()
+        {
+            return Err(AgentVerbRefusal {
+                code: "browser_connection_unchecked".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// The verb an engine's refusal names as the way out, as its bare
 /// suggestion (FIX 6966).
 const SWITCH_ENGINE_VERB: &str = "self.browser.switch_engine";
@@ -163,17 +189,20 @@ pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
                     .into_iter()
                     .collect(),
                 message,
+                reason_codes: Vec::new(),
             }
         }
         BrowserError::DestinationRefused(refused) => AgentVerbRefusalWords {
             code: refused.reason.clone(),
             message: refused.message.clone(),
             suggestions: Vec::new(),
+            reason_codes: Vec::new(),
         },
         BrowserError::NeedsPress(_) | BrowserError::StaleRef(_) => AgentVerbRefusalWords {
             code: error.code().to_owned(),
             message: error.to_string(),
             suggestions: Vec::new(),
+            reason_codes: Vec::new(),
         },
         _ => code_words(error.code().to_owned()),
     }
@@ -205,11 +234,27 @@ impl KeptRefusal {
     }
 }
 
+/// A press's refusal, `words`, once its held act is bound to code consent
+/// wait `wait` (FIX 10423): the same code and control, naming the wait the
+/// owner is asked on and the run waits for, so the press is carried as the
+/// bound wait and not as refusal prose alone.
+pub(super) fn bound_words(words: AgentVerbRefusalWords, wait: EntityId) -> AgentVerbRefusalWords {
+    AgentVerbRefusalWords {
+        message: format!(
+            "{}; its owner is asked on code consent wait {}, and the run waits for the answer",
+            words.message,
+            wait.to_hex()
+        ),
+        ..words
+    }
+}
+
 /// A refusal worded by its code alone.
 pub(super) fn code_words(code: String) -> AgentVerbRefusalWords {
     AgentVerbRefusalWords {
         message: code.clone(),
         code,
         suggestions: Vec::new(),
+        reason_codes: Vec::new(),
     }
 }

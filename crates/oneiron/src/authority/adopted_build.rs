@@ -120,7 +120,10 @@ impl Vault {
     /// [`Vault::write_authority_checkpoint_v2`] sets its parent and keeps it.
     /// Refuses with the typed history-required error where the tail cannot
     /// extend the baseline and a covered row is not held here; with every
-    /// covered row held, the held log builds the image whole.
+    /// covered row held, the held log builds the image whole. It inherits the
+    /// adopted image's residence overflow mark, and its residence bodies fall
+    /// back for [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`]
+    /// as a held-only build's do (FIX 11400).
     pub(super) fn build_authority_checkpoint_from_adopted_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -279,6 +282,7 @@ impl Vault {
             rows,
             per_parent,
             replay,
+            residence_overflow: image.residence_overflow,
             aggregate: CheckpointAggregate {
                 posture,
                 peers,

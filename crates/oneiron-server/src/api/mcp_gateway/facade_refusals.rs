@@ -5,8 +5,17 @@
 use super::McpGatewayError;
 use super::tasks_response::{MCP_HOST_ACTION_REFUSED, MCP_OWNER_BINDING_REQUIRED, mcp_hook_stop};
 
-/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
-pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary,
+/// its reason codes kept whatever its kind (FIX 7398).
+pub(crate) fn mcp_facade_error(mut error: oneiron::MemoryError) -> McpGatewayError {
+    let reason_codes = std::mem::take(&mut error.reason_codes);
+    McpGatewayError {
+        reason_codes,
+        ..mcp_facade_refusal(error)
+    }
+}
+
+fn mcp_facade_refusal(error: oneiron::MemoryError) -> McpGatewayError {
     if let Some(stop) = error.hook {
         return mcp_hook_stop(*stop);
     }
@@ -27,6 +36,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
         | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
+        | oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         // A row's world setting, a frozen vault and a render that met its
         // deadline or a machine floor are typed refusals too, never an
@@ -57,6 +67,10 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // floor; the agent reads the name, not the sentence.
         oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
             Some("sandbox_proposal_disk_floor")
+        }
+        // FIX 10011: an owner model pin no offered seat serves.
+        oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
+            Some("model_pin_unavailable")
         }
         // FIX 6547: an agent thread's walk-in its room's audience does not
         // admit, named as the facade's 409 names it.

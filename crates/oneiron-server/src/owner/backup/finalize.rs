@@ -186,6 +186,12 @@ impl Produced {
     /// What `take` answers for this backup: its `bytes`, and the older ones
     /// `pruned` deleted.
     pub(crate) fn into_outcome(self, bytes: u64, pruned: Vec<String>) -> BackupOutcome {
+        let host_holds_unavailable = match self.receipt.host_holds {
+            oneiron::recovery::checkpoint::HostHoldsAvailability::Unavailable(reason) => {
+                Some(reason)
+            }
+            _ => None,
+        };
         BackupOutcome {
             backup: BackupRecord {
                 file: self.file,
@@ -197,6 +203,7 @@ impl Produced {
             },
             checkpoint_id: self.receipt.image_digest,
             pruned,
+            host_holds_unavailable,
         }
     }
 }

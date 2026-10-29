@@ -8,6 +8,9 @@ use crate::error::{
     ClaimError, Error, ErrorKind, GateDenialOutcome, GateDenialReason, GateError, VerbHookStop,
 };
 
+mod gate_denial;
+pub use self::gate_denial::MemoryGateDenial;
+
 /// Stable facade error codes, mirroring the `oneiron-server`
 /// `ApiErrorDetails` code vocabulary (S8).
 pub const MEMORY_CODE_BAD_REQUEST: &str = "BAD_REQUEST";
@@ -40,6 +43,9 @@ pub const MEMORY_CODE_BUDGET_SPENT: &str = "BUDGET_SPENT";
 /// call, the call failed, or its answer did not fit the call. Nothing stands
 /// in for it.
 pub const MEMORY_CODE_MODEL_UNAVAILABLE: &str = "MODEL_UNAVAILABLE";
+
+/// The owner pinned a spawn's model and no offered seat serves it (FIX 10011).
+pub const MEMORY_CODE_MODEL_PIN_UNAVAILABLE: &str = "MODEL_PIN_UNAVAILABLE";
 
 /// The canonical door was asked to witness into a conversation owned by a live
 /// off-record session (ARCH-0052 D2 backstop (a), ONE-1728 K7). Distinct from
@@ -211,6 +217,13 @@ pub struct MemoryError {
     /// order its source said them (FIX 8190); empty where it said none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resets_at: Vec<u64>,
+    /// The stable reason codes behind this refusal, in the order and
+    /// spelling its producer gave them (FIX 7398): a room's upkeep voice
+    /// refusal names its `gate.rooms.upkeep.*` code here, so no client parses
+    /// it out of `message`. Empty, and absent on the wire, where the producer
+    /// named none. A Gate write rejection's codes stay in `gate_denial`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -221,29 +234,6 @@ pub struct MemoryWrongRoot {
     pub replacement: String,
     #[serde(rename = "schemaRef")]
     pub schema_ref: String,
-}
-
-/// The stable Gate rejection strings behind a [`MemoryError`] whose engine
-/// cause was [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected): the outcome (`pending`/`deny`) and
-/// the `gate.*` reason codes, exactly as the engine spelled them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MemoryGateDenial {
-    /// `pending` or `deny`.
-    pub outcome: String,
-    /// Stable `gate.*` reason codes.
-    pub reason_codes: Vec<String>,
-    /// The ask this refusal raised or found, as its hex ref: a
-    /// `gate.deny.message_address` refusal for want of comm reach names the
-    /// parent's widen ask here, so no client parses it out of `message`
-    /// (FIX 1380). Absent on every other denial.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ask_ref: Option<String>,
-    /// While the Gate holds the act for the owner (`pending`), the
-    /// approve-once digest his one-time press must name to release it, 64
-    /// lower-hex (FIX 6424), copied from the held dispatch's result. Absent
-    /// on every other denial.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_digest: Option<String>,
 }
 
 /// Typed provenance and exception door for a refused policy-controlled act.
@@ -278,6 +268,7 @@ impl MemoryError {
             hook: None,
             retry_after: None,
             resets_at: Vec::new(),
+            reason_codes: Vec::new(),
         }
     }
 
@@ -714,6 +705,11 @@ impl From<Error> for MemoryError {
                 message,
                 &["Restore the revision's package (re-import it), or edit the skill by hand."],
             ),
+            ErrorKind::ModelPinUnavailable => Self::new(
+                MEMORY_CODE_MODEL_PIN_UNAVAILABLE,
+                message,
+                &["Offer a seat for the pinned model, or clear or change the owner's model pin."],
+            ),
             // The request was sound; the refusal names the bound that has to
             // change first (a scope to fund, a seat to bind), and is the
             // whole answer.
@@ -740,6 +736,7 @@ impl From<Error> for MemoryError {
                     "An erase took this reply: what the call did stands, and no call sends it again.",
                 ],
             ),
+            ErrorKind::HoldTargetErased => Self::hold_target_erased(message),
             // A credential's custody key does not open, or custody could not
             // take a new one (KS-6): the vault's state, never the request's
             // shape, and the message names the credential and its way out.

@@ -287,7 +287,10 @@ pub async fn run_compaction_check(
         Read::Ready(read) => read,
         Read::Settled(settled) => {
             record(ctx.vault, attempt_id, &declaration, &settled, now)?;
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
     };
     let locality = judge_locality(&model)?;
@@ -327,6 +330,7 @@ pub async fn run_compaction_check(
     record(ctx.vault, attempt_id, &declaration, &settled, now)?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: verdict.spend.units,
+        step_hashes: Vec::new(),
     })
 }
 

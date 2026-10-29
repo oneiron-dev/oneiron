@@ -36,6 +36,9 @@
 //!   `Memory::claim_upsert_in_session`).
 //! - `self.off_record.execute` runs one entry of a durable code-mode run
 //!   bound to the session, on the server's code-mode host.
+//! - `self.off_record.results.list`, `.results.read`, `.waits.get` and
+//!   `.waits.answer` read that run's results and answer its wait through
+//!   the session ([`run_reads`], FIX 4284).
 //!
 //! None keeps a call receipt (`no_record`): ARCH-0052 keeps no wire receipt
 //! that a session ran. Each lists its rows (`host_door_lists`): a recall
@@ -44,6 +47,7 @@
 use std::sync::Arc;
 
 use oneiron::authority::VerifiedSlip;
+use oneiron::code_run::ProgramStepFeedbackRelease;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
     CommitReceipt, Effort, EntityRefReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -64,6 +68,10 @@ use crate::mcp::{McpCodeExecutionError, OffRecordRunSession};
 use crate::owner::OwnerError;
 use crate::owner::off_record as owner_off_record;
 use crate::server::SyncServer;
+
+mod run_reads;
+
+pub(crate) use self::run_reads::*;
 
 /// Who calls a session row.
 enum Caller {
@@ -627,6 +635,13 @@ async fn off_record_execute(
         next_step_seq,
         steps_run: outcome.steps_run,
         bridge_calls: outcome.replay_record.bridge_calls.len(),
+        // Each step's feedback the run keeps on the session's route, whole:
+        // the reply's destination release judges each apart (FIX 10389).
+        program_steps: outcome
+            .program_steps
+            .into_iter()
+            .map(ProgramStepFeedbackRelease::Released)
+            .collect(),
     })
 }
 

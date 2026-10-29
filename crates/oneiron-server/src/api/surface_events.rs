@@ -2,8 +2,14 @@
 //!
 //! `POST` admits a normalized inbound event: the engine routes it, commits the
 //! attempt, and this route returns `202` with a stable attempt ref before any
-//! dispatcher runs. `GET` reads the durable snapshot for one correlation id.
-//! Production worker wiring is the later surface-serving ticket's scope.
+//! dispatcher runs. A mail that carries its email thread takes the scoped
+//! CC door instead (`email_thread`, FIX 974). `GET` reads the durable
+//! snapshot for one correlation id. Production worker wiring is the later
+//! surface-serving ticket's scope.
+
+mod email_thread;
+
+pub(crate) use self::email_thread::SurfaceEmailThreadPayload;
 
 use super::core_engine_error;
 use super::json_payload;
@@ -243,6 +249,11 @@ pub(crate) struct SurfaceEventSubmitRequest {
     /// The engine stamps every routed event `true`; `false` is not honoured.
     #[schema(example = true)]
     foreign_inbound: bool,
+    /// An email message's threading headers (FIX 974): the mail joins its
+    /// thread across identities through the CC door. Absent, the event takes
+    /// the generic door.
+    #[serde(default)]
+    email_thread: Option<SurfaceEmailThreadPayload>,
 }
 
 impl SurfaceEventSubmitRequest {
@@ -587,16 +598,21 @@ pub(crate) async fn submit_core_surface_event(
     // the ack points at a status read: a submitter reads what it addresses.
     auth.require(CoreScope::Read)?;
     auth.require(CoreScope::Write)?;
-    let req = json_payload(payload)?;
+    let mut req: SurfaceEventSubmitRequest = json_payload(payload)?;
     let read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let thread = req.email_thread.take();
 
-    let admission = server
-        .vault
-        .enqueue_inbound_surface_event_as(&read, req.into_engine(), unix_seconds_now())
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), "surface event admission failed");
-            core_engine_error("surface event admission failed", error)
-        })?;
+    let admission = email_thread::enqueue_as(
+        &server.vault,
+        &read,
+        req.into_engine(),
+        thread,
+        unix_seconds_now(),
+    )
+    .map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "surface event admission failed");
+        core_engine_error("surface event admission failed", error)
+    })?;
 
     Ok(match admission {
         oneiron::SurfaceEventAdmission::Accepted(ack) => {

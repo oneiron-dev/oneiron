@@ -92,6 +92,15 @@ impl Vault {
             // the row's hard marker in this transaction, which the
             // finisher reads after the commit.
             crate::world_keys::stage_local_pad_row_erase_in_txn(&self.store, wtxn, id);
+            // An erased claim's decisions are redacted and their key retired
+            // here, before the tear, whose own redaction is a delete's (FIX
+            // 7955).
+            self.store.redact_gate_decisions_for_claim_in_txn(
+                wtxn,
+                id.as_bytes(),
+                self.store.clock.now_recorded_at(),
+                true,
+            )?;
         }
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
@@ -237,6 +246,7 @@ impl Vault {
             wtxn,
             id.as_bytes(),
             self.store.clock.now_recorded_at(),
+            erase,
         )?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;

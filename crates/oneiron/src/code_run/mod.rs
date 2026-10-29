@@ -68,6 +68,12 @@ pub use self::compaction_home::{
     bind_compaction_caller, compaction_home_budget, load_compaction_home,
     resolve_compaction_identity,
 };
+pub use self::consent_wait::{
+    AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
+    CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
+    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
+    CodeConsentWaitView,
+};
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
     CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
@@ -78,10 +84,6 @@ pub(crate) use self::consent_wait::{
     refuse_code_consent_wait_in_txn, seal_parked_code_consent_in_txn,
     settle_code_consent_wait_listing_in_txn, verify_code_consent_consumed,
     verify_parked_code_consent,
-};
-pub use self::consent_wait::{
-    CodeConsentAnswerInput, CodeConsentChoice, CodeConsentEffectHost, CodeConsentSavedCredential,
-    CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView,
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{
@@ -96,6 +98,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
@@ -114,8 +117,8 @@ pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCaptu
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
-    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
-    refusal as result_refusal, resolve as resolve_result, unknown_handle,
+    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
+    refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -125,8 +128,8 @@ pub(crate) use self::storage::{
     response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
-    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, ResultSpeech,
-    executor_compaction_session_id, executor_speech_message_id_in_run,
+    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
+    SessionInstanceBind, executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
@@ -152,6 +155,7 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
+    session_type_diagnostics_row,
 };
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
@@ -255,9 +259,9 @@ pub use run_verbs::{
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, SelfAgentVerbCall, SessionHookDisposition,
-    SessionHookNotKept, SessionHookPhase, SessionHookReceipt, SessionHookState,
-    SessionWriteAdmission, SessionWriteCeiling,
+    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, SelfAgentVerbCall,
+    SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt,
+    SessionHookState, SessionWriteAdmission, SessionWriteCeiling,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

@@ -55,7 +55,13 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "post",
         path: "/recovery-kit/pad-access",
-        summary: "The owner's kit, in the named target's own call and for it alone, grants a machine (this install when none is named) every pad object the home keeps, over this install's home connection: the generations offered, usable here and pending with the home.",
+        summary: "The owner's kit, in the named target's own call and for it alone, grants a machine (this install when none is named) every pad object the home keeps: over this install's home connection, or here when this install keeps the generations; neither is home_unavailable. Answers the generations offered, usable here and pending with the home.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/recovery-kit/upkeep",
+        summary: "The last sealed bundle relay this install's upkeep finished (its pending pad access and pending erases), the last that failed, and the last kit grant this process answered, each with its time or as unobserved.",
         row: None,
     },
     OwnerRoute {
@@ -74,6 +80,36 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/representation/decline",
         summary: "Declines the draft for good.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/roots",
+        summary: "The roots this install sees: the one it pins, one page of foreign roots (after, limit) with next, the root a pin awaits, and this install's machine.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/roots/anchor",
+        summary: "The named target's own call: the bound root's kit marks the enrolment's machine mine here, with the 26-symbol code a new machine shows; fingerprint or confirm_root vouches for a kit this install cannot verify.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/roots/confirm",
+        summary: "The named target's own call: two pieces of the pending kit (or one and the passphrase) confirm it, and its root goes live here, carrying the machines named.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/roots/issue",
+        summary: "The named target's own call: issues a world kit over three homes, its pieces in this answer alone; nothing is published until confirm.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/roots/pin",
+        summary: "Pins a root on this install from its fingerprint and re-wraps the keys this machine may read under it; a root not stored here yet is awaited.",
         row: None,
     },
     OwnerRoute {
@@ -98,6 +134,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/roots/requests/run",
         summary: "The named target's own call: runs a root request pending here with the kit material its change needs, for this call alone, once the target proves to be this install and a machine the worlds' privacy lets hold their keys; answers the target's report and its words to this caller only.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/roots/restore",
+        summary: "The named target's own call: the kit restores the world keys wrapped to its root on this install; fingerprint or confirm_root vouches for a kit this install cannot verify.",
         row: None,
     },
     OwnerRoute {
@@ -150,6 +192,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/secrets/anchor-sign",
+        summary: "The owner's recovery kit, in this one call, pushes a portable secret's current custody transition signed with his owner anchor to the installs he names; the engine takes it only from an install with no live machine profile.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/secrets/bind",
         summary: "With {\"handle\"} or {\"name\"}, \"effector\", and optionally \"tier_ceiling\" and \"scopes\".",
         row: None,
@@ -164,6 +212,18 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/secrets/custody",
         summary: "A register or rotate whose protected input the surface sealed to the holder itself: this install takes only the ciphertext.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/secrets/custody/pending",
+        summary: "Each restore batch whose credentials wait on their source's evidence, by handle, and each batch an owner kept, with its receipt and a generic owner card.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/custody/pending",
+        summary: "With {\"batch\", \"confirm\": \"keep_without_source\"}: keeps the batch without its source's evidence, the owner's election; returns its receipt.",
         row: None,
     },
     OwnerRoute {
@@ -242,6 +302,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/secrets/rotate",
         summary: "The body is read by RotateSecret::read, not Json: the extractor's body copy and parser scratch would outlive the request unwiped.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/unbind",
+        summary: "With {\"handle\"} or {\"name\"} and \"effector\": withdraws that one binding; every other stays.",
         row: None,
     },
     OwnerRoute {

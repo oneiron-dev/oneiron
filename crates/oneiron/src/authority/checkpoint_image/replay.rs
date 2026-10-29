@@ -30,6 +30,14 @@ pub(in crate::authority) const AUTHORITY_REPLAY_FULL_STRIDE: u32 = 32;
 pub(in crate::authority) const AUTHORITY_REPLAY_OVERFLOW: ReplayEvidence =
     ReplayEvidence::FrontierOnly;
 
+/// What an image whose encoded bytes would still pass the size cap after
+/// dropping its replay evidence marks its residence rows with instead of
+/// their bodies (FIX 11400, CALLS AUTHORITY_RESIDENCE_BODY_OVERFLOW): no
+/// residence body, as before #4095 carried them, so a fold past it asks for
+/// that history as at fold 14. An image that fits keeps its residence
+/// bodies.
+pub(in crate::authority) const AUTHORITY_RESIDENCE_BODY_OVERFLOW: bool = true;
+
 /// The fold states an image keeps off its frontier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

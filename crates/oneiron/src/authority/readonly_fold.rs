@@ -423,6 +423,42 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
     }
 }
 
+/// [`fold_stored_tail_in_txn`], every guest slip it holds whose Grant this
+/// vault withdrew tombstoned (FIX-LIST 1978): one merged in after the
+/// withdrawal, from whichever replica minted it, confers nothing. Every
+/// view of this vault's own log takes it, cached or not; the base a later
+/// generation resumes from and a checkpoint image, which folds the log
+/// afresh, never do: a local withdrawal is no row of the log.
+fn fold_authority_checkpoint_tail_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    key: AuthorityCacheKey,
+    baseline: Option<&AuthorityContinuation>,
+    required: &BTreeSet<AuthorityEntryHash>,
+    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> Result<AuthorityTailFold> {
+    let mut folded =
+        fold_stored_tail_in_txn(store, posture, txn, key, baseline, required, arriving)?;
+    if let AuthorityTailFold::Complete { view, .. } = &mut folded {
+        let grant_bound = view
+            .fold
+            .slips
+            .mints
+            .values()
+            .any(|mint| mint.action.claims.grant_ref.is_some());
+        if grant_bound {
+            // The view was built just now, so it is not shared yet.
+            Arc::make_mut(&mut view.fold)
+                .slips
+                .tombstone_withdrawn_grants(|grant| {
+                    super::guest_revoke::guest_grant_known_withdrawn_in_txn(store, txn, grant)
+                });
+        }
+    }
+    Ok(folded)
+}
+
 /// The stored log's fold behind `key` past `baseline` (OF-469). The rows the
 /// baseline folded are not read again: only the stored rows past it are
 /// decoded and verified, and the fold resumes from the baseline where its
@@ -441,7 +477,7 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
 /// Each `arriving` row folds as a stored row first seen now, though it is
 /// not stored (FIX 2535): what a door judges an arriving row against, never
 /// cached.
-fn fold_authority_checkpoint_tail_in_txn(
+fn fold_stored_tail_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,

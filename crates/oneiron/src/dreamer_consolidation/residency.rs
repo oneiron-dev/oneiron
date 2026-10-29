@@ -17,12 +17,17 @@ pub(crate) fn waits_on_residency(error: &Error) -> bool {
 
 /// The deferral an attempt that met the wait takes: queued again after
 /// [`super::RESIDENCY_RETRY_SECS`], settling what it already spent.
-pub(super) fn residency_deferral(now_ms: u64, completed_units: u64) -> DreamerAttemptExecution {
+pub(super) fn residency_deferral(
+    now_ms: u64,
+    completed_units: u64,
+    step_hashes: Vec<[u8; 32]>,
+) -> DreamerAttemptExecution {
     DreamerAttemptExecution::Deferred {
         completed_units,
         retry_at: now_ms
             .div_ceil(1_000)
             .saturating_add(super::RESIDENCY_RETRY_SECS),
+        step_hashes,
     }
 }
 
@@ -36,7 +41,11 @@ pub(super) fn spent_or_deferred(
     charges: &StepChargeTally,
 ) -> Result<DreamerAttemptExecution> {
     if waits_on_residency(&error) {
-        Ok(residency_deferral(ctx.now_ms, charges.units))
+        Ok(residency_deferral(
+            ctx.now_ms,
+            charges.units,
+            charges.step_hashes.clone(),
+        ))
     } else {
         ctx.note_spend_before_error(charges.units, &charges.step_hashes);
         Err(error)

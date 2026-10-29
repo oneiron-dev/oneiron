@@ -149,7 +149,7 @@ pub struct TeamReceipt {
     pub pattern: TeamPattern,
     pub pattern_skill: Option<PatternSkillRef>,
     pub axis: TeamAxis,
-    /// Model ids at revision the team ran on.
+    /// Model ids at revision the team ran on; empty when none was recorded.
     pub models: Vec<String>,
     pub shape: TeamShape,
     pub decided_by: DecidedBy,
@@ -195,12 +195,8 @@ impl TeamReceipt {
         )?;
         self.type_ref.validate()?;
         // No count cap on models or roles (ARCH-0079: width has no count
-        // cap), so a very wide team still records its receipt.
-        if self.models.is_empty() {
-            return Err(Error::InvalidClaimBody(
-                "a team receipt names at least one model id",
-            ));
-        }
+        // cap), so a very wide team still records its receipt. No model
+        // recorded is unknown, never a refusal (FIX 10192).
         for model in &self.models {
             bounded(model, "a model id is 1..=256 bytes without NUL")?;
         }

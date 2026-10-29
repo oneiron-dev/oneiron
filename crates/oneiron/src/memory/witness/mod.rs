@@ -5,6 +5,7 @@
 mod assertions;
 mod base;
 mod codec;
+mod linked;
 mod program;
 mod reply_assertions;
 mod session;
@@ -20,7 +21,9 @@ mod validation;
 
 pub use self::reply_assertions::MessageReplyAssertions;
 pub(crate) use self::reply_assertions::{
-    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
+    erase_birth_reply_assertions_in_txn, erase_reply_assertions_in_txn,
+    reply_assertions_opaque_owners, reply_assertions_owners, reply_assertions_scan,
+    reply_assertions_stub,
 };
 pub use self::types::{
     WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,

@@ -466,6 +466,7 @@ pub(in crate::dreamer_consolidation) fn read_candidate<'s>(
         evidence_turn_refs,
         project,
         prospective_queries: prospective_queries(item)?,
+        sources: Vec::new(),
     };
     Ok((parsed, fault))
 }

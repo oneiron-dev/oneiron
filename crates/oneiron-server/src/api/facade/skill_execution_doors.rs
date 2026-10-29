@@ -116,13 +116,16 @@ async fn skills_call(
             .with_callable_skills(Arc::clone(&server.vault))?
             .with_agent_verb_door(door.clone());
         let mut runtime = provider.runtime();
+        // The callable is type-checked on the host's service as it is, never
+        // loaded or waited on here; its feedback stays beside the run
+        // (FIX 10389).
         let answer = oneiron::engine_executor::execute_live_skill_call_listing(
             server.vault(),
             &binding,
             &dispatcher,
             &model,
             input.spec,
-            runtime.as_mut(),
+            (runtime.as_mut(), provider.code_check()),
         );
         // A revoked credential receives no result, even if it died mid-call.
         let proof = auth.verified_slip().ok_or_else(credential_required)?;
@@ -191,10 +194,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
             let _ = sender.send(answer);
         });
         Ok(match receiver.recv() {
-            Ok(Ok(answer)) => Ok(AgentVerbAnswer {
-                output: answer.value,
-                rows: answer.rows,
-            }),
+            Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
             Ok(Err(error)) => Err(AgentVerbRefusal {
                 code: error.into_memory_error().code,
             }),

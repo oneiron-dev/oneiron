@@ -16,6 +16,8 @@ mod memories;
 mod prefix;
 mod reply;
 pub(crate) use reply::generate_reply;
+mod run_self;
+pub(crate) use run_self::describe_self_for_run;
 mod scratchpad;
 mod session;
 mod standing;

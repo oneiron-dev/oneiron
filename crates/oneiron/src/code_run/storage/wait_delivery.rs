@@ -18,6 +18,7 @@
 //! typed unavailable, while every other holder reads the reply as before.
 
 mod erased_read;
+mod settle_report;
 
 use std::cell::Cell;
 

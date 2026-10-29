@@ -42,6 +42,7 @@
 
 mod attached;
 mod envelopes;
+mod surface_seal;
 mod witness;
 
 use getrandom::SysRng;
@@ -68,6 +69,7 @@ pub(crate) use self::attached::{
     Attached, AttachedManifest, attach_manifest, attach_no_manifest, attach_published_manifests,
     attach_unread, split_attached,
 };
+pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
 pub(crate) use self::witness::{WitnessJoin, keep_witnessed_input_in_txn, witness_joined_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use self::witness::{

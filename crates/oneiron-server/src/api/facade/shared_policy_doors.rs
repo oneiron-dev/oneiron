@@ -75,6 +75,25 @@ pub(crate) async fn vault_shared_policy_answer(
     .await
 }
 
+/// `vault.shared.policy.changes` (FIX 4288): every change of the vault's
+/// policy rows and its answers, for a live Owner, under the one-change
+/// read's authority; a pending change the rows moved past reads as stale.
+pub(crate) async fn vault_shared_policy_changes(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SharedVaultRequest,
+) -> MaybeListed<Vec<SharedActPolicyChange>> {
+    const VERB: &str = "vault.shared.policy.changes";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::read_shared_act_policy_changes(server.vault(), &owner, input),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
 /// `vault.shared.policy.change`: one change and its answers, for a live Owner.
 pub(crate) async fn vault_shared_policy_change(
     server: &Arc<SyncServer>,

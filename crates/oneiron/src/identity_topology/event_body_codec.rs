@@ -23,11 +23,11 @@ use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{ProposalOutcome, ProposalScope, evaluate_transition};
 use super::wire_keys::{
     BODY_KEY_ACTOR, BODY_KEY_ACTOR_CLASS, BODY_KEY_AMENDED, BODY_KEY_APPLIED_ASSIGNED,
-    BODY_KEY_APPLIED_RESIDUE, BODY_KEY_CLAIM, BODY_KEY_ENTITY, BODY_KEY_FACETS, BODY_KEY_FORKED,
-    BODY_KEY_HEADS, BODY_KEY_MAP, BODY_KEY_OUTCOME, BODY_KEY_PAIR_A, BODY_KEY_PAIR_B,
-    BODY_KEY_PLAN, BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR, BODY_KEY_SCOPE_OP_KIND,
-    BODY_KEY_SCOPE_TARGET_CLASS, BODY_KEY_SOURCES, BODY_KEY_SURVIVOR, BODY_KEY_TARGET,
-    EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET, EVENT_KIND_MERGE,
+    BODY_KEY_APPLIED_EVENT, BODY_KEY_APPLIED_RESIDUE, BODY_KEY_CLAIM, BODY_KEY_ENTITY,
+    BODY_KEY_FACETS, BODY_KEY_FORKED, BODY_KEY_HEADS, BODY_KEY_MAP, BODY_KEY_OUTCOME,
+    BODY_KEY_PAIR_A, BODY_KEY_PAIR_B, BODY_KEY_PLAN, BODY_KEY_PROPOSAL, BODY_KEY_SCOPE_ACTOR,
+    BODY_KEY_SCOPE_OP_KIND, BODY_KEY_SCOPE_TARGET_CLASS, BODY_KEY_SOURCES, BODY_KEY_SURVIVOR,
+    BODY_KEY_TARGET, EVENT_KIND_ASSERT_DISTINCT, EVENT_KIND_FACET, EVENT_KIND_MERGE,
     EVENT_KIND_PROPOSAL_CANCELLATION, EVENT_KIND_PROPOSAL_RESOLUTION, EVENT_KIND_SPLIT,
     EVENT_KIND_UNDO, EVIDENCE_KEY_RATIONALE, EVIDENCE_KEY_REFS,
     IDENTITY_TOPOLOGY_REPLICATED_SEQ_LIMIT, PLAN_READ_THROUGH,
@@ -137,6 +137,7 @@ pub(super) fn encode_action_entries(
             outcome,
             scope,
             amended_body,
+            applied,
         } => {
             entries.push((Value::from(BODY_KEY_PROPOSAL), id_value(proposal)));
             entries.push((Value::from(BODY_KEY_OUTCOME), Value::from(outcome.as_str())));
@@ -157,6 +158,9 @@ pub(super) fn encode_action_entries(
                     Value::from(BODY_KEY_AMENDED),
                     Value::Binary(amended_body.clone()),
                 ));
+            }
+            if let Some(applied) = applied {
+                entries.push((Value::from(BODY_KEY_APPLIED_EVENT), id_value(applied)));
             }
         }
     }
@@ -396,6 +400,9 @@ pub(super) fn decode_action(kind: &str, map: &[(Value, Value)]) -> Result<Stored
                         .to_owned(),
                 },
                 amended_body,
+                applied: map_field(map, BODY_KEY_APPLIED_EVENT)
+                    .map(|value| decode_id_value(value, RESOLUTION_CONTEXT))
+                    .transpose()?,
             })
         }
         _ => Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
