@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1191 facade rows, 4306 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1143.
+// UniFFI census: 1196 facade rows, 4320 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1148.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -26898,6 +26898,59 @@ pub struct OfferPilotComplete {
 pub struct OfferPilotRef {
     #[serde(rename = "pilot")]
     pub pilot: String,
+}
+
+/// `oneiron::verbs::reservoir_sources::ReservoirSourcesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReservoirSourcesRequest {
+    #[serde(
+        rename = "task_classes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub task_classes: Option<Vec<String>>,
+    #[serde(rename = "since", default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<u64>,
+    #[serde(
+        rename = "consented_sources",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub consented_sources: Option<Vec<String>>,
+}
+
+/// `oneiron::edit_distance::reservoir::eligibility::ReservoirSourcePeople`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ReservoirSourcePeople {
+    #[serde(rename = "others")]
+    Others,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+/// `oneiron::edit_distance::reservoir::eligibility::ReservoirSourceRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReservoirSourceRow {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "people")]
+    pub people: ReservoirSourcePeople,
+    #[serde(rename = "pairs")]
+    pub pairs: u64,
+    #[serde(rename = "consented")]
+    pub consented: bool,
+}
+
+/// `oneiron::edit_distance::reservoir::eligibility::ReservoirSourcePreview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReservoirSourcePreview {
+    #[serde(rename = "carried")]
+    pub carried: u64,
+    #[serde(rename = "excluded")]
+    pub excluded: std::collections::HashMap<String, u64>,
+    #[serde(rename = "sources")]
+    pub sources: Vec<ReservoirSourceRow>,
 }
 
 /// `oneiron::verbs::research::ResearchBindWire`.
@@ -66225,6 +66278,144 @@ pub struct IdentityPairProposals {
     pub proposals: Vec<String>,
     #[serde(rename = "distinct_claims")]
     pub distinct_claims: Vec<String>,
+}
+
+/// `oneiron::verbs::custody_drain::CustodyMemberRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyMemberRef {
+    #[serde(rename = "target_id")]
+    pub target_id: String,
+}
+
+/// `oneiron::store::key_custody::protocol::AckPosition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AckPosition {
+    #[serde(rename = "vault")]
+    pub vault: String,
+    #[serde(rename = "namespace")]
+    pub namespace: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+    #[serde(rename = "tip")]
+    pub tip: String,
+}
+
+/// `oneiron::verbs::custody_drain::CustodyDrainTicketView`.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyDrainTicketView {
+    #[serde(rename = "target_id")]
+    pub target_id: String,
+    #[serde(rename = "set_revision")]
+    pub set_revision: u64,
+    #[serde(rename = "position")]
+    pub position: AckPosition,
+    #[serde(rename = "operation_id")]
+    pub operation_id: String,
+    #[serde(rename = "token")]
+    pub token: String,
+}
+impl std::fmt::Debug for CustodyDrainTicketView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustodyDrainTicketView")
+            .finish_non_exhaustive()
+    }
+}
+
+/// `oneiron::store::key_custody::protocol::EvidenceKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ProtocolEvidenceKind {
+    #[serde(rename = "filesystem_sweep")]
+    FilesystemSweep,
+    #[serde(rename = "residence_sweep")]
+    ResidenceSweep,
+    #[serde(rename = "ssh_version_sweep")]
+    SshVersionSweep,
+    #[serde(rename = "object_version_sweep")]
+    ObjectVersionSweep,
+    #[serde(rename = "no_head_in_scope")]
+    NoHeadInScope,
+    #[serde(rename = "unversioned_object_sweep")]
+    UnversionedObjectSweep,
+}
+
+/// `oneiron::store::key_custody::protocol::DeletionEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DeletionEvidence {
+    #[serde(rename = "kind")]
+    pub kind: ProtocolEvidenceKind,
+    #[serde(rename = "superseded_removed")]
+    pub superseded_removed: u64,
+    #[serde(rename = "remaining_heads")]
+    pub remaining_heads: u64,
+    #[serde(rename = "inventory_digest")]
+    pub inventory_digest: String,
+}
+
+/// `oneiron::store::key_custody::protocol::drain::DrainAck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DrainAck {
+    #[serde(rename = "version")]
+    pub version: u8,
+    #[serde(rename = "target_id")]
+    pub target_id: String,
+    #[serde(rename = "set_revision")]
+    pub set_revision: u64,
+    #[serde(rename = "position")]
+    pub position: AckPosition,
+    #[serde(rename = "operation_id")]
+    pub operation_id: String,
+    #[serde(rename = "evidence")]
+    pub evidence: DeletionEvidence,
+    #[serde(rename = "placement")]
+    pub placement: String,
+    #[serde(rename = "origin")]
+    pub origin: String,
+    #[serde(rename = "mac")]
+    pub mac: String,
+}
+
+/// `oneiron::verbs::custody_drain::CustodyDrainCommitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyDrainCommitRequest {
+    #[serde(rename = "ack")]
+    pub ack: DrainAck,
+}
+
+/// `oneiron::verbs::custody_drain::CustodySetRevision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CustodySetRevision {
+    #[serde(rename = "revision")]
+    pub revision: u64,
+}
+
+/// `oneiron::store::key_custody::protocol::TargetScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TargetScope {
+    #[serde(rename = "head_and_log")]
+    HeadAndLog,
+    #[serde(rename = "log_only")]
+    LogOnly,
+}
+
+/// `oneiron::verbs::custody_drain::CustodyMemberReenrolRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyMemberReenrolRequest {
+    #[serde(rename = "target_id", default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(rename = "folder", default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<TargetScope>,
 }
 
 /// `oneiron::verbs::connector_call::ConnectorAnswerAction`.

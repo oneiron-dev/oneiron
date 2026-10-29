@@ -755,6 +755,8 @@ class Oneiron:
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
         def revert_run(self, spec: Facade.RevertRunRequest) -> Facade.RevertRunOutcome:
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
+        @property
+        def custody(self) -> "Oneiron._VaultCustodyVerbs": ...
     class _VaultCommitmentsVerbs:
         def create(self, spec: Facade.CommitmentCreateRequest) -> Facade.CommitmentCreateReceipt:
             """Creates an authored commitment series and its due index atomically, without approving a reminder."""
@@ -804,6 +806,8 @@ class Oneiron:
         def candidates(self) -> "Oneiron._VaultCoachTrainingOffersCandidatesVerbs": ...
         @property
         def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs": ...
+        def sources(self, spec: Facade.ReservoirSourcesRequest) -> Facade.ReservoirSourcePreview:
+            """Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."""
     class _VaultCoachTrainingOffersCandidatesVerbs:
         def __call__(self, spec: Facade.OfferCandidateQuery) -> list[Facade.OfferCandidateRecord]:
             """Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination."""
@@ -3429,6 +3433,21 @@ class Oneiron:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
         def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
+    class _VaultCustodyVerbs:
+        @property
+        def members(self) -> "Oneiron._VaultCustodyMembersVerbs": ...
+    class _VaultCustodyMembersVerbs:
+        @property
+        def drain(self) -> "Oneiron._VaultCustodyMembersDrainVerbs": ...
+        def reenrol(self, spec: Facade.CustodyMemberReenrolRequest) -> Facade.CustodySetRevision:
+            """The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."""
+    class _VaultCustodyMembersDrainVerbs:
+        def begin(self, spec: Facade.CustodyMemberRef) -> Facade.CustodyDrainTicketView:
+            """The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter."""
+        def commit(self, spec: Facade.CustodyDrainCommitRequest) -> Facade.CustodySetRevision:
+            """The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."""
+        def folder(self, spec: Facade.CustodyMemberRef) -> Facade.CustodySetRevision:
+            """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
     class _FeedbackVerbs:
         def preview(self, spec: Facade.FeedbackPreviewRequest) -> Facade.FeedbackSubjectPreview:
             """The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."""

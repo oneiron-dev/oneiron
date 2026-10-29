@@ -474,6 +474,7 @@ vaultCoachTrainingOffersCandidatesPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
+vaultCoachTrainingOffersSources(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
@@ -1187,6 +1188,10 @@ vaultIdentityResolve(input: unknown): unknown
 vaultIdentityEventsGet(input: unknown): unknown
 vaultIdentityProposalsResolve(input: unknown): unknown
 vaultIdentityProposalsForPair(input: unknown): unknown
+vaultCustodyMembersDrainBegin(input: unknown): unknown
+vaultCustodyMembersDrainCommit(input: unknown): unknown
+vaultCustodyMembersDrainFolder(input: unknown): unknown
+vaultCustodyMembersReenrol(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown

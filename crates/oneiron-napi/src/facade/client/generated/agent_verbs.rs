@@ -3837,6 +3837,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_coach_training_offers_sources(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.sources", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_bind(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.research.bind", js_json(input))
@@ -10416,6 +10425,42 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.identity.proposals.for_pair", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_drain_begin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.drain.begin", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_drain_commit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.drain.commit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_drain_folder(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.drain.folder", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_reenrol(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.reenrol", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

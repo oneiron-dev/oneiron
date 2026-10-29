@@ -496,6 +496,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.coach.training_offers.pilots.get",
             post(facade_route),
         )
+        .route("/vault.coach.training_offers.sources", post(facade_route))
         .route("/vault.research.bind", post(facade_route))
         .route("/vault.research.fork", post(facade_route))
         .route("/vault.research.weave", post(facade_route))
@@ -1259,6 +1260,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.identity.events.get", post(facade_route))
         .route("/vault.identity.proposals.resolve", post(facade_route))
         .route("/vault.identity.proposals.for_pair", post(facade_route))
+        .route("/vault.custody.members.drain.begin", post(facade_route))
+        .route("/vault.custody.members.drain.commit", post(facade_route))
+        .route("/vault.custody.members.drain.folder", post(facade_route))
+        .route("/vault.custody.members.reenrol", post(facade_route))
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))

@@ -446,6 +446,7 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.prepare`
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
+- `vault.coach.training_offers.sources`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`
@@ -1159,3 +1160,7 @@ both bindings and their export-census tests in one change.
 - `vault.identity.events.get`
 - `vault.identity.proposals.resolve`
 - `vault.identity.proposals.for_pair`
+- `vault.custody.members.drain.begin`
+- `vault.custody.members.drain.commit`
+- `vault.custody.members.drain.folder`
+- `vault.custody.members.reenrol`

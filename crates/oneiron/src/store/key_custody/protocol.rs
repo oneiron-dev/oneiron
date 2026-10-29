@@ -263,6 +263,12 @@ impl TargetSpec {
         Ok(Self::hosted(id, kind, TargetScope::HeadAndLog))
     }
 
+    /// The folder member at `folder`, for the owner's re-enrolment of one he
+    /// drained (FIX 11274): `folder:<16 hex>` of its absolute path.
+    pub(crate) fn of_folder(folder: PathBuf) -> Self {
+        Self::folder(folder)
+    }
+
     pub(super) fn folder(folder: PathBuf) -> Self {
         Self {
             id: TargetId::of_folder(&folder),
