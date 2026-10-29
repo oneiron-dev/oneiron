@@ -532,12 +532,26 @@ impl Vault {
             .collect::<Vec<_>>();
         // Appended last so it can never become the single surfaced body. The
         // vault-egress path is the owner plane by construction, so it says so
-        // rather than leaving a clean allow's rationale unattributed.
-        system_notices.extend(policy_model_rationale_notice(
-            &verdict,
-            PolicyPlane::OwnerPolicy,
-            None,
-        ));
+        // rather than leaving a clean allow's rationale unattributed. Its MAC
+        // is read in the door's writer or, for a verdict another door
+        // recorded, in a snapshot under the custody read guard.
+        let rationale = match wtxn.as_ref() {
+            Some(wtxn) => policy_model_rationale_notice(
+                &self.store,
+                wtxn,
+                &verdict,
+                PolicyPlane::OwnerPolicy,
+                None,
+            ),
+            None => policy_model_rationale_notice(
+                &self.store,
+                &self.store.custody_snapshot()?,
+                &verdict,
+                PolicyPlane::OwnerPolicy,
+                None,
+            ),
+        };
+        system_notices.extend(rationale);
         // The hold's ruling is read in the same transaction that settled the
         // verdict (and queued its hold), or, for a verdict another door
         // recorded, in the same snapshot that finds it still in force: a

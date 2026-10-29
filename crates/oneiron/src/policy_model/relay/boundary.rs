@@ -248,6 +248,8 @@ impl Vault {
         // Appended last, as everywhere: an audit row must never become the
         // single body a caller surfaces.
         notices.extend(policy_model_rationale_notice(
+            &self.store,
+            wtxn,
             verdict,
             PolicyPlane::OwnerPolicy,
             None,
@@ -392,8 +394,11 @@ impl Vault {
                 // The relay boundary evaluates the hosted plane and nothing
                 // else, so a rationale its verdict does not attribute — a
                 // clean allow the model examined after a pattern fired — is
-                // still a hosted-plane row.
+                // still a hosted-plane row. This door holds no writer yet, so
+                // the MAC is read in a snapshot under the custody read guard.
                 notices.extend(policy_model_rationale_notice(
+                    &self.store,
+                    &self.store.custody_snapshot()?,
                     verdict,
                     PolicyPlane::HostedLegal,
                     receipt.hosted.map(|hosted| hosted.version.as_str()),
@@ -634,6 +639,8 @@ impl Vault {
         // is what the owner reads back to improve them; replacing the
         // verdict is no reason to lose it.
         let notices: Vec<GateSystemNoticeRecord> = policy_model_rationale_notice(
+            &self.store,
+            wtxn,
             &degraded,
             PolicyPlane::HostedLegal,
             receipt.hosted.map(|hosted| hosted.version.as_str()),
