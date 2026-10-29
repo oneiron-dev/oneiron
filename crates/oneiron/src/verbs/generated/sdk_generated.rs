@@ -2030,6 +2030,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.off_record.results.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordResultsRequest,
+                >(),
+            ),
+            (
+                "self.off_record.results.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordResultReadRequest,
+                >(),
+            ),
+            (
+                "self.off_record.waits.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordWaitRequest,
+                >(),
+            ),
+            (
+                "self.off_record.waits.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordWaitAnswerRequest,
+                >(),
+            ),
+            (
                 "vault.off_record.rooms.status",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::OffRecordRoomRequest,
@@ -6977,6 +7001,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "self.off_record.results.list",
+    "self.off_record.results.read",
+    "self.off_record.waits.get",
+    "self.off_record.waits.answer",
     "vault.off_record.rooms.status",
     "vault.off_record.rooms.start",
     "vault.off_record.rooms.witness",
@@ -8352,6 +8380,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordExecuted,
+        >(),
+        "self.off_record.results.list" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordResultCards,
+        >(),
+        "self.off_record.results.read" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordResultRead,
+        >(),
+        "self.off_record.waits.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordWaitView,
+        >(),
+        "self.off_record.waits.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordWaitAnswered,
         >(),
         "vault.off_record.rooms.status" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordRoomView,
@@ -9936,6 +9976,10 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "self.off_record.results.list",
+    "self.off_record.results.read",
+    "self.off_record.waits.get",
+    "self.off_record.waits.answer",
     "vault.off_record.rooms.status",
     "vault.off_record.rooms.start",
     "vault.off_record.rooms.witness",
@@ -12710,6 +12754,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.off_record.execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.off_record.results.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.off_record.results.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.off_record.waits.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.off_record.waits.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19381,6 +19453,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.off_record.execute" => {
             let _input: crate::task_verb::sdk::OffRecordExecuteRequest = decode(value.clone())?;
         }
+        "self.off_record.results.list" => {
+            let _input: crate::task_verb::sdk::OffRecordResultsRequest = decode(value.clone())?;
+        }
+        "self.off_record.results.read" => {
+            let _input: crate::task_verb::sdk::OffRecordResultReadRequest = decode(value.clone())?;
+        }
+        "self.off_record.waits.get" => {
+            let _input: crate::task_verb::sdk::OffRecordWaitRequest = decode(value.clone())?;
+        }
+        "self.off_record.waits.answer" => {
+            let _input: crate::task_verb::sdk::OffRecordWaitAnswerRequest = decode(value.clone())?;
+        }
         "vault.off_record.rooms.status" => {
             let _input: crate::task_verb::sdk::OffRecordRoomRequest = decode(value.clone())?;
         }
@@ -22938,6 +23022,16 @@ pub fn invoke(
             encode(vault_off_record_claims_upsert(memory, decode(value)?)?)
         }
         "self.off_record.execute" => encode(self_off_record_execute(memory, decode(value)?)?),
+        "self.off_record.results.list" => {
+            encode(self_off_record_results_list(memory, decode(value)?)?)
+        }
+        "self.off_record.results.read" => {
+            encode(self_off_record_results_read(memory, decode(value)?)?)
+        }
+        "self.off_record.waits.get" => encode(self_off_record_waits_get(memory, decode(value)?)?),
+        "self.off_record.waits.answer" => {
+            encode(self_off_record_waits_answer(memory, decode(value)?)?)
+        }
         "vault.off_record.rooms.status" => {
             encode(vault_off_record_rooms_status(memory, decode(value)?)?)
         }
@@ -27868,6 +27962,30 @@ pub fn self_off_record_execute(
     input: crate::task_verb::sdk::OffRecordExecuteRequest,
 ) -> MemoryResult<crate::task_verb::sdk::OffRecordExecuted> {
     crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.execute", &input)
+}
+pub fn self_off_record_results_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordResultsRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordResultCards> {
+    crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.results.list", &input)
+}
+pub fn self_off_record_results_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordResultReadRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordResultRead> {
+    crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.results.read", &input)
+}
+pub fn self_off_record_waits_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordWaitRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordWaitView> {
+    crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.waits.get", &input)
+}
+pub fn self_off_record_waits_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordWaitAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordWaitAnswered> {
+    crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.waits.answer", &input)
 }
 pub fn vault_off_record_rooms_status(
     memory: &Memory<'_>,

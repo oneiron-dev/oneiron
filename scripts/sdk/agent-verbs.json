@@ -6102,6 +6102,70 @@
       "openapi": true
     },
     {
+      "name": "self.off_record.results.list",
+      "description": "The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not.",
+      "input": "crate::task_verb::sdk::OffRecordResultsRequest",
+      "output": "crate::task_verb::sdk::OffRecordResultCards",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.results.list\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.results.read",
+      "description": "The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint.",
+      "input": "crate::task_verb::sdk::OffRecordResultReadRequest",
+      "output": "crate::task_verb::sdk::OffRecordResultRead",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.results.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.waits.get",
+      "description": "The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered.",
+      "input": "crate::task_verb::sdk::OffRecordWaitRequest",
+      "output": "crate::task_verb::sdk::OffRecordWaitView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.waits.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.waits.answer",
+      "description": "The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on.",
+      "input": "crate::task_verb::sdk::OffRecordWaitAnswerRequest",
+      "output": "crate::task_verb::sdk::OffRecordWaitAnswered",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.waits.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.off_record.rooms.status",
       "description": "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk.",
       "input": "crate::task_verb::sdk::OffRecordRoomRequest",

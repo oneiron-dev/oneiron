@@ -5552,6 +5552,30 @@ class Oneiron:
         def execute(self, spec):
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
+        @property
+        def results(self) -> "Oneiron._SelfOffRecordResultsVerbs":
+            return Oneiron._SelfOffRecordResultsVerbs(self._client)
+        @property
+        def waits(self) -> "Oneiron._SelfOffRecordWaitsVerbs":
+            return Oneiron._SelfOffRecordWaitsVerbs(self._client)
+    class _SelfOffRecordResultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not."""
+            return json.loads(_translate(lambda: self._client.self_off_record_results_list(json.dumps(spec))))
+        def read(self, spec):
+            """The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint."""
+            return json.loads(_translate(lambda: self._client.self_off_record_results_read(json.dumps(spec))))
+    class _SelfOffRecordWaitsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered."""
+            return json.loads(_translate(lambda: self._client.self_off_record_waits_get(json.dumps(spec))))
+        def answer(self, spec):
+            """The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on."""
+            return json.loads(_translate(lambda: self._client.self_off_record_waits_answer(json.dumps(spec))))
     class _SelfConsentVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

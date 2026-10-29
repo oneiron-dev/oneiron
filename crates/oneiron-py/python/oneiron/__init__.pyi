@@ -3474,6 +3474,20 @@ class Oneiron:
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+        @property
+        def results(self) -> "Oneiron._SelfOffRecordResultsVerbs": ...
+        @property
+        def waits(self) -> "Oneiron._SelfOffRecordWaitsVerbs": ...
+    class _SelfOffRecordResultsVerbs:
+        def list(self, spec: Facade.OffRecordResultsRequest) -> Facade.OffRecordResultCards:
+            """The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not."""
+        def read(self, spec: Facade.OffRecordResultReadRequest) -> Facade.OffRecordResultRead:
+            """The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint."""
+    class _SelfOffRecordWaitsVerbs:
+        def get(self, spec: Facade.OffRecordWaitRequest) -> Facade.OffRecordWaitView:
+            """The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered."""
+        def answer(self, spec: Facade.OffRecordWaitAnswerRequest) -> Facade.OffRecordWaitAnswered:
+            """The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on."""
     class _SelfConsentVerbs:
         @property
         def graduation(self) -> "Oneiron._SelfConsentGraduationVerbs": ...

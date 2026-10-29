@@ -1936,6 +1936,26 @@ export_facade! {
     let output = client.self_off_record_execute(&input)?;
     crate::codec::lift_record("self.off_record.execute", &output)
 };
+"self.off_record.results.list" => fn self_off_record_results_list(&self, input: OffRecordResultsRequest) -> OffRecordResultCards = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordResultsRequest = crate::codec::lower_record("self.off_record.results.list", input)?;
+    let output = client.self_off_record_results_list(&input)?;
+    crate::codec::lift_record("self.off_record.results.list", &output)
+};
+"self.off_record.results.read" => fn self_off_record_results_read(&self, input: OffRecordResultReadRequest) -> OffRecordResultRead = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordResultReadRequest = crate::codec::lower_record("self.off_record.results.read", input)?;
+    let output = client.self_off_record_results_read(&input)?;
+    crate::codec::lift_record("self.off_record.results.read", &output)
+};
+"self.off_record.waits.get" => fn self_off_record_waits_get(&self, input: OffRecordWaitRequest) -> OffRecordWaitView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordWaitRequest = crate::codec::lower_record("self.off_record.waits.get", input)?;
+    let output = client.self_off_record_waits_get(&input)?;
+    crate::codec::lift_record("self.off_record.waits.get", &output)
+};
+"self.off_record.waits.answer" => fn self_off_record_waits_answer(&self, input: OffRecordWaitAnswerRequest) -> OffRecordWaitAnswered = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordWaitAnswerRequest = crate::codec::lower_record("self.off_record.waits.answer", input)?;
+    let output = client.self_off_record_waits_answer(&input)?;
+    crate::codec::lift_record("self.off_record.waits.answer", &output)
+};
 "vault.off_record.rooms.status" => fn vault_off_record_rooms_status(&self, input: OffRecordRoomRequest) -> OffRecordRoomView = |client| {
     let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.status", input)?;
     let output = client.vault_off_record_rooms_status(&input)?;

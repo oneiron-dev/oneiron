@@ -12368,6 +12368,142 @@ async fn self_off_record_execute(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_off_record_results_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.results.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.results.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.results.list", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_results_list(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_results_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.results.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.results.read", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.results.read", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_results_read(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_waits_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.waits.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.waits.get", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.waits.get", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_waits_get(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_waits_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.waits.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.waits.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.waits.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_waits_answer(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_off_record_rooms_status(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37390,6 +37526,10 @@ pub(crate) async fn call_verb(
             vault_off_record_claims_upsert(server, call, input).await
         }
         "self.off_record.execute" => self_off_record_execute(server, call, input).await,
+        "self.off_record.results.list" => self_off_record_results_list(server, call, input).await,
+        "self.off_record.results.read" => self_off_record_results_read(server, call, input).await,
+        "self.off_record.waits.get" => self_off_record_waits_get(server, call, input).await,
+        "self.off_record.waits.answer" => self_off_record_waits_answer(server, call, input).await,
         "vault.off_record.rooms.status" => vault_off_record_rooms_status(server, call, input).await,
         "vault.off_record.rooms.start" => vault_off_record_rooms_start(server, call, input).await,
         "vault.off_record.rooms.witness" => {

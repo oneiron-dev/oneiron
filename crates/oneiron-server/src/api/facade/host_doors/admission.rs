@@ -684,7 +684,11 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.off_record.recall"
         | "vault.off_record.notes.create"
         | "vault.off_record.claims.upsert"
-        | "self.off_record.execute" => {
+        | "self.off_record.execute"
+        | "self.off_record.results.list"
+        | "self.off_record.results.read"
+        | "self.off_record.waits.get"
+        | "self.off_record.waits.answer" => {
             crate::api::facade::off_record_doors::off_record_admits(server, auth, verb)
         }
         "vault.off_record.rooms.start"

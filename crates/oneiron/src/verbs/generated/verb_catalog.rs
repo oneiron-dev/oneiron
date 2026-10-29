@@ -391,6 +391,10 @@ pub enum AgentVerb {
     VaultOffRecordNotesCreate,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
+    SelfOffRecordResultsList,
+    SelfOffRecordResultsRead,
+    SelfOffRecordWaitsGet,
+    SelfOffRecordWaitsAnswer,
     VaultOffRecordRoomsStatus,
     VaultOffRecordRoomsStart,
     VaultOffRecordRoomsWitness,
@@ -1578,6 +1582,10 @@ impl AgentVerb {
         Self::VaultOffRecordNotesCreate,
         Self::VaultOffRecordClaimsUpsert,
         Self::SelfOffRecordExecute,
+        Self::SelfOffRecordResultsList,
+        Self::SelfOffRecordResultsRead,
+        Self::SelfOffRecordWaitsGet,
+        Self::SelfOffRecordWaitsAnswer,
         Self::VaultOffRecordRoomsStatus,
         Self::VaultOffRecordRoomsStart,
         Self::VaultOffRecordRoomsWitness,
@@ -2772,6 +2780,10 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
             Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
             Self::SelfOffRecordExecute => "self.off_record.execute",
+            Self::SelfOffRecordResultsList => "self.off_record.results.list",
+            Self::SelfOffRecordResultsRead => "self.off_record.results.read",
+            Self::SelfOffRecordWaitsGet => "self.off_record.waits.get",
+            Self::SelfOffRecordWaitsAnswer => "self.off_record.waits.answer",
             Self::VaultOffRecordRoomsStatus => "vault.off_record.rooms.status",
             Self::VaultOffRecordRoomsStart => "vault.off_record.rooms.start",
             Self::VaultOffRecordRoomsWitness => "vault.off_record.rooms.witness",
@@ -3985,6 +3997,10 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordResultsList
+                | Self::SelfOffRecordResultsRead
+                | Self::SelfOffRecordWaitsGet
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStatus
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
@@ -5201,6 +5217,10 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordResultsList
+                | Self::SelfOffRecordResultsRead
+                | Self::SelfOffRecordWaitsGet
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStatus
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
@@ -6543,6 +6563,10 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordResultsList
+                | Self::SelfOffRecordResultsRead
+                | Self::SelfOffRecordWaitsGet
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStatus
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
@@ -7513,6 +7537,7 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::SelfOffRecordWaitsAnswer
                 | Self::VaultOffRecordRoomsStart
                 | Self::VaultOffRecordRoomsWitness
                 | Self::VaultOffRecordRoomsSave
@@ -8414,6 +8439,10 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::SelfOffRecordResultsList => &["spec"],
+            Self::SelfOffRecordResultsRead => &["spec"],
+            Self::SelfOffRecordWaitsGet => &["spec"],
+            Self::SelfOffRecordWaitsAnswer => &["spec"],
             Self::VaultOffRecordRoomsStatus => &["spec"],
             Self::VaultOffRecordRoomsStart => &["spec"],
             Self::VaultOffRecordRoomsWitness => &["spec"],
@@ -9602,6 +9631,10 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::SelfOffRecordResultsList => &["spec"],
+            Self::SelfOffRecordResultsRead => &["spec"],
+            Self::SelfOffRecordWaitsGet => &["spec"],
+            Self::SelfOffRecordWaitsAnswer => &["spec"],
             Self::VaultOffRecordRoomsStatus => &["spec"],
             Self::VaultOffRecordRoomsStart => &["spec"],
             Self::VaultOffRecordRoomsWitness => &["spec"],
@@ -11546,6 +11579,18 @@ impl AgentVerb {
             }
             Self::SelfOffRecordExecute => {
                 "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
+            }
+            Self::SelfOffRecordResultsList => {
+                "The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not."
+            }
+            Self::SelfOffRecordResultsRead => {
+                "The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint."
+            }
+            Self::SelfOffRecordWaitsGet => {
+                "The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered."
+            }
+            Self::SelfOffRecordWaitsAnswer => {
+                "The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on."
             }
             Self::VaultOffRecordRoomsStatus => {
                 "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."

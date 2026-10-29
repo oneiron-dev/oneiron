@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4180 declarations.
-Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 107; unread shapes: 0.
+Census: 1166 facade rows, 4189 declarations.
+Inputs: 1099 of 1166 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1042 of 1166 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -7475,6 +7475,85 @@ class OffRecordExecuted(TypedDict):
     next_step_seq: NotRequired[int | None]
     steps_run: int
     bridge_calls: int
+class OffRecordResultsRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    offset: NotRequired[int | None]
+    limit: NotRequired[int | None]
+ResultBodyKind = Literal["text", "binary"]
+ResultTaintState = Literal["clean", "tainted_live", "tainted_stale"]
+class ResultTaint(TypedDict):
+    state: ResultTaintState
+    secret: NotRequired[str | None]
+ResultFacet = Literal["slice", "search", "query", "chunks"]
+class ResultCard(TypedDict):
+    handle: str
+    bytes: int
+    kind: ResultBodyKind
+    lines: int
+    complete: bool
+    preview: str
+    name: NotRequired[str | None]
+    taint: ResultTaint
+    more: list[ResultFacet]
+    shape: NotRequired[Any | None]
+class OffRecordResultCards(TypedDict):
+    run_ref: str
+    run_id: str
+    count: int
+    cards: list[ResultCard]
+    next_offset: NotRequired[int | None]
+    withheld: bool
+class OffRecordResultReadRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    ref: str
+    facet: NotRequired[ResultFacet | None]
+    input: NotRequired[Any | None]
+class ResultReadRefusal(TypedDict):
+    denied: str
+    reasonCodes: list[str]
+    error: NotRequired[str | None]
+    bytes: NotRequired[int | None]
+class OffRecordResultReadCard(TypedDict):
+    status: Literal["card"]
+    card: ResultCard
+class OffRecordResultReadPage(TypedDict):
+    status: Literal["page"]
+    facet: ResultFacet
+    page: Any
+class OffRecordResultReadDenied(TypedDict):
+    status: Literal["denied"]
+    refusal: ResultReadRefusal
+OffRecordResultRead = OffRecordResultReadCard | OffRecordResultReadPage | OffRecordResultReadDenied
+class OffRecordWaitRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+class OffRecordRunWait(TypedDict):
+    wait_id: str
+    generation: int
+    effect: str
+    reason: str
+    prompt: NotRequired[str | None]
+    answerable: bool
+    delivered_at_ms: NotRequired[int | None]
+class OffRecordWaitView(TypedDict):
+    run_ref: str
+    run_id: str
+    wait: NotRequired[OffRecordRunWait | None]
+class OffRecordWaitAnswerRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    reply: Any
+    wait_id: NotRequired[EntityId | None]
+    generation: NotRequired[int | None]
+class OffRecordWaitAnswered(TypedDict):
+    run_ref: str
+    run_id: str
+    wait_id: str
+    generation: int
+    already_answered: bool
+    delivered_at_ms: int
 class OffRecordRoomRequest(TypedDict):
     room: str
     session_ref: str
@@ -7518,7 +7597,6 @@ class MessageResultSource(TypedDict):
     run_id: EntityId
     occurrence: EntityId
     path: str
-ResultFacet = Literal["slice", "search", "query", "chunks"]
 class MessageResultAttachment(TypedDict):
     source: MessageResultSource
     handle: str
@@ -11325,11 +11403,6 @@ class ResultBodyStatus(TypedDict):
     occurrence: EntityId
     complete: bool
     retained: NotRequired[ResultRetainedBody | None]
-ResultBodyKind = Literal["text", "binary"]
-ResultTaintState = Literal["clean", "tainted_live", "tainted_stale"]
-class ResultTaint(TypedDict):
-    state: ResultTaintState
-    secret: NotRequired[str | None]
 class ResultTaintReference(TypedDict):
     secret_ref: str
     generation: int
@@ -11356,22 +11429,6 @@ class ResultRunStatus(TypedDict):
 class ResultOccurrenceRequest(TypedDict):
     run_id: EntityId
     occurrence: EntityId
-class ResultCard(TypedDict):
-    handle: str
-    bytes: int
-    kind: ResultBodyKind
-    lines: int
-    complete: bool
-    preview: str
-    name: NotRequired[str | None]
-    taint: ResultTaint
-    more: list[ResultFacet]
-    shape: NotRequired[Any | None]
-class ResultReadRefusal(TypedDict):
-    denied: str
-    reasonCodes: list[str]
-    error: NotRequired[str | None]
-    bytes: NotRequired[int | None]
 class ResultReadViewAvailable(TypedDict):
     status: Literal["available"]
     manifest: ResultOccurrenceManifest

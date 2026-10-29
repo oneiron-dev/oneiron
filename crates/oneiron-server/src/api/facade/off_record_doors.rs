@@ -36,6 +36,9 @@
 //!   `Memory::claim_upsert_in_session`).
 //! - `self.off_record.execute` runs one entry of a durable code-mode run
 //!   bound to the session, on the server's code-mode host.
+//! - `self.off_record.results.list`, `.results.read`, `.waits.get` and
+//!   `.waits.answer` read that run's results and answer its wait through
+//!   the session ([`run_reads`], FIX 4284).
 //!
 //! None keeps a call receipt (`no_record`): ARCH-0052 keeps no wire receipt
 //! that a session ran. Each lists its rows (`host_door_lists`): a recall
@@ -64,6 +67,10 @@ use crate::mcp::{McpCodeExecutionError, OffRecordRunSession};
 use crate::owner::OwnerError;
 use crate::owner::off_record as owner_off_record;
 use crate::server::SyncServer;
+
+mod run_reads;
+
+pub(crate) use self::run_reads::*;
 
 /// Who calls a session row.
 enum Caller {
