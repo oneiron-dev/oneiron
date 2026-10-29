@@ -2202,6 +2202,9 @@ class Oneiron:
         @property
         def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs":
             return Oneiron._VaultConnectorsReadGrantsVerbs(self._client)
+        @property
+        def web(self) -> "Oneiron._VaultConnectorsWebVerbs":
+            return Oneiron._VaultConnectorsWebVerbs(self._client)
     class _VaultConnectorsProxyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2262,6 +2265,12 @@ class Oneiron:
         def revoke(self, spec):
             """The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."""
             return json.loads(_translate(lambda: self._client.vault_connectors_read_grants_revoke(json.dumps(spec))))
+    class _VaultConnectorsWebVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def usage(self, spec):
+            """Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_web_usage(json.dumps(spec))))
     class _VaultAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3305,6 +3314,9 @@ class Oneiron:
         @property
         def inference_defaults(self) -> "Oneiron._VaultSettingsInferenceDefaultsVerbs":
             return Oneiron._VaultSettingsInferenceDefaultsVerbs(self._client)
+        @property
+        def web_connector(self) -> "Oneiron._VaultSettingsWebConnectorVerbs":
+            return Oneiron._VaultSettingsWebConnectorVerbs(self._client)
     class _VaultSettingsLearningVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3332,6 +3344,15 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling."""
             return json.loads(_translate(lambda: self._client.vault_settings_inference_defaults_replace(json.dumps(spec))))
+    class _VaultSettingsWebConnectorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key."""
+            return json.loads(_translate(lambda: self._client.vault_settings_web_connector(json.dumps(spec))))
+        def replace(self, spec):
+            """Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector."""
+            return json.loads(_translate(lambda: self._client.vault_settings_web_connector_replace(json.dumps(spec))))
     class _VaultSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
