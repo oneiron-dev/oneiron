@@ -68,6 +68,9 @@ pub enum RevealDecision {
     Denied,
     /// Its window closed; reveal again.
     Expired,
+    /// Its secret was erased before its value went out; the receipt's
+    /// `cause` names why (FIX 8350).
+    Unavailable,
 }
 
 /// `reveal.wait`'s answer. `Debug` never prints the value.
@@ -120,6 +123,8 @@ pub struct RevealReceipt {
     pub lease: Option<String>,
     pub asked_at: u64,
     pub delivered_at: Option<u64>,
+    /// Why the reveal closed with no value, `None` otherwise (FIX 8350).
+    pub cause: Option<String>,
 }
 
 /// `reveal.describe`'s input: one handle.
@@ -206,6 +211,7 @@ pub fn wait_reveal_as_caller(
             SecretRevealDecision::Granted => RevealDecision::Granted,
             SecretRevealDecision::Denied => RevealDecision::Denied,
             SecretRevealDecision::Expired => RevealDecision::Expired,
+            SecretRevealDecision::Unavailable => RevealDecision::Unavailable,
         },
         value,
         value_base64,
@@ -510,5 +516,6 @@ pub(crate) fn reveal_receipt(receipt: SecretRevealReceipt) -> RevealReceipt {
         lease: receipt.lease.map(|lease| lease.to_hex()),
         asked_at: receipt.asked_at,
         delivered_at: receipt.delivered_at,
+        cause: receipt.cause.map(|cause| cause.as_str().to_owned()),
     }
 }

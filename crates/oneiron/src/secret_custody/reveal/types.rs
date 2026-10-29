@@ -30,6 +30,9 @@ pub enum SecretRevealState {
     Expired,
     /// Its value went to its reader.
     Delivered,
+    /// Its secret was erased before its value went out; the row's cause
+    /// names why (FIX 8350).
+    Unavailable,
 }
 
 impl SecretRevealState {
@@ -44,6 +47,7 @@ impl SecretRevealState {
             Self::Denied => "denied",
             Self::Expired => "expired",
             Self::Delivered => "delivered",
+            Self::Unavailable => "unavailable",
         }
     }
 }
@@ -60,6 +64,8 @@ pub enum SecretRevealDecision {
     Denied,
     /// Its window closed.
     Expired,
+    /// The secret is gone; the receipt's `cause` names why (FIX 8350).
+    Unavailable,
 }
 
 impl SecretRevealDecision {
@@ -71,6 +77,26 @@ impl SecretRevealDecision {
             Self::Granted => "granted",
             Self::Denied => "denied",
             Self::Expired => "expired",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// Why a reveal closed with no value (FIX 8350).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretRevealCause {
+    /// The run seat that found the secret ended, and its run-bound record
+    /// was erased with it (FIX 8028).
+    RunSeatEnded,
+}
+
+impl SecretRevealCause {
+    /// The pinned cause word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RunSeatEnded => "run_seat_ended",
         }
     }
 }
@@ -113,6 +139,8 @@ pub struct SecretRevealReceipt {
     /// a typed body an agent's read showed: its keys are the handles above,
     /// and each went out under its own T1 lease.
     pub file: Option<EntityId>,
+    /// Why the reveal closed with no value, `None` otherwise (FIX 8350).
+    pub cause: Option<SecretRevealCause>,
 }
 
 /// One reveal as the owner reads it, with the in-moment card while it waits

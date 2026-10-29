@@ -89,6 +89,7 @@ impl Vault {
                 delivered_at: None,
                 file: None,
                 notices: Vec::new(),
+                closed: None,
             };
             row.once_digest = Some(*row.ask_digest(&reveal).as_bytes());
             let grants = load_active_standing_grants(&self.store, txn)?;
@@ -166,6 +167,9 @@ impl Vault {
                 SecretRevealState::Delivered => return answer(SecretRevealDecision::Granted, &row),
                 SecretRevealState::Denied => return answer(SecretRevealDecision::Denied, &row),
                 SecretRevealState::Expired => return answer(SecretRevealDecision::Expired, &row),
+                SecretRevealState::Unavailable => {
+                    return answer(SecretRevealDecision::Unavailable, &row);
+                }
                 _ if now >= row.expires_at => {
                     row.state = SecretRevealState::Expired;
                     // An expired ask leaves no open notice (FIX 2355).

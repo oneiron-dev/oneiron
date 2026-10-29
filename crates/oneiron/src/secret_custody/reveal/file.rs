@@ -451,6 +451,7 @@ impl KeyRead<'_> {
                 repo: self.repo.cloned(),
             }),
             notices: Vec::new(),
+            closed: None,
         }
     }
 
@@ -553,7 +554,9 @@ fn open_ask_id_in_txn(
 /// unanswered ask past its window is asked again under its own id.
 fn kept_row(row: &RevealRow, now: u64) -> bool {
     match row.state {
-        SecretRevealState::Delivered | SecretRevealState::ApprovedStanding => true,
+        SecretRevealState::Delivered
+        | SecretRevealState::ApprovedStanding
+        | SecretRevealState::Unavailable => true,
         SecretRevealState::ApprovedOnce | SecretRevealState::Denied => now >= row.expires_at,
         SecretRevealState::Asked | SecretRevealState::Covered | SecretRevealState::Expired => false,
     }

@@ -26,6 +26,7 @@
 
 mod actor_erase;
 mod agent;
+mod close;
 mod file;
 mod notice;
 mod owner;
@@ -52,6 +53,7 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use crate::vault::Vault;
 
 pub(crate) use self::actor_erase::erase_reveal_actor_in_txn;
+pub(crate) use self::close::close_secret_reveals_in_txn;
 pub(super) use self::actor_erase::names_no_actor;
 pub use self::actor_erase::{ACTOR_ERASE_REVEAL_ASK, RevealAskErase};
 pub use self::file::RepoFileRevealScope;
@@ -61,8 +63,8 @@ pub(crate) use self::file::{
 };
 pub use self::types::{
     HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance,
-    SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealDecision,
-    SecretRevealReceipt, SecretRevealState,
+    SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealCause,
+    SecretRevealDecision, SecretRevealReceipt, SecretRevealState,
 };
 
 /// How long a pending reveal waits for its answer and its collection, in
@@ -286,6 +288,9 @@ struct RevealRow {
     /// reveal a standing grant covers. Notice ids only, never a value.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     notices: Vec<EntityId>,
+    /// Why it closed with no value (FIX 8350).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    closed: Option<SecretRevealCause>,
 }
 
 /// The file an agent's read names: the artifact, its stored bytes' hash, and
@@ -447,6 +452,7 @@ impl RevealRow {
             asked_at: self.created_at,
             delivered_at: self.delivered_at,
             file: self.file.as_ref().map(|file| file.artifact),
+            cause: self.closed,
         })
     }
 }

@@ -33,6 +33,7 @@ use zeroize::Zeroizing;
 use super::doors::{
     CustodyWrite, NAME_INDEX, read_secret_custody_admission_in_txn, register_custody_in_txn,
 };
+use super::reveal::{SecretRevealCause, close_secret_reveals_in_txn};
 use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_SCOPE_READ, SecretBinding,
     SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
@@ -289,6 +290,14 @@ impl Vault {
             let held = NAME_INDEX.scan_from(&self.store, &*wtxn, prefix.as_bytes())?;
             for (name, entry) in &held {
                 self.fence_credential_in_txn(wtxn, &entry.id);
+                // Its asks close with a named cause, in this same writer
+                // (FIX 8350).
+                close_secret_reveals_in_txn(
+                    self,
+                    wtxn,
+                    &entry.id,
+                    SecretRevealCause::RunSeatEnded,
+                )?;
                 crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
                 // A run-bound name names its one record and is never
                 // reclaimed: its high-water goes with it.
@@ -320,6 +329,14 @@ impl Vault {
                 let held = NAME_INDEX.scan_from(&self.store, &*wtxn, prefix.as_bytes())?;
                 for (name, entry) in &held {
                     self.fence_credential_in_txn(wtxn, &entry.id);
+                    // Its asks close with a named cause, in this same writer
+                    // (FIX 8350).
+                    close_secret_reveals_in_txn(
+                        self,
+                        wtxn,
+                        &entry.id,
+                        SecretRevealCause::RunSeatEnded,
+                    )?;
                     crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
                     // A run-bound name names its one record and is never
                     // reclaimed: its high-water goes with it.
