@@ -192,6 +192,8 @@ impl WidenIntent {
                 // The enclosing record attaches its saved direct spawn
                 // receipt ([`WidenRecord::dispatch`]); the intent keeps none.
                 direct_spawn: None,
+                // A widened spawn is a child: it keeps its parent's requester.
+                requester: None,
             },
         ))
     }

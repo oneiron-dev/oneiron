@@ -76,12 +76,15 @@ impl WireTelemetry {
         let mut last = None;
         let mut after: Option<String> = None;
         loop {
-            let next =
-                self.vault
-                    .sync_state_prefix_page(prefix, after.as_deref(), KEPT_PAGE, |key, _| {
-                        last = Some(key.to_owned());
-                        Ok(())
-                    })?;
+            let next = self.vault.sync_state_prefix_page(
+                prefix,
+                after.as_deref(),
+                KEPT_PAGE,
+                |key, _| {
+                    last = Some(key.to_owned());
+                    Ok(())
+                },
+            )?;
             match next {
                 Some(next) => after = Some(next),
                 None => return Ok(last),

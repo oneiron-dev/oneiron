@@ -452,6 +452,13 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         };
         self.dispatchable_definition_in_txn(&txn, &input.target)?;
+        // FIX 11592: a requester whose authority was withdrawn ends the try
+        // unrun, on the TASK runner's turn; this pump claims nothing.
+        if self.requester_withdrawn_in_txn(&txn, &input).is_some() {
+            drop(txn);
+            self.end_withdrawn(id, lease_owner, now)?;
+            return Ok(None);
+        }
         let ClaimOutcome::Claimed(attempt) = crate::ports::JobQueue::port_job_claim_id(
             self.vault,
             &mut txn,

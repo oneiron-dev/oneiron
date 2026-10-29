@@ -68,7 +68,13 @@ impl Receiver {
         let dialer: Arc<dyn oneiron::sync::SyncDialer> =
             Arc::new(MeshSyncDialer::new(mesh.transport(), dial.home));
         let host = mesh_host(&dial.url);
-        let task = tokio::spawn(receive_mesh(dialer, host, credential_file, archives, stopped));
+        let task = tokio::spawn(receive_mesh(
+            dialer,
+            host,
+            credential_file,
+            archives,
+            stopped,
+        ));
         Some(Self { stop, task })
     }
 
@@ -288,9 +294,8 @@ async fn session_mesh(
         .map_err(|_| anyhow::anyhow!("the paired credential's slip does not decode"))?;
     let person = oneiron::EntityId::from_hex(&slip.claims.holder_ref)?;
     let credential = SyncTransportCredential::new(paired.token.clone(), paired.signing_key()?);
-    let answer: Deliveries = serde_json::from_slice(
-        &post_mesh(dialer, host, DELIVERY_PATH, &credential, None).await?,
-    )?;
+    let answer: Deliveries =
+        serde_json::from_slice(&post_mesh(dialer, host, DELIVERY_PATH, &credential, None).await?)?;
     if answer.deliveries.is_empty() {
         return Ok(());
     }
