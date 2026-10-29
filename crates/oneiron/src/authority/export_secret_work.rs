@@ -177,7 +177,9 @@ impl HolderExportRequest {
 
 /// The entry hash a receipt's lowercase hex names.
 fn entry_of_hex(hex: &str) -> Option<AuthorityEntryHash> {
-    blake3::Hash::from_hex(hex).ok().map(|hash| *hash.as_bytes())
+    blake3::Hash::from_hex(hex)
+        .ok()
+        .map(|hash| *hash.as_bytes())
 }
 
 /// One export secret request as its owner reads it (FIX 4624(b)): where it

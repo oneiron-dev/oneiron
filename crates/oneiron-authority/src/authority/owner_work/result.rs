@@ -282,7 +282,9 @@ pub enum OwnerWorkOutcome {
     /// and committed the sealed copy under the request's entry (FIX
     /// 4624(b)): enacted, with the copy it names. It says the copy is held
     /// there, never that the owner fetched or opened it.
-    Sealed { output: SealedWorkOutput },
+    Sealed {
+        output: SealedWorkOutput,
+    },
 }
 
 impl OwnerWorkOutcome {

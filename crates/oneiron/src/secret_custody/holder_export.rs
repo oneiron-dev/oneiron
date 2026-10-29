@@ -205,7 +205,8 @@ impl Vault {
             holder: asked.executor,
             recipient: work.recipient.machine,
             status,
-            digest: output.map(|output| blake3::Hash::from_bytes(output.digest).to_hex().to_string()),
+            digest: output
+                .map(|output| blake3::Hash::from_bytes(output.digest).to_hex().to_string()),
             bytes: output.map(|output| output.bytes),
             sealed: sealed.map(|kept| base64::engine::general_purpose::STANDARD.encode(kept)),
         }))

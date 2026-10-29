@@ -224,7 +224,10 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExport
             return holder_requests;
         }
     };
-    let needs: Vec<_> = holder_requests.iter().map(HolderExportRequest::need).collect();
+    let needs: Vec<_> = holder_requests
+        .iter()
+        .map(HolderExportRequest::need)
+        .collect();
     let written = vault.with_write_txn(|txn| {
         // The id's allocation floor is kept with the row that names it.
         let at = match crate::ports::recorded_at_in_txn(&vault.store, txn) {
@@ -238,14 +241,7 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExport
         // and both before the row, which lists them: each in a savepoint of
         // its own, so a fault leaves the write as it was.
         let export_act = act.and_then(|act| {
-            vault.record_export_act_op_in_txn(
-                txn,
-                act,
-                export,
-                &format,
-                bytes,
-                digest.as_deref(),
-            )
+            vault.record_export_act_op_in_txn(txn, act, export, &format, bytes, digest.as_deref())
         });
         let holder_requests = vault.record_holder_export_requests_in_txn(
             txn,

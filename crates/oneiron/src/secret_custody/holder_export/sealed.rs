@@ -13,8 +13,8 @@
 
 use getrandom::SysRng;
 use oneiron_crypto::{
-    Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, MAX_PLAINTEXT_LEN, OpenKey,
-    OpenPolicy, Purpose, SealKey, SealParams, SuiteId, WrapType, seal_with_aad,
+    Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy,
+    Purpose, SealKey, SealParams, SuiteId, WrapType, seal_with_aad,
 };
 use zeroize::Zeroizing;
 

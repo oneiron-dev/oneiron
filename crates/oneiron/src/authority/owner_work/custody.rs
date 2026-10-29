@@ -107,7 +107,10 @@ impl AuthorityFold {
                 continue;
             };
             let enacted = matches!(
-                self.owner_work.results.get(hash).map(|answer| &answer.outcome),
+                self.owner_work
+                    .results
+                    .get(hash)
+                    .map(|answer| &answer.outcome),
                 Some(OwnerWorkOutcome::Enacted { .. })
             );
             let Some(holder) = folded.request.executor_machine() else {

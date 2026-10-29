@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use ed25519_dalek::SigningKey;
 
 use super::{OWNER_WORK_NO_EXECUTOR, OwnerWorkReceipt, OwnerWorkUnassigned};
+use crate::authority::export_secret_executor;
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityOp, FrontierSigner,
     MAX_PARENTS, OwnerAct, OwnerActKind, OwnerWorkBody, OwnerWorkCancel, OwnerWorkRequest,
@@ -16,7 +17,6 @@ use crate::authority::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::secret_custody::custody_work_executor;
-use crate::authority::export_secret_executor;
 use crate::world_keys::bundle::bundle_publish_executor;
 use crate::world_keys::recipients;
 use crate::world_keys::root_work::root_work_executor;
