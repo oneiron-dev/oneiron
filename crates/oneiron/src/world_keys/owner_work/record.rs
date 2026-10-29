@@ -16,6 +16,7 @@ use crate::authority::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::secret_custody::custody_work_executor;
+use crate::authority::export_secret_executor;
 use crate::world_keys::bundle::bundle_publish_executor;
 use crate::world_keys::recipients;
 use crate::world_keys::root_work::root_work_executor;
@@ -73,6 +74,7 @@ pub(crate) fn owner_work_executor(
         OwnerWorkBody::Custody { change, holder, .. } => {
             custody_work_executor(fold, *change, *holder, recorder)
         }
+        OwnerWorkBody::ExportSecret(work) => export_secret_executor(fold, work),
     }
 }
 
@@ -179,6 +181,21 @@ impl Vault {
         work: OwnerWorkBody,
     ) -> Result<OwnerWorkReceipt> {
         let act = OwnerAct::by_owner(actor, work.kind().act(), target, surface, seen);
+        self.sign_owner_work_in_txn(txn, act, work, None)
+    }
+
+    /// Records the work `act` needs, carrying `act` exactly as the door that
+    /// authenticated it made it, in `txn` (FIX 4624(b)): an owner export's
+    /// own act, for the export secret work its holder does. The caller
+    /// checked its owner a live vault owner in this same transaction. The
+    /// executor is pinned by [`owner_work_executor`]; with none to name,
+    /// nothing is written and the receipt says why.
+    pub(crate) fn record_owner_work_with_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: OwnerAct,
+        work: OwnerWorkBody,
+    ) -> Result<OwnerWorkReceipt> {
         self.sign_owner_work_in_txn(txn, act, work, None)
     }
 

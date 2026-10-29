@@ -56,6 +56,11 @@ side_tables! {
     /// staged to retire) or still owed. Never a value, key, name or count; a re-entered credential
     /// takes a new id. Key: id16 (custody record id).
     SECRET_CUSTODY_ERASE: VaultMeta b"secret_custody:erase:v1:" Raw Engine;
+    /// The sealed copy one export secret request's holder committed (FIX 4624(b)): the custody
+    /// value sealed to the recipient machine the owner chose, in its numbered envelopes, kept for
+    /// the owner to fetch. Holds no plaintext; its signed result names its digest. Key: hash32 (the
+    /// request's entry hash).
+    SECRET_CUSTODY_EXPORT_OUTPUT: VaultMeta b"secret_custody:export_output:v1:" Raw Ciphertext;
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
     /// Name index mapping a live secret-custody record's name to its EntityId, then the name's
     /// generation high-water as a big-endian u32, kept after the record is gone (FIX 5958). Key:

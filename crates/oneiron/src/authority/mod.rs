@@ -70,6 +70,7 @@ mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
 mod export_act;
+mod export_secret_work;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_project;
@@ -198,6 +199,15 @@ pub use oneiron_authority::authority::{
 };
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// The export secret work body and its sealed result (FIX 4624(b)).
+pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
+pub(crate) use export_secret_work::{
+    HolderExportBasis, HolderExportNeed, export_secret_executor,
+};
+pub use export_secret_work::{
+    ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,
+    OpenedSecretSupplement, SecretSupplementImport,
+};
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's

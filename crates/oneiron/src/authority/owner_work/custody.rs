@@ -87,6 +87,51 @@ impl AuthorityFold {
         self.owner_work.revoked.contains(secret)
     }
 
+    /// The installs that hold `secret`'s value at `generation`, as the fold
+    /// proves it (FIX 4624(b)): the executor of each counted custody
+    /// register, rotate or rewrap of it at that generation whose result is
+    /// enacted, those of the secret's live heads first, each group by
+    /// machine id. A permitted recipient is a candidate, never a holder: a
+    /// value sealed to it proves no delivery. A kit request names no
+    /// machine.
+    pub(crate) fn custody_value_holders(&self, secret: EntityId, generation: u32) -> Vec<EntityId> {
+        let heads = self.owner_work.heads.get(&(OwnerWorkKind::Custody, secret));
+        let (mut live, mut earlier) = (BTreeSet::new(), BTreeSet::new());
+        for (hash, folded) in &self.owner_work.requests {
+            let OwnerWorkBody::Custody {
+                change,
+                generation: at,
+                ..
+            } = &folded.request.work
+            else {
+                continue;
+            };
+            let enacted = matches!(
+                self.owner_work.results.get(hash).map(|answer| &answer.outcome),
+                Some(OwnerWorkOutcome::Enacted { .. })
+            );
+            let Some(holder) = folded.request.executor_machine() else {
+                continue;
+            };
+            if !folded.counts
+                || folded.request.act.target != secret
+                || *change == CustodyChange::Revoke
+                || *at != generation
+                || !enacted
+            {
+                continue;
+            }
+            if heads.is_some_and(|heads| heads.contains(hash)) {
+                live.insert(holder);
+            } else {
+                earlier.insert(holder);
+            }
+        }
+        let mut holders: Vec<EntityId> = live.iter().copied().collect();
+        holders.extend(earlier.difference(&live).copied());
+        holders
+    }
+
     /// Every secret id an admitted custody revoke names, ascending.
     pub(crate) fn custody_revoked_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.owner_work.revoked.iter().copied()
