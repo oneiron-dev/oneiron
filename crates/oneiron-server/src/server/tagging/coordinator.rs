@@ -203,10 +203,14 @@ impl Coordinator {
 
     /// Starts what is due and allowed: the probe between rounds, the upkeep a
     /// round starts with, and a read of the store when it may have changed.
-    /// No new claim starts while the tagger is probed.
+    /// No new claim starts while the tagger is probed. The pause is read
+    /// before a due probe starts, so a paused pass starts no probe.
     async fn refill(&mut self) {
         if self.stopping {
             self.want = None;
+            return;
+        }
+        if self.paused() {
             return;
         }
         if self.probe_due && self.probe.is_none() {
@@ -215,7 +219,7 @@ impl Coordinator {
             let probe = async move { server.tagger_still_configured().await };
             self.probe = Some(Box::pin(probe));
         }
-        if self.probe.is_some() || self.paused() {
+        if self.probe.is_some() {
             return;
         }
         if self.upkeep_due {
