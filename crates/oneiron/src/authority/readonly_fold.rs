@@ -66,6 +66,23 @@ impl AuthorityView {
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
+
+    /// This view with each agent-carried setting or export act held back
+    /// whose Grant `txn` holds refused (contract §4, FIX 4624, FIX 5660;
+    /// [`super::carried_act`]). With none, the view as it was.
+    fn with_agent_grant_standing(self, store: &Store, txn: &heed::RoTxn<'_>) -> Self {
+        let refused =
+            super::carried_act::grant_refused_agent_acts(store, txn, &self.fold.agent_carried_acts);
+        if refused.is_empty() {
+            return self;
+        }
+        let mut fold = (*self.fold).clone();
+        super::carried_act::hold_back_agent_acts(&mut fold, &refused);
+        Self {
+            fold: Arc::new(fold),
+            generation: self.generation,
+        }
+    }
 }
 
 impl std::ops::Deref for AuthorityView {
@@ -360,7 +377,11 @@ fn fold_view_for_key(
             view,
             next_deadline_secs,
             continuation,
-        } => Ok((view, next_deadline_secs, continuation)),
+        } => Ok((
+            view.with_agent_grant_standing(store, txn),
+            next_deadline_secs,
+            continuation,
+        )),
         AuthorityTailFold::NeedHistory(request) => Err(history_required(&request)),
     }
 }

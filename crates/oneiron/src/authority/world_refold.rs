@@ -11,8 +11,9 @@ use super::*;
 /// restrictive too. A world edit and a grant travel choice must not fall with
 /// an unrelated row either (FIX 2998; settings edits left the side branch
 /// for the mesh, contract §6), and neither may the owner's checkpoint policy
-/// choice (mesh PR2c), home pick (DOOR-101) or a person's conversation
-/// training choice (FIX 4489), nor a root request or the owner's cancel of
+/// choice (mesh PR2c), home pick (DOOR-101), a person's conversation
+/// training choice (FIX 4489) or a setting's act (FIX 4624, FIX 5660), nor a
+/// root request or the owner's cancel of
 /// one ([`closes_root_work`], FIX 5584), nor a root request's result
 /// ([`answers_root_work`], FIX 5649). `kind_of` reads the kind of the owner
 /// work request signed as a hash from the request's own row, where the fold
@@ -32,6 +33,7 @@ pub(super) fn refolds(
                 | AuthorityOp::HomeNodePick(_)
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
+                | AuthorityOp::PolicySettingSet(_)
         )
 }
 

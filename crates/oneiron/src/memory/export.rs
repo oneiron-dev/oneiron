@@ -626,15 +626,17 @@ impl<'a> ExportBy<'a> {
 
 /// The act an owner export records: kind [`OwnerActKind::Export`], by
 /// `owner`, on the whole vault's reserved target, from `surface` (audit
-/// only). An export changes nothing, so its `seen` is zero.
+/// only). An export changes nothing, so its `seen` is zero. Its audit row
+/// signs it as an `ExportAct` (FIX 4624).
 fn export_act(owner: EntityId, surface: ActSurface) -> MemoryResult<OwnerAct> {
-    let target = crate::policy_setting_doors::owner_act_target("vault.export")?;
+    let target =
+        crate::policy_setting_doors::owner_act_target(crate::authority::EXPORT_ACT_TARGET_NAME)?;
     Ok(OwnerAct::by_owner(
         owner,
         OwnerActKind::Export,
         target,
         surface,
-        [0; 32],
+        crate::authority::EXPORT_ACT_SEEN,
     ))
 }
 

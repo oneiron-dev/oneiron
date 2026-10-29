@@ -46,6 +46,7 @@ use crate::memory::{Memory, MemoryResult};
 use crate::ports::{EntityRecord, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 mod agent_grant_act;
+mod carried_act;
 mod issues;
 use issues::FoldIssues;
 
@@ -632,6 +633,8 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
             },
         ),
         AuthorityOp::AgentGrantAct(record) => agent_grant_act::classify(record),
+        AuthorityOp::PolicySettingSet(set) => carried_act::classify_policy_setting(set),
+        AuthorityOp::ExportAct(record) => carried_act::classify_export(record),
     }
 }
 

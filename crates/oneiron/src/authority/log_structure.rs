@@ -395,6 +395,8 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => install_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => install_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => install_key(record.machine),
+            AuthorityOp::PolicySettingSet(set) => install_key(set.machine),
+            AuthorityOp::ExportAct(record) => install_key(record.machine),
             // A frontier join: its carrier's install key, as for the act it
             // leads to, a stranger's once its carrier is removed
             // ([`Self::is_stranger`]); the host issuer's falls to the
@@ -460,6 +462,8 @@ impl AuthorityStructure {
             AuthorityOp::ConversationTrainingVaultSet(set) => machine_key(set.machine),
             AuthorityOp::HomeCandidacy(declaration) => machine_key(declaration.machine),
             AuthorityOp::AgentGrantAct(record) => machine_key(record.machine),
+            AuthorityOp::PolicySettingSet(set) => machine_key(set.machine),
+            AuthorityOp::ExportAct(record) => machine_key(record.machine),
             AuthorityOp::FrontierJoin(FrontierJoin {
                 carrier: Some(carrier),
             }) => machine_key(*carrier) || self.removed.contains(carrier),

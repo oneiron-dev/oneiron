@@ -146,22 +146,33 @@ impl GrantedAct {
 }
 
 /// Policy hook (CALLS "mesh PR2a agent act Grant line", open): the act kinds an
-/// agent's Grant may name in this build. Topology seals, and a world's
-/// settings for a tighten only (FIX 4480, CALLS "FIX 4480 agent tighten Grant
-/// line"); each other door takes agents when its lane writes the Grant line
-/// that names its act (contract §4).
-const AGENT_GRANTABLE_ACTS: [OwnerActKind; 2] =
-    [OwnerActKind::TopologySeal, OwnerActKind::WorldPrivacy];
+/// agent's Grant may name in this build. Topology seals, a world's settings
+/// for a tighten only (FIX 4480, CALLS "FIX 4480 agent tighten Grant line"),
+/// and an agent's free-time policy, any set or clear (FIX 5660, CALLS "FIX
+/// 5660 agent free-time act"); each other door takes agents when its lane
+/// writes the Grant line that names its act (contract §4).
+const AGENT_GRANTABLE_ACTS: [OwnerActKind; 3] = [
+    OwnerActKind::TopologySeal,
+    OwnerActKind::WorldPrivacy,
+    OwnerActKind::FreeTimePolicy,
+];
 
 /// The verb a Grant names a world-settings act by. A Grant can only ever name
 /// a tighten: a widen is never an agent's act (FIX 4480), so no verb names it.
 pub(crate) const WORLD_PRIVACY_TIGHTEN_VERB: &str = "world_privacy_tighten";
 
+/// The verb a Grant names an agent's free-time policy act by (FIX 5660): a
+/// set or a clear, of any agent's policy, in any direction, since no
+/// narrower-or-wider order exists for the policy.
+pub(crate) const FREE_TIME_POLICY_SET_VERB: &str = "free_time_policy_set";
+
 /// The verb an agent's Grant lists to name `act`: the act's wire tag, but for
-/// a world's settings, whose one grantable direction is the tighten.
+/// a world's settings, whose one grantable direction is the tighten, and the
+/// free-time policy, whose verb names the set.
 fn grant_verb(act: OwnerActKind) -> &'static str {
     match act {
         OwnerActKind::WorldPrivacy => WORLD_PRIVACY_TIGHTEN_VERB,
+        OwnerActKind::FreeTimePolicy => FREE_TIME_POLICY_SET_VERB,
         other => other.as_str(),
     }
 }
