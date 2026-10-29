@@ -517,8 +517,9 @@ such as `connector:github`.
 
 Name the secret by `handle` or `name`. `tier_ceiling` is the binding's rung, 0 (doored) by default
 and never above the class's live floor, and `scopes` defaults to `["read"]`. A binding for the same
-effector is replaced. The reply lists the record's bindings and the Gate record that keeps the
-binding. A portable secret's binding is a custody rewrap this install records and does as its
+effector is replaced. On a stopped vault, `oneiron secrets bind` does the same, and `secrets unbind`
+or `POST /v1/owner/secrets/unbind` withdraws one binding ([owner-custody.md](owner-custody.md)).
+The reply lists the record's bindings and the Gate record that keeps the binding. A portable secret's binding is a custody rewrap this install records and does as its
 holder, so its transition carries the new bindings to your other machines that hold the secret. The
 reply's `custody` says so, or why the binding stayed on this install. A machine whose own floor is
 narrower than the binding's rung keeps its old bindings and holds the new ones pending. It takes
@@ -1607,7 +1608,8 @@ A passkey's PRF input is `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input
 credential name)`: the vault and the name fix it, so the same authenticator gives the same output
 on any host. A running server takes the same steps at `/v1/owner/vault-key` (`GET` for the wraps,
 `GET /prf-input?credential=NAME`, `POST /passkeys`, `POST /password`, `POST /device`,
-`POST /remove`, `POST /retire-escrow`, `POST /unlock`, `GET /signer`).
+`POST /remove`, `POST /retire-escrow`, `POST /unlock`, `GET /signer`). Each command here that opens
+the key also takes `--unlock` with its `--unlock-*` inputs ([owner-custody.md](owner-custody.md)).
 
 An escrow wrap seals to a hybrid key grown from a 32-byte seed; the recovery box keeps the seed.
 `--box-dir DIR` keeps it at `DIR/<vault id>/<label>.seed`, owner-only (removable media, your own
@@ -1627,7 +1629,9 @@ oneiron restore BACKUP --unlock escrow --label usb --box-dir /Volumes/KEY/oneiro
 Every unlock but this device's needs `--trust`: a host holding no signer seed has no other ground
 to trust a backup on, and a backup's own head is never trusted. Where no vault is at the
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
-install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
+install's keystore. With the keystore off, `--wrap-to` adds a wrap this host can open later
+([owner-custody.md](owner-custody.md)). Where one is, it restores over it as above, or rehearses
+with `--rehearse`.
 
 A managed vault's escrow capsules live in the registry, one report per recipient (`managed` or
 `break-glass`). One of them opens a backup even when the backup is older than its wrap:
@@ -1671,8 +1675,9 @@ in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlo
 opens. With no keystore, serve unlocks them with the password the service manager's credential store
 holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
 another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
---unlock password` (or `passkey`, `escrow`, or `kit` with the world kit's pieces); `oneiron
-vault-key prf-input NAME` gives a passkey's input before the vault opens. A credential whose wrap
+--unlock password` (or `passkey`, `escrow` with `--label` or a registry's `--capsule`, or `kit`
+with the world kit's pieces); `oneiron vault-key prf-input NAME` gives a passkey's input before the
+vault opens. A credential whose wrap
 was removed or replaced opens nothing, even if an interrupted change left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
 the vault's data is not, init, serve and restore refuse: move the mirror away to create a new vault,
 since it may be the only copy of that vault's wraps. Body files, `.lines`, LFS staging and lock
@@ -2405,6 +2410,17 @@ manifest check". `custody.manifest` names the manifests when this install is the
 one it attached when another install is. Send `"manifest_ref"` whenever the record names a
 manifest; a stated ref keeps its check and its refusal.
 
+The SDK rows `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
+`vault.secrets.custody.get` and `vault.secrets.custody.submit` take the same bodies and give the
+same answers, under the same owner credential. In Rust, `oneiron::task_verb::sdk::seal_custody_submit`
+seals the input on your side from the `custody.get` answer: pass the change, the holder and the
+recipients, and the body. A register's body is its whole record
+(`oneiron::secret_custody::encode_secret_custody_body`) and a rotate's is the new value. It returns
+the `custody.submit` input, so only ciphertext leaves your device. Register, rotate and submit keep
+no call receipt (`x-oneiron-receipt-ref: none; no-record`): their record is the custody request's
+receipt in the reply. A sealed input sent through the SDK row meets the facade's 64 MiB body
+limit; a larger one goes to `POST /v1/owner/secrets/custody`, which takes any length.
+
 A revoke erases the secret's value at rest on each install that holds it and keeps its name and
 generation. Its reply's `custody` says whether it went to your other machines or why it stayed
 here. Copies already exported, in a checkpoint or delivered elsewhere are not recalled.
@@ -2413,7 +2429,7 @@ here. Copies already exported, in a checkpoint or delivered elsewhere are not re
 
 An install with no live machine profile in the vault cannot carry your acts, so it cannot be a
 holder. If it holds a portable secret, your recovery kit can push it: the kit is your authority.
-Stop `serve`, then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
+On a stopped vault, pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
 passphrase on the first line, and then one code is enough), naming each install to seal it to:
 
 ```sh
@@ -2422,7 +2438,9 @@ oneiron secrets anchor-sign --name NAME --recipient MACHINE < kit.txt
 
 It prints `{"name", "signed"}`. `signed` is false for a record that stays on its device
 (device-bound, cross-vault or "this device only"). Any install with a live profile refuses this
-and tells you to rewrap the secret as its holder instead. No route or SDK verb takes the kit.
+and tells you to rewrap the secret as its holder instead. No SDK verb takes the kit. A running
+server takes it in the body of `POST /v1/owner/secrets/anchor-sign`, for that call alone
+([owner-custody.md](owner-custody.md)).
 
 ## Calling the owner routes
 

@@ -98,6 +98,7 @@ pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
+pub(crate) use self::payload::agent_verb_observations_of;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
@@ -116,8 +117,8 @@ pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCaptu
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
-    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
-    refusal as result_refusal, resolve as resolve_result, unknown_handle,
+    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
+    refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
@@ -258,9 +259,9 @@ pub use run_verbs::{
 };
 pub use types::{
     AGENT_VERB_DOOR_UNBOUND, AGENT_VERB_SESSION_BOUND, AgentVerbAnswer, AgentVerbDoor,
-    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, SelfAgentVerbCall, SessionHookDisposition,
-    SessionHookNotKept, SessionHookPhase, SessionHookReceipt, SessionHookState,
-    SessionWriteAdmission, SessionWriteCeiling,
+    AgentVerbRefusal, AgentVerbRefusalWords, RunCall, RunObservation, SelfAgentVerbCall,
+    SessionHookDisposition, SessionHookNotKept, SessionHookPhase, SessionHookReceipt,
+    SessionHookState, SessionWriteAdmission, SessionWriteCeiling,
 };
 
 // The flat code_run.rs module used to provide these names to the test module

@@ -546,10 +546,7 @@ impl<'a> HostSelfDispatcher<'a> {
         let output = serde_json::to_value(ConsultLandReply::from(receipt))
             .map_err(|_| Error::InvariantViolation("consult landing answer encode"))?;
         // The answer serves the rows the landing read.
-        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
-            output,
-            rows: Some(reads),
-        }))
+        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(output, Some(reads))))
     }
 
     /// Admits one `self.skills.call` as every call the run serves itself is

@@ -19,10 +19,10 @@ use super::render_history::{
 };
 use super::validation::pack_intake_crossed;
 use super::{
-    PACKS, VoiceIdentity, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRenderConsent,
-    VoiceRenderDecision, VoiceTargetClone, VoiceTargetRecord, admit_render, current_target,
-    evict_target_in, invalid, limits_for, read_identity, read_pack, record_target_clone_in,
-    store_pack_in, target_key, valid_id,
+    PACKS, VoiceIdentity, VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind,
+    VoiceRenderConsent, VoiceRenderDecision, VoiceTargetClone, VoiceTargetRecord, admit_render,
+    current_target, evict_target_in, fenced_clone, invalid, limits_for, read_identity, read_pack,
+    record_target_clone_in, store_pack_in, target_key, valid_id,
 };
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
@@ -104,22 +104,66 @@ pub struct VoiceTargetCloneView {
     pub revision: String,
 }
 
+/// How the host renders one named target, as the host states it (FIX
+/// 4394): from its own recorded clone of the voice, from the bank's
+/// reference clip uploaded with each call, or not at all. Each rendering
+/// target's locality is the host's, never the caller's: how far the voice's
+/// render consent must reach for its refs to go there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum VoiceTargetRender {
+    /// A hosted target that renders from its own clone, as its clone wire
+    /// states it.
+    HostedClone { locality: ModelLocality },
+    /// A target that renders from the bank's reference clip on each call
+    /// and keeps no clone (a `voxcpm2` worker).
+    Reference { locality: ModelLocality },
+    /// No target by that name renders on this host.
+    Unconfigured,
+}
+
+/// The fence a reference target's next render binds, as its upload guard
+/// compares it (FIX 4394): the identity's incarnation, the digest of the
+/// refs the selection picks now and the render consent they reach the
+/// target under. Metadata only: no clip, audio or transcript.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceReferenceFenceView {
+    /// The packs the selection picks, in the identity's order. A reference
+    /// render selects recorded packs only.
+    pub source_packs: Vec<String>,
+    /// The digest of the selected packs, hex.
+    pub ref_digest: String,
+    /// The identity's incarnation, hex; `None` for an identity banked before
+    /// incarnations were minted.
+    pub incarnation: Option<String>,
+    /// The revision of the render decision the refs reach the target under,
+    /// hex.
+    pub consent_revision: String,
+    /// The reference revision a render request carries: the incarnation,
+    /// the ref digest and the consent revision, hex.
+    pub revision: String,
+}
+
 /// One named render target, as the bank holds it for the voice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VoiceTargetInspection {
     pub target: String,
-    /// Where the target runs, as the host's clone wire states it: how far
-    /// the voice's render consent must reach for its refs to go there.
-    pub locality: ModelLocality,
+    /// How the host renders the target, and where it runs.
+    pub render: VoiceTargetRender,
     /// Whether the selection the clone is checked against counts generated
     /// packs.
     pub include_generated: bool,
-    /// The target's clone while it is current: made from the refs the
+    /// A hosted target's clone while it is current: made from the refs the
     /// selection picks now, under a render consent that reaches the target.
     /// None when none was made, it was evicted or withdrawn, or it went
-    /// stale.
+    /// stale, and for any other target.
     pub current: Option<VoiceTargetCloneView>,
+    /// A reference target's fence while its render would bind one: under a
+    /// render consent that reaches the target, at a locality a reference
+    /// may go to. None otherwise, and for any other target.
+    pub reference: Option<VoiceReferenceFenceView>,
 }
 
 /// The actor's voice as the bank holds it, read from one snapshot: its
@@ -295,18 +339,20 @@ impl Vault {
     }
 
     /// The actor's voice as the bank holds it, from one snapshot, for the
-    /// named `target` at the `locality` its host states: the identity, each
-    /// pack's metadata, the current render decision, and the target's clone
-    /// while it is current. No provider call and no write. None when the
-    /// bank holds nothing of the voice; another's voice refuses, and a
-    /// corrupt row is an error, never a gap.
+    /// named `target` as its host renders it (`render`, FIX 4394): the
+    /// identity, each pack's metadata, the current render decision, and a
+    /// hosted target's clone while it is current, or the fence a reference
+    /// target's render would bind. A target the host does not render still
+    /// reads the bank's metadata, and says so. No provider call and no
+    /// write. None when the bank holds nothing of the voice; another's voice
+    /// refuses, and a corrupt row is an error, never a gap.
     pub fn inspect_voice_bank(
         &self,
         actor: &VoiceBankActor,
         voice_id: &str,
         target: &str,
         include_generated: bool,
-        locality: ModelLocality,
+        render: VoiceTargetRender,
     ) -> Result<Option<VoiceBankInspection>> {
         valid_id(target)?;
         let txn = self.store.env.read_txn()?;
@@ -330,23 +376,37 @@ impl Vault {
         // target, as a render admits it: a withdrawn or narrowed decision
         // shows none. The decision read above already surfaced a corrupt
         // row, so a refusal here is the consent's.
-        let current = match &identity {
-            Some(identity) => {
+        let (current, reference) = match (&identity, render) {
+            (Some(identity), VoiceTargetRender::HostedClone { locality }) => {
                 match admit_render(&self.store, &txn, voice_id, &identity.owner, locality) {
-                    Ok(_) => current_target(
-                        &self.store,
-                        &txn,
-                        voice_id,
-                        target,
-                        include_generated,
-                        locality,
-                    )?
-                    .map(|(record, _)| VoiceTargetCloneView::from(record)),
-                    Err(Error::InvalidConfig(_)) => None,
+                    Ok(_) => (
+                        current_target(
+                            &self.store,
+                            &txn,
+                            voice_id,
+                            target,
+                            include_generated,
+                            locality,
+                        )?
+                        .map(|(record, _)| VoiceTargetCloneView::from(record)),
+                        None,
+                    ),
+                    Err(Error::InvalidConfig(_)) => (None, None),
                     Err(error) => return Err(error),
                 }
             }
-            None => None,
+            // A reference never goes to a third party, and its render selects
+            // recorded packs only (`BankVoiceBinding::bind_reference`).
+            (Some(_), VoiceTargetRender::Reference { locality })
+                if locality != ModelLocality::ThirdParty =>
+            {
+                match fenced_clone(&self.store, &txn, voice_id, target, false, locality) {
+                    Ok((clone, fence)) => (None, Some(reference_fence_view(&clone, &fence))),
+                    Err(Error::InvalidConfig(_)) => (None, None),
+                    Err(error) => return Err(error),
+                }
+            }
+            _ => (None, None),
         };
         Ok(Some(VoiceBankInspection {
             voice_id: voice_id.to_owned(),
@@ -355,9 +415,10 @@ impl Vault {
             render_consent: render_consent.map(VoiceRenderConsentView::from),
             target: VoiceTargetInspection {
                 target: target.to_owned(),
-                locality,
+                render,
                 include_generated,
                 current,
+                reference,
             },
         }))
     }
@@ -381,5 +442,20 @@ impl Vault {
             .into_iter()
             .map(VoiceRenderEventView::from)
             .collect())
+    }
+}
+
+/// A reference target's fence as an inspection shows it (FIX 4394), in the
+/// hex the upload guard compares.
+fn reference_fence_view(
+    clone: &VoiceTargetClone,
+    fence: &VoiceRefFence,
+) -> VoiceReferenceFenceView {
+    VoiceReferenceFenceView {
+        source_packs: clone.source_packs.clone(),
+        ref_digest: bytes_to_hex_lower(&fence.ref_digest),
+        incarnation: fence.incarnation.as_ref().map(|bytes| bytes_to_hex_lower(bytes)),
+        consent_revision: bytes_to_hex_lower(&fence.grant.revision),
+        revision: crate::voice_cascade::media::BankVoiceBinding::reference_revision(fence),
     }
 }

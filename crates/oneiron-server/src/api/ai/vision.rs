@@ -25,21 +25,21 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use oneiron::llm::decision::catalogue::QuestionFamily;
 use oneiron::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionImage, DecisionLadder, DecisionProvider, DecisionRung, EvidenceVersion,
-    HumanDecisionQueue, HumanDecisionRequest, ProviderPin, Reversibility, TypedDecision,
+    AnswerContract, DecisionBand, DecisionBandPolicy, DecisionClass, DecisionDial, DecisionImage,
+    DecisionLadder, DecisionProvider, DecisionRung, EvidenceVersion, HumanDecisionQueue,
+    HumanDecisionRequest, ProviderPin, Reversibility,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::memory::{ImageViewRequest, PixelRegion, PulledImage};
+use oneiron::memory::{ImageViewRequest, PulledImage};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EdgeActorClass,
-    EntityId, FinishReason, ImageContent, LlmMessage, LlmMessageRole, LlmRequest, LlmUsage,
-    ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence, WriteActor,
+    EntityId, ImageContent, LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat,
+    TierPrecedence, WriteActor,
 };
-use serde::{Deserialize, Serialize};
+use oneiron::task_verb::sdk::{AskImageAnswer, AskImageReceipt, AskImageRequest};
 use serde_json::json;
 
 use super::refusal;
@@ -79,66 +79,10 @@ const BOX_DIAL: DecisionDial = DecisionDial {
 /// time.
 const BOX_BUDGET: Duration = Duration::from_secs(60);
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct AskImageBody {
-    /// The view handle the image was served with (`<asset>@<hash>`).
-    handle: String,
-    /// What to ask about its pixels.
-    question: String,
-    /// A region to ask about, in the image's own pixels; the whole image
-    /// when absent.
-    #[serde(default)]
-    region: Option<PixelRegion>,
-    /// The answer contract to ask under; a text answer when absent. The
-    /// Local-vision slot answers a Box or a Point, over the whole image.
-    #[serde(default)]
-    contract: Option<AnswerContract>,
-}
-
-/// The vision model's answer, and the receipt of the call that made it.
-#[derive(Serialize)]
-struct AskImageAnswer {
-    /// 32-hex ASSET id.
-    asset_ref: String,
-    /// The answer, in text, for a text question.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
-    /// The answer on the contract, for a question asked under one: a Box or
-    /// a Point, `null` inside it for an absent target, or an abstention.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    answer: Option<DecisionAnswer>,
-    /// The decision that stands, for a question asked under an answer
-    /// contract: the coordinates', or the presence step's when it found
-    /// the target absent or stayed in doubt, with its confidence and
-    /// receipt (the rungs' pins, the image's evidence version, its clock).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    typed: Option<TypedDecision>,
-    /// The presence step, when the coordinates stand on it.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    presence: Option<TypedDecision>,
-    receipt: AskImageReceipt,
-}
-
-/// What the call was: the pull its served-form record names, its run, the
-/// seat's model and where it ran, and what it spent. A typed question that
-/// abstained before the seat answered has no spend.
-#[derive(Serialize)]
-struct AskImageReceipt {
-    pull: String,
-    run: String,
-    model: ModelId,
-    locality: ModelLocality,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    usage: Option<LlmUsage>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    finish_reason: Option<FinishReason>,
-}
-
 pub(super) async fn ask_image(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    Json(body): Json<AskImageBody>,
+    Json(body): Json<AskImageRequest>,
 ) -> Response {
     match asked(&server, &auth, body).await {
         Ok(answer) => Json(answer).into_response(),
@@ -146,10 +90,12 @@ pub(super) async fn ask_image(
     }
 }
 
-async fn asked(
+/// One ask_image call, as this route and the facade's `ai.ask_image` door
+/// both ask it: a refusal is the route's own response.
+pub(crate) async fn asked(
     server: &SyncServer,
     auth: &CoreAuth,
-    body: AskImageBody,
+    body: AskImageRequest,
 ) -> Result<AskImageAnswer, Response> {
     auth.require(CoreScope::Read)
         .map_err(IntoResponse::into_response)?;

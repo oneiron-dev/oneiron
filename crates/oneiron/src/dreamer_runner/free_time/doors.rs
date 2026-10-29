@@ -351,7 +351,10 @@ pub fn free_time_policy_as_owner(
 
 /// Sets, or with no policy clears, one agent's free-time policy as the owner,
 /// at the revision the owner read. A clear ends the agent's open cycle and
-/// it goes back to its nightly dreaming.
+/// it goes back to its nightly dreaming. A set, and the row a clear leaves
+/// as its witness, record `surface`, where the owner's say-so reached this
+/// install as its host verified it (FIX 5721): audit only, never an
+/// admission condition.
 ///
 /// # Errors
 /// A malformed agent id or policy, a proof that does not hold here, an
@@ -360,19 +363,20 @@ pub fn free_time_policy_as_owner(
 pub fn free_time_policy_set_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: crate::authority::ActSurface,
     input: &FreeTimePolicySetRequest,
 ) -> Result<FreeTimePolicyView> {
     let agent = entity("agent", &input.agent)?;
     let row = match &input.policy {
         Some(policy) => Some(vault.set_free_time_policy(
             owner,
-            None,
+            Some(surface),
             agent,
             input.expected_revision,
             policy.clone(),
         )?),
         None => {
-            vault.clear_free_time_policy(owner, agent, input.expected_revision)?;
+            vault.clear_free_time_policy(owner, Some(surface), agent, input.expected_revision)?;
             None
         }
     };
