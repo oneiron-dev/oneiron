@@ -39,7 +39,7 @@ use crate::runtime::{GpuPool, GpuRegistryError};
 mod answer_error;
 mod destination;
 use answer_error::AnswerError;
-use destination::EmbeddingDestination;
+use destination::{EmbeddingDestination, PodTarget};
 pub(crate) use destination::{PodRelease, VaultRelease};
 
 pub(super) const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
@@ -627,13 +627,20 @@ impl HttpEmbedder {
 
     /// Posts `texts` as one request to `destination`, through the paid door
     /// when this remote has one; the answer is held to what the vault
-    /// admitted. A pod batch is admitted on the pods' own door.
+    /// admitted. A pod batch is admitted on the pods' own door. A derivation
+    /// request acquires its job before its door is chosen, so a pool with no
+    /// healthy pod rides the primary door, as before the pod door existed.
     fn post_embeddings(
         &self,
         texts: &[&str],
         side: Side<'_>,
         destination: &EmbeddingDestination,
     ) -> oneiron::Result<Answer> {
+        if let EmbeddingDestination::Pod(PodTarget::Derivation(scope)) = destination {
+            if let Some(pods) = self.pods.get() {
+                return self.post_derivation(texts, side, *scope, pods);
+            }
+        }
         let (door, client) = match destination {
             // The pods' door, or the endpoint's until the pool binds.
             EmbeddingDestination::Pod(_) => (
@@ -655,6 +662,47 @@ impl HttpEmbedder {
         let mut mark = None;
         let vectors = door.send(texts, &mut || {
             let answer = self.post_once(texts, side, destination)?;
+            mark = answer.mark;
+            Ok(answer.vectors)
+        })?;
+        Ok(Answer { vectors, mark })
+    }
+
+    /// Posts one derivation request: its job is acquired over these rows
+    /// first and shared with the send, so door, preflight and send agree. A
+    /// pool with no healthy pod sends the admitted rows through the primary,
+    /// which may take any row.
+    fn post_derivation(
+        &self,
+        texts: &[&str],
+        side: Side<'_>,
+        scope: DerivationScope,
+        pods: &PodRoute,
+    ) -> oneiron::Result<Answer> {
+        let computation = format!("embed:{}", self.model_key).into_bytes();
+        let job = match pods
+            .pool
+            .acquire_derivation(scope, computation, batch_digest(texts))
+        {
+            Ok(job) => job,
+            Err(GpuRegistryError::Unavailable) => {
+                let primary = EmbeddingDestination::Primary;
+                return self.post_embeddings(texts, side, &primary);
+            }
+            Err(error) => return Err(pod_error(&error)),
+        };
+        let door = self.pod_paid.get().or_else(|| self.paid.get());
+        let Some(door) = door else {
+            return pods.post_with_job(self, job, scope, texts, side);
+        };
+        pods.client.preflight()?;
+        let mut job = Some(job);
+        let mut mark = None;
+        let vectors = door.send(texts, &mut || {
+            let job = job.take().ok_or_else(|| {
+                oneiron::Error::InvariantViolation("the derivation job was already sent")
+            })?;
+            let answer = pods.post_with_job(self, job, scope, texts, side)?;
             mark = answer.mark;
             Ok(answer.vectors)
         })?;
