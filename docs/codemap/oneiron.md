@@ -1057,7 +1057,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/checkout/lease/types.rs` | src | m | 12 struct · 8 enum · 3 trait · 8 fn · 2 type · 5 const | CheckoutClaimRequest, CheckoutError, CheckoutFactMutation, CheckoutFactSink, CheckoutId, CheckoutLeaseAct, CheckoutLeaseFence, CheckoutLeaseGrant +15 | Lease domain vocabulary: ids, requests, grants, receipts, errors, and traits |
 | `src/checkout/tests.rs` | test | L | — | — | — |
 | `src/claim/aging_profiles.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | ClaimAgingProfiles | Class-level aging policy data; claim classification stays predicate-root metadata |
-| `src/claim/core_types.rs` | src | m | 3 struct · 1 enum · 3 fn · 1 const · 2 re-export · 17 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim | The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, and the… |
+| `src/claim/core_types.rs` | src | m | 3 struct · 1 enum · 4 fn · 1 const · 2 re-export · 17 crate-vis | ClaimBody, ClaimSubject, SessionClaimBundle, SessionClaimBundleClaim | The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, and the… |
 | `src/claim/core_types/codec.rs` | src | m | 1 fn · 1 crate-vis | — | The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed… |
 | `src/claim/core_types/evidence_refs.rs` | src | s | 2 struct · 1 enum · 1 fn · 4 crate-vis | CursorSpan, EvidenceKind, EvidenceRef | Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary… |
 | `src/claim/decay.rs` | src | s | 2 struct · 1 enum · 5 fn · 4 const · 2 crate-vis | AccessFactorPolicy, ClaimAgingClass, ClaimRetrievability | Read-side memory decay: the pure aging-class `access_factor` contract |
@@ -3045,6 +3045,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/inbox/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue |
 | `src/inbox/model.rs` | src | m | 11 struct · 3 enum · 8 fn · 3 const · 13 crate-vis | InboxAmendedApproval, InboxBulkVerb, InboxBundleResolution, InboxCheckInException, InboxExceptionClass, InboxGroup, InboxGroupCursor, InboxGroupMember +6 | Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants |
 | `src/inbox/notification.rs` | src | m | 3 struct · 1 enum · 4 fn · 4 const · 9 crate-vis | NotificationBody, NotificationEvent, NotificationKind, NotificationSource | OF-221: background events as NOTIFICATION records (type 42) |
+| `src/inbox/outbox_ask.rs` | src | s | 3 fn | — | FIX 11074: a vault VM's outbox carrier keeps a copy of a member the carrier never agreed on, as the member's… |
 | `src/inbox/projection.rs` | src | m | 2 fn · 11 crate-vis | — | Read-side inbox grouping projection, member classification, and dial surfacing |
 | `src/inbox/resolve.rs` | src | m | 10 fn · 2 crate-vis | — | Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors |
 | `src/inbox/root_group.rs` | src | s | 8 crate-vis | — | Complete root group cards (FIX 9871): every open Dreamer proposal in the tray, read in one pass with its… |
