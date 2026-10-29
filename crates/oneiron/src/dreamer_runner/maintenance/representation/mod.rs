@@ -49,10 +49,11 @@ pub struct RepresentationRequest {
     pub voice: Vec<RepresentationSourceRef>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RepresentationSourceRef {
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub claim: EntityId,
 }
 

@@ -29,15 +29,26 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/runs/hold/resume", post(resume))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct HeldRun {
     /// The run's root attempt, as the hold's inbox row names it.
     run: String,
 }
 
+/// The OpenAPI schema of `POST /v1/owner/runs/hold/resume`'s body (FIX 11611): [`HeldRun`].
+pub(crate) fn held_run_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HeldRun>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/runs/hold/resume`'s answer (FIX 11611):
+/// [`HeldRunView`].
+pub(crate) fn held_run_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HeldRunView>()
+}
+
 /// One held run as its owner reads it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct HeldRunView {
     run: String,
     state: BudgetHoldState,

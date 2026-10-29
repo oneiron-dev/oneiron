@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1241 code-mode rows (1201 host rows, 40 run rows), 4362 declarations.
-// Replies: 1064 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1242 code-mode rows (1202 host rows, 40 run rows), 4364 declarations.
+// Replies: 1065 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -2143,6 +2143,8 @@ declare namespace Sdk {
   type SecretRotationReceipt = { receipt_id: string; name: string; from_generation: number; to_generation: number; rotated_at: number; kind: string };
   type SecretRotateReply = Partial<SecretRotationReceipt> & { custody: SecretCustodyReply };
   type SecretRewrapRequest = { name: string; holder?: string | null; recipients: string[] };
+  type SecretRevokeRequest = { name: string };
+  type SecretRevokeReply = Partial<SecretRotationReceipt> & { custody: SecretCustodyReply };
   type SecretCustodyGetRequest = { name: string };
   type SecretCustodyLiveRequest = OwnerWorkReceipt & { manifest_text?: string | null };
   type SecretCustodyCandidateReply = { machine: string; profile: string; encryption_key_digest: string; suite: number; encryption_key_base64: string; this_install: boolean };
@@ -7003,6 +7005,8 @@ declare const vault: Sdk.VaultHost & {
     lift_history(input: Sdk.SecretLiftRequest): Promise<Sdk.SecretLiftStatus | StoredResult>;
     /** The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call. */
     register(input: Sdk.SecretRegisterRequest): Promise<Sdk.SecretRegisterReply | StoredResult>;
+    /** The owner revokes a secret: the record goes terminal and every lease over it is revoked; the reply reads as a rotation's, with kind revoked, beside the custody request carried for his other machines. */
+    revoke(input: Sdk.SecretRevokeRequest): Promise<Sdk.SecretRevokeReply | StoredResult>;
     /** The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown. */
     rewrap(input: Sdk.SecretRewrapRequest): Promise<Sdk.SecretCustodyReply | StoredResult>;
     /** The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call. */
