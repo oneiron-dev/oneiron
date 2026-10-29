@@ -38,8 +38,8 @@ use crate::sync::window_rows::{
 /// writes no deletion state of its own.
 ///
 /// Atomically (one LMDB write txn), per the ARCH-0023b key layout:
-/// - bumps `m:u_seq:w:{key}` (u32 LE, crash-safe monotonic counter),
-/// - appends the raw update bytes at `u:w:{key}:{seq:08x}`,
+/// - bumps `m:u_seq:w:{key}` (u64 LE, crash-safe monotonic counter),
+/// - appends the raw update bytes at `u:w:{key}:{seq:016x}`,
 /// - marks the window state vector stale: `svf:w:{key}` = `[0]`.
 ///
 /// Returns the sequence number assigned to the update. A missing seq row
@@ -51,7 +51,7 @@ pub fn persist_imported_window_update(
     vault: &Vault,
     key: &WindowKey,
     update_bytes: &[u8],
-) -> Result<u32> {
+) -> Result<u64> {
     persist_admitted_window_update(vault, key, update_bytes, |_| true)
 }
 
@@ -64,7 +64,7 @@ pub fn persist_admitted_window_update(
     key: &WindowKey,
     update_bytes: &[u8],
     session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
-) -> Result<u32> {
+) -> Result<u64> {
     vault.with_write_txn_grouped(|wtxn| {
         if !session_is_live(wtxn) {
             return Err(Error::sync_protocol(
@@ -72,7 +72,7 @@ pub fn persist_admitted_window_update(
             ));
         }
         let seq_key = key.as_str().to_owned();
-        let seq: u32 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
+        let seq: u64 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
             None => 0,
             Some(WindowUpdateSeq(seq)) => seq,
         };
