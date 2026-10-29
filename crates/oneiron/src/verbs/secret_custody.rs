@@ -535,7 +535,9 @@ impl SecretCustodyPermit {
 /// The holder and recipients a request names, as machine ids.
 fn custody_plan(holder: Option<&str>, recipients: &[String]) -> MemoryResult<CustodyPlan> {
     Ok(CustodyPlan {
-        holder: holder.map(|holder| entity_id("holder", holder)).transpose()?,
+        holder: holder
+            .map(|holder| entity_id("holder", holder))
+            .transpose()?,
         recipients: recipients
             .iter()
             .map(|machine| entity_id("recipients", machine))

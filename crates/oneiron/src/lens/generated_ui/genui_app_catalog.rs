@@ -189,8 +189,7 @@ fn validate_semver(value: &str) -> Result<()> {
     }
     if let Some(pre) = pre
         && !pre.split('.').all(|part| {
-            identifier(part)
-                && (!part.bytes().all(|byte| byte.is_ascii_digit()) || numeric(part))
+            identifier(part) && (!part.bytes().all(|byte| byte.is_ascii_digit()) || numeric(part))
         })
     {
         return Err(invalid());
@@ -221,8 +220,7 @@ impl GeneratedUiComponentSchema {
     /// Whether `props` meets this declaration's schema. A schema that does not
     /// compile admits nothing, so its component lowers to text.
     pub(super) fn admits(&self, props: &serde_json::Value) -> bool {
-        jsonschema::draft202012::new(&self.schema)
-            .is_ok_and(|validator| validator.is_valid(props))
+        jsonschema::draft202012::new(&self.schema).is_ok_and(|validator| validator.is_valid(props))
     }
 }
 

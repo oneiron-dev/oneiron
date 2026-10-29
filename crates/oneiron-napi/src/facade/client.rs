@@ -11,7 +11,8 @@ use super::convert::{
 };
 use super::dtos::{
     NapiClaimInput, NapiCommitReceipt, NapiMemoryPack, NapiQueryAffect, NapiRecallMedia,
-    NapiRecallScope, NapiWitnessAssertions, NapiWitnessMessage, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiRecallScope, NapiWitnessAssertions, NapiWitnessMessage, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 use super::input_error::witness_input_error;
 use super::js_json::js_json;

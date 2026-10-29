@@ -16,9 +16,9 @@ use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{
-    SecretCustodyGetRequest, SecretCustodyReply, SecretCustodySubmitRequest, SecretCustodyViewReply,
-    SecretRegisterReply, SecretRegisterRequest, SecretRewrapRequest, SecretRotateReply,
-    SecretRotateRequest, register_secret_as, rewrap_secret_as, rotate_secret_as,
+    SecretCustodyGetRequest, SecretCustodyReply, SecretCustodySubmitRequest,
+    SecretCustodyViewReply, SecretRegisterReply, SecretRegisterRequest, SecretRewrapRequest,
+    SecretRotateReply, SecretRotateRequest, register_secret_as, rewrap_secret_as, rotate_secret_as,
     secret_custody_get_as, submit_sealed_custody_as,
 };
 
@@ -52,9 +52,12 @@ pub(crate) async fn vault_secrets_register(
     surface: ActSurface,
     input: SecretRegisterRequest,
 ) -> Listed<SecretRegisterReply> {
-    as_custody_owner(server, auth, "vault.secrets.register", move |vault, owner| {
-        register_secret_as(vault, owner, surface, input)
-    })
+    as_custody_owner(
+        server,
+        auth,
+        "vault.secrets.register",
+        move |vault, owner| register_secret_as(vault, owner, surface, input),
+    )
     .await
 }
 
@@ -90,9 +93,12 @@ pub(crate) async fn vault_secrets_custody_get(
     auth: &CoreAuth,
     input: SecretCustodyGetRequest,
 ) -> Listed<SecretCustodyViewReply> {
-    as_custody_owner(server, auth, "vault.secrets.custody.get", move |vault, owner| {
-        secret_custody_get_as(vault, owner, input)
-    })
+    as_custody_owner(
+        server,
+        auth,
+        "vault.secrets.custody.get",
+        move |vault, owner| secret_custody_get_as(vault, owner, input),
+    )
     .await
 }
 
@@ -104,8 +110,11 @@ pub(crate) async fn vault_secrets_custody_submit(
     surface: ActSurface,
     input: SecretCustodySubmitRequest,
 ) -> Listed<SecretCustodyReply> {
-    as_custody_owner(server, auth, "vault.secrets.custody.submit", move |vault, owner| {
-        submit_sealed_custody_as(vault, owner, surface, input)
-    })
+    as_custody_owner(
+        server,
+        auth,
+        "vault.secrets.custody.submit",
+        move |vault, owner| submit_sealed_custody_as(vault, owner, surface, input),
+    )
     .await
 }

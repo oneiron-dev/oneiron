@@ -82,7 +82,9 @@ fn refs(ids: &[EntityId], project: Project<'_>) -> Vec<String> {
 }
 
 fn resolved(refs: &[String], resolve: Resolve<'_>) -> MemoryResult<Vec<EntityId>> {
-    refs.iter().map(|reference| resolve(reference.as_str())).collect()
+    refs.iter()
+        .map(|reference| resolve(reference.as_str()))
+        .collect()
 }
 
 impl ClusterEvidence {

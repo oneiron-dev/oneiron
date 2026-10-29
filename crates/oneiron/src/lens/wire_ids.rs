@@ -91,7 +91,11 @@ lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
 lens_token_type!(SelfUiStateKey, "self.ui state key");
 lens_token_type!(GeneratedUiCatalogName, "generated-ui catalog name", true);
-lens_token_type!(GeneratedUiComponentName, "generated-ui component name", true);
+lens_token_type!(
+    GeneratedUiComponentName,
+    "generated-ui component name",
+    true
+);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

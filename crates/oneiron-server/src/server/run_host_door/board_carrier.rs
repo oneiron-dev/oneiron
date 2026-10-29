@@ -102,7 +102,10 @@ fn live_task_lines(
 
 /// Whether `task` still stands on the board and `lane` reads it.
 fn tells_task(server: &SyncServer, lane: &ScopedRead<'_>, task: EntityId) -> bool {
-    let stands = matches!(CommittedTaskBoardState::read(server.vault(), task), Ok(Some(_)));
+    let stands = matches!(
+        CommittedTaskBoardState::read(server.vault(), task),
+        Ok(Some(_))
+    );
     stands && lane.is_entity_readable(&task).unwrap_or(false)
 }
 

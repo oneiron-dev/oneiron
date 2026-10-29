@@ -48,7 +48,11 @@ impl WaitDeliveries<'_> {
                 })?;
                 self.storage.deliver_wait(wait_id, reply, None, now_ms)?;
                 let settled = binding
-                    .answered(|| binding.session.side_table_get(&SETTLED, &(SETTLED_TAG, wait_id)))?
+                    .answered(|| {
+                        binding
+                            .session
+                            .side_table_get(&SETTLED, &(SETTLED_TAG, wait_id))
+                    })?
                     .ok_or_else(missing)?;
                 Ok((won, settled))
             }

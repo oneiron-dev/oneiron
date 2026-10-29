@@ -207,7 +207,11 @@ fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
 /// registry's capsule (`--capsule`) opens the key in place of a wrap; its
 /// recipient is released, to retire (FIX 2559).
 fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
-    let vault = open(&args.serve, &UnlockRequest::add_device(&args), KeyNeed::Held)?;
+    let vault = open(
+        &args.serve,
+        &UnlockRequest::add_device(&args),
+        KeyNeed::Held,
+    )?;
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(&owner, NewVaultKeyWrap::Device)?)
 }
@@ -454,7 +458,9 @@ pub(super) fn read_secret(
     match &source.secret_file {
         Some(path) => read_owner_only(path, &mut value)?,
         None => read_stdin_secret(what, TerminalRead::Line, |input| {
-            input.take(SECRET_LIMIT as u64 + 1).read_to_end(&mut value)?;
+            input
+                .take(SECRET_LIMIT as u64 + 1)
+                .read_to_end(&mut value)?;
             Ok(())
         })?,
     }

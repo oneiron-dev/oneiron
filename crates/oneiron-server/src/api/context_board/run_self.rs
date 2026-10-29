@@ -51,7 +51,9 @@ pub(crate) async fn describe_self_for_run(
     // describe(self) names the run's own brief and nothing else (FIX 3256).
     request.validate()?;
     if !request.self_target {
-        return Err(MemoryError::bad_request("describe(self) names the run's own brief"));
+        return Err(MemoryError::bad_request(
+            "describe(self) names the run's own brief",
+        ));
     }
     let people = run_people(server, actor)?;
     let reads = crate::api::run_session_reads(server, actor, connection).await;

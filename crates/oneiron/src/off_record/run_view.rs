@@ -259,9 +259,9 @@ impl SessionCodeRun<'_> {
         }
         // Whose reply stands is the settle's own put-if-absent, so two
         // concurrent answers never both hear that theirs was delivered.
-        let (won, settled) = self
-            .deliveries
-            .settle_reporting(key.wait_id, reply, crate::unix_millis_now())?;
+        let (won, settled) =
+            self.deliveries
+                .settle_reporting(key.wait_id, reply, crate::unix_millis_now())?;
         Ok(SessionWaitAnswer {
             key,
             already_answered: !won,

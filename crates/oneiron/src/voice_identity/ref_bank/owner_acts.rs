@@ -454,7 +454,10 @@ fn reference_fence_view(
     VoiceReferenceFenceView {
         source_packs: clone.source_packs.clone(),
         ref_digest: bytes_to_hex_lower(&fence.ref_digest),
-        incarnation: fence.incarnation.as_ref().map(|bytes| bytes_to_hex_lower(bytes)),
+        incarnation: fence
+            .incarnation
+            .as_ref()
+            .map(|bytes| bytes_to_hex_lower(bytes)),
         consent_revision: bytes_to_hex_lower(&fence.grant.revision),
         revision: crate::voice_cascade::media::BankVoiceBinding::reference_revision(fence),
     }

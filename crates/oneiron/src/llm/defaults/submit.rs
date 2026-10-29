@@ -18,7 +18,9 @@ use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::llm::PurposeDefaultTable;
-use crate::policy_model::{PolicyRowScope, holds_vault_policy_power_in_txn, policy_row_grant_target};
+use crate::policy_model::{
+    PolicyRowScope, holds_vault_policy_power_in_txn, policy_row_grant_target,
+};
 use crate::policy_setting_doors::{PolicySetting, record_policy_setting_act_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};

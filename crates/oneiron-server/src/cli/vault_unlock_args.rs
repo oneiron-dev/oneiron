@@ -29,7 +29,11 @@ pub struct VaultUnlockArgs {
     pub unlock_credential: Option<String>,
 
     /// With `--unlock escrow`: the escrow wrap's label.
-    #[arg(long = "unlock-label", value_name = "NAME", conflicts_with = "unlock_capsule")]
+    #[arg(
+        long = "unlock-label",
+        value_name = "NAME",
+        conflicts_with = "unlock_capsule"
+    )]
     pub unlock_label: Option<String>,
 
     /// With `--unlock escrow`: a registry's escrow capsule report (JSON) for
@@ -58,7 +62,11 @@ pub struct VaultUnlockArgs {
 
     /// With `--unlock escrow`: the recovery box directory that keeps the
     /// escrow seed.
-    #[arg(long = "unlock-box-dir", value_name = "DIR", conflicts_with = "unlock_box_command")]
+    #[arg(
+        long = "unlock-box-dir",
+        value_name = "DIR",
+        conflicts_with = "unlock_box_command"
+    )]
     pub unlock_box_dir: Option<PathBuf>,
 
     /// With `--unlock escrow`: the recovery box program that releases the
@@ -121,7 +129,11 @@ pub struct RestoreWrapArgs {
 
     /// With `--wrap-to escrow`: the recovery box program that keeps the new
     /// seed.
-    #[arg(long = "wrap-box-command", value_name = "PROGRAM", requires = "wrap_to")]
+    #[arg(
+        long = "wrap-box-command",
+        value_name = "PROGRAM",
+        requires = "wrap_to"
+    )]
     pub wrap_box_command: Option<PathBuf>,
 }
 

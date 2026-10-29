@@ -104,11 +104,7 @@ pub(crate) async fn vault_lenses_default(
         Ok(bound) => bound,
         Err(refusal) => return (Err(refusal.into_memory_error()), Vec::new()),
     };
-    let surface = input
-        .surface
-        .clone()
-        .or(client_surface)
-        .unwrap_or_default();
+    let surface = input.surface.clone().or(client_surface).unwrap_or_default();
     let rendered = {
         let server = Arc::clone(server);
         let auth = auth.clone();

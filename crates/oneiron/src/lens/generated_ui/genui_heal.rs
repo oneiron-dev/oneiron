@@ -105,7 +105,9 @@ pub(super) fn heal_cut_json(text: &str) -> Option<String> {
             b':' => index += 1,
             b'"' => {
                 let (end, closed) = string_end(bytes, index + 1);
-                let is_key = stack.last().is_some_and(|frame| !frame.array && frame.expect_key);
+                let is_key = stack
+                    .last()
+                    .is_some_and(|frame| !frame.array && frame.expect_key);
                 if !closed {
                     let free_text = !is_key && stack.last().is_some_and(Frame::holds_display_text);
                     if !free_text {
@@ -167,7 +169,11 @@ fn string_end(bytes: &[u8], start: usize) -> (usize, bool) {
         match bytes[index] {
             b'"' => return (index, true),
             b'\\' => {
-                let width = if bytes.get(index + 1) == Some(&b'u') { 6 } else { 2 };
+                let width = if bytes.get(index + 1) == Some(&b'u') {
+                    6
+                } else {
+                    2
+                };
                 if index + width > bytes.len() {
                     return (index, false);
                 }

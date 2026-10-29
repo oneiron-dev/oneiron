@@ -94,7 +94,9 @@ impl ProgramInjection {
         // its answer, as a verb's output reads.
         InjectedAnswer::Settled {
             view: Some(json!({ "output": reply.clone() })),
-            outcome: Box::new(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(reply, None))),
+            outcome: Box::new(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
+                reply, None,
+            ))),
         }
     }
 

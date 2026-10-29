@@ -85,11 +85,9 @@ fn json_equal(left: &Value, right: &Value) -> bool {
         }
         (Value::Object(left), Value::Object(right)) => {
             left.len() == right.len()
-                && left.iter().all(|(key, left)| {
-                    right
-                        .get(key)
-                        .is_some_and(|right| json_equal(left, right))
-                })
+                && left
+                    .iter()
+                    .all(|(key, left)| right.get(key).is_some_and(|right| json_equal(left, right)))
         }
         _ => left == right,
     }

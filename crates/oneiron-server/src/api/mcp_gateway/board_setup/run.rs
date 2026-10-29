@@ -88,7 +88,10 @@ pub(crate) async fn ride_run_carrier(
     actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,
     frame: oneiron::context_board::BoardStreamFrame,
-) -> (oneiron::context_board::BoardStreamFrame, Vec<oneiron::EntityId>) {
+) -> (
+    oneiron::context_board::BoardStreamFrame,
+    Vec<oneiron::EntityId>,
+) {
     let mut queued = frame.clone();
     if let oneiron::context_board::FrameKind::Delta(rows) = &mut queued.kind {
         rows.retain(|row| row.key != "changed");

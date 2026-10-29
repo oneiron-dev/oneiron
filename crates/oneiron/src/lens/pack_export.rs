@@ -133,7 +133,9 @@ impl Memory<'_> {
             vault.born_with_text(&lens_ref, None)?
         } else {
             let mut text = match vault.row_birth(&lens_ref)? {
-                Some(birth) => self.born_with_text_for_reader(&lens_ref, &birth.made_by, &travel)?,
+                Some(birth) => {
+                    self.born_with_text_for_reader(&lens_ref, &birth.made_by, &travel)?
+                }
                 None => vault.born_with_text_for_another(&lens_ref, None)?,
             };
             // The intent prompt is the prompt NOTE's text: it leaves only
