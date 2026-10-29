@@ -102,8 +102,8 @@ pub use secret::{SecretCustody, SecretUse};
 pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
 pub use session::{
-    BrowserGuest, BrowserGuestStarter, BrowserSession, CapturedSolvedSpan, FreshGuest, PressGrants,
-    SOLVED_PAST_PRESS, SolvedSnapshotGap, StartedGuest,
+    BrowserGuest, BrowserGuestStarter, BrowserSession, CapturedSolvedSpan, FreshGuest, HeldPress,
+    PressGrants, PressNeed, SOLVED_PAST_PRESS, SolvedSnapshotGap, StartedGuest,
 };
 pub use site::{
     OriginError, SeedBody, SeedCandidate, SiteOrigin, SiteSkillError, SiteSkillErrorCode,
