@@ -82,6 +82,8 @@ pub(super) mod owner_key_enrollment_routes;
 pub(super) mod owner_work_routes;
 pub(super) mod pack_preview_routes;
 pub(super) mod pack_routes;
+#[cfg(target_os = "linux")]
+mod outbox_diverged_routes;
 pub(super) mod pad_routes;
 pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
@@ -219,6 +221,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(recovery_kit_target_routes::routes())
         .merge(super::owner_origin::routes())
         .merge(super::packs::routes())
+        .merge(carrier_routes())
+}
+
+/// The vault VM outbox carrier's owner routes (FIX 11074); none off Linux,
+/// where no vault VM runs.
+fn carrier_routes() -> Router<Arc<SyncServer>> {
+    #[cfg(target_os = "linux")]
+    let routes = outbox_diverged_routes::routes();
+    #[cfg(not(target_os = "linux"))]
+    let routes = Router::new();
+    routes
 }
 
 /// The owner's off-record routes, nested apart from [`routes`]: like the
