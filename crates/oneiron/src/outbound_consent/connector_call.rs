@@ -166,6 +166,11 @@ pub(super) struct PendingConnectorCall {
     /// arguments sealed, never in the clear. Never stored.
     #[serde(skip)]
     pub(super) off_record: bool,
+    /// A full count-bound budget window paces this call until this engine
+    /// instant, Unix seconds (FIX 8686): it asks no one, does not expire, and
+    /// the settler drives it again from then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) paced_until: Option<u64>,
 }
 
 /// A held call's terminal outcome, without the tool's reply: the ledger
@@ -193,6 +198,7 @@ impl SettledConnectorCall {
                 intent,
                 result: None,
                 result_absence: Some(ConnectorResultAbsence::NotRetained),
+                budget_steering: Vec::new(),
             },
             Self::Refused {
                 decision_ref,

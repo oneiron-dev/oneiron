@@ -178,6 +178,7 @@ fn observed(
                 ToolClass {
                     data_class: tool.data_class,
                     spends: tool.spends,
+                    price: tool.price.clone(),
                 },
             )
         })

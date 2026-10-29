@@ -66,6 +66,7 @@ impl ConnectorEventResponder for ServedConnectorResponder {
             agent: wake.agent,
             event: wake.event.clone(),
             parent_attempt: parent,
+            budget_steering: wake.budget_steering.clone(),
         };
         let job = vault.enqueue_connector_reply_job(&job, now)?;
         Ok(ConnectorEventReplyHandoff::Queued { job })

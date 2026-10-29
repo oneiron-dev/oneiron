@@ -69,6 +69,11 @@ pub enum ConnectorCallReply {
         result: Option<ConnectorToolResult>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reasons: Vec<String>,
+        /// The 80%/95% budget messages this call's charge fired on its
+        /// connector key and catalog pool (FIX 3759): plan, then land, the
+        /// work it is part of. Absent when none fired.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        budget_steering: Vec<String>,
     },
     /// Held for consent or governance; nothing was sent. A code-mode run
     /// parks on `call_ref` until the hold settles. `approval_digest` (FIX
@@ -239,14 +244,17 @@ impl ConnectorCallReply {
         match outcome {
             ConnectorCallOutcome::Delivered {
                 result: Some(result),
+                budget_steering,
                 ..
             } => Self::Delivered {
                 result: Some(ConnectorToolResult::foreign(name, tool, result)),
                 reasons: Vec::new(),
+                budget_steering,
             },
             ConnectorCallOutcome::Delivered {
                 result: None,
                 result_absence,
+                budget_steering,
                 ..
             } => Self::Delivered {
                 result: None,
@@ -261,6 +269,7 @@ impl ConnectorCallReply {
                     }
                     .to_owned(),
                 ],
+                budget_steering,
             },
             ConnectorCallOutcome::Held {
                 call_ref,

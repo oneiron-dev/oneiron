@@ -422,6 +422,7 @@ impl Vault {
                         &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
                     )
                 })?;
+                self.signal_code_owned_call_asks();
                 let stopped = ConnectorCallOutcome::Refused {
                     decision_ref: None,
                     reasons: vec![CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED.to_owned()],
@@ -521,6 +522,7 @@ impl Vault {
                 }
                 Ok(())
             })?;
+            self.signal_code_owned_call_asks();
         }
         Ok(self.code_consent_wait_view(wait_id, false)?)
     }
@@ -551,7 +553,9 @@ impl Vault {
 
 /// Settles a held call a code consent wait owns as refused, in the caller's
 /// writer, unless it already settled, so the settler acknowledges it and
-/// nothing runs under it.
+/// nothing runs under it. The row withdraws the owner questions it named in
+/// the same write (FIX 2551); its committer wakes their waiters with
+/// [`Vault::signal_code_owned_call_asks`].
 pub(crate) fn settle_code_owned_call_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -575,6 +579,7 @@ pub(crate) fn settle_code_owned_call_in_txn(
         decision_ref: decision_ref.clone(),
         reasons: reasons.clone(),
     });
+    vault.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row);
     PENDING_CALLS.put(&vault.store, txn, call_ref, &row)
 }
 

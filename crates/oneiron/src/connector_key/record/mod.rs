@@ -7,8 +7,9 @@ mod key_record;
 mod scoped;
 
 pub use self::budgets::{
-    CalendarPeriod, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
-    EffectorBudgetReservePolicy, EffectorBudgetWindow,
+    CalendarPeriod, ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudget,
+    EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
+    EffectorBudgetWindow,
 };
 pub(super) use self::budgets::{
     validate_budget_row, validate_spend_unit, validate_suggested_budget_row,

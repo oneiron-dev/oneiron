@@ -1,6 +1,9 @@
 //! New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert.
 
-use super::budget::{charge_once, co_actor_exhausted, rate_paced, rate_window_result};
+use super::budget::{
+    charge_once, co_actor_exhausted, rate_paced, rate_window_result, spend_price_in_txn,
+    spend_reserve,
+};
 use super::dedupe;
 use super::replay::{
     effect_result, gate_rejection, replay_record, send_admitted, suppression_result,
@@ -424,12 +427,16 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         }
         _ => true,
     };
-    // FIX 8788: a Linear mutation whose only full rows are Rate windows that
-    // refuse waits for them: dropping the writer leaves nothing recorded,
-    // bound or charged.
-    if co_governance.is_some() {
+    // FIX 8788, FIX 8686: a Linear mutation or a scoped connector call whose
+    // only full rows are count-bound windows that refuse waits for them:
+    // dropping the writer leaves nothing recorded, bound or charged.
+    let scoped_call = matches!(
+        prepared.authorization,
+        PreparedAuthorization::ScopedMcp { .. }
+    );
+    if co_governance.is_some() || scoped_call {
         let co = co_governance.as_mut().filter(|_| co_key_distinct);
-        if rate_paced(
+        if let Some(next_eligible_at) = rate_paced(
             vault,
             &mut wtxn,
             &mut governance,
@@ -438,7 +445,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             co_pool,
         )? {
             drop(wtxn);
-            return Ok(rate_window_result(intent_id));
+            return Ok(rate_window_result(intent_id, next_eligible_at));
         }
     }
     let co_exhausted = match co_governance.as_mut() {
@@ -450,6 +457,27 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     if co_exhausted && let Some(co) = co_governance.take() {
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
+        wtxn.commit().map_err(Error::from)?;
+        return Ok(gate_rejection(intent_id, decision_id, decision));
+    }
+    // FIX 8689: a Spend row whose owner preauthorizes money reads the verb's
+    // declared price first; one with no room denies before anything debits.
+    let spend_price = scoped_call
+        .then(|| spend_price_in_txn(vault, &wtxn, &mut governance, &prepared.tool))
+        .transpose()?
+        .flatten();
+    if spend_reserve(
+        vault,
+        &mut wtxn,
+        &mut governance,
+        spend_price.as_ref(),
+        false,
+    )?
+    .is_none()
+    {
+        governance.deny_budget_exhausted();
+        let (decision_id, decision) =
+            gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
@@ -475,6 +503,20 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     let mut reserved = budget_charge
         .as_ref()
         .map_or_else(Vec::new, |charge| charge.debits.clone());
+    let spend = spend_reserve(
+        vault,
+        &mut wtxn,
+        &mut governance,
+        spend_price.as_ref(),
+        true,
+    )?
+    .ok_or(Error::InvariantViolation(
+        "preauthorized spend changed inside admission transaction",
+    ))?;
+    let spend_basis = spend.map(|(debits, basis)| {
+        reserved.extend(debits);
+        basis
+    });
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
         let (_, co_charge, exhausted) =
             charge_once(vault, &mut wtxn, co, prepared.budget_class, now_ms, co_pool)?;
@@ -587,7 +629,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
-    reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved)?;
+    reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved, spend_basis)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
