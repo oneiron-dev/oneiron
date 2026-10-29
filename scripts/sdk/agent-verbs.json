@@ -1358,6 +1358,10 @@
         ]
       },
       "mcp_scope": "born",
+      "mcp_fields": {
+        "spec": "$",
+        "task_ref": "=task_ref"
+      },
       "section": true
     },
     {
