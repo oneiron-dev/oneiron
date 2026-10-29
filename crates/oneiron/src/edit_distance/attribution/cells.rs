@@ -14,8 +14,10 @@
 //! keeps one version per cell (FIX 7822).
 //!
 //! A cell is qualified by `executor` and `consent_scope`, and by `typeRef`
-//! when a task placed the run. An actor is its own executor. A skill's
-//! executor is the model the drafting run was stamped with, or the
+//! when a task placed the run, in one scope: the project the run counted in
+//! or the reviewed claim names, or the vault's (FIX 6038). The consent scope
+//! is a qualifier, never the cell's scope. An actor is its own executor. A
+//! skill's executor is the model the drafting run was stamped with, or the
 //! unknown-executor key. Readers ask the cell ([`edit_cost_for`]); no parallel
 //! scalar `actor.edit_cost` / `skill.edit_cost` head is kept (FIX 9797).
 
@@ -58,17 +60,20 @@ impl EditOutcome {
     }
 }
 
-/// The `learning.edit_cost` cell of `subject` at `executor` in `scope`, and
-/// in task type `type_ref` when one placed the run.
+/// The `learning.edit_cost` cell of `subject` at `executor` in `scope`, in
+/// task type `type_ref` when one placed the run, in `project`'s scope (`None`,
+/// the vault's).
 pub(super) fn edit_cost_cell(
     subject: EntityId,
     executor: &str,
     scope: &str,
     type_ref: Option<&TypeRef>,
+    project: Option<EntityId>,
 ) -> LearningCell {
     let cell = LearningCell::new(LearningPredicate::EditCost, subject)
         .executor(executor)
-        .consent_scope(learning_scope(scope));
+        .consent_scope(learning_scope(scope))
+        .project(project);
     match type_ref {
         Some(type_ref) => cell.type_ref(type_ref.clone()),
         None => cell,
@@ -76,9 +81,9 @@ pub(super) fn edit_cost_cell(
 }
 
 /// The `learning.edit_cost` estimate of `subject` at `executor` in `scope`,
-/// and in task type `type_ref` when one placed the runs: the shared cell's
-/// own estimate, `None` while no own run has landed. The scope keys the cell
-/// exactly as the writers key it.
+/// in task type `type_ref` when one placed the runs, in `project`'s scope
+/// (`None`, the vault's): the shared cell's own estimate, `None` while no own
+/// run has landed. The scope keys the cell exactly as the writers key it.
 ///
 /// # Errors
 ///
@@ -89,8 +94,10 @@ pub fn edit_cost_for(
     executor: &str,
     scope: &str,
     type_ref: Option<&TypeRef>,
+    project: Option<EntityId>,
 ) -> Result<Option<Estimate>> {
-    crate::learning::learning_estimate(vault, &edit_cost_cell(*subject, executor, scope, type_ref))
+    let cell = edit_cost_cell(*subject, executor, scope, type_ref, project);
+    crate::learning::learning_estimate(vault, &cell)
 }
 
 /// `scope` as a learning qualifier: verbatim when it fits, its digest when it
@@ -106,8 +113,9 @@ pub(super) fn learning_scope(scope: &str) -> String {
 }
 
 /// An untouched approval is the decider's verdict on the generator's output
-/// with nothing to split: it lands on the generating actor's own cell at no
-/// edit mass, counted untouched.
+/// with nothing to split: it lands on the generating actor's own cell in the
+/// reviewed claim's `project` (`None`, the vault's) at no edit mass, counted
+/// untouched.
 ///
 /// # Errors
 ///
@@ -117,10 +125,11 @@ pub(in crate::edit_distance) fn record_untouched_in_txn(
     txn: &mut heed::RwTxn<'_>,
     actor: EntityId,
     scope: &str,
+    project: Option<EntityId>,
     receipt: &str,
     at: u64,
 ) -> Result<()> {
-    let cell = edit_cost_cell(actor, &actor.to_hex(), scope, None);
+    let cell = edit_cost_cell(actor, &actor.to_hex(), scope, None, project);
     let evidence = observation(receipt, at, 0.0, 1.0, EditOutcome::Untouched);
     record_in_txn(vault, txn, &cell, &evidence, at)
 }
@@ -196,15 +205,22 @@ pub(super) fn judgment_rows(judgment: &AmendmentJudgment) -> Vec<(LearningCell, 
         })
         .collect();
     let counted = [
-        judgment
-            .actor
-            .map(|actor| edit_cost_cell(actor, &actor.to_hex(), &judgment.scope, None)),
+        judgment.actor.map(|actor| {
+            edit_cost_cell(
+                actor,
+                &actor.to_hex(),
+                &judgment.scope,
+                None,
+                judgment.project,
+            )
+        }),
         judgment.skill.map(|skill| {
             edit_cost_cell(
                 skill,
                 judgment.executor_key(),
                 &judgment.scope,
                 judgment.type_ref.as_ref(),
+                judgment.project,
             )
         }),
     ];
@@ -350,6 +366,7 @@ fn charged_cells(judgment: &AmendmentJudgment) -> Vec<(LearningCell, f64)> {
                 &executor,
                 &judgment.scope,
                 judgment.type_ref.as_ref(),
+                judgment.project,
             );
             Some((cell, f64::from(share.share)))
         })

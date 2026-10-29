@@ -1,5 +1,6 @@
-//! Who drafted an amended proposal: the executor identity at revision and
-//! the task type, as the attempt the proposal came from was stamped (FIX 9812).
+//! Who drafted an amended proposal: the executor identity at revision, the
+//! task type and the project its run counted in, as the attempt the proposal
+//! came from was stamped (FIX 9812, 6038).
 //!
 //! The stamp is the one the attempt froze when its run began
 //! (`AttemptRecord::executor_model`, copied onto its terminal pack receipt).
@@ -11,6 +12,7 @@
 
 use crate::Vault;
 use crate::edit_distance::ProposalArtifactRef;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::TypeRef;
 
@@ -21,22 +23,38 @@ pub(in crate::edit_distance) const UNKNOWN_EXECUTOR: &str = "unknown";
 /// Longest executor stamp accepted: the attempt queue's own bound.
 const MAX_EXECUTOR_BYTES: usize = 256;
 
-/// The executor and task type the evidence door records for one amendment:
-/// the named attempt's stamps first, then the executor the amended
+/// What the evidence door records of one amendment's drafting run.
+#[derive(Debug)]
+pub(super) struct EvidenceOrigin {
+    pub(super) executor: Option<String>,
+    pub(super) type_ref: Option<TypeRef>,
+    /// The project the run counted in; `None` is the vault's (FIX 6038).
+    pub(super) project: Option<EntityId>,
+}
+
+/// A run's task type and the project it counted in.
+type Placement = (TypeRef, Option<EntityId>);
+
+/// The executor, task type and project the evidence door records for one
+/// amendment: the named attempt's stamps first, then the executor the amended
 /// proposal's birth receipt names, then what the host stamped, each kept only
-/// when it reads as one.
+/// when it reads as one. The project travels with the task type: an
+/// attempt's type brings the project its run counted in, the vault's
+/// included; with no attempt type, both are the host's.
 ///
 /// # Errors
 ///
-/// Storage errors reading the attempt's pack receipt or the proposal.
+/// Storage errors reading the attempt's pack receipt or the proposal; a
+/// project stamp that is not an entity id.
 pub(super) fn evidence_origin(
     vault: &Vault,
     attempt_receipt: Option<&str>,
     proposal: Option<ProposalArtifactRef>,
     executor: Option<&str>,
     type_ref: Option<&TypeRef>,
-) -> Result<(Option<String>, Option<TypeRef>)> {
-    let (mut stamped, attempt_type) = match attempt_receipt {
+    project: Option<EntityId>,
+) -> Result<EvidenceOrigin> {
+    let (mut stamped, placed) = match attempt_receipt {
         Some(receipt) => attempt_origin(vault, receipt)?,
         None => (None, None),
     };
@@ -46,34 +64,42 @@ pub(super) fn evidence_origin(
         stamped = birth_executor(vault, proposal)?;
     }
     let executor = stamped.or_else(|| executor.and_then(usable_executor));
-    let type_ref = attempt_type.or_else(|| {
-        type_ref
-            .filter(|type_ref| type_ref.validate().is_ok())
-            .cloned()
-    });
-    Ok((executor, type_ref))
+    let (type_ref, project) = match placed {
+        Some((type_ref, project)) => (Some(type_ref), project),
+        None => (
+            type_ref
+                .filter(|type_ref| type_ref.validate().is_ok())
+                .cloned(),
+            project,
+        ),
+    };
+    Ok(EvidenceOrigin {
+        executor,
+        type_ref,
+        project,
+    })
 }
 
-/// The executor and task type the attempt behind `attempt_receipt` was
-/// stamped with, each `None` where its terminal pack receipt records none.
+/// The executor the attempt behind `attempt_receipt` was stamped with, and
+/// where its run was placed: its type stamp with the project frozen beside
+/// it, else its frozen attribution's type and project (FIX 6038). Each `None`
+/// where its terminal pack receipt records none.
 fn attempt_origin(
     vault: &Vault,
     attempt_receipt: &str,
-) -> Result<(Option<String>, Option<TypeRef>)> {
+) -> Result<(Option<String>, Option<Placement>)> {
     let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, attempt_receipt)? else {
         return Ok((None, None));
     };
     let executor = receipt.executor_model().and_then(usable_executor);
-    let type_ref = receipt
-        .task_type_ref()
-        .map(|stamp| TypeRef::from(&stamp))
-        .or_else(|| {
-            receipt
-                .pack_attribution_fields()
-                .ok()
-                .map(|fields| fields.type_ref)
-        });
-    Ok((executor, type_ref))
+    let placed = match receipt.task_type_ref() {
+        Some(stamp) => Some((TypeRef::from(&stamp), receipt.task_project()?)),
+        None => receipt
+            .pack_attribution_fields()
+            .ok()
+            .map(|fields| (fields.type_ref, fields.project)),
+    };
+    Ok((executor, placed))
 }
 
 /// The executor a generated proposal's birth receipt names (FIX 9812): its

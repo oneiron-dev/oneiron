@@ -121,20 +121,30 @@ pub(crate) fn record_inbox_learning_in_txn(
         return Err(Error::InvariantViolation("inbox decision already captured"));
     }
     DECISION.put(&vault.store, txn, &receipt, &row)?;
-    record_edit_cost_learning(vault, txn, &row);
+    // The reviewed claim's project audience scopes the cell (FIX 6038); the
+    // reserved default project is the vault's. Never the consent scope.
+    let project = (reviewed.scope_project != crate::claim::default_project_id())
+        .then_some(reviewed.scope_project);
+    record_edit_cost_learning(vault, txn, &row, project);
     Ok(())
 }
 
-/// The decision's `learning.edit_cost` capture, in a savepoint: an optional
-/// capture that never fails the deciding write it rides.
-fn record_edit_cost_learning(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &PrincipalDecision) {
+/// The decision's `learning.edit_cost` capture in `project`'s scope (`None`,
+/// the vault's), in a savepoint: an optional capture that never fails the
+/// deciding write it rides.
+fn record_edit_cost_learning(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &PrincipalDecision,
+    project: Option<EntityId>,
+) {
     let landed = vault
         .store
         .env
         .nested_write_txn(txn)
         .map_err(Error::from)
         .and_then(|mut savepoint| {
-            feed_edit_cost_in_txn(vault, &mut savepoint, row)?;
+            feed_edit_cost_in_txn(vault, &mut savepoint, row, project)?;
             Ok(savepoint.commit()?)
         });
     if let Err(error) = landed {
@@ -148,27 +158,36 @@ fn record_edit_cost_learning(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &Pri
 /// An untouched approval is the decider's verdict on the generator's output,
 /// with nothing to split: it feeds the generating actor's own
 /// `learning.edit_cost` cell. A rejection is judged first (FIX 7823): only the
-/// shares attribution charges reach a cell, counted rejected. An amendment's
-/// cost reaches the family through its attributed shares, not here.
+/// shares attribution charges reach a cell, counted rejected. Both land in
+/// `project`'s scope (`None`, the vault's). An amendment's cost reaches the
+/// family through its attributed shares, not here.
 fn feed_edit_cost_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &PrincipalDecision,
+    project: Option<EntityId>,
 ) -> Result<()> {
     use crate::edit_distance::attribution::{
         Rejection, judge_rejection_in_txn, record_untouched_in_txn,
     };
 
     match row.outcome.as_str() {
-        "approved" => {
-            record_untouched_in_txn(vault, txn, row.actor, &row.scope, &row.receipt, row.at)
-        }
+        "approved" => record_untouched_in_txn(
+            vault,
+            txn,
+            row.actor,
+            &row.scope,
+            project,
+            &row.receipt,
+            row.at,
+        ),
         "rejected" => {
             let rejection = Rejection {
                 receipt: &row.receipt,
                 actor: row.actor,
                 skill: row.skill,
                 scope: &row.scope,
+                project,
                 at: row.at,
             };
             judge_rejection_in_txn(vault, txn, &rejection).map(|_| ())

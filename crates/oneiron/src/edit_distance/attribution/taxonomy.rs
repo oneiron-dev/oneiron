@@ -97,6 +97,9 @@ pub struct AmendmentEvidence {
     /// The task type the drafting run was placed in; `None` when no task
     /// placed it. The evidence door takes the named attempt's stamp.
     pub type_ref: Option<TypeRef>,
+    /// The project the drafting run counted in; `None` is the vault's. The
+    /// evidence door takes the named attempt's stamp (FIX 6038).
+    pub project: Option<EntityId>,
     /// The `(subject, scope)` axis the resulting cost row is keyed on.
     pub scope: String,
     /// Why the decider amended (see [`AmendmentCause`]).
@@ -121,6 +124,7 @@ impl AmendmentEvidence {
             attempt_receipt: None,
             executor: None,
             type_ref: None,
+            project: None,
             scope: scope.into(),
             cause: None,
             followed_skill: None,
@@ -237,6 +241,9 @@ pub struct AmendmentJudgment {
     pub executor: Option<String>,
     /// The task type the drafting run was placed in, when one placed it.
     pub type_ref: Option<TypeRef>,
+    /// The project whose cells the judgment lands in, frozen from the
+    /// evidence or the reviewed claim; `None` is the vault's (FIX 6038).
+    pub project: Option<EntityId>,
     /// The terminal pack receipt of the attempt the proposal came from, when
     /// the evidence named one.
     pub attempt_receipt: Option<String>,
