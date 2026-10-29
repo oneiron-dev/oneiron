@@ -40,6 +40,7 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
             | ErrorKind::SecretGrantStale
             | ErrorKind::SecretGrantSpent
             | ErrorKind::AgentDefinitionDisabled
+            | ErrorKind::ModelPinUnavailable
             | ErrorKind::KillSwitchDisabled
             | ErrorKind::IdentityUnsettled
             | ErrorKind::ProjectHistoryOverBudget

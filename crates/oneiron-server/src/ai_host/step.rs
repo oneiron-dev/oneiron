@@ -37,8 +37,10 @@ use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
 
+mod live_lease;
 mod secret_use;
 
+use live_lease::LiveLease;
 use secret_use::StepSecretUse;
 
 /// The purpose a workflow step's calls are metered and routed under.
@@ -414,8 +416,9 @@ impl StepRunner {
         };
         // A step launched under a spend lease (OF-532) is bounded by it too:
         // beside its policy rows, this try may spend no more than the lease
-        // has left. Replayed charges are already on the lease, so they sit
-        // on top of that bound, not inside it.
+        // has left, read live as each call is admitted (FIX 1819). Replayed
+        // charges are already on the lease, so they sit on top of that
+        // bound, not inside it.
         let dispatcher = AgentDispatcher::new(vault);
         let lease = dispatcher.spend_scope_for_attempt(attempt.id)?;
         // OF-531: a room-paid step bills its root payer's own account, bound
@@ -448,7 +451,7 @@ impl StepRunner {
             Some(scope) => self.budget_units.min(
                 charged
                     .saturating_mul(reserve)
-                    .saturating_add(dispatcher.guard_for_scope(scope)?.read().remaining_units),
+                    .saturating_add(dispatcher.available_units(scope)?),
             ),
             None => self.budget_units,
         };
@@ -470,6 +473,10 @@ impl StepRunner {
             guard.settle_reserved(&spent).map_err(budget)?;
         }
         let replayed = guard.read().used_units;
+        // Each call of this try books its spend on the lease once it
+        // settled, and the next is admitted against what the lease has left
+        // then, its siblings' spend included (FIX 1819).
+        let live = LiveLease::new(vault, lease, guard.clone(), self.budget_units, replayed);
         let uses =
             offers_use.then(|| StepSecretUse::new(vault, attempt, actor, &run_id, &self.host));
         // The step is a run on that meter: each rung its call reaches is
@@ -488,16 +495,21 @@ impl StepRunner {
             actor,
             &request,
         );
+        let may_send = || {
+            live.book_and_revise();
+            true
+        };
         let generated = match &uses {
-            Some(uses) => uses.converse(runtime, &call.ladder, &run, request),
-            None => runtime.block_on(call.ladder.generate_served(&run, request, None)),
+            Some(uses) => uses.converse(runtime, &call.ladder, &run, &live, request),
+            None => runtime.block_on(
+                call.ladder
+                    .generate_served_while(&run, request, None, &may_send),
+            ),
         };
         oneiron::code_run::finalize_step_captures(vault);
-        // What this try spent goes on the lease whatever the call answered;
-        // the replayed tries recorded their own.
-        if let Some(scope) = &lease {
-            dispatcher.record_guard_spend(scope, run.read().used_units.saturating_sub(replayed))?;
-        }
+        // What this try spent and no call's look booked goes on the lease
+        // whatever the call answered; the replayed tries recorded their own.
+        live.book_rest()?;
         let response = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused

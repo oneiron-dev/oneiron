@@ -531,9 +531,10 @@ impl Vault {
         })
     }
 
-    /// Whether a kit this vault issued for `root` still waits for its
-    /// confirm, read in `txn`. Only that confirm publishes the root: a seed
-    /// door refuses it, so a pending kit never becomes coverage.
+    /// Whether a kit this install issued for `root` still waits for its
+    /// confirm, read from this install's inventory in `txn`. Only that
+    /// confirm publishes the root, but the seed gate lets a matching stored
+    /// or carried root record outrank it (`PENDING_KIT_ROOT_RULE`).
     pub(super) fn kit_root_pending_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

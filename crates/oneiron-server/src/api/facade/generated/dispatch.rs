@@ -19676,7 +19676,17 @@ async fn execute_code(
             facade_door_input(&mut hooks)?,
         )
         .await;
-        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+        Ok::<_, FacadeApiError>((
+            facade_output(output.map_err(|failure| {
+                super::host_doors::source_run_refusal(
+                    server,
+                    auth,
+                    Some(listed.as_slice()),
+                    failure,
+                )
+            })?)?,
+            listed,
+        ))
     }
     .await;
     let (output, listed) = match ran {
@@ -36711,6 +36721,7 @@ async fn self_focus_refresh(
             super::host_doors::self_focus_refresh(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36751,6 +36762,7 @@ async fn self_focus_subscribe(
             super::host_doors::self_focus_subscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36791,6 +36803,7 @@ async fn self_focus_unsubscribe(
             super::host_doors::self_focus_unsubscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,

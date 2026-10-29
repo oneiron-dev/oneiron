@@ -170,7 +170,7 @@ fn refusal_in(
     }
     let Some(source) = PROPOSAL_ARTIFACT
         .get(&vault.store, rtxn, &artifact)?
-        .and_then(|record| record.source_turn_ref)
+        .and_then(|stored| stored.record.source_turn_ref)
     else {
         return Ok(None);
     };

@@ -326,6 +326,12 @@ impl ConsolidationExecutor<'_> {
         // The continuation's asks name its attempt.
         let correlation = EntityId::from_bytes(*step.attempt_id.as_bytes())?;
         let to = AskTo::owner();
+        // The call's input renders from stored rows alone (FIX 11420): the
+        // anchor's and each partner's claim body as the merge's snapshot
+        // read it, and the subjects their labels name. The wording and the
+        // ladder's own questions are the host's text, the choices fixed, and
+        // no same-as draft exists before this call.
+        let sources: Vec<EntityId> = evidence.iter().copied().chain(labels.rows()).collect();
         let mut spent = Vec::new();
         let decided = self
             .decider()
@@ -342,6 +348,7 @@ impl ConsolidationExecutor<'_> {
                     evidence: &evidence,
                     state: &state,
                     ceiling: DecisionRung::Big,
+                    sources: Some(sources),
                 },
                 pack.questions(),
                 &labels,
