@@ -19,7 +19,9 @@ pub(super) const MAX_NAPI_QUERY_BYTES: usize = oneiron_remote::MAX_QUERY_BYTES;
 
 pub(super) const MAX_NAPI_ENTITY_PAYLOAD_BYTES: usize = oneiron_remote::MAX_ENTITY_PAYLOAD_BYTES;
 
-pub(super) const MAX_NAPI_BATCH_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
+/// The entities one transaction of a batch write holds (FIX 11125): a batch
+/// past it is written frame by frame, never refused for its size.
+pub(super) const NAPI_BATCH_FRAME_ENTITIES: usize = oneiron_remote::MAX_BATCH_ENTITIES;
 
 pub(super) const MAX_NAPI_CODEBASE_FILES: usize = oneiron_remote::MAX_CODEBASE_FILES;
 
@@ -188,16 +190,6 @@ pub(super) fn validate_entity_payload_len(len: usize) -> BoundaryResult<()> {
     if len > MAX_NAPI_ENTITY_PAYLOAD_BYTES {
         return Err(format!(
             "entity data payload must be <= {MAX_NAPI_ENTITY_PAYLOAD_BYTES} bytes, got {len}"
-        ));
-    }
-    Ok(())
-}
-
-/// Validate batch write size before opening a write transaction.
-pub(super) fn validate_batch_size(len: usize) -> BoundaryResult<()> {
-    if len > MAX_NAPI_BATCH_ENTITIES {
-        return Err(format!(
-            "batch_put_entities accepts at most {MAX_NAPI_BATCH_ENTITIES} entities, got {len}"
         ));
     }
     Ok(())

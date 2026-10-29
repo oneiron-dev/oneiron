@@ -7,7 +7,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
-use oneiron::world_keys::{VaultKeyUnlock, VaultKeyWrapInfo};
+use oneiron::world_keys::{
+    HybridSecretKey, VaultKeyUnlock, VaultKeyWrapInfo, existing_machine_secret,
+};
 use oneiron_keystore::DeviceKeystore;
 use rand_core::RngCore as _;
 use serde::Serialize;
@@ -160,7 +162,10 @@ impl RestoreWrap {
 /// config asks for the tier, under the backup's own data key, and is kept
 /// only once its key is wrapped here. A custody anchor door is called with
 /// `anchor`, the owner credential the restore was handed on its pipe
-/// (`--custody-anchor-credentials-fd`).
+/// (`--custody-anchor-credentials-fd`). With `pad_machine`, the named
+/// admitted machine's key opens the worlds that admit it, as `--open-pads`
+/// opens them; a machine whose key this install does not hold opens nothing
+/// and is a note on the receipt (FIX 10468).
 pub(in crate::commands::owner) fn restore_fresh(
     backup: &Path,
     config: &ServeConfig,
@@ -169,7 +174,11 @@ pub(in crate::commands::owner) fn restore_fresh(
     wrap: Option<&RestoreWrap>,
     pins: Option<Vec<CheckpointSigner>>,
     anchor: Option<Arc<CustodyAnchorCredentials>>,
+    pad_machine: Option<&str>,
 ) -> anyhow::Result<FreshRestore> {
+    // A handle for the machine opener below: unlocking the backup moves the
+    // install's keystore into the key it opens.
+    let machine_keystore = keystore.clone();
     let key = match backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
         Some(key) => key,
         None => match keystore {
@@ -187,20 +196,56 @@ pub(in crate::commands::owner) fn restore_fresh(
         key: &key,
     })?;
     let path = &config.vault_path;
+    // One of the owner's machines, whose key this install's keystore still
+    // holds: it opens the worlds that admit it, as `--open-pads` opens them
+    // (FIX 10468). A machine whose key is not held opens nothing, and is a
+    // note on the receipt, never a failure.
+    let mut pad_machine_note = None;
+    let machine: Option<(oneiron::EntityId, HybridSecretKey)> = match pad_machine {
+        Some(id) => {
+            let machine = oneiron::EntityId::from_hex(id)
+                .map_err(|error| anyhow::anyhow!("--pad-machine {id}: {error}"))?;
+            // No vault yet names its id: the backup's head names the vault
+            // whose machine slots this install may hold.
+            let vault_id = CheckpointKey::unlocks(backup)
+                .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?
+                .vault_id;
+            let keystore = match &machine_keystore {
+                Some(keystore) => Arc::clone(keystore),
+                None => {
+                    oneiron_keystore::default_platform_keystore(&[config.vault_path.as_path()])?
+                }
+            };
+            let secret =
+                existing_machine_secret(keystore.as_ref(), vault_id, *machine.as_bytes())?;
+            if secret.is_none() {
+                pad_machine_note = Some(format!(
+                    "this install holds no key of machine {id}: it opened nothing"
+                ));
+            }
+            secret.map(|secret| (machine, secret))
+        }
+        None => None,
+    };
     // The custody head beside the backup, checked against the configured
     // anchor (a root or another install's door, called with the piped
     // credential) when there is one, and opened with the kit when the
-    // restore was unlocked with it (KS-4A1).
+    // restore was unlocked with it (KS-4A1) and with the named machine's
+    // key.
     let mut custody = backup::custody_recovery(backup, &config.backup, anchor);
     if let Some(root) = super::super::recovery_kit::kit_custody_root(unlock) {
         custody = custody.with_kit(root);
+    }
+    if let Some((machine, secret)) = &machine {
+        custody = custody.with_machine(*machine, secret);
     }
     // Before the vault is kept: its key unlocks the same way and is wrapped
     // to this install, and to the wrap the owner named, so a sealed one is
     // published only once it opens here.
     let mut installed = false;
     let mut added = None;
-    let (vault, restored) = backup::restore_fresh(backup, path, target, &key, &custody, |vault| {
+    let (vault, mut restored) =
+        backup::restore_fresh(backup, path, target, &key, &custody, |vault| {
         installed = config.keystore.install_on(vault, path);
         unlock.unlock_live(vault)?;
         // A device unlock of a plain vault wraps the key to this install on
@@ -214,6 +259,9 @@ pub(in crate::commands::owner) fn restore_fresh(
         }
         vault.check_page_custody()
     })?;
+    if let Some(note) = pad_machine_note {
+        restored.pad_notes.push(note);
+    }
     let vault_id = vault.vault_key_vault_id();
     let wraps = view::report(&vault)?.wraps;
     let custody_note = (!installed && added.is_none()).then(|| no_wrap_here(unlock, &wraps));

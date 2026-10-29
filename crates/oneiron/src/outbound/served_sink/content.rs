@@ -2,6 +2,7 @@
 //! typed content-family loaders this engine has. A ref no loader claims
 //! resolves to nothing; a bare entity id is never dumped as text.
 
+use crate::campaign::step_body::CAMPAIGN_STEP_BODY_PREFIX;
 use crate::dreamer_runner::maintenance::representation::REPRESENTATION_CONTENT_PREFIX;
 use crate::error::{Error, Result};
 use crate::outbound::reply_content::CONNECTOR_REPLY_BODY_PREFIX;
@@ -14,16 +15,19 @@ const TRUSTED_CONTACT_CHECK_IN_TEXT: &str = "Having a hard night, please check i
 
 impl Vault {
     /// The plain text an outbound content ref sends, when this engine has a
-    /// typed loader for it: an agent's connector reply body, approved
-    /// representation content, a commitment reminder, a soft-confirm notice
-    /// (scheduled by its bare notice id, FIX 1469), or a trusted contact's
-    /// fixed check-in line.
+    /// typed loader for it: an agent's connector reply body, a campaign
+    /// program step's filed body, approved representation content, a
+    /// commitment reminder, a soft-confirm notice (scheduled by its bare
+    /// notice id, FIX 1469), or a trusted contact's fixed check-in line.
     pub fn outbound_content_text(&self, content_ref: &str) -> Result<Option<String>> {
         if content_ref == crate::counterparty_contact::TRUSTED_CONTACT_NOTICE_CONTENT_REF {
             return Ok(Some(TRUSTED_CONTACT_CHECK_IN_TEXT.to_owned()));
         }
         if content_ref.starts_with(CONNECTOR_REPLY_BODY_PREFIX) {
             return self.connector_reply_body_text(content_ref);
+        }
+        if content_ref.starts_with(CAMPAIGN_STEP_BODY_PREFIX) {
+            return self.campaign_step_body_text(content_ref);
         }
         // The approved content as approved, its approval and sources
         // revalidated by the representation loader itself.

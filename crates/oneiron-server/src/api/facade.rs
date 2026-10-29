@@ -75,6 +75,7 @@ mod craft_candidate_doors;
 mod credential_doors;
 mod critic_review_doors;
 mod critical_confirm_doors;
+mod custody_drain_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
@@ -113,6 +114,7 @@ mod hyde_doors;
 mod identity;
 mod identity_doors;
 mod identity_topology_doors;
+mod inbox_group_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;
@@ -148,6 +150,7 @@ mod release;
 mod reply_doors;
 mod repo_doors;
 mod research_doors;
+mod reservoir_source_doors;
 mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
@@ -164,6 +167,7 @@ mod secret_custody_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
+mod self_actor_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
@@ -189,6 +193,11 @@ mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
 mod wave_doors;
+#[expect(
+    dead_code,
+    reason = "the trusted MFA step-up verifier (FIX 9431) binds the served Admin route to these"
+)]
+mod weave_admin_doors;
 mod weave_doors;
 mod web_connector_doors;
 mod web_fetch_doors;

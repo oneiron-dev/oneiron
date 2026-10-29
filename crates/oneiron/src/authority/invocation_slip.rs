@@ -134,4 +134,17 @@ impl Vault {
         }
         Ok(verified)
     }
+
+    /// Whether the slip `binding` keeps was positively withdrawn in `txn`
+    /// (FIX 11592): the fold records it, or an ancestor, revoked. Queued work
+    /// its request carried ends on that alone; a slip that merely no longer
+    /// verifies, or a fold that does not read, is not this.
+    pub(crate) fn invocation_slip_revoked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &InvocationSlipBinding,
+    ) -> Result<bool> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        Ok(fold.slips.is_revoked(&binding.slip.claims.slip_id))
+    }
 }

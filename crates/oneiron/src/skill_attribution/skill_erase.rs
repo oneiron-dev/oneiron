@@ -5,10 +5,11 @@
 //!
 //! An evidence row keeps its receipt and outcome with its skill or actor
 //! slot nil, so a projection that reads it again routes it with no one to
-//! name. A judgment charging an erased skill goes, as does every edit
-//! proposal naming that skill, and the projector, whose cursor is past them,
-//! routes neither again. A lapse judgment charging an erased actor stays,
-//! its subject nil, and charges no one.
+//! name. A judgment charging an erased skill stays, its subject nil (FIX
+//! 10640), while every edit proposal naming that skill goes, and the
+//! projector, whose cursor is past them, routes neither again. A lapse
+//! judgment charging an erased actor stays, its subject nil, and charges
+//! no one.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -46,9 +47,10 @@ pub(crate) fn erase_attribution_evidence_skill_in_txn(
     Ok(())
 }
 
-/// Drops every judgment that charges erased `entity` as its skill, and every
-/// edit proposal that names it; a lapse judgment that charges it as its
-/// actor stays, its subject nil.
+/// Erases the subject of every judgment that charges erased `entity` as
+/// its skill, keeping the row (FIX 10640), and drops every edit proposal
+/// that names it; a lapse judgment that charges it as its actor stays, its
+/// subject nil.
 ///
 /// # Errors
 ///
@@ -63,10 +65,9 @@ pub(crate) fn erase_attribution_judgment_skill_in_txn(
             continue;
         }
         match judgment.verdict {
-            AttributionVerdict::SkillDefect | AttributionVerdict::Discovery => {
-                JUDGMENT.delete(&vault.store, wtxn, &sequence)?;
-            }
-            AttributionVerdict::ExecutionLapse => {
+            AttributionVerdict::SkillDefect
+            | AttributionVerdict::Discovery
+            | AttributionVerdict::ExecutionLapse => {
                 judgment.subject = None;
                 JUDGMENT.put(&vault.store, wtxn, &sequence, &judgment)?;
             }

@@ -3,13 +3,16 @@
 //! authored prompt is an explicit-only `lens/intent` NOTE beside it. The
 //! lens row's birth names the prompt as its prompt input, the proposer as
 //! its writer and the caller's trigger, all in the proposal's transaction.
-//! The proposal, intent and slot side rows index these rows by ref.
+//! The prompt NOTE sits where the proposal places the lens (FIX 2136,
+//! [`super::scope`]). The proposal, intent and slot side rows index these
+//! rows by ref.
 
 use crate::batch::{BatchBuilder, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::{
     CodeArtifactBody, CodeArtifactClass, decode_code_artifact_body, encode_code_artifact_body,
 };
 use crate::edge::EdgeKind;
+use crate::federation::record_scope::BirthPosition;
 use crate::note::{LENS_INTENT_NOTE_KIND, NoteActor, NoteBody, NoteKind, encode_note_body};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::{MadeByClass, MadeByTrigger};
@@ -34,12 +37,15 @@ pub(super) struct LensArtifacts<'a> {
     pub(super) compiled_json: &'a str,
     /// What caused the proposal, when the caller names it.
     pub(super) trigger: Option<MadeByTrigger>,
+    /// Where the lens is read: the prompt NOTE's world and facet.
+    pub(super) placement: BirthPosition,
     pub(super) at: u64,
 }
 
 impl LensArtifacts<'_> {
-    /// Both rows, the prompt's authorship and subject edges and the lens
-    /// row's birth, staged for the caller's write transaction.
+    /// Both rows, the prompt's authorship and subject edges, the edges that
+    /// place it and the lens row's birth, staged for the caller's write
+    /// transaction.
     pub(super) fn stage<'v>(
         self,
         vault: &'v Vault,
@@ -79,7 +85,7 @@ impl LensArtifacts<'_> {
             birth
         });
         let weight = |kind: EdgeKind| kind.default_weight().unwrap_or(1.0);
-        Ok(vault
+        let mut batch = vault
             .batch_in()
             .put(
                 &self.lens_ref,
@@ -101,7 +107,17 @@ impl LensArtifacts<'_> {
                 &self.lens_ref,
                 weight(EdgeKind::About),
             )
-            .made_by(&self.lens_ref, birth))
+            .made_by(&self.lens_ref, birth);
+        // The NOTE's world and its facet, in the writer that births it.
+        if let Some(world) = self.placement.world {
+            let kind = EdgeKind::InWorld;
+            batch = batch.edge(&self.prompt_ref, kind, &world, weight(kind));
+        }
+        if let Some(facet) = self.placement.facet {
+            let kind = EdgeKind::FacetOf;
+            batch = batch.edge(&self.prompt_ref, kind, &facet, weight(kind));
+        }
+        Ok(batch)
     }
 }
 

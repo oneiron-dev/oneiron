@@ -1,10 +1,10 @@
 //! A secret read from stdin (FIX 1490). From a terminal, the command asks
 //! for it on stderr and turns the terminal's echo off until the read ends,
 //! however it ends, so the secret never shows on the screen or in its
-//! scrollback. A signal that ends the process mid-read (Ctrl-C) turns the
-//! echo back on before it ends it. From a pipe or a file it is read as
-//! given, as before. The caller reads into its own wiped buffer; nothing is
-//! copied here.
+//! scrollback. On Unix a signal that ends the process mid-read (Ctrl-C)
+//! turns the echo back on before it ends it. From a pipe or a file it is
+//! read as given, as before. The caller reads into its own wiped buffer;
+//! nothing is copied here.
 
 use std::io::{self, Read};
 #[cfg(unix)]
@@ -193,11 +193,62 @@ extern "C" fn restore_echo_then_end(signal: libc::c_int) {
     }
 }
 
-/// No terminal echo control off Unix: stdin is read as given.
-#[cfg(not(unix))]
+/// Stdin's console with its echo turned off, turned back on when dropped
+/// (FIX 11387). A Ctrl-C that ends the process runs no `Drop`, so the
+/// console keeps the quiet mode until its owner resets it.
+#[cfg(windows)]
+struct EchoOff {
+    console: windows_sys::Win32::Foundation::HANDLE,
+    saved: u32,
+}
+
+#[cfg(windows)]
+impl EchoOff {
+    /// Turns echo off when stdin is a console; `None` for a pipe or a file.
+    fn on_terminal() -> io::Result<Option<Self>> {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Console::{
+            ENABLE_ECHO_INPUT, GetConsoleMode, GetStdHandle, STD_INPUT_HANDLE, SetConsoleMode,
+        };
+        // SAFETY: `GetStdHandle` reads the process's standard input handle
+        // and touches no memory of ours.
+        let console = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        if console == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let mut saved: u32 = 0;
+        // SAFETY: `GetConsoleMode` writes the mode it is handed and nothing
+        // else; a pipe or a file is no console, so it fails and stdin is
+        // read as given.
+        if unsafe { GetConsoleMode(console, &mut saved) } == 0 {
+            return Ok(None);
+        }
+        // From here the guard puts the mode back.
+        let guard = Self { console, saved };
+        // SAFETY: `SetConsoleMode` reads the mode it is handed and nothing else.
+        if unsafe { SetConsoleMode(console, saved & !ENABLE_ECHO_INPUT) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Some(guard))
+    }
+}
+
+#[cfg(windows)]
+impl Drop for EchoOff {
+    fn drop(&mut self) {
+        use windows_sys::Win32::System::Console::SetConsoleMode;
+        // SAFETY: `SetConsoleMode` reads the mode it is handed and nothing else.
+        unsafe {
+            SetConsoleMode(self.console, self.saved);
+        }
+    }
+}
+
+/// No terminal echo control off Unix and Windows: stdin is read as given.
+#[cfg(not(any(unix, windows)))]
 struct EchoOff;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 impl EchoOff {
     fn on_terminal() -> io::Result<Option<Self>> {
         Ok(None)
