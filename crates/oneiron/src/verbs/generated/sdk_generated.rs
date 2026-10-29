@@ -7109,6 +7109,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.guests.share",
     "vault.guests.export_envelope",
     "vault.guests.reshare",
+    "vault.guests.revoke",
     "vault.guests.mint_slip",
     "vault.support_grants.mint",
     "vault.support_grants.list",
@@ -7191,6 +7192,24 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.usage.events.remove_undecodable",
     "vault.usage.repair.receipts",
     "vault.entities.mention",
+    "vault.legal_holds.place",
+    "vault.legal_holds.widen",
+    "vault.legal_holds.list",
+    "vault.legal_holds.log",
+    "vault.legal_holds.lift_and_erase",
+    "vault.embedding_spaces.list",
+    "vault.embedding_spaces.declare",
+    "vault.embedding_spaces.bind",
+    "vault.embedding_spaces.one_space",
+    "vault.embedding_spaces.retire",
+    "vault.embedding_spaces.move",
+    "vault.embedding_spaces.move_check",
+    "vault.embedding_spaces.move_approve",
+    "vault.embedding_spaces.move_undo",
+    "vault.embedding_spaces.move_abandon",
+    "vault.embedding_spaces.probes.list",
+    "vault.embedding_spaces.probes.put",
+    "vault.embedding_spaces.probes.delete",
     "vault.policy.owner.get",
     "vault.policy.owner.configure",
     "vault.policy.owner.row.change",
@@ -8474,6 +8493,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.guests.reshare" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GuestDocumentEnvelope,
         >(),
+        "vault.guests.revoke" => {
+            crate::code_run::vault_read::request_schema::<crate::receipt::GuestRevokeResponse>()
+        }
         "vault.guests.mint_slip" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::GuestSlipMinted>()
         }
@@ -8725,6 +8747,60 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.entities.mention" => crate::code_run::vault_read::request_schema::<
             crate::ingest::EntityResolutionWaterfallDecision,
+        >(),
+        "vault.legal_holds.place" => {
+            crate::code_run::vault_read::request_schema::<crate::deletion::LegalHold>()
+        }
+        "vault.legal_holds.widen" => {
+            crate::code_run::vault_read::request_schema::<crate::deletion::LegalHold>()
+        }
+        "vault.legal_holds.list" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::deletion::LegalHold>>()
+        }
+        "vault.legal_holds.log" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::deletion::LegalHoldEvent>>()
+        }
+        "vault.legal_holds.lift_and_erase" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LegalHoldLiftAndErased,
+        >(),
+        "vault.embedding_spaces.list" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.declare" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.bind" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.one_space" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.retire" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.move" => {
+            crate::code_run::vault_read::request_schema::<crate::embed::SpaceMove>()
+        }
+        "vault.embedding_spaces.move_check" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpaceMoveChecked,
+        >(),
+        "vault.embedding_spaces.move_approve" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.move_undo" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.move_abandon" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpacesView,
+        >(),
+        "vault.embedding_spaces.probes.list" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpaceProbes,
+        >(),
+        "vault.embedding_spaces.probes.put" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpaceProbe,
+        >(),
+        "vault.embedding_spaces.probes.delete" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::EmbeddingSpaceProbeDeleted,
         >(),
         "vault.policy.owner.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::OwnerPolicyConfigurationView,

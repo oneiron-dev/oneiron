@@ -43,7 +43,7 @@ struct SubscribeRequest {
     channel: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevokeRequest {
     /// The subscription to stop, as 32 hex.
@@ -66,9 +66,21 @@ struct Subscriptions {
     subscriptions: Vec<SubscriptionRow>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Revoked {
     subscription: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions/revoke`'s body (FIX
+/// 11103): [`RevokeRequest`].
+pub(crate) fn revoke_subscription_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevokeRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions/revoke`'s answer (FIX
+/// 11103): [`Revoked`].
+pub(crate) fn subscription_revoked_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Revoked>()
 }
 
 fn invalid(error: oneiron::Error) -> OwnerError {
