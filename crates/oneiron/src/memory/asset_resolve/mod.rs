@@ -402,13 +402,16 @@ impl AssetForms {
 
     /// What [`hydrated_asset`] serves of an asset that holds an image: the
     /// rung its ladder reaches within `admits`, the ask raised on `lane`'s
-    /// vault when nothing fit, and with no form the stored body.
+    /// vault when nothing fit, bounded by what the door's room has `left`
+    /// (the vault's `limits.image_room_bytes` when it names none), and with
+    /// no form the stored body.
     fn hydrated(
         self,
         lane: &ScopedRead<'_>,
         consumer: &AssetConsumer,
         pick: Option<&ImagePick<'_>>,
         admits: &mut dyn FnMut(usize) -> bool,
+        left: &dyn Fn() -> Option<u64>,
     ) -> MemoryResult<HydratedAsset> {
         let Some(image) = &self.image else {
             return Ok(HydratedAsset::Stored);
@@ -424,11 +427,8 @@ impl AssetForms {
             }
             Rung::Ask(needed) => {
                 let watch = lane.vault().limit_watch();
-                watch.crossed(
-                    EngineLimit::ImageRoomBytes,
-                    watch.bound(EngineLimit::ImageRoomBytes),
-                    needed,
-                );
+                let bound = left().unwrap_or_else(|| watch.bound(EngineLimit::ImageRoomBytes));
+                watch.crossed(EngineLimit::ImageRoomBytes, bound, needed);
                 HydratedAsset::Omitted { form }
             }
         })
