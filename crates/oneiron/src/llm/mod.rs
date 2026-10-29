@@ -152,7 +152,7 @@ pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
-    terminal_step_identity,
+    settled_step_usage_in_txn, terminal_step_identity,
 };
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
