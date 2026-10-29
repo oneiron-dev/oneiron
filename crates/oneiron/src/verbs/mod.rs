@@ -58,6 +58,7 @@ mod retrieval;
 mod root_requests;
 mod scratchpad;
 mod secret;
+mod secret_custody;
 mod secret_grant;
 mod secret_use;
 #[path = "self.rs"]
@@ -627,6 +628,7 @@ pub use self::retrieval::*;
 pub use self::root_requests::*;
 pub use self::scratchpad::*;
 pub use self::secret::*;
+pub use self::secret_custody::*;
 pub use self::secret_grant::*;
 pub use self::secret_use::*;
 pub use self::self_verbs::*;

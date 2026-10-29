@@ -1837,6 +1837,18 @@ export class Oneiron {
     secrets: {
       /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
       lift_history: (input: Facade.SecretLiftRequest): Facade.SecretLiftStatus => this.#call(() => this.#client.vaultSecretsLiftHistory(input) as Facade.SecretLiftStatus),
+      /** The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call. */
+      register: (input: Facade.SecretRegisterRequest): Facade.SecretRegisterReply => this.#call(() => this.#client.vaultSecretsRegister(input) as Facade.SecretRegisterReply),
+      /** The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call. */
+      rotate: (input: Facade.SecretRotateRequest): Facade.SecretRotateReply => this.#call(() => this.#client.vaultSecretsRotate(input) as Facade.SecretRotateReply),
+      /** The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown. */
+      rewrap: (input: Facade.SecretRewrapRequest): Facade.SecretCustodyReply => this.#call(() => this.#client.vaultSecretsRewrap(input) as Facade.SecretCustodyReply),
+      custody: {
+        /** The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to. */
+        get: (input: Facade.SecretCustodyGetRequest): Facade.SecretCustodyViewReply => this.#call(() => this.#client.vaultSecretsCustodyGet(input) as Facade.SecretCustodyViewReply),
+        /** The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call. */
+        submit: (input: Facade.SecretCustodySubmitRequest): Facade.SecretCustodyReply => this.#call(() => this.#client.vaultSecretsCustodySubmit(input) as Facade.SecretCustodyReply),
+      },
     },
     /** The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined. */
     widen_proposals: Object.assign((input: Facade.WidenProposalsRequest): Facade.WidenProposalsView => this.#call(() => this.#client.vaultWidenProposals(input) as Facade.WidenProposalsView), {

@@ -147,6 +147,9 @@ pub(crate) use super::setting_doors::*;
 pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
+// The owner's custody register, rotate, rewrap, view and sealed submit
+// doors (FIX 4993), likewise.
+pub(crate) use super::secret_custody_doors::*;
 // The usage repair doors (FIX 6476), likewise.
 pub(crate) use super::usage_repair_doors::*;
 // The owner's root wave door (OF-427), likewise.

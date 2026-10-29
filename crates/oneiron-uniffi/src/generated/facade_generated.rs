@@ -2636,6 +2636,31 @@ export_facade! {
     let output = client.vault_secrets_lift_history(&input)?;
     crate::codec::lift_record("vault.secrets.lift_history", &output)
 };
+"vault.secrets.register" => fn vault_secrets_register(&self, input: SecretRegisterRequest) -> SecretRegisterReply = |client| {
+    let input: oneiron::task_verb::sdk::SecretRegisterRequest = crate::codec::lower_record("vault.secrets.register", input)?;
+    let output = client.vault_secrets_register(&input)?;
+    crate::codec::lift_record("vault.secrets.register", &output)
+};
+"vault.secrets.rotate" => fn vault_secrets_rotate(&self, input: SecretRotateRequest) -> SecretRotateReply = |client| {
+    let input: oneiron::task_verb::sdk::SecretRotateRequest = crate::codec::lower_record("vault.secrets.rotate", input)?;
+    let output = client.vault_secrets_rotate(&input)?;
+    crate::codec::lift_record("vault.secrets.rotate", &output)
+};
+"vault.secrets.rewrap" => fn vault_secrets_rewrap(&self, input: SecretRewrapRequest) -> SecretCustodyReply = |client| {
+    let input: oneiron::task_verb::sdk::SecretRewrapRequest = crate::codec::lower_record("vault.secrets.rewrap", input)?;
+    let output = client.vault_secrets_rewrap(&input)?;
+    crate::codec::lift_record("vault.secrets.rewrap", &output)
+};
+"vault.secrets.custody.get" => fn vault_secrets_custody_get(&self, input: SecretCustodyGetRequest) -> SecretCustodyViewReply = |client| {
+    let input: oneiron::task_verb::sdk::SecretCustodyGetRequest = crate::codec::lower_record("vault.secrets.custody.get", input)?;
+    let output = client.vault_secrets_custody_get(&input)?;
+    crate::codec::lift_record("vault.secrets.custody.get", &output)
+};
+"vault.secrets.custody.submit" => fn vault_secrets_custody_submit(&self, input: SecretCustodySubmitRequest) -> SecretCustodyReply = |client| {
+    let input: oneiron::task_verb::sdk::SecretCustodySubmitRequest = crate::codec::lower_record("vault.secrets.custody.submit", input)?;
+    let output = client.vault_secrets_custody_submit(&input)?;
+    crate::codec::lift_record("vault.secrets.custody.submit", &output)
+};
 "vault.widen_proposals" => fn vault_widen_proposals(&self, input: WidenProposalsRequest) -> WidenProposalsView = |client| {
     let input: oneiron::agent_dispatch::widen_doors::WidenProposalsRequest = crate::codec::lower_record("vault.widen_proposals", input)?;
     let output = client.vault_widen_proposals(&input)?;

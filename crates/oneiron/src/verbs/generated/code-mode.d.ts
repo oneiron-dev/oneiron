@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4240 declarations.
-// Replies: 1088 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4255 declarations.
+// Replies: 1093 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
 declare namespace Sdk {
@@ -2049,6 +2049,21 @@ declare namespace Sdk {
   type SnapshotSecretLiftProposal = { path: string; detector_reason: string; suggested_secret_name: string; project_id: string };
   type SecretLiftHistoryProposal = { id?: string; family: LiftFamily; cause: LiftCause; proposal: SnapshotSecretLiftProposal; run_id: string; filed_at: number; closed_at?: number | null; closed_by?: string | null; close_reason?: LiftCloseReason | null; close_receipt?: string | null };
   type SecretLiftStatus = { mode: SecretScanMode; paused: boolean; running?: SecretLiftProgress | null; last?: SecretLiftReceipt | null; open_proposals: number; open_by_cause: LiftCauseCount[]; closed_proposals: number; proposals: SecretLiftHistoryProposal[] };
+  type SecretRegisterBinding = { effector: string; scopes?: string[]; tier_ceiling?: number | null };
+  type SecretManifestSource = { repo: string; ref?: string | null };
+  type SecretRegisterRequest = { name: string; class: string; rung: number; device_only?: boolean; bindings?: SecretRegisterBinding[]; manifest?: SecretManifestSource | null; value_base64: string; holder?: string | null; recipients?: string[] };
+  type SecretRegisteredBinding = { effector: string; tier_ceiling: number; scopes: string[] };
+  type SecretCustodyReply = { work?: OwnerWorkReceipt | null; kept_here?: string | null; delivery: string; said: string; manifest?: string | null };
+  type SecretRegisterReply = { secret_id: string; name: string; class: string; device_only: boolean; rotation_generation: number; registered_at: number; bindings: SecretRegisteredBinding[]; manifest_ref: string; declared_paths: string[]; custody: SecretCustodyReply };
+  type SecretRotateRequest = { name: string; value_base64: string; holder?: string | null; recipients?: string[] };
+  type SecretRotationReceipt = { receipt_id: string; name: string; from_generation: number; to_generation: number; rotated_at: number; kind: string };
+  type SecretRotateReply = { receipt?: SecretRotationReceipt | null; custody: SecretCustodyReply };
+  type SecretRewrapRequest = { name: string; holder?: string | null; recipients: string[] };
+  type SecretCustodyGetRequest = { name: string };
+  type SecretCustodyCandidateReply = { machine: string; profile: string; encryption_key_digest: string; suite: number; encryption_key_base64: string; this_install: boolean };
+  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: OwnerWorkReceipt[]; candidates: SecretCustodyCandidateReply[]; delivery: string };
+  type SecretCustodyPermit = { machine: string; profile: string; encryption_key_digest: string };
+  type SecretCustodySubmitRequest = { change: string; secret_id: string; generation: number; seen: string; holder: string; recipients: SecretCustodyPermit[]; manifest_ref?: string | null; input_base64: string };
   type WidenProposalState = "pending" | "approved" | "declined";
   type WidenProposalsRequest = { state?: WidenProposalState | null };
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
@@ -6823,8 +6838,20 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   secrets: {
+    custody: {
+      /** The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to. */
+      get(input: Sdk.SecretCustodyGetRequest): Promise<Sdk.SecretCustodyViewReply | StoredResult>;
+      /** The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call. */
+      submit(input: Sdk.SecretCustodySubmitRequest): Promise<Sdk.SecretCustodyReply | StoredResult>;
+    };
     /** The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued. */
     lift_history(input: Sdk.SecretLiftRequest): Promise<Sdk.SecretLiftStatus | StoredResult>;
+    /** The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call. */
+    register(input: Sdk.SecretRegisterRequest): Promise<Sdk.SecretRegisterReply | StoredResult>;
+    /** The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown. */
+    rewrap(input: Sdk.SecretRewrapRequest): Promise<Sdk.SecretCustodyReply | StoredResult>;
+    /** The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call. */
+    rotate(input: Sdk.SecretRotateRequest): Promise<Sdk.SecretRotateReply | StoredResult>;
   };
   settings: {
     /** Reads the per-purpose inference defaults: the app's inference.defaults.read action, which needs the caller's Auto ceiling. */

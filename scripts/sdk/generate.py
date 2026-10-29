@@ -172,10 +172,12 @@ for row in ROWS:
         raise ValueError(f'{row["name"]}: an attachment names a facade JSON response file')
     # DOOR-127: `no_record` marks a facade row no transport keeps a call
     # receipt of (`NO_RECORD_ROWS`): an off-record session's own rows, as
-    # ARCH-0052 keeps no wire receipt that a session ran. Every reply states
-    # `none; no-record`, as the owner's off-record routes do. Only a host door
-    # judged by the owner's proof carries it, so no other caller's call goes
-    # unrecorded.
+    # ARCH-0052 keeps no wire receipt that a session ran, and the owner's
+    # custody rows that carry a secret's value or its sealed input (FIX
+    # 4993), whose record is the custody request's own receipt, as on the
+    # owner's routes. Every reply states `none; no-record`, as the owner's
+    # off-record routes do. Only a host door judged by the owner's proof
+    # carries it, so no other caller's call goes unrecorded.
     if row.get('no_record') and (row.get('context', 'memory') != 'memory' or not row.get('host_door')):
         raise ValueError(f'{row["name"]}: only a host-door facade row keeps no call receipt')
     # FIX 6498: `require_granted_scope` marks a write whose engine door judges
