@@ -461,14 +461,20 @@ pub struct OutcomeWindowClose {
 }
 
 /// A standing question's scheduled backfill: from `due_at`, the question
-/// pump answers each covered unit with no answer at `version`, once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// pump answers each covered unit with no answer at `version`, once. With
+/// `joins`, it answers each join whose unit has no answer at `version`,
+/// shown the join's own evidence instead of the unit's neighbours (FIX 2383).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScheduledBackfill {
     #[serde(with = "super::super::codec::entity")]
     pub question: EntityId,
     pub version: u32,
     pub due_at: u64,
+    /// The explicit recipe: each unit and the exact sources its answer is
+    /// shown. Empty: the default neighbourhood recipe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joins: Vec<super::recipe::GraphQuestionInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

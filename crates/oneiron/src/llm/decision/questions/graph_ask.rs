@@ -615,6 +615,36 @@ pub(super) fn unit_context(
     }))
 }
 
+/// A unit's context under an explicit recipe (FIX 2383): the unit, then each
+/// source the recipe names, as `lane` reads it, none left out. `None` when a
+/// source is out of `lane`'s reach, is no graph evidence, or is empty or past
+/// the source bound: a missing source means abstain, as in a recipe run.
+pub(super) fn recipe_context(
+    lane: &ScopedRead<'_>,
+    unit: EntityId,
+    kind: u8,
+    body: Vec<u8>,
+    evidence: &[EntityId],
+) -> Result<Option<GraphUnitContext>> {
+    let txn = lane.vault().store.env.read_txn()?;
+    let mut sources = Vec::with_capacity(evidence.len() + 1);
+    sources.push(source(unit, kind, body));
+    for id in evidence {
+        let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
+            return Ok(None);
+        };
+        if !kind_is_graph_evidence(kind) || body.is_empty() || body.len() > MAX_SOURCE_BYTES {
+            return Ok(None);
+        }
+        sources.push(source(*id, kind, body));
+    }
+    Ok(Some(GraphUnitContext {
+        unit,
+        sources,
+        omitted: Vec::new(),
+    }))
+}
+
 /// Whether `lane` still reads, in `txn`, exactly the eligible neighbours
 /// `context` was built from, and judges them as it did: the same kept and
 /// the same left out, so an omitted ref is still one the asker reads.

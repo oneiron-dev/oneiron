@@ -42,6 +42,9 @@ struct Prepared {
     proposal: Proposed,
     /// The graph context the answerer was shown, rechecked before landing.
     context: Option<GraphUnitContext>,
+    /// The context is a backfill join's own sources (FIX 2383): it has no
+    /// neighbourhood to recheck, only its sources.
+    joined: bool,
     arrival_marker: Option<Vec<u8>>,
 }
 
@@ -59,10 +62,11 @@ enum Proposed {
     Decision(Box<TypedDecision>),
 }
 
-/// A unit's answerer: the record, the unit, its entity type and its body.
-/// `None` leaves the unit unanswered this run.
-type UnitAnswer<'a> =
-    dyn FnMut(&QuestionRecord, EntityId, u8, &[u8]) -> Result<Option<Answered>> + 'a;
+/// A unit's answerer: the record, the unit, its entity type, its body and,
+/// for a backfill join (FIX 2383), the exact sources it is shown in place of
+/// its neighbours. `None` leaves the unit unanswered this run.
+type UnitAnswer<'a> = dyn FnMut(&QuestionRecord, EntityId, u8, &[u8], Option<&[EntityId]>) -> Result<Option<Answered>>
+    + 'a;
 
 /// How long a question whose refresh failed waits before it is tried again,
 /// in seconds: a failure is not retried on every pass.
@@ -86,7 +90,7 @@ pub fn refresh_question(
         question,
         trigger,
         now,
-        &mut |record, unit, _, body| {
+        &mut |record, unit, _, body, _| {
             answerer(record, unit, body).map(|p| {
                 Some(Answered {
                     proposal: Proposed::Proposal(p),
@@ -119,12 +123,12 @@ pub fn refresh_question_with<A: GraphAnswerer>(
         question,
         RefreshTrigger::Manual,
         now,
-        &mut |record, unit, kind, body| {
+        &mut |record, unit, kind, body, evidence| {
             if answerer.is_none() {
                 answerer = Some(answerer_for(record)?);
             }
             let answerer = answerer.as_mut().expect("made above");
-            graph_proposal(vault, record, answerer, unit, kind, body)
+            graph_proposal(vault, record, answerer, unit, kind, body, evidence)
         },
     )
 }
