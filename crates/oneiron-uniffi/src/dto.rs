@@ -115,9 +115,9 @@ pub struct WitnessTurn {
     /// Unix seconds; omitted is stamped with the current time at the call
     /// boundary.
     pub occurred_at: Option<i64>,
-    /// The records this reply names as cited or created (OF-063), judged by
-    /// the engine under the writer's own read. Omitted means it asserts
-    /// nothing.
+    /// The records this reply names as cited or created (OF-063), as the
+    /// generated facade record, judged by the engine under the writer's own
+    /// read. Omitted means it asserts nothing.
     pub assertions: Option<crate::WitnessAssertions>,
 }
 

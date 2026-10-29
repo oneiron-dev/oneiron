@@ -320,7 +320,11 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
                     .collect::<Result<std::collections::BTreeSet<_>, OneironError>>()
             })
             .transpose()?;
-        let assertions: Option<engine::WitnessAssertions> = self.assertions.lower()?;
+        // The generated record shares the engine's wire shape.
+        let assertions: Option<engine::WitnessAssertions> = self
+            .assertions
+            .map(|assertions| lower_record("vault.witness", assertions))
+            .transpose()?;
         Ok(engine::WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
