@@ -143,7 +143,9 @@ impl Memory<'_> {
                             let stored = self
                                 .vault()
                                 .identity_topology_event_in_txn(txn, &event)?
-                                .ok_or_else(|| MemoryError::not_found("topology event is absent"))?;
+                                .ok_or_else(|| {
+                                    MemoryError::not_found("topology event is absent")
+                                })?;
                             super::super::topology::topology_outcome_in_txn(
                                 self.vault(),
                                 txn,

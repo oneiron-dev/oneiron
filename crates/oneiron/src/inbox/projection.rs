@@ -442,7 +442,9 @@ pub(super) fn explicit_inbox_group(
             return Ok(None);
         }
         group_key = runs.identity(group_ref)?.0.clone();
-        pending = vault.store.pending_gate_consents_for_group_key(&group_key)?;
+        pending = vault
+            .store
+            .pending_gate_consents_for_group_key(&group_key)?;
         if pending.is_empty() {
             pending = raw_run_pending;
         }

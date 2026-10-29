@@ -23,7 +23,10 @@ struct PendingRunStart {
 /// Every stamped run holding a pending consent, in the order its earliest
 /// row waits, read in `txn`. The tray read visits every row; nothing here
 /// cuts it at a count. A row no run stamps is in no run.
-fn pending_dreamer_runs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<PendingRunStart>> {
+fn pending_dreamer_runs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<PendingRunStart>> {
     let mut seen = HashSet::new();
     let mut runs = Vec::new();
     for record in vault.store.pending_gate_consents_in_txn(txn, usize::MAX)? {

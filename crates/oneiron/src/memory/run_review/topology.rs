@@ -120,7 +120,9 @@ fn applied_by_ruling(
 
 /// An op's kind and its participants as a set: what an applied event and
 /// the ruling that applied it both name.
-fn op_shape(op: &IdentityTopologyOp) -> (std::mem::Discriminant<IdentityTopologyOp>, Vec<EntityId>) {
+fn op_shape(
+    op: &IdentityTopologyOp,
+) -> (std::mem::Discriminant<IdentityTopologyOp>, Vec<EntityId>) {
     let mut participants = op.participants();
     participants.sort_unstable();
     (std::mem::discriminant(op), participants)
