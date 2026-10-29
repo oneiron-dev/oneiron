@@ -116,8 +116,9 @@ impl Child {
     }
 
     /// Runs the child, or a summary job's one model call, on its meter
-    /// ([`Child::meter`]), and records what it used on its child scope once
-    /// the run ends when it spends under one.
+    /// ([`Child::meter`]), read live when it spends under a child scope: each
+    /// call books on that scope what the child used so far, and what no call
+    /// booked is recorded there once the run ends.
     fn metered(
         &self,
         vault: &Vault,
@@ -153,18 +154,30 @@ impl Child {
         let Some(backend) = self.provider.reader_backend(guard.clone(), payer) else {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
         };
+        // FIX 11458: under a child scope each call is admitted against what
+        // the scope has left then, the spend of siblings drawing on the
+        // parent room a soft hold shares included, never past the room the
+        // meter opened with, and its spend books there as the next call is
+        // admitted. A child on the host's meter runs on its backend as it is.
+        let live = recorded.map(|scope| {
+            let limit = guard.read().limit_units;
+            crate::ai_host::live_lease::LiveLease::new(vault, Some(scope), guard.clone(), limit, 0)
+        });
+        let leased = live
+            .as_ref()
+            .map(|live| crate::mcp::LiveLeaseBackend::new(live, backend.as_ref()));
+        let backend: &dyn LlmBackend = match &leased {
+            Some(leased) => leased,
+            None => backend.as_ref(),
+        };
         let end = match &job.kind {
-            ReaderJobKind::Read => {
-                self.run(vault, session, backend.as_ref(), &guard, door, None, None)
-            }
+            ReaderJobKind::Read => self.run(vault, session, backend, &guard, door, None, None),
             // A scoped child runs as a read child's run does, with its lent
             // ports bound; one whose authority or ports do not hold ends
             // before any call, never as a read child.
             ReaderJobKind::ScopedAgent { .. } => {
                 match scoped_child_service(vault, self.provider.as_ref(), job) {
-                    Ok(ports) => {
-                        self.run(vault, session, backend.as_ref(), &guard, door, ports, None)
-                    }
+                    Ok(ports) => self.run(vault, session, backend, &guard, door, ports, None),
                     Err(end) => end,
                 }
             }
@@ -175,15 +188,14 @@ impl Child {
             } => self.run_summarize_job(
                 vault,
                 session,
-                backend.as_ref(),
+                backend,
                 door.as_ref(),
                 recipe,
                 *window_tokens,
             ),
         };
-        if let Some(scope) = recorded
-            && let Err(error) =
-                AgentDispatcher::new(vault).record_guard_spend(&scope, guard.read().used_units)
+        if let Some(live) = &live
+            && let Err(error) = live.book_rest()
         {
             tracing::warn!(%error, task = %job.task.to_hex(), "a reader child's spend was not recorded");
         }

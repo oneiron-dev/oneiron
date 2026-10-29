@@ -2,7 +2,7 @@
 //! predicate every admission door asks, and the parties and readers a
 //! settled join's outcome replays to.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::join_consent::{
     ConsentNeed, ConsentState, RequiredParty, SpendConsent, person_of_actor_in_txn,
@@ -13,6 +13,7 @@ use crate::claim::ScopedRead;
 use crate::conversation::{RoomRole, room_host_in_txn};
 use crate::error::{ClaimError, Error, Result};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
+use crate::workspace_roster::ProjectEffective;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
 /// Whether `actor` answers `room`'s admission now: a human who owns the room
@@ -20,8 +21,10 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 /// signed project the room sits in (its own project first, then each ring of
 /// ancestors from the signed fold), an agent included, where the room's
 /// `admission` policy row allows a leader to answer. The leader's granted
-/// scope is that project's: a room no project of its leads holds is not its.
-/// Answering admission grants no payer or membership consent.
+/// scope is that project's: a room no project of its leads holds is not its,
+/// nor is one whose own project's view reaches past the slice of every ring
+/// project it leads. Answering admission grants no payer or membership
+/// consent.
 pub(in crate::workspace_roster) fn admission_party_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -34,7 +37,7 @@ pub(in crate::workspace_roster) fn admission_party_in_txn(
         return Ok(true);
     }
     if actor.actor_class() == EdgeActorClass::System
-        || !nearest_leaders_in(vault, txn, room)?.contains(&actor.entity_ref())
+        || nearest_leaders_in(vault, txn, room)?.get(&actor.entity_ref()) != Some(&true)
     {
         return Ok(false);
     }
@@ -82,25 +85,34 @@ pub(in crate::workspace_roster) fn require_admission_party_in_txn(
 
 /// The leaders of the nearest ring of signed projects `room` sits in: its
 /// own project first, then each ring of ancestors the signed fold names.
-/// Empty for a room no project holds, or none of whose projects folds to a
-/// signed authority.
+/// Each maps to whether the slice of a ring project it leads holds the
+/// room's own project's effective view (FIX 11087): a leader's slice that
+/// does not cover the room answers nothing there. Empty for a room no
+/// project holds, or none of whose projects folds to a signed authority.
 fn nearest_leaders_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
-) -> Result<BTreeSet<EntityId>> {
+) -> Result<BTreeMap<EntityId, bool>> {
     let mut seen: BTreeSet<EntityId> = crate::workspace_roster::room_project_in(vault, txn, room)?
         .into_iter()
         .collect();
     let mut ring: Vec<EntityId> = seen.iter().copied().collect();
+    // The first ring is the room's own project alone, so the first view
+    // read is the room's.
+    let mut room_view: Option<ProjectEffective> = None;
     while !ring.is_empty() {
-        let mut leaders = BTreeSet::new();
+        let mut leaders = BTreeMap::new();
         let mut next = Vec::new();
         for id in ring {
             let Some((_, effective)) = vault.effective_project_in_txn(txn, id)? else {
                 continue;
             };
-            leaders.extend(EntityId::from_hex(&effective.leader).ok());
+            let room_view = room_view.get_or_insert_with(|| effective.clone());
+            if let Ok(leader) = EntityId::from_hex(&effective.leader) {
+                let covers = room_view.slice_fits_under(&effective);
+                *leaders.entry(leader).or_insert(false) |= covers;
+            }
             for parent in &effective.parents {
                 let parent = EntityId::from_hex(parent)?;
                 if seen.insert(parent) {
@@ -113,7 +125,7 @@ fn nearest_leaders_in(
         }
         ring = next;
     }
-    Ok(BTreeSet::new())
+    Ok(BTreeMap::new())
 }
 
 /// Refuses `caller` the settled join `receipt`'s outcome, with its payer,

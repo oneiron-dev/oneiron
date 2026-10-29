@@ -50,7 +50,7 @@ fn transaction_key(vault: &Vault, txn: &RwTxn<'_>) -> TransactionKey {
     store_transaction_key(&vault.store, txn)
 }
 
-fn store_transaction_key(store: &Store, txn: &RwTxn<'_>) -> TransactionKey {
+fn store_transaction_key<S>(store: &S, txn: &RwTxn<'_>) -> TransactionKey {
     // Identity only: neither address is dereferenced or retained past the scope.
     (
         std::ptr::from_ref(store) as usize,
@@ -154,6 +154,21 @@ pub(crate) fn queue_settled_tasks(
 pub(crate) fn queue_committed_rows(vault: &Vault, txn: &RwTxn<'_>, rows: BTreeSet<EntityId>) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.rows.extend(rows);
+        }
+    });
+}
+
+/// Mark written rows for the owner's post-commit live-window mirror, from a
+/// helper holding only the store. The scope is keyed by the store's address,
+/// so only the vault's own store finds it. A rolled-back scope drops them, so
+/// no live window mirrors a write that did not land.
+pub(crate) fn queue_committed_rows_in_txn<S>(store: &S, txn: &RwTxn<'_>, rows: BTreeSet<EntityId>) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending
+            .borrow_mut()
+            .get_mut(&store_transaction_key(store, txn))
+        {
             queued.rows.extend(rows);
         }
     });

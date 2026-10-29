@@ -1920,6 +1920,7 @@ class TaskStatusView(TypedDict):
     asks: list[tuple[TaskAskHandle, TaskAskStatus]]
     last_receipt: NotRequired[str | None]
     workflow: NotRequired[TaskWorkflowStatus | None]
+    waiting: NotRequired[str | None]
     observed: str
 class TaskOutcomeProposed(TypedDict):
     kind: Literal["proposed"]
