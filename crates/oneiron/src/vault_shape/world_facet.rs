@@ -7,7 +7,7 @@
 //! topology's facet op, which partitions a person. A world facet grants
 //! nothing, as no mask does.
 use super::live::{facet_name, world_name};
-use super::{SHAPE_NAME_MAX_BYTES, invalid};
+use super::{SHAPE_NAME_MAX_BYTES, ShapeRow, ShapeTarget, invalid};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::error::Result;
@@ -15,7 +15,27 @@ use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_WORLD};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, TimeRange, Vault};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Leaves out of `kept` each world facet whose world `withheld` hides, and
+/// withholds it with its world: the row names its world (FIX 10199).
+pub(super) fn withhold_facets_of_hidden_worlds(
+    kept: &mut Vec<(ShapeRow, Option<EntityId>)>,
+    withheld: &mut BTreeSet<ShapeTarget>,
+) {
+    kept.retain(|(row, _)| {
+        let ShapeRow::WorldFacet { world, .. } = row else {
+            return true;
+        };
+        let hidden = withheld.contains(&ShapeTarget::World {
+            name: world.clone(),
+        });
+        if hidden {
+            withheld.insert(row.target());
+        }
+        !hidden
+    });
+}
 
 impl Vault {
     /// Every live local world on the caller's snapshot, by the name its

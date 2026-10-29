@@ -49,6 +49,14 @@ impl Vault {
         if withheld.contains(target) {
             return Ok(true);
         }
+        // A world's facet names its world (FIX 2297).
+        if let ShapeTarget::WorldFacet { world, .. } = target
+            && withheld.contains(&ShapeTarget::World {
+                name: world.clone(),
+            })
+        {
+            return Ok(true);
+        }
         let Some(id) = named_entity(target) else {
             return Ok(false);
         };

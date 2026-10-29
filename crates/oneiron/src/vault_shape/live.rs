@@ -6,6 +6,7 @@ use super::live_source::{LiveSkill, UnlanedChannel, channel_holding};
 use super::manifest_json::manifest_json;
 use super::reach::{ReachActor, ReachRows, ReachSender};
 use super::seed::hex;
+use super::world_facet::withhold_facets_of_hidden_worlds;
 use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::channel_identity::{
@@ -479,6 +480,7 @@ impl Vault {
         for (row, _) in &kept {
             withheld.remove(&row.target());
         }
+        withhold_facets_of_hidden_worlds(&mut kept, &mut withheld);
         Ok(LiveShape {
             rows: kept,
             policy_frontier,
