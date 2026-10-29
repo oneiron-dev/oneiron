@@ -109,8 +109,8 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
-        let verdict = self.owner_pattern_only_pass(&request, config)?;
-        self.record_bare_classify_receipt(&request, &verdict, config)
+        let pass = self.owner_pattern_only_pass(&request, config)?;
+        self.record_bare_classify_receipt(&request, &pass.verdict, pass.examined, config)
     }
 
     /// The model-less owner pass, WITHOUT a ledger row.
@@ -125,15 +125,19 @@ impl Vault {
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
-    ) -> Result<PolicyClassifyVerdict> {
+    ) -> Result<OwnerPlanePass> {
         let context = self.policy_model_context(request, config)?;
         let binding = context.binding;
+        let examined = context.owner_policy_enabled;
         let Some(context) = self.live_owner_context(context, config)? else {
-            return Ok(PolicyClassifyVerdict::clean_allow(
-                binding,
-                config,
-                PolicyPlane::OwnerPolicy,
-            ));
+            return Ok(OwnerPlanePass {
+                verdict: PolicyClassifyVerdict::clean_allow(
+                    binding,
+                    config,
+                    PolicyPlane::OwnerPolicy,
+                ),
+                examined,
+            });
         };
         let evaluation = context.evaluate(&request.content);
         if evaluation.acting_role() != Some(PolicyPatternRole::Decide)
@@ -141,22 +145,23 @@ impl Vault {
             && let Some(decisions) = config.owner_decisions.as_deref()
             && let Some(prompt) = context.prompt(request)
         {
-            return decisions.classify(
-                request,
-                &prompt,
-                AnswerPlane::Owner,
-                binding,
-                config,
-                pass_audit(&evaluation),
-                &PolicyCallClock::start(),
-            );
+            return Ok(OwnerPlanePass {
+                verdict: decisions.classify(
+                    request,
+                    &prompt,
+                    AnswerPlane::Owner,
+                    binding,
+                    config,
+                    pass_audit(&evaluation),
+                    &PolicyCallClock::start(),
+                )?,
+                examined,
+            });
         }
-        Ok(owner_pattern_only_verdict(
-            &context,
-            &evaluation,
-            config,
-            binding,
-        ))
+        Ok(OwnerPlanePass {
+            verdict: owner_pattern_only_verdict(&context, &evaluation, config, binding),
+            examined,
+        })
     }
 
     /// Classify with a safeguard model available.
@@ -179,7 +184,7 @@ impl Vault {
         let pass = self
             .owner_plane_pass_pinned(&request, config, Some((backend, lease)), &clock)
             .await?;
-        self.record_bare_classify_receipt(&request, &pass.verdict, config)
+        self.record_bare_classify_receipt(&request, &pass.verdict, pass.examined, config)
     }
 
     /// The ledger row a BARE classify door owes for the verdict it just
@@ -206,11 +211,12 @@ impl Vault {
     /// nothing behind.
     ///
     /// The silence rule is the enforcement path's: only an `Allow` from an
-    /// owner plane that is off examined nothing and writes nothing. A clean
-    /// `Allow` the plane gave is one hash-only row (FIX 7805): its content
-    /// and frontier hashes and its reason codes, no notice. Anything else —
-    /// a warn, a block, a route, or an allow with an audit a pattern or the
-    /// model contributed to — is a row as it always was.
+    /// owner plane that was off for the pass examined nothing and writes
+    /// nothing. A clean `Allow` the plane gave is one hash-only row (FIX
+    /// 7805): its content and frontier hashes and its reason codes, no
+    /// notice. Anything else — a warn, a block, a route, or an allow with an
+    /// audit a pattern or the model contributed to — is a row as it always
+    /// was.
     ///
     /// A pass whose model did not answer is a SOVEREIGN PLANE FALLING OPEN,
     /// which is the fact the owner is most owed. Its verdict is
@@ -222,6 +228,7 @@ impl Vault {
         &self,
         request: &PolicyClassifyRequest,
         verdict: &PolicyClassifyVerdict,
+        examined: bool,
         config: &PolicyModelConfig,
     ) -> Result<PolicyClassifyVerdict> {
         #[cfg(test)]
@@ -229,13 +236,13 @@ impl Vault {
         // F107's window, on the doors F94 and F99 built: the verdict was bound
         // to a policy frontier, and the door hands it out after a LATER
         // transaction. The silence rule only drops an Allow that still
-        // answers the policy in force from a plane that is off; anything else
-        // is settled in the row's own transaction (see
+        // answers the policy in force from a plane that was off for the pass;
+        // anything else is settled in the row's own transaction (see
         // `owner_verdict_in_force_in_txn`).
         if verdict.decision == PolicyClassifyDecision::Allow
             && verdict.audit.is_none()
             && !self.policy_model_verdict_is_stale_with_config(verdict, request, config)?
-            && !self.owner_plane_examines()?
+            && !examined
         {
             return Ok(verdict.clone());
         }
@@ -309,9 +316,7 @@ impl Vault {
                 return Ok(pass);
             }
         }
-        Ok(OwnerPlanePass {
-            verdict: self.policy_moving_verdict(request, config)?,
-        })
+        self.policy_moving_verdict(request, config)
     }
 
     /// The owner plane's typed fail-open for a policy still moving after its
@@ -322,14 +327,17 @@ impl Vault {
         &self,
         request: &PolicyClassifyRequest,
         config: &PolicyModelConfig,
-    ) -> Result<PolicyClassifyVerdict> {
-        let binding = self.policy_model_context(request, config)?.binding;
-        Ok(PolicyClassifyVerdict::skipped(
-            PolicySkipReason::PolicyMoving,
-            binding,
-            config,
-            PolicyPlane::OwnerPolicy,
-        ))
+    ) -> Result<OwnerPlanePass> {
+        let context = self.policy_model_context(request, config)?;
+        Ok(OwnerPlanePass {
+            verdict: PolicyClassifyVerdict::skipped(
+                PolicySkipReason::PolicyMoving,
+                context.binding,
+                config,
+                PolicyPlane::OwnerPolicy,
+            ),
+            examined: context.owner_policy_enabled,
+        })
     }
 
     /// The owner plane's full pass, model included. Shared by the classify
@@ -379,6 +387,7 @@ impl Vault {
     ) -> Result<OwnerPlanePass> {
         let context = self.policy_model_context(request, config)?;
         let binding = context.binding;
+        let examined = context.owner_policy_enabled;
         let Some(context) = self.live_owner_context(context, config)? else {
             return Ok(OwnerPlanePass {
                 verdict: PolicyClassifyVerdict::clean_allow(
@@ -386,6 +395,7 @@ impl Vault {
                     config,
                     PolicyPlane::OwnerPolicy,
                 ),
+                examined,
             });
         };
         let evaluation = context.evaluate(&request.content);
@@ -394,6 +404,7 @@ impl Vault {
         if evaluation.acting_role() == Some(PolicyPatternRole::Decide) {
             return Ok(OwnerPlanePass {
                 verdict: owner_pattern_only_verdict(&context, &evaluation, config, binding),
+                examined,
             });
         }
         if !wants_model(config.owner_classifier_mode, evaluation.acting_role()) {
@@ -404,6 +415,7 @@ impl Vault {
                     PolicyPlane::OwnerPolicy,
                 )
                 .with_audit(audit),
+                examined,
             });
         }
         let skipped = |reason: PolicySkipReason, audit: PolicyPassAudit| OwnerPlanePass {
@@ -414,6 +426,7 @@ impl Vault {
                 PolicyPlane::OwnerPolicy,
             )
             .with_audit(audit),
+            examined,
         };
         // No document to send, or no model to reach: the plane is inactive for
         // model classification. Sovereign, so it fails open — as a skip.
@@ -431,6 +444,7 @@ impl Vault {
                     audit,
                     clock,
                 )?,
+                examined,
             });
         }
         let Some(safeguard) = safeguard else {
@@ -458,7 +472,7 @@ impl Vault {
             let line = budget.read().attempt_id;
             self.budget_denied_hooks(&crate::llm::BudgetDenied::Exhausted, budget, &line, None);
         }
-        Ok(OwnerPlanePass { verdict })
+        Ok(OwnerPlanePass { verdict, examined })
     }
 
     /// The prompt this vault would send for `request`, or `None` when the owner
@@ -559,7 +573,7 @@ pub(crate) async fn stateless_owner_classification(
             return Ok((verdict.decision, notices));
         }
     }
-    let moving = vault.policy_moving_verdict(&request, config)?;
+    let moving = vault.policy_moving_verdict(&request, config)?.verdict;
     let notices = policy_notice(moving.decision, &moving.category, None, config)
         .into_iter()
         .collect();
@@ -571,6 +585,9 @@ pub(crate) async fn stateless_owner_classification(
 /// caller can drop the fact on the way out.
 pub(super) struct OwnerPlanePass {
     pub(crate) verdict: PolicyClassifyVerdict,
+    /// Whether the owner plane was on for the policy the pass read: a pass
+    /// that examined the content, even if the plane is off now.
+    pub(crate) examined: bool,
 }
 
 impl OwnerPlanePass {

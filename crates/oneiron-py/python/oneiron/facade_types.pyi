@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1180 facade rows, 4273 declarations.
-Inputs: 1111 of 1180 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1030 of 1180 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1182 facade rows, 4281 declarations.
+Inputs: 1113 of 1182 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1032 of 1182 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 116; unread shapes: 0.
 """
 
@@ -2356,6 +2356,23 @@ class RsiTopUpShare(TypedDict):
     share: str
     units: int
 RsiTopUp = RsiTopUpTokens | RsiTopUpExploration | RsiTopUpShare
+class ResidentSharesRequest(TypedDict):
+    ...
+class ResidentShareView(TypedDict):
+    resident: str
+    units: NotRequired[int | None]
+    pinned: bool
+    allocation: NotRequired[str | None]
+    allocation_generation: NotRequired[int | None]
+    used_units: int
+    overdraft_units: int
+    overdrafts: int
+class ResidentSharesView(TypedDict):
+    residents: list[ResidentShareView]
+class SetResidentShareRequest(TypedDict):
+    resident: str
+    units: NotRequired[int | None]
+    pinned: NotRequired[bool]
 SeatAuth = Literal["vendor_login", "api_key"]
 class RunnerSeat(TypedDict):
     runner: str
@@ -5348,8 +5365,20 @@ class SkillOptimizeGoalView(TypedDict):
 class SkillOptimizeGoalBindRequest(TypedDict):
     skill: EntityId
     project: NotRequired[EntityId | None]
+class TradeoffCapacityAdvisoryAuthoredRulesBody(TypedDict):
+    held: int
+    limit: int
+class TradeoffCapacityAdvisoryAuthoredRules(TypedDict):
+    authored_rules: TradeoffCapacityAdvisoryAuthoredRulesBody
+class TradeoffCapacityAdvisoryLearnedRulesBody(TypedDict):
+    held: int
+    limit: int
+class TradeoffCapacityAdvisoryLearnedRules(TypedDict):
+    learned_rules: TradeoffCapacityAdvisoryLearnedRulesBody
+TradeoffCapacityAdvisory = TradeoffCapacityAdvisoryAuthoredRules | TradeoffCapacityAdvisoryLearnedRules
 class SkillOptimizeGoalRevision(TypedDict):
     goal_revision: str
+    tradeoff_capacity_advisory: NotRequired[list[TradeoffCapacityAdvisory] | None]
 TradeoffChoice = Literal["approve", "reject"]
 class TradeoffRule(TypedDict):
     gains: list[str]
@@ -5408,6 +5437,7 @@ class SkillTradeoffAsk(TypedDict):
 class SkillOptimizeTradeoffAskView(TypedDict):
     question_digest: str
     ask: SkillTradeoffAsk
+    tradeoff_capacity_advisory: NotRequired[list[TradeoffCapacityAdvisory] | None]
 class SkillOptimizeTradeoffPickRequest(TypedDict):
     proposal: EntityId
     question_digest: str
@@ -19315,10 +19345,15 @@ class ConsolidationWakeStatusRequest(TypedDict):
     wake_ref: NotRequired[str | None]
     limit: NotRequired[int | None]
     cursor: NotRequired[str | None]
+class DreamerWakeClaimAuthoringFallbackViewAmbiguousCampaignsBody(TypedDict):
+    roots: list[str]
+class DreamerWakeClaimAuthoringFallbackView(TypedDict):
+    ambiguous_campaigns: DreamerWakeClaimAuthoringFallbackViewAmbiguousCampaignsBody
 class DreamerWakeEndView(TypedDict):
     unix_ms: int
     elapsed_ms: int
     stop: NotRequired[str | None]
+    claim_authoring_fallback: NotRequired[DreamerWakeClaimAuthoringFallbackView | None]
 class DreamerWakeHeaderView(TypedDict):
     trigger: str
     scope: str
@@ -21588,6 +21623,7 @@ class SwitchOutcomeFailed(TypedDict):
     detail: str
 SwitchOutcome = SwitchOutcomeSwitched | SwitchOutcomeUnchanged | SwitchOutcomeFailed
 EngineSwitchRecord = TypedDict("EngineSwitchRecord", {"from": BrowserEngine, "to": BrowserEngine, "reason": str, "url": str, "carried": NotRequired[list[SwitchCarried]], "not_carried": NotRequired[list[SwitchNotCarried]], "outcome": SwitchOutcome})
+ReceiptOutcome = Literal["unknown"]
 class EffectReceipt(TypedDict):
     seq: int
     verb: str
@@ -21614,6 +21650,7 @@ class EffectReceipt(TypedDict):
     tab: NotRequired[str | None]
     result_tab: NotRequired[str | None]
     result_unread: NotRequired[str | None]
+    outcome: NotRequired[ReceiptOutcome | None]
     duration_ms: int
 class SecretParam(TypedDict):
     name: str
@@ -21935,9 +21972,14 @@ class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
 BrowserHandoverOutput = BrowserAnswer
+class SnapshotBounds(TypedDict):
+    read_chars: NotRequired[int | None]
+    snapshot_origins: NotRequired[int | None]
+    snapshot_bytes: NotRequired[int | None]
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str
+    snapshot_bounds: NotRequired[SnapshotBounds | None]
 class SwitchEngineOutput(TypedDict):
     receipt: EffectReceipt
     observation: NotRequired[ObservationPage | None]

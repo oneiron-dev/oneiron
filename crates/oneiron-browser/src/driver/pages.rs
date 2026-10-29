@@ -12,11 +12,17 @@
 //! forms, the answer carries the one whose pages take fewer JSON bytes,
 //! the whole one on a tie (AB-003). A base no longer held, of another
 //! scope, or partial gives a whole observation, never a refusal.
+//!
+//! What the answers hold is charged to the host's memory floor, where the
+//! driver booked a charge for them, as they come and go (FIX 8007): a
+//! charge never refuses, so growth the floor will not admit leaves the
+//! charge as it was and the answer is held all the same.
 
 use crate::observation::{ObservationBase, splice_of};
+use crate::retention::HandleRetention;
 use crate::{
     BrowserError, FindInput, Observation, ObservationPage, ObserveInput, PartialTree, Row,
-    WaitForInput,
+    RowFieldGap, RowSecret, WaitForInput,
 };
 use std::collections::{HashSet, VecDeque};
 
@@ -78,6 +84,20 @@ pub(crate) struct Read {
     pub(crate) rows: Vec<Row>,
     pub(crate) no_tree: bool,
     pub(crate) partial: Option<PartialTree>,
+    /// Where a page read was taken, for a recorder's lookup; none for a
+    /// window's.
+    pub(crate) at: Option<ReadAt>,
+}
+
+/// Where a page read was taken (CUA E9, FIX 9412): its tab, its URL as the
+/// browser holds it (never the masked one an observation shows), and its
+/// tab's top-level commits before the read, so two reads of one URL in two
+/// tabs, or across a reload, are never taken for one document.
+#[derive(Clone)]
+pub(crate) struct ReadAt {
+    pub(crate) tab: String,
+    pub(crate) url: String,
+    pub(crate) commits: u64,
 }
 
 /// One observation's ordered rows, kept for a later one to edit.
@@ -85,9 +105,9 @@ pub(crate) struct Read {
 struct Snapshot {
     seq: u64,
     scope: String,
-    url: String,
     rows: Vec<Row>,
     partial: bool,
+    at: Option<ReadAt>,
 }
 
 /// The observations a later one may edit, and the answers held for their
@@ -117,6 +137,9 @@ pub(crate) struct Observations {
     read_rows: HashSet<u64>,
     /// The number the last held row answer took.
     rows_seq: u64,
+    /// The host's charge for what the answers hold, and its bytes now.
+    charge: Option<Box<dyn HandleRetention>>,
+    charged: usize,
 }
 
 /// A held row answer: its number, its rows, and, when its window's walk
@@ -151,6 +174,41 @@ pub(crate) struct Found {
 }
 
 impl Observations {
+    /// Answers whose held bytes are charged through `charge`, holding
+    /// nothing yet (FIX 8007).
+    pub(crate) fn charged(charge: Box<dyn HandleRetention>) -> Self {
+        Self {
+            charge: Some(charge),
+            ..Self::default()
+        }
+    }
+
+    /// Moves the charge to the bytes the answers hold now: every snapshot,
+    /// and every paged observation and row answer.
+    fn recharge(&mut self) {
+        if self.charge.is_none() {
+            return;
+        }
+        let snapshots = self
+            .history
+            .iter()
+            .chain(&self.delivered)
+            .chain(&self.hidden)
+            .map(|held| rows_bytes(&held.rows));
+        let paged = self.paged.iter().map(|held| rows_bytes(&held.rows));
+        let rows = self.rows.iter().map(|held| rows_bytes(&held.rows));
+        let bytes = snapshots
+            .chain(paged)
+            .chain(rows)
+            .fold(0, usize::saturating_add);
+        if bytes != self.charged
+            && let Some(charge) = self.charge.as_mut()
+            && charge.resize(bytes)
+        {
+            self.charged = bytes;
+        }
+    }
+
     /// The observation of `read`, whole or as an edit of `base`, the smaller
     /// on the wire; `read` is kept for a later observation to edit.
     pub(crate) fn observe(&mut self, read: Read, base: &Base) -> Observation {
@@ -182,9 +240,9 @@ impl Observations {
         let snapshot = Snapshot {
             seq: read.seq,
             scope: read.scope,
-            url: whole.url.clone(),
             rows: read.rows,
             partial,
+            at: read.at,
         };
         if self.hiding {
             self.hidden = Some(snapshot);
@@ -194,6 +252,7 @@ impl Observations {
                 self.history.pop_front();
             }
         }
+        self.recharge();
         let Some((base_seq, (splice, rows))) = edit else {
             return whole;
         };
@@ -240,15 +299,22 @@ impl Observations {
         (!partial && !held.partial && held.scope == scope).then_some(held)
     }
 
-    /// The rows of the newest whole observation read at `url`, as the
-    /// session holds them (CUA E9): what a recorder matches an act's target
-    /// against before it reads the page again.
-    pub(crate) fn held_rows_at(&self, url: &str) -> Option<&[Row]> {
+    /// The rows of the newest whole observation read in tab `tab` at `url`,
+    /// as the browser holds it, after the tab's `commits` top-level commits
+    /// and before another (CUA E9, FIX 9412): what a recorder matches an
+    /// act's target against before it reads the page again. Its seq orders
+    /// the reads of one document.
+    pub(crate) fn held_rows_at(&self, tab: &str, url: &str, commits: u64) -> Option<&[Row]> {
         self.history
             .iter()
             .chain(&self.hidden)
             .chain(&self.delivered)
-            .filter(|held| !held.partial && held.url == url)
+            .filter(|held| !held.partial)
+            .filter(|held| {
+                held.at
+                    .as_ref()
+                    .is_some_and(|at| at.tab == tab && at.url == url && at.commits == commits)
+            })
             .max_by_key(|held| held.seq)
             .map(|held| held.rows.as_slice())
     }
@@ -275,6 +341,7 @@ impl Observations {
             return;
         }
         self.delivered = self.history.iter().find(|held| held.seq == seq).cloned();
+        self.recharge();
     }
 
     /// `observation` as its first page; the rest is held for its cursor. A
@@ -317,6 +384,7 @@ impl Observations {
         }
         self.paged.push_back(observation);
         age_out(&mut self.paged, &mut self.read_paged, |held| held.seq);
+        self.recharge();
         page
     }
 
@@ -330,6 +398,7 @@ impl Observations {
             self.deliver(seq);
             self.read_paged.insert(seq);
             age_out(&mut self.paged, &mut self.read_paged, |held| held.seq);
+            self.recharge();
         }
         Ok(page)
     }
@@ -347,6 +416,7 @@ impl Observations {
         self.deliver(rest.seq);
         self.read_paged.insert(rest.seq);
         age_out(&mut self.paged, &mut self.read_paged, |held| held.seq);
+        self.recharge();
         Ok(rest)
     }
 
@@ -413,6 +483,7 @@ impl Observations {
             self.read_rows.insert(answer);
         }
         age_out(&mut self.rows, &mut self.read_rows, |held| held.answer);
+        self.recharge();
         found
     }
 
@@ -435,6 +506,7 @@ impl Observations {
         if found.next.is_none() {
             self.read_rows.insert(answer);
             age_out(&mut self.rows, &mut self.read_rows, |held| held.answer);
+            self.recharge();
         }
         Ok(found)
     }
@@ -472,6 +544,7 @@ impl Observations {
         self.rows.clear();
         self.read_paged.clear();
         self.read_rows.clear();
+        self.recharge();
     }
 
     /// The paged observation `cursor` reads on, and where its next page
@@ -653,6 +726,32 @@ fn page_of(rows: &[Row], from: usize) -> (Vec<Row>, Option<usize>) {
         at += 1;
     }
     (page, None)
+}
+
+/// The bytes held rows take: each row's own slot and its strings' room.
+fn rows_bytes(rows: &[Row]) -> usize {
+    let texts = |texts: &[String]| -> usize {
+        texts.iter().map(String::capacity).sum::<usize>()
+            + texts.len() * std::mem::size_of::<String>()
+    };
+    let optional = |text: &Option<String>| text.as_ref().map_or(0, String::capacity);
+    rows.iter()
+        .map(|row| {
+            std::mem::size_of::<Row>()
+                + row.target.capacity()
+                + row.locator.capacity()
+                + row.role.capacity()
+                + row.name.capacity()
+                + optional(&row.value)
+                + optional(&row.href)
+                + texts(&row.states)
+                + texts(&row.datetimes)
+                + row.unavailable.len() * std::mem::size_of::<RowFieldGap>()
+                + row.secret.as_ref().map_or(0, |secret| {
+                    std::mem::size_of::<RowSecret>() + optional(&secret.handle)
+                })
+        })
+        .fold(0, usize::saturating_add)
 }
 
 /// One entry's bytes in a page's JSON, with its comma.

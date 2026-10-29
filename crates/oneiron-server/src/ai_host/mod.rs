@@ -163,6 +163,11 @@ pub struct AiHandle {
     writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
     /// The wording runs are asked for their confession in (FIX 8696).
     confession: Arc<str>,
+    /// The control the Dreamer's passes are admitted and paused through,
+    /// when this host attached under one (managed serve's reap freeze, FIX
+    /// 6909): the owner's pause and resume doors set and clear their own
+    /// cause on it. `None` elsewhere.
+    dreamer_control: Option<DreamerControl>,
 }
 
 /// The running workers, owned by the serve path until shutdown.

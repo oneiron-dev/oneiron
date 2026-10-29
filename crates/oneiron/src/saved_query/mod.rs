@@ -57,6 +57,7 @@ mod definition;
 mod evaluator;
 mod evidence;
 mod filter;
+mod health;
 mod lifecycle;
 mod membership;
 mod memo_lifetime;
@@ -92,6 +93,10 @@ pub use self::evidence::{
 pub use self::filter::{
     ClaimComparison, EvidenceDependencies, FilterAst, MatcherSpec, filter_dependencies,
     parse_filter_ast, validate_per_entity_decidable,
+};
+pub use self::health::{
+    SavedQueryHealth, SavedQueryPass, SavedQueryWake, SavedQueryWakeOutcome,
+    record_saved_query_wake, saved_query_health,
 };
 pub use self::lifecycle::{
     archive_saved_query, create_saved_query, read_saved_query, update_saved_query,

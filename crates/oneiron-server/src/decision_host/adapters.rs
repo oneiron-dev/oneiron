@@ -71,6 +71,12 @@ impl DecisionProvider for HouseRead {
         self.leaves
     }
 
+    /// The reader's price as its host knows it (FIX 11305): none for the
+    /// house model this server serves, whose provider names no price.
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.reader.cost_per_thousand()
+    }
+
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         self.provider()?.decide(call)
     }

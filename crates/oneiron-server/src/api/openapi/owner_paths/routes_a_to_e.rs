@@ -636,6 +636,18 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/dreamer/pause",
+        summary: "Sets the owner's own Dreamer pause: no new pass starts, and the running attempt parks at its next boundary. Answers the pause and the owner's cause of it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/dreamer/resume",
+        summary: "Clears the owner's own Dreamer pause; a managed freeze still holds it. Answers the pause and the owner's cause of it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/dreamer/revert",
         summary: "The owner's revert of one Dreamer change, with one receipt.",
         row: None,
