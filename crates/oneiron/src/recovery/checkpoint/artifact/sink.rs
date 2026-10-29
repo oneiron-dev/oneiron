@@ -95,7 +95,9 @@ pub(in crate::recovery::checkpoint) struct ArtifactBody {
     pub(in crate::recovery::checkpoint) digest: Option<[u8; 32]>,
 }
 
-/// Writes the artifact at `path`, create-new and owner-only: the image, then
+/// Writes the artifact of `snapshot`, its snapshot id, which its caller
+/// minted fresh before it sealed anything bound to it (FIX 6598), at
+/// `path`, create-new and owner-only: the image, then
 /// each body `open_body` hands back by its place in `bodies`, then each of
 /// `payload`'s streams (KS-7; `None` writes none), then the manifest's
 /// pieces and root (`manifest`, FIX 8823), then the commitment `link`
@@ -112,6 +114,7 @@ pub(in crate::recovery::checkpoint) struct ArtifactBody {
 #[allow(clippy::too_many_arguments)]
 pub(in crate::recovery::checkpoint) fn write_artifact(
     path: &Path,
+    snapshot: [u8; 32],
     key: &CheckpointKey,
     kind: ArtifactKind,
     registry: Option<&str>,
@@ -134,8 +137,6 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     }
     let file = options.open(path)?;
     let mut partial = Partial(Some(path.to_path_buf()));
-    let mut snapshot = [0u8; 32];
-    crate::world_keys::os_fill(&mut snapshot)?;
     let key_header = carried.encode()?;
     let len = u32::try_from(key_header.len())
         .ok()

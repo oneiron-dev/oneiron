@@ -260,18 +260,18 @@ pub(super) fn local_outbound_scope(
     }
 }
 
+/// The scope a Connect or re-pact discloses, beside the commitment both
+/// owners' gestures sign (FIX 7907, 7958). The commitment is keyed by the
+/// grant's erasable opening key, which the door that logged the action
+/// keyed it under and which no fold holds, so a fold, a replay after the
+/// key's revocation and a post-revoke proof take the signed commitment as
+/// it stands, without the key: the scope must only be canonical.
 fn verify_pact_scope_digest(
     scope: &FederationPactScope,
-    pact_nonce: &[u8; 16],
-    claimed_digest: &[u8; 32],
 ) -> std::result::Result<(), FederationLifecycleRejection> {
-    let canonical_scope = encode_federation_pact_scope(scope)
-        .map_err(|_| FederationLifecycleRejection::ScopeInvalid)?;
-    if federation_scope_digest(pact_nonce, &canonical_scope) == *claimed_digest {
-        Ok(())
-    } else {
-        Err(FederationLifecycleRejection::ScopeDigestMismatch)
-    }
+    encode_federation_pact_scope(scope)
+        .map(drop)
+        .map_err(|_| FederationLifecycleRejection::ScopeInvalid)
 }
 
 /// Verifies the embedded peer gesture against the side-symmetric transcript.
@@ -375,7 +375,7 @@ pub(super) fn apply_federation_lifecycle(
         let claimed_digest = action
             .scope_digest
             .ok_or(FederationLifecycleRejection::ScopeDigestMismatch)?;
-        verify_pact_scope_digest(scope, &action.pact_nonce, &claimed_digest)?;
+        verify_pact_scope_digest(scope)?;
         let peer_owner_key =
             verify_lifecycle_gesture(state, action, &claimed_digest, None, context)?;
         let effective_scope = local_outbound_scope(&local_vault_id, &action.peer_vault_id, scope);
@@ -462,7 +462,7 @@ pub(super) fn apply_federation_lifecycle(
             let claimed_digest = action
                 .scope_digest
                 .ok_or(FederationLifecycleRejection::ScopeDigestMismatch)?;
-            verify_pact_scope_digest(scope, &action.pact_nonce, &claimed_digest)?;
+            verify_pact_scope_digest(scope)?;
             verify_lifecycle_gesture(
                 state,
                 action,

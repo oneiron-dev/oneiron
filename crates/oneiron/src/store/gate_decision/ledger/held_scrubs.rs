@@ -93,11 +93,18 @@ impl Store {
     /// a held one keeps its bytes, its claim references and its indexes, and
     /// the erase owes it its skeleton. `true` when anything changed, an owed
     /// scrub included; never whether the erase is complete.
+    ///
+    /// `erase` is set for an erase (FIX 7955): only it retires the claim's
+    /// decision key, so a restore of an older image cannot open what it
+    /// redacted. A delete keeps the key, so its receipts restore from a
+    /// pre-delete backup in the restore window; its skeletons, tray and owed
+    /// scrubs are the same.
     pub(crate) fn redact_gate_decisions_for_claim_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         claim_id: &[u8; 16],
         redacted_at: u64,
+        erase: bool,
     ) -> Result<bool> {
         self.reject_legal_hold_in_txn(&*wtxn, claim_id)?;
         let id = EntityId::from_bytes(*claim_id)
@@ -134,7 +141,9 @@ impl Store {
                 return Err(Error::CorruptedIndex("gate decision claim erasure"));
             }
         }
-        self.stage_erased_claim_key_retirement_in_txn(wtxn, claim_id)?;
+        if erase {
+            self.stage_erased_claim_key_retirement_in_txn(wtxn, claim_id)?;
+        }
         Ok(changed)
     }
 

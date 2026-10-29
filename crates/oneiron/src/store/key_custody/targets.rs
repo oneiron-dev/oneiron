@@ -2,9 +2,12 @@
 //! the keyless log in `<compartment>/.journal/`, outside the vault's image:
 //! no restore of an image rolls it back.
 //!
-//! - `targets`: the required set, `{version, revision, members}`. A member
-//!   is added before its first exposure and the revision rises; none is ever
-//!   dropped by a pass, a config change or an outage (no silent removal).
+//! - `targets`: the required set, `{version, revision, members, history}`.
+//!   A member is added before its first exposure and the revision rises;
+//!   none is ever dropped by a pass, a config change or an outage (no
+//!   silent removal). Only the owner's drain takes one out, after its
+//!   deletion ack, at a new revision with a history row (`drain`, FIX 5843);
+//!   `drains/f.<target hex>` fences a member while its drain is begun.
 //! - `acks/a.<target hex>`: the newest accepted ack per member;
 //!   `acks/p.<target hex>`: why it is pending, sanitized, with its time;
 //!   `acks/l.<target hex>`: its publish lock (FIX 6394).
@@ -43,6 +46,8 @@ use super::protocol::{
 };
 use super::retirement::{RetireCause, RetirementIntent};
 
+mod drain;
+
 const TARGETS: &str = "targets";
 const ACKS: &str = "acks";
 const OBLIGATIONS: &str = "obligations";
@@ -70,6 +75,9 @@ struct SetWire {
     version: u8,
     revision: u64,
     members: Vec<MemberWire>,
+    /// The owner's drains and re-enrolments (FIX 5843).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    history: Vec<drain::SetEvent>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -97,11 +105,17 @@ pub(crate) struct Member {
 pub(crate) struct RequiredSet {
     pub(crate) revision: u64,
     pub(crate) members: Vec<Member>,
+    history: Vec<drain::SetEvent>,
 }
 
 impl RequiredSet {
     fn member(&self, id: &TargetId) -> Option<&Member> {
         self.members.iter().find(|member| member.spec.id() == id)
+    }
+
+    /// Whether `id` is a member a publication goes to.
+    pub(crate) fn holds(&self, id: &TargetId) -> bool {
+        self.member(id).is_some()
     }
 
     fn wire(&self) -> SetWire {
@@ -124,6 +138,7 @@ impl RequiredSet {
                         .map(|bytes| hex(&bytes)),
                 })
                 .collect(),
+            history: self.history.clone(),
         }
     }
 
@@ -157,6 +172,7 @@ impl RequiredSet {
         Ok(Self {
             revision: wire.revision,
             members,
+            history: wire.history,
         })
     }
 }
@@ -269,13 +285,14 @@ impl Journal {
     }
 
     /// Adds every member of `specs` the set lacks, at the next revision.
-    /// Nothing is ever removed here.
+    /// Nothing is ever removed here, and a member the owner drained is never
+    /// added back here: only its re-enrolment adds it (FIX 5843).
     pub(crate) fn register(&self, specs: &[TargetSpec]) -> Result<RequiredSet> {
         let _lock = self.lock()?;
         let mut set = self.required_set()?;
         let missing: Vec<&TargetSpec> = specs
             .iter()
-            .filter(|spec| set.member(spec.id()).is_none())
+            .filter(|spec| set.member(spec.id()).is_none() && !set.drained(spec.id()))
             .collect();
         if missing.is_empty() {
             return Ok(set);
@@ -346,6 +363,13 @@ impl Journal {
         let id = TargetId::new(&ack.target_id)?;
         let set = self.required_set()?;
         let member = set.member(&id).ok_or_else(mismatch)?;
+        // A member a begun drain fences commits no publication (FIX 5843,
+        // ruled 10-20).
+        if self.drain_fenced(&id)? {
+            return Err(Error::InvalidConfig(
+                "the custody target is being drained: its acknowledgement is stale".into(),
+            ));
+        }
         let expected = facts.ack(&id, ack.evidence.clone(), &ack.attester);
         let remaining = match member.spec.scope() {
             TargetScope::HeadAndLog => 1,

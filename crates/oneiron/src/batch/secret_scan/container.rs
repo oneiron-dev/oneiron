@@ -1,22 +1,32 @@
 //! Containers the secret mask reads into (OF-067 C, owner ruling G04 binary
 //! = C2): a ZIP archive (Office, OpenDocument and the other ZIP-family
-//! files), a gzip file and a PDF's streams. The write door reads each member
-//! as it reads a body, and a member's keys are placed at their spans in the
-//! decoded member. A reader the owner has not granted gets a copy rebuilt
-//! around the overwritten keys; the stored bytes never change.
+//! files), a gzip file and a PDF's streams and text strings. The write door
+//! reads each member as it reads a body, and a member's keys are placed at
+//! their spans in the decoded member. A reader the owner has not granted gets
+//! a copy rebuilt around the overwritten keys, each key in a text member
+//! standing as its custody handle (FIX 7944); the stored bytes never change.
 //!
-//! One walk serves the write door, the release scan and the rebuild, under
-//! one budget for a file's whole tree. A container the walk cannot read
-//! whole (past a bound, malformed, failing a checksum, encrypted, or in a
-//! method or filter no reader here decodes) is sealed ([`is_sealed`]): the
-//! write door stores it as it is and leaves it unmarked (owner ruling C2,
-//! "encrypted files are stored as they are"), a serving door gives it to the
-//! owner and refuses it to a masked reader, and every release door reads it
-//! as a hit.
+//! One walk serves the write door, the release scan and the rebuild, its
+//! frames on the heap ([`retained_iterative`]), under one floor of decoded
+//! bytes for a file's whole tree. No count of members, objects or nesting
+//! ends it (FIX 7943): a container met inside itself is a cycle, and a
+//! central directory that declares more entries than its bytes can hold is
+//! malformed. A container the walk cannot read whole (malformed, failing a
+//! checksum, encrypted, in a method or filter no reader here decodes, or
+//! past the byte floor) is sealed ([`is_sealed`]): the write door stores it
+//! as it is and leaves it unmarked (owner ruling C2, "encrypted files are
+//! stored as they are"), a serving door gives it to the owner and refuses it
+//! to a masked reader, and every release door reads it as a hit.
 //!
-//! A container is known by its leading bytes, never by its name. A tar, 7z,
-//! RAR or xz file is read as plain bytes, and so is a container that starts
-//! past a file's first byte.
+//! The bytes no reader shows (a PDF's superseded revisions, a ZIP's bytes
+//! outside its central directory's entries) are read by the scans alone
+//! (FIX 2470): a release door and a masked read of an unmarked file read
+//! them, and the rebuilt copy leaves them out, so no mark is placed there.
+//!
+//! A container is known by its leading bytes, never by its name, and text
+//! with a container's leading bytes is one only when it parses as one (FIX
+//! 2474). A tar, 7z, RAR or xz file is read as plain bytes, and so is a
+//! container that starts past a file's first byte.
 
 mod archive;
 mod gzip;
@@ -28,22 +38,13 @@ pub(crate) use self::projection_edit::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff,
 };
 
-use super::{release_hit, scan_payload, secret_scan_error};
+use super::{release_hit, scan_payload, secret_scan_error, write_payload_hit};
 use crate::error::{Error, Result};
-use crate::secret_custody::{KeyPlaces, MemberStep, filled};
+use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
 
-/// Containers nested in one file, the file itself counted.
-const MAX_DEPTH: usize = 4;
-/// Members one walk reads over a file's whole tree: ZIP entries, gzip
-/// payloads and decoded PDF streams.
-const MAX_MEMBERS: usize = 50_000;
-/// The bytes one member may decode to.
-const MAX_MEMBER_BYTES: usize = 64 * 1024 * 1024;
-/// The bytes all of a file's members may decode to over its whole tree. A
-/// rebuilt copy is held to it too.
+/// The bytes all of a file's members may decode to over its whole tree: the
+/// floor of what one walk holds. A rebuilt copy is held to it too.
 const MAX_EXPANDED_BYTES: usize = 512 * 1024 * 1024;
-/// The indirect objects one PDF may hold.
-const MAX_PDF_OBJECTS: usize = 50_000;
 /// The keys one file may carry; the write door refuses a file with more.
 pub(super) const MAX_FILE_KEYS: usize = 10_000;
 
@@ -51,11 +52,11 @@ pub(super) const MAX_FILE_KEYS: usize = 10_000;
 /// checksum, encrypted, holding one name twice, or in a compression method
 /// or PDF filter not decoded here.
 pub(super) const REASON_UNREADABLE: &str = "gate.secret_scan.container_unreadable";
-/// A container past one of the bounds above.
+/// A container whose members decode past the byte floor above.
 pub(super) const REASON_OVER_BUDGET: &str = "gate.secret_scan.container_over_budget";
-/// A container a retained repository read meets inside itself: its whole
-/// bytes are those of a container the walk is already inside (FIX 8031).
-/// An integrity stop, not a bound: the walk reads no further down it.
+/// A container a walk meets inside itself: its whole bytes are those of a
+/// container the walk is already inside (FIX 8031). An integrity stop, not a
+/// bound: the walk reads no further down it.
 const REASON_ARCHIVE_CYCLE: &str = "gate.secret_scan.archive_cycle";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -65,6 +66,7 @@ enum Kind {
     Pdf,
 }
 
+/// The container `bytes` lead as: the head test alone.
 fn kind(bytes: &[u8]) -> Option<Kind> {
     if bytes.starts_with(b"PK\x03\x04") || bytes.starts_with(b"PK\x05\x06") {
         Some(Kind::Zip)
@@ -77,38 +79,79 @@ fn kind(bytes: &[u8]) -> Option<Kind> {
     }
 }
 
-/// Whether the walk reads into `bytes`.
+/// The container the walk reads `bytes` as (FIX 2474): the head's, save
+/// that UTF-8 text is a container only when its frame parses (a ZIP's end
+/// record and central directory, a PDF's header, cross-reference and
+/// trailer). A credential line or a string that only starts like one reads
+/// as text. Binary bytes keep the head's: a malformed container stays
+/// sealed. A gzip file's second byte is no UTF-8.
+fn classify(bytes: &[u8]) -> Option<Kind> {
+    let kind = kind(bytes)?;
+    if std::str::from_utf8(bytes).is_err() {
+        return Some(kind);
+    }
+    let parses = match kind {
+        Kind::Zip => archive::opens(bytes),
+        Kind::Gzip => true,
+        Kind::Pdf => pdf::opens(bytes),
+    };
+    parses.then_some(kind)
+}
+
+/// Whether `bytes` lead as a container: the head pre-filter a reader that
+/// holds only a body's first bytes takes. The walk reads `bytes` as the
+/// classification above does.
 pub(crate) fn is_container(bytes: &[u8]) -> bool {
     kind(bytes).is_some()
 }
 
 /// Whether `bytes` is a container the walk cannot read whole: encrypted,
-/// malformed, in a method or filter no reader here decodes, or past one of
-/// the bounds above. Its members are not read, so no mark can place a key in
-/// it.
+/// malformed, in a method or filter no reader here decodes, met inside
+/// itself, or past the byte floor. Its members are not read, so no mark can
+/// place a key in it.
 pub(crate) fn is_sealed(bytes: &[u8]) -> bool {
-    is_container(bytes)
-        && matches!(
-            walk_members(bytes, &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> {
-                Ok(())
-            }),
-            Err(Stop::Refuse(_))
-        )
+    matches!(
+        walk_members(bytes, &mut |_: &[MemberStep], _: &[u8]| -> Walked<()> {
+            Ok(())
+        }),
+        Err(Stop::Refuse(_))
+    )
 }
 
 /// Whether a key's span is placed in `bytes` as they are: plain bytes, and a
 /// PDF, whose own bytes hold its uncompressed objects. A ZIP or gzip file is
 /// rebuilt from its members, so a key in one is placed in the member.
 pub(super) fn holds_spans(bytes: &[u8]) -> bool {
-    !matches!(kind(bytes), Some(Kind::Zip | Kind::Gzip))
+    !matches!(classify(bytes), Some(Kind::Zip | Kind::Gzip))
+}
+
+/// Whether bytes no reader shows are handed to a scan's walk as a member
+/// (FIX 2470): plain bytes, and a container the walk reads whole. One the
+/// walk does not read is left to the scan of the file's own bytes: no reader
+/// shows it either.
+fn hidden_member(bytes: &[u8]) -> bool {
+    classify(bytes).is_none() || !is_sealed(bytes)
+}
+
+/// Whether a key at `path` in the member `bytes` stands as its handle text
+/// in a masked copy (FIX 7944): the UTF-8 text of a ZIP entry, a gzip
+/// payload or a PDF object's strings, each encoded again around its new
+/// length. The stored bytes' own spans, a binary member's, a PDF stream's
+/// (an object stream names its objects by offset) and a PDF's own bytes
+/// (its cross-reference does) keep the filler's width.
+fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
+    matches!(
+        path.last(),
+        Some(MemberStep::Zip { .. } | MemberStep::Gzip | MemberStep::PdfStrings { .. })
+    ) && std::str::from_utf8(bytes).is_ok()
+        && classify(bytes).is_none()
 }
 
 /// Why a walk stopped before the end of a file's tree.
 pub(super) enum Stop {
     /// The door refuses the file with this reason code: a hit, or a
     /// container read no further ([`REASON_UNREADABLE`],
-    /// [`REASON_OVER_BUDGET`], and a retained read's
-    /// [`REASON_ARCHIVE_CYCLE`]).
+    /// [`REASON_OVER_BUDGET`], [`REASON_ARCHIVE_CYCLE`]).
     Refuse(&'static str),
     /// The engine failed, or a reader's own scan refused.
     Fail(Error),
@@ -145,29 +188,43 @@ pub(super) fn refusal(stop: Stop) -> Error {
     }
 }
 
+/// A serving door's error for a masked copy that stopped (FIX 2475): a
+/// file this reader cannot be served masked is the typed refusal, and an
+/// engine failure stays its own error.
+fn withheld(stop: Stop) -> Error {
+    match stop {
+        Stop::Refuse(reason) => masked_copy_withheld(reason),
+        Stop::Fail(error) => error,
+    }
+}
+
 /// How a walk reads a file's tree.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ContainerReadMode {
-    /// The write door's, release doors' and serving doors' read: every bound
-    /// above holds.
+    /// The write door's, release doors' and serving doors' read: the byte
+    /// floor holds.
     Generic,
-    /// A retained repository blob's read (FIX 7608, rule 5): no member,
-    /// object, depth or expanded-byte bound. The same decoders read it, with
-    /// every integrity check theirs (declared lengths, CRCs, duplicate
-    /// names, methods, filters, encryption, cross-references); what stops it
-    /// is a container no reader here reads, or the machine.
+    /// A retained repository blob's read (FIX 7608, rule 5): no byte floor.
+    /// The same decoders read it, with every integrity check theirs
+    /// (declared lengths, CRCs, duplicate names, methods, filters,
+    /// encryption, cross-references); what stops it is a container no
+    /// reader here reads, or the machine.
     RetainedRepo,
 }
 
 /// What a walk over one file's tree has left. A member's own walk spends
 /// from it; none starts a budget of its own. A retained repository read
-/// counts against none of it, and keeps the containers it is inside.
+/// spends none of it. Every walk keeps the containers it is inside.
 struct Budget {
     mode: ContainerReadMode,
-    members: usize,
     expanded: usize,
-    /// The BLAKE3 of each container a retained read is inside, the file
-    /// first: this walk's own, never kept or logged.
+    /// Whether the walk also reads the bytes no reader shows (FIX 2470): a
+    /// PDF's superseded revisions and a ZIP's bytes outside its central
+    /// directory's entries. Only a scan reads them; a mark or a rebuild never
+    /// does.
+    hidden: bool,
+    /// The BLAKE3 of each container the walk is inside, the file first: this
+    /// walk's own, never kept or logged.
     ancestors: Vec<[u8; 32]>,
 }
 
@@ -179,57 +236,40 @@ impl Budget {
     fn of(mode: ContainerReadMode) -> Self {
         Self {
             mode,
-            members: MAX_MEMBERS,
             expanded: MAX_EXPANDED_BYTES,
+            hidden: false,
             ancestors: Vec::new(),
         }
     }
 
-    /// Whether the bounds above hold for this walk.
+    /// This budget, its walk reading the bytes no reader shows too.
+    fn reading_hidden(mut self) -> Self {
+        self.hidden = true;
+        self
+    }
+
+    /// Whether the byte floor holds for this walk.
     fn capped(&self) -> bool {
         self.mode == ContainerReadMode::Generic
     }
 
-    /// Counts one more member.
-    fn member(&mut self) -> Walked<()> {
-        if self.capped() {
-            self.members = self.members.checked_sub(1).ok_or_else(over_budget)?;
-        }
-        Ok(())
-    }
-
-    /// The members the walk may still read; `None` when no bound holds.
-    fn members_left(&self) -> Option<usize> {
-        self.capped().then_some(self.members)
-    }
-
     /// The most bytes the next member may decode to: the machine's most
-    /// when no bound holds.
+    /// when no floor holds.
     fn limit(&self) -> usize {
         if self.capped() {
-            self.expanded.min(MAX_MEMBER_BYTES)
+            self.expanded
         } else {
             usize::MAX
         }
     }
 
     /// The most bytes a PDF's loader may decompress one stream to; `None`
-    /// when no bound holds.
+    /// when no floor holds.
     fn decompressed_ceiling(&self) -> Option<usize> {
-        self.capped().then_some(MAX_MEMBER_BYTES)
+        self.capped().then_some(self.expanded)
     }
 
-    /// Whether `objects` indirect objects are past the PDF bound.
-    fn objects_over(&self, objects: usize) -> bool {
-        self.capped() && objects > MAX_PDF_OBJECTS
-    }
-
-    /// Whether a container `depth` steps down is past the depth bound.
-    fn too_deep(&self, depth: usize) -> bool {
-        self.capped() && depth >= MAX_DEPTH
-    }
-
-    /// Whether a rebuilt copy of `len` bytes is past the expanded bound.
+    /// Whether a rebuilt copy of `len` bytes is past the byte floor.
     fn copy_over(&self, len: usize) -> bool {
         self.capped() && len > MAX_EXPANDED_BYTES
     }
@@ -243,15 +283,11 @@ impl Budget {
     }
 
     /// Enters the container whose whole bytes are `bytes`, before its
-    /// members are read (FIX 8031). A retained read already inside a
-    /// container of the same bytes has met a cycle, and reads no further
-    /// down it. Each entry is left once its members are read, so a
-    /// container met again beside itself is read again. A bounded walk
-    /// keeps no ancestry: its own bounds end it.
+    /// members are read (FIX 8031). A walk already inside a container of the
+    /// same bytes has met a cycle, and reads no further down it. Each entry
+    /// is left once its members are read, so a container met again beside
+    /// itself is read again.
     fn enter_container(&mut self, bytes: &[u8]) -> Walked<()> {
-        if self.capped() {
-            return Ok(());
-        }
         let digest = *blake3::hash(bytes).as_bytes();
         if self.ancestors.contains(&digest) {
             return Err(Stop::Refuse(REASON_ARCHIVE_CYCLE));
@@ -262,29 +298,34 @@ impl Budget {
 
     /// Leaves the container entered last.
     fn leave_container(&mut self) {
-        if !self.capped() {
-            self.ancestors.pop();
-        }
+        self.ancestors.pop();
     }
 }
 
 /// Hands each member under `bytes` to `visit` with its path, depth first in
 /// each container's order: a ZIP's entries, a gzip file's payload, a PDF's
-/// streams. A member that is itself a container is handed whole, then
-/// walked. Plain bytes hold no members.
+/// streams and each object's text strings. A member that is itself a
+/// container is handed whole, then walked. Plain bytes hold no members.
 pub(super) fn walk_members(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
 ) -> Walked<()> {
-    walk(bytes, &mut Vec::new(), &mut Budget::new(), visit)
+    retained_iterative::walk(bytes, &mut Budget::new(), visit)
+}
+
+/// [`walk_members`], and the bytes no reader shows beside each container's
+/// members (FIX 2470), each handed as a member too: what a scan reads.
+fn walk_members_with_hidden(
+    bytes: &[u8],
+    visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+) -> Walked<()> {
+    retained_iterative::walk(bytes, &mut Budget::new().reading_hidden(), visit)
 }
 
 /// [`walk_members`] over a retained repository blob (FIX 7608, rule 5):
-/// every member, at any depth, read whole, with no policy bound. A stop is
-/// a container no reader here reads, one met inside itself
-/// ([`REASON_ARCHIVE_CYCLE`]), or a visitor's own. Its frames are on the
-/// heap ([`retained_iterative`]), so no depth of nesting runs the thread's
-/// stack out.
+/// every member, at any depth, read whole, with no byte floor. A stop is a
+/// container no reader here reads, one met inside itself
+/// ([`REASON_ARCHIVE_CYCLE`]), or a visitor's own.
 pub(super) fn walk_retained_repo_members(
     bytes: &[u8],
     visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
@@ -293,129 +334,89 @@ pub(super) fn walk_retained_repo_members(
     retained_iterative::walk(bytes, &mut budget, visit)
 }
 
-fn walk(
-    bytes: &[u8],
-    path: &mut Vec<MemberStep>,
-    budget: &mut Budget,
-    visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
-) -> Walked<()> {
-    let Some(kind) = kind(bytes) else {
-        return Ok(());
-    };
-    if budget.too_deep(path.len()) {
-        return Err(over_budget());
-    }
-    let mut each = |step: MemberStep, member: &[u8], budget: &mut Budget| -> Walked<()> {
-        path.push(step);
-        let read = visit(path.as_slice(), member)
-            .and_then(|()| walk(member, &mut *path, budget, &mut *visit));
-        path.pop();
-        read
-    };
-    match kind {
-        Kind::Zip => archive::members(bytes, budget, &mut each),
-        Kind::Gzip => gzip::members(bytes, budget, &mut each),
-        Kind::Pdf => pdf::members(bytes, budget, &mut each),
-    }
-}
-
 /// The write door over each member under `bytes`, each read as the door
-/// reads a body.
-pub(crate) fn scan_members(bytes: &[u8]) -> Result<()> {
+/// reads a body (FIX 2312, 2477). A container the walk reads no further is
+/// read as far as it reads: the door stores it as it is (owner ruling C2).
+pub(super) fn scan_readable_members(bytes: &[u8]) -> Result<()> {
     let mut scan = |_: &[MemberStep], member: &[u8]| -> Walked<()> {
         let _secrets_nulled = scan_payload(member)?;
         Ok(())
     };
-    walk_members(bytes, &mut scan).map_err(refusal)
+    match walk_members(bytes, &mut scan) {
+        Ok(()) | Err(Stop::Refuse(_)) => Ok(()),
+        Err(Stop::Fail(error)) => Err(error),
+    }
 }
 
-/// The release doors' rules over each member under `bytes`: the first
-/// hit's reason, or why the walk read no further.
-pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
-    if !is_container(bytes) {
-        return None;
-    }
+/// `rules` over each member under `bytes` and each run of bytes no reader
+/// shows: the first hit's reason, or why the walk read no further.
+fn members_hit(bytes: &[u8], rules: fn(&[u8]) -> Option<&'static str>) -> Option<&'static str> {
     let mut scan = |_: &[MemberStep], member: &[u8]| -> Walked<()> {
-        release_hit(member).map_or(Ok(()), |reason| Err(Stop::Refuse(reason)))
+        rules(member).map_or(Ok(()), |reason| Err(Stop::Refuse(reason)))
     };
-    match walk_members(bytes, &mut scan) {
+    match walk_members_with_hidden(bytes, &mut scan) {
         Ok(()) => None,
         Err(Stop::Refuse(reason)) => Some(reason),
         Err(Stop::Fail(_)) => Some(REASON_UNREADABLE),
     }
 }
 
+/// The release doors' rules over each member under `bytes` and the bytes no
+/// reader shows.
+pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
+    members_hit(bytes, release_hit)
+}
+
+/// The write door's rules over each member under `bytes` and the bytes no
+/// reader shows: what a masked reader's copy, and an unmarked container, is
+/// read by before it is served (FIX 2470, 2480).
+pub(super) fn write_members_hit(bytes: &[u8]) -> Option<&'static str> {
+    members_hit(bytes, write_payload_hit)
+}
+
 /// `bytes` with each key `places` names overwritten: the spans at a place
 /// filled first, then each member under it rebuilt the same way and the
 /// container encoded around its members again. Every place must be met.
 pub(crate) fn masked_copy(bytes: &[u8], places: &KeyPlaces) -> Result<Vec<u8>> {
-    masked_copy_in(bytes, places, Budget::new()).map_err(refusal)
+    masked_copy_in(bytes, places, None, Budget::new()).map_err(refusal)
+}
+
+/// [`masked_copy`] for a serving door's masked reader: each key in a text
+/// member stands as the handle text `handles` gives it (FIX 7944), and a
+/// copy the walk cannot build is [`SecretError::MaskedCopyWithheld`] (FIX
+/// 2475).
+///
+/// [`SecretError::MaskedCopyWithheld`]: crate::error::SecretError::MaskedCopyWithheld
+pub(crate) fn served_masked_copy(
+    bytes: &[u8],
+    places: &KeyPlaces,
+    handles: &PlaceHandles,
+) -> Result<Vec<u8>> {
+    masked_copy_in(bytes, places, Some(handles), Budget::new()).map_err(withheld)
 }
 
 /// [`masked_copy`] of a retained repository blob, under its whole read
 /// ([`walk_retained_repo_members`]). The stop is the caller's to read: a
 /// container no reader here rebuilds is not an engine failure.
 pub(super) fn masked_retained_repo_copy(bytes: &[u8], places: &KeyPlaces) -> Walked<Vec<u8>> {
-    masked_copy_in(bytes, places, Budget::of(ContainerReadMode::RetainedRepo))
+    masked_copy_in(
+        bytes,
+        places,
+        None,
+        Budget::of(ContainerReadMode::RetainedRepo),
+    )
 }
 
-fn masked_copy_in(bytes: &[u8], places: &KeyPlaces, mut budget: Budget) -> Walked<Vec<u8>> {
+fn masked_copy_in(
+    bytes: &[u8],
+    places: &KeyPlaces,
+    handles: Option<&PlaceHandles>,
+    mut budget: Budget,
+) -> Walked<Vec<u8>> {
     let mut met = 0;
-    let copy = if budget.capped() {
-        rebuild(bytes, &mut Vec::new(), places, &mut budget, &mut met)?
-    } else {
-        retained_iterative::rebuild(bytes, places, &mut budget, &mut met)?
-    };
+    let copy = retained_iterative::rebuild(bytes, places, handles, &mut budget, &mut met)?;
     if met != places.len() {
         return Err(Stop::Fail(Error::CorruptedIndex("masked file member path")));
-    }
-    Ok(copy)
-}
-
-fn rebuild(
-    bytes: &[u8],
-    path: &mut Vec<MemberStep>,
-    places: &KeyPlaces,
-    budget: &mut Budget,
-    met: &mut usize,
-) -> Walked<Vec<u8>> {
-    let mut copy = bytes.to_vec();
-    for (_, spans) in places
-        .iter()
-        .filter(|(at, _)| at.as_slice() == path.as_slice())
-    {
-        copy = filled(&copy, spans.iter().copied())?;
-        *met += 1;
-    }
-    if !places
-        .iter()
-        .any(|(at, _)| at.len() > path.len() && at.starts_with(path.as_slice()))
-    {
-        return Ok(copy);
-    }
-    let kind = kind(bytes).ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
-    if budget.too_deep(path.len()) {
-        return Err(over_budget());
-    }
-    let mut each =
-        |step: MemberStep, member: &[u8], budget: &mut Budget| -> Walked<Option<Vec<u8>>> {
-            path.push(step);
-            let marked = places.iter().any(|(at, _)| at.starts_with(path.as_slice()));
-            let copy = if marked {
-                rebuild(member, &mut *path, places, budget, &mut *met).map(Some)
-            } else {
-                Ok(None)
-            };
-            path.pop();
-            copy
-        };
-    let copy = match kind {
-        Kind::Zip => archive::rebuilt(&copy, budget, &mut each),
-        Kind::Gzip => gzip::rebuilt(&copy, budget, &mut each),
-        Kind::Pdf => pdf::rebuilt(&copy, budget, &mut each),
-    }?;
-    if budget.copy_over(copy.len()) {
-        return Err(over_budget());
     }
     Ok(copy)
 }

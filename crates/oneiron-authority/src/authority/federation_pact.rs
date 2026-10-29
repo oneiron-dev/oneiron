@@ -11,6 +11,12 @@ use crate::federation::{FederationDirectionScope, FederationPactScope};
 
 use super::*;
 
+mod scope_key;
+
+pub use self::scope_key::{
+    ScopeOpeningAad, keyed_scope_digest, open_scope_opening, seal_scope_opening,
+};
+
 /// Federation relationship lifecycle kind (OF-156, option B).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FederationLifecycleKind {
@@ -268,20 +274,19 @@ pub fn federation_pact_transcript(
     Ok(transcript)
 }
 
-/// Domain-separated nonce commitment over canonical pact scope bytes.
-///
-/// `blake3(FEDERATION_SCOPE_COMMIT_DOMAIN || pact_nonce || canonical_scope)`;
-/// the gesture transcript carries only this digest, so a gesture shown to a
-/// third party does not disclose scope contents.
+/// The scope commitment both pact owners sign, keyed by the grant's
+/// erasable opening key `key` (FIX 7907, 7958): keyed BLAKE3 over a domain,
+/// the pact nonce and the canonical scope bytes. The gesture transcript
+/// carries only this digest, never the key, so a gesture shown to a third
+/// party does not disclose scope contents, and once the key is erased at
+/// revocation no one can test a guessed scope against it.
 #[must_use]
-pub fn federation_scope_digest(pact_nonce: &[u8; 16], canonical_scope: &[u8]) -> [u8; 32] {
-    let mut material = Vec::with_capacity(
-        FEDERATION_SCOPE_COMMIT_DOMAIN.len() + pact_nonce.len() + canonical_scope.len(),
-    );
-    material.extend_from_slice(FEDERATION_SCOPE_COMMIT_DOMAIN);
-    material.extend_from_slice(pact_nonce);
-    material.extend_from_slice(canonical_scope);
-    *blake3::hash(&material).as_bytes()
+pub fn federation_scope_digest(
+    key: &[u8; 32],
+    pact_nonce: &[u8; 16],
+    canonical_scope: &[u8],
+) -> [u8; 32] {
+    keyed_scope_digest(key, pact_nonce, canonical_scope)
 }
 
 /// Builds a peer gesture by signing the pact transcript with `signer`.

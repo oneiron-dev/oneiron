@@ -507,6 +507,11 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&object.to_be_bytes());
             out.extend_from_slice(&generation.to_be_bytes());
         }
+        MemberStep::PdfStrings { object, generation } => {
+            out.push(3);
+            out.extend_from_slice(&object.to_be_bytes());
+            out.extend_from_slice(&generation.to_be_bytes());
+        }
     }
 }
 
@@ -552,6 +557,10 @@ impl<'b> Spooled<'b> {
             0 => MemberStep::Zip { entry: self.u32()? },
             1 => MemberStep::Gzip,
             2 => MemberStep::PdfStream {
+                object: self.u32()?,
+                generation: self.u16()?,
+            },
+            3 => MemberStep::PdfStrings {
                 object: self.u32()?,
                 generation: self.u16()?,
             },

@@ -24,8 +24,8 @@ use super::super::identity::{CustodyId, CustodyKind, CustodySecret};
 use super::super::log::CustodyPosition;
 use super::pad_scope::{WorldPadScope, retain_admitted};
 use super::{
-    BodyWire, CompartmentScope, CompartmentWire, CustodyOpener, CustodyRecipients, OpenedHead,
-    WrapWire, head_corrupt, key_id, open_body, serde_bytes_vec, typed, unwrap_key,
+    BodyWire, CompartmentScope, CompartmentWire, CustodyOpener, CustodyRecipients, DigestRoot,
+    OpenedHead, WrapWire, head_corrupt, key_id, open_body, serde_bytes_vec, typed, unwrap_key,
 };
 
 /// The derive-key context of a compartment's commitment in its head's
@@ -33,6 +33,8 @@ use super::{
 const COMPARTMENT_DIGEST_CONTEXT: &str = "oneiron/custody-head/compartment-digest/v2";
 /// The derive-key context of a carried compartment's commitment.
 const CARRIED_DIGEST_CONTEXT: &str = "oneiron/custody-head/carried-digest/v2";
+/// The derive-key context of a control compartment's root over them all.
+const DIGEST_ROOT_CONTEXT: &str = "oneiron/custody-head/digest-root/v3";
 /// The derive-key context of the publication policy's carried-set digest.
 const CARRIED_SET_CONTEXT: &str = "oneiron/custody-head/carried-set/v1";
 const CARRIED_MAGIC: &[u8; 4] = b"OCCW";
@@ -115,28 +117,49 @@ fn digest(context: &str, wire: &impl Serialize) -> Result<[u8; 32]> {
         .as_bytes())
 }
 
-/// Whether `digests` and `carried_digests`, a control compartment's, name
-/// exactly `compartments` and `carried`, each whole and in order.
+/// The root a control compartment commits to (FIX 5800): both counts, then
+/// every compartment's digest and every carried one's, in order, under one
+/// hash, so the control stays one size however many there are.
+pub(super) fn digest_root(
+    digests: &[[u8; 32]],
+    carried_digests: &[[u8; 32]],
+) -> Result<DigestRoot> {
+    let compartments = u32::try_from(digests.len()).map_err(|_| head_corrupt())?;
+    let carried = u32::try_from(carried_digests.len()).map_err(|_| head_corrupt())?;
+    let mut hasher = blake3::Hasher::new_derive_key(DIGEST_ROOT_CONTEXT);
+    hasher.update(&compartments.to_be_bytes());
+    hasher.update(&carried.to_be_bytes());
+    for each in digests.iter().chain(carried_digests) {
+        hasher.update(each);
+    }
+    Ok(DigestRoot {
+        compartments,
+        carried,
+        root: *hasher.finalize().as_bytes(),
+    })
+}
+
+/// Whether `root`, a control compartment's, names exactly `compartments`
+/// and `carried`, each whole and in order.
 pub(super) fn committed(
     compartments: &[CompartmentWire],
-    digests: &[[u8; 32]],
     carried: &[CarriedWire],
-    carried_digests: &[[u8; 32]],
+    root: &DigestRoot,
 ) -> Result<bool> {
-    if compartments.len() != digests.len() || carried.len() != carried_digests.len() {
+    if usize::try_from(root.compartments).ok() != Some(compartments.len())
+        || usize::try_from(root.carried).ok() != Some(carried.len())
+    {
         return Ok(false);
     }
-    for (compartment, expected) in compartments.iter().zip(digests) {
-        if wire_digest(compartment)? != *expected {
-            return Ok(false);
-        }
-    }
-    for (wire, expected) in carried.iter().zip(carried_digests) {
-        if digest(CARRIED_DIGEST_CONTEXT, wire)? != *expected {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    let digests = compartments
+        .iter()
+        .map(wire_digest)
+        .collect::<Result<Vec<_>>>()?;
+    let carried_digests = carried
+        .iter()
+        .map(|wire| digest(CARRIED_DIGEST_CONTEXT, wire))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(digest_root(&digests, &carried_digests)? == *root)
 }
 
 /// One carried compartment as a head holds it.
@@ -294,8 +317,7 @@ pub(super) fn open_carried(
         };
         let mut body = open_body(&pad.position, &origin, &key, &pad.wire.sealed)?;
         if body.control.is_some()
-            || !body.digests.is_empty()
-            || !body.carried_digests.is_empty()
+            || body.root.is_some()
             || !body.recipients.is_empty()
             || !body.history.is_empty()
             || !body.evidence.is_empty()

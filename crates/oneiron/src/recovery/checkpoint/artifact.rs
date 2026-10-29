@@ -97,7 +97,7 @@ fn binding_mismatch() -> Error {
 /// host without the vault unlocks it from a wrap the artifact carries
 /// ([`CheckpointKey::unlock`]) and says whom it trusts.
 pub struct CheckpointKey {
-    vault_id: [u8; 32],
+    pub(super) vault_id: [u8; 32],
     kek: Kek,
     /// The data key's custody-head subkey, which opens a custody head's
     /// host-readable compartments on a host without the vault (KS-4).
@@ -114,6 +114,12 @@ pub struct CheckpointKey {
     /// set only by [`CheckpointKey::with_wake_sequence_floor`]; `None` for a
     /// historical restore and a local open, which compare nothing.
     wake_floor: Option<u64>,
+    /// The family a host's worker opened from the artifact's host-private
+    /// member, for a cold restore (`with_artifact_host_holds`, FIX 6817).
+    pub(super) artifact_host_holds: Option<Box<super::ArtifactHostOrderHolds>>,
+    /// The signers the vault's mode roots delegated, trusted beside `trust`
+    /// (`trusting_mode_roots`, FIX 968).
+    pub(super) delegated: Option<Box<super::signer_delegation::DelegatedSigners>>,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -169,6 +175,8 @@ impl CheckpointKey {
             opened: Some(opened),
             expected: None,
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -206,6 +214,8 @@ impl CheckpointKey {
             opened: Some(opened),
             expected: Some(Box::new(expected.clone())),
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -293,6 +303,8 @@ impl Vault {
             opened: None,
             expected: None,
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -313,6 +325,8 @@ impl Vault {
                 opened: None,
                 expected: None,
                 wake_floor: None,
+                artifact_host_holds: None,
+                delegated: None,
             },
         ))
     }
@@ -408,6 +422,8 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) custody: Option<crate::store::CustodyRequirement>,
     /// The checkpoint sequence its verified commitment signs (OF-570 (e)).
     pub(super) sequence: u64,
+    /// The snapshot id its verified commitment signs.
+    pub(super) snapshot: [u8; 32],
     /// The payload compartments it carries, apart from its bodies (KS-7).
     #[allow(dead_code, reason = "KS7-5 opens the compartments")]
     pub(super) payload: Option<SealedPayload<'k>>,
@@ -473,6 +489,7 @@ pub(super) fn open_artifact_file(
     let commitment_bytes = read_at(&mut file, signed_at + 4, commitment_len)?;
     let commitment = commitment::verify(
         &key.trust,
+        key.delegated_signers(),
         &key.vault_id,
         &commitment_bytes,
         &read_at(&mut file, record_at + 4, record_len)?,
@@ -599,6 +616,7 @@ pub(super) fn open_artifact_file(
         },
         custody: manifest.custody,
         sequence: commitment.sequence,
+        snapshot: prelude.snapshot,
         payload,
     })
 }

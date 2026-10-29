@@ -2,7 +2,7 @@
 use ed25519_dalek::Signer;
 use rand_core::{OsRng, RngCore};
 
-use super::connect::{local_vault_id, offer_for};
+use super::connect::{ScopeOpeningKey, local_vault_id, offer_for, require_offer_signs};
 use super::{HostSlipIssuer, require_host};
 use crate::Vault;
 use crate::authority::{
@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::federation::{
     Ceiling, FederationDirectionScope, FederationPactScope, encode_federation_pact_scope,
 };
+use crate::store::grant_scope_custody;
 
 /// A host's signed half of a reciprocal re-scope at one fresh consent epoch.
 #[derive(Debug, Clone)]
@@ -62,6 +63,7 @@ fn rescope_action(
     );
     action.pact_nonce = offered.offer.pact_nonce;
     action.scope_digest = Some(federation_scope_digest(
+        offered.offer.scope_key.expose(),
         &action.pact_nonce,
         &encode_federation_pact_scope(&offered.offer.pact_scope)?,
     ));
@@ -89,14 +91,17 @@ impl Vault {
         }
         self.require_connect_rescope_grant_in_txn(&txn, &state, &local, &scope)?;
         let mut action = action(&state, pact_id, FederationLifecycleKind::Rescope, epoch);
+        // Each epoch's commitment is keyed by its own opening key.
+        let scope_key = ScopeOpeningKey::fresh()?;
         action.scope_digest = Some(federation_scope_digest(
+            scope_key.expose(),
             &action.pact_nonce,
             &encode_federation_pact_scope(&scope)?,
         ));
         action.pact_scope = Some(scope);
         Ok(ConnectRescopeOffer {
             epoch,
-            offer: offer_for(issuer, &action, local)?,
+            offer: offer_for(issuer, &action, local, &scope_key)?,
         })
     }
 
@@ -122,10 +127,11 @@ impl Vault {
                 &offered.offer.pact_scope,
             )?;
             let mut action = rescope_action(&state, offered)?;
+            require_offer_signs(&action, &offered.offer, &local)?;
             action.gesture = Some(offered.offer.gesture.clone());
             let counter = ConnectRescopeOffer {
                 epoch: offered.epoch,
-                offer: offer_for(issuer, &action, local)?,
+                offer: offer_for(issuer, &action, local, &offered.offer.scope_key)?,
             };
             // Exact retries still verify the peer's gesture. An arbitrary signature
             // cannot turn a cached state into a successful owner commitment.
@@ -157,13 +163,21 @@ impl Vault {
                 return Ok((state, counter));
             }
             self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
-            Ok((
-                pact(
-                    &*self.authority_view_readonly_in_txn(txn)?,
-                    &offered.offer.pact_id,
-                )?,
-                counter,
-            ))
+            let repacted = pact(
+                &*self.authority_view_readonly_in_txn(txn)?,
+                &offered.offer.pact_id,
+            )?;
+            // The epoch's opening key enters custody with the re-pact it
+            // keys, once the fold admitted it.
+            grant_scope_custody::install_scope_key(
+                &self.store,
+                txn,
+                &state.grant_ref,
+                &offered.offer.pact_id,
+                offered.epoch,
+                offered.offer.scope_key.expose(),
+            )?;
+            Ok((repacted, counter))
         })
     }
 
@@ -214,6 +228,10 @@ impl Vault {
             let fold = self.authority_view_readonly_in_txn(txn)?;
             require_host(&fold, issuer)?;
             let state = pact(&fold, &pact_id)?;
+            // A revoke retires the grant's opening key of every epoch, so
+            // no signed commitment of the pact tests a guessed scope again
+            // (FIX 7907, 7958).
+            grant_scope_custody::retire_scope_keys(&self.store, txn, &state.grant_ref)?;
             if state.status == crate::authority::FederationPactStatus::Disconnected {
                 return Ok(state);
             }

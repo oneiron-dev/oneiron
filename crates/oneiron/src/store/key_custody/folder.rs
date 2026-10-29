@@ -14,8 +14,8 @@ use super::files::{open_dir, read_whole, replace_file, write_once};
 use super::head::{head_position, staged_position};
 use super::log::{CustodyPosition, FrameHeader, Journal, frame_name, log_corrupt};
 use super::protocol::{
-    CustodyBatch, CustodySource, CustodyTarget, DeletionEvidence, EvidenceKind, Lineage,
-    PendingCode, TargetPending, TargetPublication, TargetSpec, hex,
+    CustodyBatch, CustodySource, CustodyTarget, DeletionEvidence, DrainAck, DrainTicket,
+    EvidenceKind, Lineage, PendingCode, TargetPending, TargetPublication, TargetSpec, hex,
 };
 
 const FOLDER: &str = "oneiron-custody";
@@ -73,6 +73,52 @@ impl FolderTarget {
         open_dir(&dir, true, None)?;
         open_dir(&dir.join(LOG), true, None)?;
         Ok(dir)
+    }
+
+    /// Empties this folder of `lineage`'s heads for the owner's drain
+    /// `ticket` (FIX 5843): its head, every stage and every temporary go,
+    /// synced, and a fresh listing counts the heads left, which must be
+    /// none for the drain to commit. The keyless log stays. Returns this
+    /// member's ack.
+    pub(crate) fn drain(&self, lineage: Lineage, ticket: &DrainTicket) -> Result<DrainAck> {
+        let dir = self.dir(lineage);
+        let mut removed = 0_u64;
+        if dir.is_dir() {
+            removed = sweep(&dir, None)?.0;
+            match fs::remove_file(dir.join(HEAD)) {
+                Ok(()) => removed = removed.saturating_add(1),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+            super::platform::sync_dir(&dir)?;
+        }
+        let mut names: Vec<std::ffi::OsString> = match fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<std::io::Result<_>>()?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(err) => return Err(err.into()),
+        };
+        names.sort();
+        let mut inventory = blake3::Hasher::new();
+        let mut heads = 0_u64;
+        for name in &names {
+            let text = name.to_string_lossy();
+            if text == HEAD || text.starts_with(STAGE_PREFIX) || text.starts_with(".t") {
+                heads = heads.saturating_add(1);
+            }
+            inventory.update(&(text.len() as u64).to_be_bytes());
+            inventory.update(text.as_bytes());
+        }
+        ticket.ack(
+            &self.spec,
+            DeletionEvidence {
+                kind: EvidenceKind::FilesystemSweep,
+                superseded_removed: removed,
+                remaining_heads: heads,
+                inventory_digest: hex(inventory.finalize().as_bytes()),
+            },
+        )
     }
 }
 
