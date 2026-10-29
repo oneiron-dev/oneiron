@@ -88,7 +88,8 @@ tokio::task_local! {
 
 /// Drives `call`, a rerank call through its seat's ladder, with `line`
 /// asked before each of its later batches. A rerank call driven outside one
-/// sends every batch.
+/// asks no line before its later batches; a later batch's failure still ends
+/// it with a partial.
 pub(crate) async fn on_line<F: Future>(line: Arc<dyn RerankLine>, call: F) -> F::Output {
     BATCH_LINE.scope(line, call).await
 }
