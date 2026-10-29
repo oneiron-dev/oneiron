@@ -138,9 +138,25 @@ def exclusive_tracks(items, duration_ms, error=RuntimeRefusal):
     return tracks
 
 
+class NoUnits:
+    """A runtime no host admits unit by unit: a process port's, whose whole
+    call its parent bridge admitted as one unit. Each call just runs."""
+
+    @staticmethod
+    def run(kind, audio_ms, call, usage=None):
+        return call()
+
+    @staticmethod
+    def progress():
+        return None
+
+
 class LocalRuntime:
     def __init__(self, path, expected_digest, error=RuntimeRefusal):
         self.error = error
+        # The bridge's unit gate: each physical model call runs as one
+        # admitted unit (FIX 3765).
+        self.units = NoUnits()
         if not path.is_absolute() or not path.is_file() or path.stat().st_size > 1024 * 1024:
             raise error("RuntimeProfileUnavailable")
         data = path.read_bytes()
@@ -333,11 +349,15 @@ class LocalRuntime:
             module_spec = importlib.util.spec_from_file_location("meeting_audio_ctc", path)
             module = importlib.util.module_from_spec(module_spec)
             module_spec.loader.exec_module(module)
-            return checked_process_words(module.align(audio, transcript, spec["snapshot"], self.error), transcript, duration_ms, self.error)
+            return checked_process_words(module.align(audio, transcript, spec["snapshot"], self.error, self.units), transcript, duration_ms, self.error)
         if external:
             body = process_pcm(audio, self.error)
-            result = process_module().call(spec, "alignment", "align_words", body,
-                {"transcript": transcript, "language": language}, self.error, strict_json)
+            # The port's whole call is one unit here: its process runs its
+            # windows itself.
+            result = self.units.run("alignment_window", duration_ms, lambda: process_module().call(
+                spec, "alignment", "align_words", body,
+                {"transcript": transcript, "language": language}, self.error, strict_json,
+                progress=self.units.progress))
             model = self.alignment_model(language)
             provenance = checked_process_provenance(result, body, model, self.error)
             if (result.get("aligner_model") != model or provenance.get("language") != language
@@ -349,7 +369,8 @@ class LocalRuntime:
         import torch
         from qwen_asr import Qwen3ForcedAligner
         model = Qwen3ForcedAligner.from_pretrained(spec["snapshot"], dtype=torch.float32, device_map="cpu", local_files_only=True)
-        output = model.align(audio=(audio, 16000), text=transcript, language=language)
+        output = self.units.run("alignment_window", duration_ms,
+                                lambda: model.align(audio=(audio, 16000), text=transcript, language=language))
         if len(output) != 1:
             raise self.error("InvalidAlignmentOutput")
         return aligned_words(output[0], transcript, duration_ms, self.error)
@@ -358,7 +379,9 @@ class LocalRuntime:
         spec = self.require("diarization")
         if spec.get("backend") == "process":
             body = process_pcm(audio, self.error)
-            result = process_module().call(spec, "diarization", "diarize_full_file", body, {}, self.error, strict_json)
+            result = self.units.run("diarization", duration_ms, lambda: process_module().call(
+                spec, "diarization", "diarize_full_file", body, {}, self.error, strict_json,
+                progress=self.units.progress))
             provenance = checked_process_provenance(result, body, COMMUNITY, self.error)
             if provenance.get("full_file_samples") != len(audio):
                 raise self.error("ProcessDiarizationBindingMismatch")
@@ -369,7 +392,11 @@ class LocalRuntime:
         from pyannote.audio import Pipeline
         pipeline = Pipeline.from_pretrained(spec["snapshot"])
         # One call on the entire decoded file. No pack/chunk parameter exists.
-        output = pipeline({"waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000})
+        # Each step the pipeline reports is progress, so a long file runs as
+        # long as its steps move.
+        output = self.units.run("diarization", duration_ms, lambda: pipeline(
+            {"waveform": torch.from_numpy(audio.copy()).unsqueeze(0), "sample_rate": 16000},
+            hook=lambda *step, **counts: self.units.progress()))
         exclusive = getattr(output, "exclusive_speaker_diarization", None)
         if exclusive is None:
             raise self.error("ExclusiveDiarizationUnavailable")
@@ -424,9 +451,16 @@ class LocalRuntime:
             return tokenizer.apply_chat_template([{"role": "user", "content": instructions}], tokenize=False, add_generation_prompt=True)
         def generate_group(group):
             prompt = prompt_for(group)
-            if len(tokenizer.encode(prompt)) > spec["max_input_tokens"]:
+            prompt_tokens = len(tokenizer.encode(prompt))
+            if prompt_tokens > spec["max_input_tokens"]:
                 raise self.error("CleanupInputTooLong")
-            text = generate(model, tokenizer, prompt=prompt, max_tokens=spec["max_tokens"], sampler=make_sampler(temp=0.0), verbose=False)
+            # Each group, and each half a cut answer goes again as, is one
+            # admitted unit.
+            text = self.units.run("cleanup_group", 0, lambda: generate(
+                model, tokenizer, prompt=prompt, max_tokens=spec["max_tokens"],
+                sampler=make_sampler(temp=0.0), verbose=False),
+                usage=lambda text: {"input_tokens": prompt_tokens,
+                                    "output_tokens": len(tokenizer.encode(text))})
             if len(tokenizer.encode(text)) >= spec["max_tokens"]:
                 if len(group) > 1:
                     half = len(group) // 2

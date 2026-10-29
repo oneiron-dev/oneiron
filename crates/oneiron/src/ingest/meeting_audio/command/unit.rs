@@ -12,7 +12,10 @@ use crate::llm::media::{AiOperation, MediaPart, MediaUsage};
 use crate::llm::run_admission::{WireCallError, WireSeat};
 
 use super::process::{Frame, Session};
-use super::{AudioResult, CommandMeetingAudioHost, PROTOCOL, host_error};
+use super::{AudioResult, CommandMeetingAudioHost, PROTOCOL, host_error, parse_reply};
+
+/// A unit's call failed in the bridge, which then replies with its code.
+const UNIT_FAILED: &str = "UnitFailed";
 
 /// The rungs a native host's physical model calls are admitted on, one per
 /// model: each call settles at its own rung's rates.
@@ -104,7 +107,8 @@ impl CommandMeetingAudioHost {
     /// Runs the unit `unit` the bridge named in `stage`'s process, on its own
     /// permit: the bridge is answered once the permit starts, and the permit
     /// settles on the unit's end. A refused unit is answered no, and the
-    /// stage faults; so does a unit that ends without its end.
+    /// stage faults; so does a unit that fails, with the code the bridge's
+    /// reply gives, or that ends without its end.
     pub(super) fn run_unit(
         &self,
         stage: &str,
@@ -143,6 +147,7 @@ impl CommandMeetingAudioHost {
                         Frame::Event(event) => match event_name(&event, request_id) {
                             Some("progress") => {}
                             Some("unit_done") => return Ok(unit_usage(&event["usage"])),
+                            Some("unit_failed") => return Err(UNIT_FAILED),
                             _ => return Err("UnitInterrupted"),
                         },
                         Frame::Reply(_) => return Err("UnitInterrupted"),
@@ -158,6 +163,14 @@ impl CommandMeetingAudioHost {
                 let _ = session.answer(false);
                 Err(host_error(stage, "RunAdmissionRefused"))
             }
+            Err(WireCallError::Failed(UNIT_FAILED)) => match session.next() {
+                // The bridge's reply carries the failed unit's own code.
+                Ok(Frame::Reply(output)) => match parse_reply(stage, request_id, false, output) {
+                    Err(error) => Err(error),
+                    Ok(_) => Err(host_error(stage, UNIT_FAILED)),
+                },
+                _ => Err(host_error(stage, UNIT_FAILED)),
+            },
             Err(WireCallError::Failed(code)) => Err(host_error(stage, code)),
         }
     }

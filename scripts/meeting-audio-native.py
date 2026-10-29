@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Offline native meeting-audio host. Uses existing ffmpeg, Silero and MLX only.
 
-One request per process: bounded JSON header + LF + exact raw input bytes.
-One response: JSON header + LF + optional raw decoded PCM. Optional local model
-ports require a hash-pinned host profile; missing ports are explicit refusals.
-Run this with an existing native interpreter, NOT an inline-metadata launcher.
+One request per process, read from the private file `--request` names:
+bounded JSON header + LF + exact raw input bytes. Before each physical model
+call the host is told its unit (`unit` line) and the call runs only once the
+host answers `{"admitted": true}` on stdin; its end (`unit_done`) or failure
+(`unit_failed`) follows, and `progress` lines mark a long call moving (FIX
+3765). One response: JSON header + LF + optional raw decoded PCM. Optional
+local model ports require a hash-pinned host profile; missing ports are
+explicit refusals. Run this with an existing native interpreter, NOT an
+inline-metadata launcher.
 """
 from __future__ import annotations
 
@@ -17,13 +22,14 @@ import io
 import json
 import os
 from pathlib import Path
+import selectors
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
 
-PROTOCOL = "oneiron.meeting_audio.host.v1"
+PROTOCOL = "oneiron.meeting_audio.host.v2"
 ASR_MODEL = "mlx-community/Qwen3-ASR-1.7B-8bit"
 COMMUNITY_MODEL = "pyannote/speaker-diarization-community-1"
 # A pack's ASR output budget grows with its audio: at least 8,192 tokens, and
@@ -32,6 +38,9 @@ COMMUNITY_MODEL = "pyannote/speaker-diarization-community-1"
 ASR_MIN_TOKENS = 8192
 ASR_TOKENS_PER_SECOND = 64
 # No recording, request or reply is refused or cut by its size (Rule 5).
+# How long ffmpeg may report no decode progress before the decode faults
+# (CALLS, FIX 3765); a long file decodes as long as it progresses.
+DECODE_PROGRESS_IDLE_SECONDS = 300
 
 
 class Refusal(Exception):
@@ -48,6 +57,60 @@ def sha256(data):
 def encode_header(header):
     return json.dumps(header, ensure_ascii=False, separators=(",", ":"),
                       allow_nan=False).encode("utf-8") + b"\n"
+
+
+class UnitGate:
+    """The host's admission of each physical model call (FIX 3765).
+
+    `run` names a unit to the host, waits for its answer, runs the call once
+    admitted and reports its end with what it counted. Without an answer
+    stream (a nested process port, whose whole call its parent admitted as
+    one unit) a unit runs unasked and only its progress is written.
+    """
+
+    def __init__(self, request_id, output_stream, answers=None):
+        self.request_id = request_id
+        self.output = output_stream
+        self.answers = answers
+        self.counts = {}
+
+    def write(self, event, **fields):
+        self.output.write(encode_header({"protocol": PROTOCOL, "request_id": self.request_id,
+                                         "event": event, **fields}))
+        self.output.flush()
+
+    def progress(self):
+        self.write("progress")
+
+    def run(self, kind, audio_ms, call, usage=None):
+        if self.answers is None:
+            self.progress()
+            result = call()
+            self.progress()
+            return result
+        index = self.counts.get(kind, 0)
+        self.counts[kind] = index + 1
+        self.write("unit", unit={"kind": kind, "index": index, "audio_ms": audio_ms})
+        try:
+            answer = json.loads(self.answers.readline())
+        except (ValueError, UnicodeError):
+            raise Refusal("InvalidAdmission") from None
+        if not isinstance(answer, dict) or answer.get("admitted") is not True:
+            raise Refusal("RunAdmissionRefused")
+        try:
+            result = call()
+        except BaseException:
+            self.write("unit_failed")
+            raise
+        counted = {"audio_ms": audio_ms}
+        if usage is not None:
+            counted.update(usage(result))
+        self.write("unit_done", usage=counted)
+        return result
+
+
+def audio_milliseconds(samples):
+    return (samples + 15) // 16
 
 
 def read_request(stream):
@@ -127,6 +190,8 @@ class NativeHost:
         self.runtime_profile = runtime_profile
         self.runtime_profile_sha256 = runtime_profile_sha256
         self.loaded_runtime = None
+        # The request's unit gate, set when its request is read.
+        self.units = UnitGate(None, io.BytesIO())
 
     def runtime(self):
         if self.runtime_profile is None:
@@ -137,6 +202,7 @@ class NativeHost:
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             self.loaded_runtime = module.LocalRuntime(self.runtime_profile, self.runtime_profile_sha256, error=Refusal)
+        self.loaded_runtime.units = self.units
         return self.loaded_runtime
 
     def capabilities(self):
@@ -184,19 +250,16 @@ class NativeHost:
             target = Path(directory) / "decoded.s16le"
             source.write_bytes(body)
             command = [str(self.ffmpeg), "-hide_banner", "-nostdin", "-v", "error",
+                       "-nostats", "-progress", "pipe:1",
                        "-protocol_whitelist", "file,pipe",
                        "-format_whitelist", "mov,mp3,wav,matroska,webm,ogg,flac,aiff,aac",
                        "-i", str(source),
                        "-map", "0:a:0", "-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000",
                        "-threads", "1", "-f", "s16le",
                        "-acodec", "pcm_s16le", str(target)]
-            try:
-                result = subprocess.run(command, stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL, check=False, timeout=300)
-            except subprocess.TimeoutExpired:
-                raise Refusal("DecodeTimedOut") from None
-            if result.returncode != 0:
-                raise Refusal("DecodeFailed", {"exit_code": result.returncode})
+            returncode = self.decode_with_progress(command)
+            if returncode != 0:
+                raise Refusal("DecodeFailed", {"exit_code": returncode})
             size = target.stat().st_size
             if size == 0 or size % 2:
                 raise Refusal("InvalidAudio")
@@ -206,6 +269,28 @@ class NativeHost:
             "samples": len(pcm) // 2, "pcm_sha256": sha256(pcm),
             "provenance": provenance("ffmpeg", body),
         }, pcm
+
+    def decode_with_progress(self, command):
+        """Runs ffmpeg while it reports progress: each report is passed on,
+        and a decode silent for DECODE_PROGRESS_IDLE_SECONDS faults."""
+        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as child:
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(child.stdout, selectors.EVENT_READ)
+                    while True:
+                        if not selector.select(DECODE_PROGRESS_IDLE_SECONDS):
+                            raise Refusal("DecodeStalled")
+                        report = os.read(child.stdout.fileno(), 65536)
+                        if not report:
+                            break
+                        self.units.progress()
+                return child.wait(timeout=DECODE_PROGRESS_IDLE_SECONDS)
+            except subprocess.TimeoutExpired:
+                raise Refusal("DecodeStalled") from None
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait()
 
     @staticmethod
     def pcm(body):
@@ -220,11 +305,11 @@ class NativeHost:
         # This loader reads the wheel's own ONNX file, never torch.hub or HF.
         model = load_silero_vad(onnx=True)
         # Engine packing owns the 250ms padding. VAD gets the COMPLETE PCM.
-        segments = get_speech_timestamps(
+        segments = self.units.run("vad", audio_milliseconds(len(audio)), lambda: get_speech_timestamps(
             audio, model, sampling_rate=16000, threshold=0.5,
             min_speech_duration_ms=0, min_silence_duration_ms=100,
             speech_pad_ms=0, return_seconds=False,
-        )
+        ))
         previous_end = 0
         spans = []
         for segment in segments:
@@ -284,12 +369,12 @@ class NativeHost:
         context = json.dumps(glossary, ensure_ascii=False, separators=(",", ":"))
         # Do not let the library re-split a core-owned pack or pad its short tail.
         max_tokens = max(ASR_MIN_TOKENS, -(-len(audio) // 16000) * ASR_TOKENS_PER_SECOND)
-        output = model.generate(
+        output = self.units.run("asr", audio_milliseconds(len(audio)), lambda: model.generate(
             audio, language=language, system_prompt=context,
             chunk_duration=max(1200.0, len(audio) / 16000.0 + 1.0),
             min_chunk_duration=0.0, batch_size=1, max_tokens=max_tokens,
             temperature=0.0, verbose=False,
-        )
+        ), usage=lambda output: {"output_tokens": output.generation_tokens})
         if output.generation_tokens >= max_tokens:
             raise Refusal("AsrTokenBudgetExhausted")
         if not output.text.strip():
@@ -361,12 +446,13 @@ class NativeHost:
         raise Refusal("UnknownOperation")
 
 
-def serve(host, input_stream, output_stream):
+def serve(host, input_stream, output_stream, answers=None):
     request_id = None
     started = time.monotonic()
     try:
         header, body = read_request(input_stream)
         request_id = header["request_id"]
+        host.units = UnitGate(request_id, output_stream, answers)
         # Third-party Python progress output must not corrupt the frame.
         with contextlib.redirect_stdout(sys.stderr):
             result, output_body = host.dispatch(header["operation"], body, header["options"])
@@ -435,6 +521,7 @@ def self_test():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--request", type=Path)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--ffmpeg", type=Path)
     parser.add_argument("--model-snapshot", type=Path)
@@ -445,8 +532,9 @@ def main():
     if args.self_test:
         self_test()
         return 0
-    if args.workspace is None or args.ffmpeg is None or args.model_snapshot is None:
-        parser.error("--workspace, --ffmpeg and --model-snapshot are required")
+    if (args.request is None or args.workspace is None or args.ffmpeg is None
+            or args.model_snapshot is None):
+        parser.error("--request, --workspace, --ffmpeg and --model-snapshot are required")
     if (args.runtime_profile is None) != (args.runtime_profile_sha256 is None):
         parser.error("runtime profile path and SHA-256 must be supplied together")
     try:
@@ -456,7 +544,10 @@ def main():
         return 2
     host = NativeHost(workspace, args.ffmpeg, args.model_snapshot,
                       args.runtime_profile, args.runtime_profile_sha256)
-    return serve(host, sys.stdin.buffer, sys.stdout.buffer)
+    # The request comes from its private file; stdin carries the host's
+    # admission answers, one line per unit.
+    with open(args.request, "rb") as request:
+        return serve(host, request, sys.stdout.buffer, sys.stdin.buffer)
 
 
 if __name__ == "__main__":
