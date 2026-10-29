@@ -89,6 +89,22 @@ pub(crate) fn code_consent_waits_bound_to_in_txn(
     Ok(bound)
 }
 
+/// Every code consent wait's row, for a host's settler pass over waits no
+/// connector row drives (FIX 11498). A row that does not decode binds none.
+pub(crate) fn code_consent_wait_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<CodeConsentWaitRow>> {
+    let mut rows = Vec::new();
+    for row in WAITS.iter_raw_from(&vault.store, txn, &[])? {
+        let (_, bytes) = row?;
+        if let Ok(row) = WAITS.decode_value(&bytes) {
+            rows.push(row);
+        }
+    }
+    Ok(rows)
+}
+
 /// Writes one wait's row at its next revision.
 pub(super) fn put_code_consent_wait_in_txn(
     vault: &Vault,
