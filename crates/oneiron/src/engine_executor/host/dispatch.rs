@@ -280,8 +280,9 @@ impl RecordingJsHost<'_, '_> {
         }
         if let Some(wait) = &self.durable_wait {
             let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
-            let row =
+            let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome, None));
         }
@@ -301,8 +302,9 @@ impl RecordingJsHost<'_, '_> {
                 effect: call.effect(),
                 error: error.to_owned(),
             });
-            let row =
+            let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome, None));
         }
