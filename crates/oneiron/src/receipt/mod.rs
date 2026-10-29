@@ -93,9 +93,9 @@ pub use self::questions::{
     GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome,
     GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply,
     QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
-    QuestionOutcomes, QuestionOutcomesProjectRequest, QuestionOutcomesProjected,
-    QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
-    QuestionRefreshRequest, QuestionScheduleRequest,
+    QuestionOutcomeWindowsRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
+    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,

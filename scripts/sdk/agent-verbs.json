@@ -14306,6 +14306,20 @@
       "section": false
     },
     {
+      "name": "vault.questions.outcome_windows",
+      "description": "Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed.",
+      "input": "crate::receipt::QuestionOutcomeWindowsRequest",
+      "output": "Vec<crate::llm::decision::questions::OutcomeWindowClose>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcome_windows\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.questions.answers",
       "description": "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each.",
       "input": "crate::receipt::QuestionAnswersRequest",

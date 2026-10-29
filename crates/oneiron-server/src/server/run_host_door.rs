@@ -44,8 +44,8 @@ use oneiron::code_run::{
 use oneiron::context_board::StreamConnectionId;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::llm::decision::questions::{
-    create_question, edit_question, pause_question, question_answers, read_question,
-    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
+    closed_outcome_windows, create_question, edit_question, pause_question, question_answers,
+    read_question, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
 };
 use oneiron::llm::media::{AiOperation, Modality};
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
@@ -55,8 +55,8 @@ use oneiron::memory::{
 };
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionBackfillRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionPauseRequest,
+    QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::skill_attribution::{RunWriteToken, with_run_write_token};
@@ -591,6 +591,7 @@ fn served_by_host(verb: AgentVerb) -> bool {
             | AgentVerb::VaultQuestionsPause
             | AgentVerb::VaultQuestionsBackfill
             | AgentVerb::VaultQuestionsRead
+            | AgentVerb::VaultQuestionsOutcomeWindows
             | AgentVerb::VaultQuestionsAnswers
             | AgentVerb::TasksWave
             | AgentVerb::ConnectorCall
