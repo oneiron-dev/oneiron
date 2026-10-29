@@ -197,3 +197,40 @@ impl AttemptRecord {
         }
     }
 }
+
+impl AttemptQueue<'_> {
+    /// Brings a waiting retry's instant forward to `now` (FIX 1112): the try a
+    /// failure ladder minted becomes ready at once instead of at its backoff.
+    /// Only a `Scheduled` retry still waiting on a later instant moves; any
+    /// other row is left as it is and reads `false`. Its tries and its ladder
+    /// are unchanged: only the wait is cut.
+    pub(crate) fn advance_retry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        now: u64,
+    ) -> Result<bool> {
+        let Some(mut record) = self.get_in_write_txn(txn, id)? else {
+            return Ok(false);
+        };
+        if record.state != AttemptState::Scheduled
+            || record.retry_of.is_none()
+            || ready_at(&record) <= now
+        {
+            return Ok(false);
+        }
+        self.delete_ready_entry_for_record(txn, &record)?;
+        record.scheduled_at = Some(now);
+        record.backoff_until = None;
+        let encoded = self.encode_in_txn(txn, &mut record)?;
+        self.store
+            .attempt_records
+            .put(txn, record.id.as_bytes(), &encoded)?;
+        self.store.attempt_ready.put(
+            txn,
+            &crate::attempt_queue::encoding::ready_key(now, record.id),
+            record.id.as_bytes(),
+        )?;
+        Ok(true)
+    }
+}

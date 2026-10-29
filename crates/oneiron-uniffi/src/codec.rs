@@ -157,11 +157,7 @@ impl<'de> serde::Deserialize<'de> for WireJson {
 
 /// Writes a two-tuple record's fields as the JSON array the engine writes
 /// a tuple as.
-pub(crate) fn ser_tuple2<S, A, B>(
-    item0: &A,
-    item1: &B,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+pub(crate) fn ser_tuple2<S, A, B>(item0: &A, item1: &B, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
     A: serde::Serialize,
