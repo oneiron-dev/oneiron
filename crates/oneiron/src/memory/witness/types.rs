@@ -156,4 +156,10 @@ pub struct WitnessReceipt {
     /// off-record witness.
     #[serde(default)]
     pub messages: Vec<crate::lens::RecordRef>,
+    /// What the wake this turn owes its actor's armed programs came to
+    /// (DOOR-141, FIX 9970), including a wake the turn could not record.
+    /// `None` for a turn that owes no wake: off record, an import, a host
+    /// door's turn, or one that lands no new words.
+    #[serde(default)]
+    pub wake_outcome: Option<super::wake_outcome::TurnProgramWakeOutcome>,
 }

@@ -28,15 +28,20 @@ impl Masker {
     /// each handle went.
     pub(super) fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
         let known = self.known_spans(text);
-        let mut hits: Vec<(Range<usize>, TextHit)> = secret_spans(text)
-            .into_iter()
-            .filter(|(span, _)| {
-                !known
-                    .iter()
-                    .any(|(held, _)| held.start < span.end && span.start < held.end)
-            })
-            .map(|(span, reason)| (span, TextHit::Shape(reason)))
-            .collect();
+        // The switch is off: no shape span is discovered (FIX 8644).
+        let mut hits: Vec<(Range<usize>, TextHit)> = Vec::new();
+        if !self.known_only {
+            hits.extend(
+                secret_spans(text)
+                    .into_iter()
+                    .filter(|(span, _)| {
+                        !known
+                            .iter()
+                            .any(|(held, _)| held.start < span.end && span.start < held.end)
+                    })
+                    .map(|(span, reason)| (span, TextHit::Shape(reason))),
+            );
+        }
         hits.extend(
             known
                 .into_iter()
@@ -46,11 +51,23 @@ impl Masker {
             return Ok(None);
         }
         hits.sort_by_key(|(span, _)| span.start);
+        // A span that cuts a char boundary is widened to it, so no slice
+        // below panics (FIX 8648).
+        hits = hits
+            .into_iter()
+            .map(|(span, hit)| (widen(text, span), hit))
+            .collect();
+        hits.sort_by_key(|(span, _)| span.start);
         let mut out = String::with_capacity(text.len());
         let mut from = 0;
         let mut placed = false;
         let mut replaced = Vec::new();
         for (span, hit) in hits {
+            // A widened span may open inside the last one: it stays as
+            // written, so no slice runs backwards (FIX 8648).
+            if span.start < from {
+                continue;
+            }
             let handle = match hit {
                 TextHit::Known(handle) => {
                     self.placed_known = true;
@@ -96,4 +113,18 @@ impl Masker {
             .map(|hit| (hit.span, hit.handle.to_owned()))
             .collect()
     }
+}
+
+/// `span` widened to UTF-8 char boundaries: its start down, its end up
+/// (FIX 8648).
+fn widen(text: &str, span: Range<usize>) -> Range<usize> {
+    let mut start = span.start.min(text.len());
+    while start > 0 && !text.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = span.end.min(text.len());
+    while end < text.len() && !text.is_char_boundary(end) {
+        end += 1;
+    }
+    start..end
 }

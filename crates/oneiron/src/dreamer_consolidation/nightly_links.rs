@@ -267,7 +267,14 @@ impl ConsolidationExecutor<'_> {
         // The call labels its claims and questions before its state renders
         // (FIX 7506).
         let mut labels = CallLabelMap::default();
-        let pack = NightlyLinkQuestion::pack(&self.decisions.nightly_link_wording, partners.len())?;
+        let pack =
+            match NightlyLinkQuestion::pack(&self.decisions.nightly_link_wording, partners.len()) {
+                Ok(pack) => pack,
+                Err(error) => {
+                    return super::residency::spent_or_deferred(error, ctx, charges)
+                        .map(ControlFlow::Break);
+                }
+            };
         self.label_questions(&mut labels, pack.questions());
         let state = pack.state(anchor, partners, &mut labels);
         let mut scope = Scope {
@@ -365,7 +372,10 @@ impl ConsolidationExecutor<'_> {
         // Every generation that finished is spent, whatever the call's
         // outcome.
         for (hash, usage) in &spent {
-            charges.record_terminal(vault, step.attempt_id, *hash, usage)?;
+            if let Err(error) = charges.record_terminal(vault, step.attempt_id, *hash, usage) {
+                return super::residency::spent_or_deferred(error, ctx, charges)
+                    .map(ControlFlow::Break);
+            }
         }
         let decisions = match decided {
             Ok(Some(decisions)) => decisions,

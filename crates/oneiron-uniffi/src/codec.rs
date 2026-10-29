@@ -30,8 +30,9 @@ use crate::dto::{
     OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt, ReadScope,
     RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope,
     RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
-    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson,
-    WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint,
+    TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor, WitnessMessage,
+    WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -359,6 +360,31 @@ impl Lift<engine::WitnessReceipt> for WitnessReceipt {
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
+            wake_outcome: value
+                .wake_outcome
+                .map(TurnProgramWakeOutcome::lift)
+                .transpose()?,
+        })
+    }
+}
+
+impl Lift<engine::TurnProgramWakeOutcome> for TurnProgramWakeOutcome {
+    fn lift(value: engine::TurnProgramWakeOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::TurnProgramWakeOutcome::NotArmed => Self::NotArmed,
+            engine::TurnProgramWakeOutcome::Evaluated { newly_recorded } => {
+                Self::Evaluated { newly_recorded }
+            }
+            engine::TurnProgramWakeOutcome::Unpersisted { reason } => Self::Unpersisted {
+                reason: match reason {
+                    engine::UnpersistedWakeReason::NoAuthority => {
+                        UnpersistedWakeReason::NoAuthority
+                    }
+                    engine::UnpersistedWakeReason::StorageFailure => {
+                        UnpersistedWakeReason::StorageFailure
+                    }
+                },
+            },
         })
     }
 }
