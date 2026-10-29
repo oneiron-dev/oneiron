@@ -45,6 +45,10 @@ impl SeatGuest for BrowserSession {
         Self::takeover(self)
     }
 
+    fn press_wait(&self) -> Option<EntityId> {
+        EntityId::from_hex(Self::press_wait(self)?).ok()
+    }
+
     fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
         Self::abandon_takeover(self)
     }

@@ -71,6 +71,10 @@ pub(super) fn assemble_extracted(
                     .get()
                     .corrects()
                     .filter(|head| extracted.corrects() == Some(*head));
+                let merged_sources = crate::skill_optimize::union_source_rows([
+                    slot.get().sources(),
+                    extracted.sources(),
+                ]);
                 let (incoming, refs) = extracted.into_parts();
                 let (mut kept, mut old_refs) = slot.get().clone().into_parts();
                 old_refs.extend(refs);
@@ -95,7 +99,7 @@ pub(super) fn assemble_extracted(
                 kept.evidence_meet =
                     super::provenance::source_meet(kept.evidence_meet, incoming.evidence_meet);
                 kept.learned_at = kept.learned_at.min(incoming.learned_at);
-                let merged = ExtractedCandidate::new(kept, old_refs)?;
+                let merged = ExtractedCandidate::new(kept, old_refs)?.with_sources(merged_sources);
                 *slot.get_mut() = match corrects {
                     Some(head) => merged.correcting(head),
                     None => merged,

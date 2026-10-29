@@ -228,6 +228,11 @@ impl AiHandle {
         &self.runtime
     }
 
+    /// Whether a running Dreamer takes session hints.
+    pub(crate) fn takes_session_hints(&self) -> bool {
+        self.hints.is_some()
+    }
+
     /// Tells the Dreamer's session policy what the app saw, in arrival order
     /// (FIX 8602): under real memory pressure the call waits its turn, off
     /// the runtime's workers, until the fact is kept, the Dreamer is gone, or

@@ -278,7 +278,10 @@ pub(crate) fn execute(
         }
         _ => return Err(invalid()),
     }
-    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    })
 }
 fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
     vault: &Vault,

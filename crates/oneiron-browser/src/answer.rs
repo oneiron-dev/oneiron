@@ -83,6 +83,11 @@ pub struct BrowserAnswer<T> {
     /// answer (FIX 5705).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_manifest: Option<SessionManifest>,
+    /// The press an act of the call waited on and what its owner's answer
+    /// came to, on the answer a code run's parked call resumes with (FIX
+    /// 10423).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub press: Option<crate::PressAnswer>,
 }
 
 impl<T> BrowserAnswer<T> {
@@ -97,6 +102,7 @@ impl<T> BrowserAnswer<T> {
             engine: None,
             demonstration: None,
             session_manifest: None,
+            press: None,
         }
     }
 }
