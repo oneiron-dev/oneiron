@@ -575,6 +575,15 @@ fn promote_one(
                 birth,
             )?;
         }
+        // A signed promotion writes no lexical hints (below), so the claim itself
+        // carries the words recall's lexical channel reads, in this transaction.
+        if envelope.machine_signature().is_some() {
+            let text = dreamer_claim_index_text(vault, &*wtxn, &landed, &prospective_queries)?;
+            vault
+                .batch_in()
+                .text(&candidate.claim_id, &[("val", text.as_str())])
+                .apply_recording_gate_decisions(wtxn)?;
+        }
         // The MESSAGE words the evidence names become this claim's
         // dependencies in the claim's own transaction.
         match verified {
@@ -766,6 +775,33 @@ fn verify_landed(
         return Err("landed verification failed: evidence taint stamp mismatch".to_owned());
     }
     Ok(body.approval)
+}
+
+/// The words a Dreamer claim is text-indexed under, one per line: its
+/// predicate with dots as spaces, its value as text (as the embedder projects
+/// it), its PERSON subject's stored name and the queries it was extracted
+/// for. Read from the stored body, so a masked value is indexed only in the
+/// masked form the claim holds; the queries meet the write door's mask.
+fn dreamer_claim_index_text(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &crate::claim::ClaimBody,
+    queries: &[String],
+) -> Result<String> {
+    let mut lines = vec![
+        body.predicate.replace('.', " "),
+        body.value
+            .as_str()
+            .map_or_else(|| body.value.to_string(), str::to_owned),
+    ];
+    if let crate::claim::ClaimSubject::Entity(subject) = body.subject
+        && vault.get_entity_type_in_txn(txn, &subject)? == Some(crate::registry::ENTITY_TYPE_PERSON)
+        && let Some(name) = crate::reaction::person_name_in(vault, txn, subject)?
+    {
+        lines.push(name);
+    }
+    lines.extend_from_slice(queries);
+    Ok(lines.join("\n"))
 }
 
 /// The same typed evidence decision returned by the public evidence read.
