@@ -41,6 +41,7 @@ use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
 mod line_chats;
+pub(crate) mod schema;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -85,7 +86,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(line_chats::routes())
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PutPack {
     /// An absolute folder on this host.
@@ -98,7 +99,7 @@ struct PutPack {
 }
 
 /// What one put did.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct PackPut {
     /// `installed`, `candidate` or `blocked`.
     outcome: &'static str,
@@ -145,7 +146,7 @@ async fn put(
     Ok(Json(put))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct InstallFromHub {
     /// A configured hub, as 32 hex.
@@ -272,7 +273,7 @@ async fn hook_bindings(
     Ok(Json(rows))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct BindHooks {
     pack: String,
@@ -299,14 +300,14 @@ async fn bind_hooks(
     Ok(Json(bound))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct QualifyHooks {
     /// The Candidate pack's source, as 32 hex (its receipt's `source_id`).
     source: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct HookQualification {
     #[serde(flatten)]
     put: PackPut,
@@ -343,7 +344,7 @@ async fn qualify_hooks(
     Ok(Json(qualified))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AgentWorld {
     /// The Candidate pack's source, as 32 hex (its receipt's `source_id`).
@@ -437,7 +438,7 @@ async fn pack_organs(
     Ok(Json(organs))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PutOrganBuild {
     /// The staged pack source, as 32 hex.
@@ -499,7 +500,7 @@ struct RefKey {
 }
 
 /// One hub ref's policy, pin and the revisions seen and trusted.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct RefSyncView {
     hub: String,
     r#ref: String,
@@ -552,7 +553,7 @@ async fn ref_sync(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetRefSync {
     hub: String,
@@ -587,7 +588,7 @@ async fn set_ref_sync(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SyncPack {
     /// The installed pack's name.
@@ -612,7 +613,7 @@ async fn sync_pack(
     Ok(Json(put))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ImportSkill {
     /// A shipped library subtree, imported at the released commit.
@@ -631,7 +632,7 @@ struct ImportSkill {
     publisher: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct SkillRow {
     /// The skill, as 32 hex.
     entity: String,
@@ -692,7 +693,7 @@ async fn import_skill(
     Ok(Json(row))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RestoreSkill {
     subtree: String,
@@ -791,7 +792,7 @@ async fn sync_skill(
 }
 
 /// The owner's consent as it landed.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct ConsentRow {
     outcome: &'static str,
     /// The gate decision, as 32 hex.
@@ -876,7 +877,7 @@ async fn skill_receipts(
     Ok(Json(receipts))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ActivationRequest {
     /// The publisher admitted for the skill's hub.
@@ -889,7 +890,7 @@ struct ActivationRequest {
 }
 
 /// The activation ask as the owner reads it.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct ActivationAskView {
     candidate: String,
     content_hash: String,
@@ -972,7 +973,7 @@ async fn approve_skill_activation(
 }
 
 /// One pack's setup: by name, and by content hash when several sources wait.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PackSetupKey {
     pack: String,
@@ -981,7 +982,7 @@ struct PackSetupKey {
     source: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PackSetupAnswerRequest {
     pack: String,
@@ -995,7 +996,7 @@ struct PackSetupAnswerRequest {
     card_action: Option<PackSetupCardActionRequest>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PackSetupCardActionRequest {
     action_id: String,
@@ -1003,7 +1004,7 @@ struct PackSetupCardActionRequest {
     state: GeneratedUiStateSnapshot,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PackSetupVerifyRequest {
     pack: String,
@@ -1013,7 +1014,7 @@ struct PackSetupVerifyRequest {
 }
 
 /// The setup, its GenUI cards and its plain text.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct PackSetupReply {
     setup: PackSetupView,
     cards: Vec<GeneratedUiCard>,
@@ -1027,7 +1028,7 @@ struct PackSetupReply {
     store_secret: Option<PackSetupStoreSecret>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct PackSetupStoreSecret {
     door: &'static str,
     connection: String,
@@ -1207,7 +1208,7 @@ async fn slack_manifest(
 }
 
 /// The Slack setup to install for: by content hash when several wait.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SlackInstallRequest {
     #[serde(default)]
