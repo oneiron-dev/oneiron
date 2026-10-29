@@ -55,7 +55,8 @@ pub(super) fn artifact_asker(
 
 /// One media call's answer, from its seat's ladder: on `run` when its caller
 /// admitted it on a line of its own, which bills that run's payer, else on
-/// the media meter as the owner's call ([`answered`]). A banked voice
+/// the media meter as the owner's call ([`answered`]), sourced from
+/// `sources`, the rows the call is read from (FIX 11311). A banked voice
 /// withdrawn or re-recorded while it rendered, on the rung that answered, is
 /// not handed back; nor is a call that found the voice withdrawn everywhere
 /// while it waited (FIX 1746).
@@ -65,13 +66,14 @@ pub(super) async fn rendered(
     request: MediaRequest,
     voices: Option<RungVoices>,
     run: Option<&RunAdmission>,
+    sources: Option<Vec<EntityId>>,
 ) -> MemoryResult<AiAnswer> {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match (run, &voices) {
         (Some(run), voices) => media.run_admitted(run, request, voices.as_ref()).await,
-        (None, Some(voices)) => media.run_voiced(request, voices, None).await,
-        (None, None) => media.run(request, None).await,
+        (None, Some(voices)) => media.run_voiced(request, voices, None, sources).await,
+        (None, None) => media.run(request, None, sources).await,
     };
     let withdrawn = || {
         MemoryError::new(

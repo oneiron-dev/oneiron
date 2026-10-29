@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::get;
 use oneiron::error::RecordError;
@@ -35,7 +35,7 @@ use oneiron::federation::{
 use oneiron::world_keys::PolicyRevision;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
 use super::{OwnerReply, blocking};
 use crate::api::body_spool::OwnerJsonBody;
@@ -168,11 +168,12 @@ async fn view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn answer(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AnswerSetup>,
 ) -> OwnerReply<SetupReply> {
     let person = holder(&auth, &server, SETUP_ACTS)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<SetupReply> {
         let given = SharedTrainingSetupAnswer {

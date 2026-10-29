@@ -24535,7 +24535,7 @@
      "path": "src/dreamer_consolidation/executor/extraction/decided.rs",
      "purpose": "Every candidate a Dreamer attempt decided a correction for, kept at the attempt before the branch builds…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -29340,6 +29340,16 @@
      "notable": [],
      "path": "src/dreamer_wake/statement_material.rs",
      "purpose": "A text's statement material (ARCH-0026 RD-26): one BLAKE3 digest per sentence with words in it, read the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/surprise_wake.rs",
+     "purpose": "The wake at a surprising save (FIX 11317, the Engine's ruling (b)): a re-tag whose surprise reaches the wake…",
      "surface": {
       "crate-vis": 1
      }
@@ -40713,6 +40723,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/decision/asks/queue.rs",
+     "purpose": "One ask queued in the caller's own write (FIX 10789): an engine record that owes the owner a question keeps…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/decision/asks/signal.rs",
      "purpose": "The vault's one decision-answer signal (FIX 4706)",
      "surface": {
@@ -40806,7 +40826,7 @@
      "path": "src/llm/decision/ladder/mod.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 2,
       "struct": 1
      }
@@ -41247,7 +41267,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RefreshBatch",
@@ -41257,7 +41277,7 @@
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
       "crate-vis": 7,
-      "fn": 9,
+      "fn": 8,
       "re-export": 1,
       "struct": 2
      }
@@ -41276,9 +41296,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/decision/questions/refresh/calls.rs",
+     "purpose": "One unit's answer from a graph answerer (FIX 8914, pure moves from `refresh.rs`)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/execution.rs",
+     "purpose": "One refresh's execution path (FIX 8914, pure moves from `refresh.rs`)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/decision/questions/refresh/manual.rs",
      "purpose": "FIX 9176: a standing question refreshed by hand writes its answers as the asker its version keeps, as the…",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/pump.rs",
+     "purpose": "The due-refresh pump and its scheduling helpers (FIX 8914, pure moves from `refresh.rs`)",
+     "surface": {
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -41293,11 +41344,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "QuestionUnitAsk"
+     ],
      "path": "src/llm/decision/questions/role_asks.rs",
      "purpose": "A question unit's person ask (OF-506; ARCH-0076 role ladder): a graph or artifact answer whose dial reaches…",
      "surface": {
-      "fn": 1
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -42117,6 +42172,7 @@
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
+      "mod": 1,
       "re-export": 12
      }
     },
@@ -42171,6 +42227,22 @@
       "crate-vis": 6,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResidentShareView",
+      "ResidentSharesRequest",
+      "ResidentSharesView",
+      "SetResidentShareRequest"
+     ],
+     "path": "src/llm/run_admission/resident_doors.rs",
+     "purpose": "Typed owner doors over the resident shares (FIX 11310): set one resident's share of the host-paid…",
+     "surface": {
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -43725,7 +43797,21 @@
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
-      "fn": 8
+      "fn": 8,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerDecidedCandidateView"
+     ],
+     "path": "src/memory/conflict_settle/candidate_decisions.rs",
+     "purpose": "The read door to a Dreamer attempt's decided candidates (FIX 11306): every candidate it decided a correction…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -44524,7 +44610,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 27,
-      "re-export": 59
+      "re-export": 60
      }
     },
     {
@@ -52878,7 +52964,7 @@
      "path": "src/policy_model/in_force.rs",
      "purpose": "Whether an owner-plane verdict still answers the policy in force, and what the plane answers when it does not",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -58404,6 +58490,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SavedQueryHealth",
+      "SavedQueryPass",
+      "SavedQueryWake",
+      "SavedQueryWakeOutcome"
+     ],
+     "path": "src/saved_query/health.rs",
+     "purpose": "Each swept saved query's health (FIX 11250): one row per query the host's evaluator wakes, written at every…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/saved_query/lifecycle.rs",
      "purpose": "—",
@@ -58464,7 +58568,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -75091,7 +75195,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1212
+      "fn": 1214
      }
     },
     {
@@ -77056,6 +77160,16 @@
       "crate-vis": 3,
       "mod": 1,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/print_ask.rs",
+     "purpose": "The owner's typed question about a third party's voice print (FIX 10789)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81062,7 +81176,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81370,7 +81484,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 147,
+     "files": 152,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81391,7 +81505,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 290,
+     "files": 291,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81671,7 +81785,7 @@
      "purpose": "Runtime hooks (ARCH-0080)"
     },
     "saved_query": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82021,7 +82135,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82077,9 +82191,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5473,
+   "source_files": 5482,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94266,7 +94380,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1180
+      "fn": 1182
      }
     },
     {
@@ -95719,7 +95833,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1181
+      "fn": 1183
      }
     },
     {
@@ -99758,13 +99872,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/budget_doors.rs",
      "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -102276,7 +102390,7 @@
      "path": "src/api/memory/watch.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -103014,7 +103128,7 @@
      "path": "src/api/owner_routes/machine_routes.rs",
      "purpose": "`/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -103038,7 +103152,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/owner_work_routes.rs",
@@ -107121,7 +107235,7 @@
      "path": "src/embedder/local/evidence.rs",
      "purpose": "Where vector evidence starts in a shipped model's space, and the profile its floors hold for",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -109894,6 +110008,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/cooldown/reply_budgets.rs",
+     "purpose": "The vault's model byte budgets a ladder's chat replies are read on (FIX 10626), kept beside its offers'…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/cooldown/world_hold.rs",
      "purpose": "Whether a fallback may take a call's world where the offer it falls back to sends it, and why not (FIX 4938…",
      "surface": {
@@ -110003,7 +110127,7 @@
      "path": "src/models/host_budgets.rs",
      "purpose": "The bytes one served vault's model host holds at once (FIX 9321, FIX 9323): one set per vault's runtime…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -110037,7 +110161,7 @@
      "path": "src/models/http/reply_line.rs",
      "purpose": "The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -114036,7 +114160,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 93,
+     "files": 94,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114185,7 +114309,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1387,
+   "source_files": 1388,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -117458,6 +117582,8 @@
       "ResidenceQueued",
       "ResidenceResultStatusName",
       "ResidenceResultView",
+      "ResidentShareView",
+      "ResidentSharesView",
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "ResolvedTeam",
@@ -117873,6 +117999,7 @@
       "SessionManifest",
       "SessionSeccomp",
       "SetNoteOverridesRequest",
+      "SetResidentShareRequest",
       "SettleVerb",
       "SettleVerdict",
       "SettledHunkView",
@@ -118647,7 +118774,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1045,
-      "struct": 3211
+      "struct": 3214
      }
     },
     {

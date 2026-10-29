@@ -160,7 +160,11 @@ pub(crate) async fn core_batch(
     // OF-181: `vault.batch`, as an action when the credential binds one,
     // else through the row's own door; both commit at the credential's grade.
     let receipt = match super::super::facade::action_routes::rest_action_bound(
-        &server, &auth, &headers, &input,
+        &server,
+        &auth,
+        &headers,
+        &extensions,
+        &input,
     )? {
         Some(bound) => {
             let row = AgentVerb::VaultBatch;

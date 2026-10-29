@@ -62,13 +62,17 @@ pub enum LimitRow {
     /// (FIX 8615): past it a reply waits its turn, and one larger than the
     /// whole line runs alone. Never a size refusal.
     MediaReplyBytes,
+    /// Bytes the JSON replies a ladder's chat sends read whole hold at once,
+    /// until the send ends (FIX 10626): charged as they arrive, never waited
+    /// for, a crossing recorded. Never a size refusal.
+    ChatReplyBytes,
     /// An engine row on this server's vault (`oneiron::limit_ask`), measured
     /// where the engine serves the work, which carries on past it.
     Engine(EngineLimit),
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 24 + EngineLimit::ALL.len()] = [
+    pub const ALL: [Self; 25 + EngineLimit::ALL.len()] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -93,6 +97,7 @@ impl LimitRow {
         Self::BookingWindows,
         Self::RendererWork,
         Self::MediaReplyBytes,
+        Self::ChatReplyBytes,
         Self::Engine(EngineLimit::KeyedFilterJsonBytes),
         Self::Engine(EngineLimit::CodeResultInlineBytes),
         Self::Engine(EngineLimit::CodeResultDiskFloorBytes),
@@ -250,6 +255,7 @@ impl LimitRow {
             Self::BookingWindows => "booking.anti_abuse:per_minute",
             Self::RendererWork => "limits.renderer_work",
             Self::MediaReplyBytes => "limits.media_reply_bytes",
+            Self::ChatReplyBytes => "limits.chat_reply_bytes",
             Self::Engine(row) => row.key(),
         }
     }

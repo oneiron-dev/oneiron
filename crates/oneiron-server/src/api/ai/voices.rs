@@ -343,8 +343,15 @@ pub(crate) async fn provision_clone_funded(
     // naming the acting person or creator as its initiator (FIX 8970); who
     // pays is the run's, unchanged.
     let initiator = actor.and_then(|actor| actor.entity_for_read(&server.vault).ok());
+    // Its clips are the voice's person's (FIX 11311).
+    let person = server
+        .vault
+        .voice_identity(voice_id)
+        .ok()
+        .flatten()
+        .map(|identity| vec![identity.owner]);
     let created = match media
-        .clone_run_funded(payer)
+        .clone_run_funded(payer, person)
         .map(|run| run.initiated_by(initiator))
     {
         Ok(run) => cloner
@@ -437,7 +444,8 @@ async fn delete_at_vendor(
     let Some(cloner) = media.voice_cloner(&record.target) else {
         return VoiceVendorDeleteStatus::NoCloneWire;
     };
-    let deleted = match media.clone_run() {
+    // A delete sends the vendor's voice id alone: it reads no row.
+    let deleted = match media.clone_run(Some(Vec::new())) {
         Ok(run) => cloner.delete(&run, &record.vendor_voice_id).await,
         Err(error) => Err(error),
     };

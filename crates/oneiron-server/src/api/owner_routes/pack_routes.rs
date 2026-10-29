@@ -1221,11 +1221,13 @@ struct SlackInstallRequest {
 async fn slack_install(
     auth: CoreAuth,
     headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<SlackInstallRequest>,
 ) -> OwnerReply<crate::builtin_host::SlackInstallLink> {
     let owner = owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let link =
         blocking(move || start_slack_install(&server, owner, surface, request.source)).await?;
