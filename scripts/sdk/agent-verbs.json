@@ -13522,7 +13522,7 @@
       "description": "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.",
       "input": "ProposalDeltaReadRequest",
       "output": "crate::task_verb::sdk::ProposalDeltaRead",
-      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, &input)?",
+      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, crate::claim::CallerLocality::OnDevice, &input)?",
       "host_door": true,
       "scope": "Read",
       "admission": {
