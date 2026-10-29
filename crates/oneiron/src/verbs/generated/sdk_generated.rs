@@ -32353,6 +32353,7 @@ pub fn vault_skills_attribution_read(
     crate::task_verb::sdk::skill_attribution_read_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.attribution.read")?,
+        crate::claim::CallerLocality::OnDevice,
         &input,
     )
 }
