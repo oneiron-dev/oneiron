@@ -159,10 +159,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let outcome =
                 call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
             let response = match outcome {
-                Ok(StepOutcome::Finished { response, .. }) => {
+                Ok(StepOutcome::Finished {
+                    response, memoized, ..
+                }) => {
                     if let Err(error) =
                         charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
                     {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
                         return Ok(charges.park_on_error(&error));
                     }
                     response

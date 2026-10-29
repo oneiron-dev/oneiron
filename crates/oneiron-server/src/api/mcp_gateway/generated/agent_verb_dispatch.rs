@@ -30,7 +30,10 @@ pub(super) async fn execute_mcp_agent_verb(
     .await
 }
 
-fn mcp_agent_verb_input(
+/// The typed input a `tools/call` of `tool` assembles from its arguments: the
+/// one projection the call runs on, and the one the binding door classifies
+/// a call over a damaged authority clock floor by (FIX 11201).
+pub(crate) fn mcp_agent_verb_input(
     tool: &str,
     a: &crate::mcp::McpVerbArguments,
 ) -> Result<Value, McpGatewayError> {
@@ -219,7 +222,14 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
-        "tasks.redo" => a.spec.clone().ok_or_else(invalid),
+        "tasks.redo" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.task_ref.as_deref() != map.get("task_ref").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.commit_message" => a.spec.clone().ok_or_else(invalid),
         "vault.begin_message_stream" => a.spec.clone().ok_or_else(invalid),
         "vault.append_to_stream" => a.spec.clone().ok_or_else(invalid),
@@ -1756,6 +1766,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         }
         "tasks.redo" => {
             arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("task_ref") {
+                arguments.insert("task_ref".to_owned(), value.clone());
+            }
         }
         "vault.commit_message" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -5089,8 +5102,12 @@ pub(crate) async fn execute_agent_verb_input(
     McpGatewayError,
 > {
     let producers = oneiron::memory::ProducerRows::default();
-    let produced = super::skill_execution::CALLER
-        .scope(
+    // An owner's erase or revoke reads the restriction-only clock through
+    // its hooks and door, as the engine classifies it (FIX 11201).
+    let restrictive = crate::api::clock_ingress::restrictive_call(server, tool, Some(&input));
+    let produced = crate::api::clock_ingress::scoped(
+        restrictive,
+        super::skill_execution::CALLER.scope(
             actor.clone(),
             execute_agent_verb_listing(
                 server,
@@ -5102,8 +5119,9 @@ pub(crate) async fn execute_agent_verb_input(
                 served,
                 board_hooks,
             ),
-        )
-        .await;
+        ),
+    )
+    .await;
     served.extend(producers.take());
     produced
 }

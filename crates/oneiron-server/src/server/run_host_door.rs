@@ -610,7 +610,7 @@ fn agent_lane(server: &SyncServer, actor: WriteActor) -> MemoryResult<ScopedRead
 }
 
 /// A standing question's dial, checked inside the host's own, as the
-/// credential door checks it.
+/// credential door checks it: a `human` ceiling stays human (FIX 11232).
 fn inside_host_dial(
     server: &SyncServer,
     dial: oneiron::llm::decision::DecisionDial,
@@ -618,11 +618,11 @@ fn inside_host_dial(
 ) -> MemoryResult<oneiron::llm::decision::DecisionDial> {
     server
         .decision_host()
-        .dial(DecisionRung::Big)
+        .dial(dial.ceiling.max(DecisionRung::Big))
         .narrow(dial)
         .map_err(|_| {
             MemoryError::bad_request(format!(
-                "{}'s dial widens the host's: start at or above its first rung, end at big or \
+                "{}'s dial widens the host's: start at or above its first rung, end at human or \
                  below, and keep a valid band inside its band",
                 verb.as_str()
             ))

@@ -14,7 +14,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::policy_model::{
     SecretLiftClose, SecretLiftHistoryProposal, SecretLiftRequest, SecretLiftStatus,
-    secret_lift_as_owner,
+    secret_lift_as_owner_toward,
 };
 
 use super::{OwnerReply, blocking, owner};
@@ -36,11 +36,13 @@ async fn status(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<SecretLiftStatus> {
     let owner = owner(&auth, &server)?;
+    let destination = auth.destination();
     let status = blocking(move || -> OwnerResult<SecretLiftStatus> {
-        Ok(secret_lift_as_owner(
+        Ok(secret_lift_as_owner_toward(
             server.vault(),
             &owner,
             &SecretLiftRequest::default(),
+            &destination,
         )?)
     })
     .await?;

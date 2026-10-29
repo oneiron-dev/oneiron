@@ -34,13 +34,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
 use oneiron::MemoryError;
 use oneiron_remote::{InProcessReply, InProcessRequest, InProcessStream, InProcessTransport};
 use oneiron_server::embedded::{
-    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, embedded_serve_config,
-    engine_memory_error, host_limits, unix_millis,
+    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, EngineErrorKind,
+    embedded_serve_config, engine_error_kind, engine_memory_error, host_limits, unix_millis,
 };
 use oneiron_vault_contract::host_adapters::AppHost;
 use zeroize::Zeroizing;
@@ -132,6 +133,9 @@ pub struct EmbeddedEngine {
     engine: BlockingEngine<ForeignHost>,
     /// The options every attached handle names, so each attach agrees.
     options: oneiron_remote::OpenOptions,
+    /// Set once `close` begins: every attached handle refuses its next call
+    /// (FIX 4895).
+    closed: Arc<AtomicBool>,
 }
 
 #[uniffi::export]
@@ -178,6 +182,7 @@ impl EmbeddedEngine {
                 dimensions,
                 device_class,
             },
+            closed: Arc::new(AtomicBool::new(false)),
         }))
     }
 
@@ -205,11 +210,23 @@ impl EmbeddedEngine {
     /// itself, not the server, so the host-door rows only a server's state
     /// answers refuse on it (use `client` for those). It keeps the engine
     /// alive. Ask again for each handle the app needs: each attaches anew,
-    /// none reopens the path.
+    /// none reopens the path. Once the engine closes, each refuses
+    /// `ENGINE_CLOSED`; a call already running finishes.
     pub fn local_client(self: Arc<Self>) -> Result<Arc<Oneiron>, OneironError> {
         let vault = self.engine.vault().map_err(engine_failure)?;
-        let inner =
-            oneiron_remote::OneironClient::attach(self.engine.path(), vault, &self.options)?;
+        let closed = Arc::clone(&self.closed);
+        let host_open: oneiron_remote::HostOpenCheck = Arc::new(move || {
+            if closed.load(Ordering::Acquire) {
+                return Err(engine_closed());
+            }
+            Ok(())
+        });
+        let inner = oneiron_remote::OneironClient::attach_while_open(
+            self.engine.path(),
+            vault,
+            &self.options,
+            host_open,
+        )?;
         Ok(Arc::new(Oneiron {
             inner,
             engine: Some(self),
@@ -277,9 +294,17 @@ impl EmbeddedEngine {
 
     /// Stops the engine in order and releases its runtime. Handles from
     /// `client` keep the vault until they go; this engine refuses every
-    /// later call.
+    /// later call, and every `local_client` handle refuses `ENGINE_CLOSED`.
     pub fn close(&self) -> Result<(), OneironError> {
-        self.engine.close().map_err(engine_failure)
+        self.closed.store(true, Ordering::Release);
+        let closed = self.engine.close();
+        // A close refused before it began (off an app thread) closes nothing.
+        if let Err(error) = &closed
+            && matches!(engine_error_kind(error), EngineErrorKind::WrongThread)
+        {
+            self.closed.store(false, Ordering::Release);
+        }
+        closed.map_err(engine_failure)
     }
 }
 
@@ -388,6 +413,17 @@ impl InProcessTransport for EngineTransport {
             body: Box::new(reply.body),
         })
     }
+}
+
+/// The refusal a closed engine's handles raise, as `engine_memory_error`
+/// words the engine's own.
+fn engine_closed() -> MemoryError {
+    let kind = EngineErrorKind::Closed;
+    MemoryError::new(
+        kind.code(),
+        "the embedded engine is closed",
+        &[kind.suggestion()],
+    )
 }
 
 /// An engine failure, as the one error this surface raises: its cause's

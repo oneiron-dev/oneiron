@@ -43,6 +43,7 @@ mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
 mod backup_signer_delegation;
+mod carried_act;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -66,6 +67,7 @@ mod current_scope;
 mod engine_machine;
 mod entry_transition;
 mod entry_transition_predicates;
+mod export_act;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_project;
@@ -118,6 +120,7 @@ mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
 mod pinned_root;
+mod policy_setting_choice;
 mod principal_standing;
 mod readonly_fold;
 mod recover_many;
@@ -245,7 +248,7 @@ pub use checkpoint_root_status::{
 };
 pub use clock_repair::{
     AUTHORITY_CLOCK_REPAIR_EVIDENCE, AuthorityClockRepair, AuthorityClockRepairEvidence,
-    AuthorityClockRepairOutcome,
+    AuthorityClockRepairOutcome, ClockRepairCaller,
 };
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;
@@ -382,6 +385,7 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
+pub(crate) use policy_setting_choice::PolicySettingAct;
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };

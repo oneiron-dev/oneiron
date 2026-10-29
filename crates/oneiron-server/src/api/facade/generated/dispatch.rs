@@ -37435,8 +37435,20 @@ pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
 /// other name is refused as an unknown verb, with its correction when it is a
-/// canonical verb under the wrong root.
+/// canonical verb under the wrong root. An owner's erase or revoke, as the
+/// engine classifies the verb and its own input, reads the restriction-only
+/// clock through its owner proof, hooks and door (FIX 11201).
 pub(crate) async fn call_verb(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    verb: &str,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
+    super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
+}
+/// [`call_verb`]'s row for `verb`.
+async fn call_verb_row(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
     verb: &str,

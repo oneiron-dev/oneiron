@@ -3050,6 +3050,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/carried_act.rs",
+     "purpose": "The signed half of the owner's setting and export doors (FIX 4624, FIX 5660): an act a door already applied…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CausalWriteDisposition"
      ],
@@ -3337,6 +3347,21 @@
       "crate-vis": 3,
       "enum": 2,
       "fn": 2,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClockRepairCaller"
+     ],
+     "path": "src/authority/clock_repair/caller.rs",
+     "purpose": "Who asks for the owner's repair of the authority clock, as its ingress took them before anything read the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -3427,6 +3452,16 @@
      "purpose": "The per-entry consent and retired-op predicates; `entry_transition` re-exports them",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/export_act.rs",
+     "purpose": "Folds the owner's signed whole-vault exports (FIX 4624): audit only",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -4148,7 +4183,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "re-export": 66
      }
     },
@@ -4188,7 +4223,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -4203,7 +4238,7 @@
      "path": "src/authority/owner_choice.rs",
      "purpose": "The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "struct": 1
      }
     },
@@ -4325,6 +4360,16 @@
      "purpose": "This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1)",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/policy_setting_choice.rs",
+     "purpose": "Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's dreamer wake policy and…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -6938,6 +6983,26 @@
      "purpose": "The container walk and rebuild with their frames on the heap (FIX 8031, 7943): each container's frame held…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/tar.rs",
+     "purpose": "A tar archive's members: each regular file in archive order, read whole against its declared length under…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/container/xz.rs",
+     "purpose": "An xz file's payload: the stream decoded whole, its checks verified and nothing left after the last stream…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -24646,7 +24711,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 4,
       "re-export": 25
      }
@@ -25061,7 +25126,7 @@
      "path": "src/dreamer_consolidation/resources/pins.rs",
      "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -25500,7 +25565,7 @@
      "path": "src/dreamer_consolidation/step_charge.rs",
      "purpose": "Attempt-local step spend due to the shared wake ledger after memo replay",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -26168,7 +26233,7 @@
      "path": "src/dreamer_runner/admission/settlement.rs",
      "purpose": "Transaction-composable reservation settlement shared by completion and deferral",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -26178,7 +26243,7 @@
      "path": "src/dreamer_runner/admission/spend.rs",
      "purpose": "What a wake-budget counter charges once spend is incurred: a settlement never refuses it (FIX 8702), so…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 4
      }
     },
@@ -26389,7 +26454,7 @@
      "purpose": "The owner's free-time doors (FIX 4453): one agent's policy with its revision, or Disabled; its cycles, a…",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 14
      }
     },
@@ -26477,7 +26542,7 @@
      "purpose": "The owner's free-time policy for one agent (FIX 4453): the total budget one cycle may spend, the cycle's…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 3,
       "struct": 4
@@ -28762,7 +28827,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "mod": 1,
       "re-export": 15
      }
@@ -28856,13 +28921,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/observation/live.rs",
      "purpose": "The live half of the wake observation: the passes and admitted calls running on one open vault",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 17
      }
     },
     {
@@ -28884,6 +28949,16 @@
       "enum": 2,
       "fn": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/owed.rs",
+     "purpose": "The wake's owed paid calls (FIX 11450): a paid model call a crash left unsettled",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -33572,7 +33647,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -42419,7 +42494,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SettledStepRequest",
@@ -42428,7 +42503,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 2
      }
@@ -44737,7 +44812,7 @@
      "path": "src/memory/owner_door.rs",
      "purpose": "The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -44900,7 +44975,7 @@
      "purpose": "Call mode (retrieval hub #call-mode): recall for live calls",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5
      }
@@ -46249,7 +46324,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/memory/witness/program/validation.rs",
+     "path": "src/memory/witness/program/provenance.rs",
      "purpose": "Witness provenance checks and the overlay landing's receipt",
      "surface": {
       "crate-vis": 3
@@ -53386,12 +53461,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InferenceDefaultsReplaceRequest",
       "PolicyActionOutcome",
-      "PolicySetting",
       "PolicySettingActReceipt",
       "WakePolicySetRequest"
      ],
@@ -53399,8 +53473,8 @@
      "purpose": "The app's policy actions as host verbs (OF-181)",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 11,
+      "fn": 9,
+      "re-export": 1,
       "struct": 4
      }
     },
@@ -54945,6 +55019,16 @@
      "purpose": "An owner's agent Grant act in the audit (FIX 5628): a mint is a grant and a revoke a revoke",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/authority_audit/carried_act.rs",
+     "purpose": "An act on a vault setting and an owner's whole-vault export in the audit (FIX 4624, FIX 5660)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -71905,7 +71989,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -71915,7 +71999,7 @@
      "path": "src/task_verb/revoke_lands/payload.rs",
      "purpose": "The polymorphic restrictive rows (FIX 5137-5139): calls whose restrictive part is in what they carry, judged…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -74482,7 +74566,7 @@
      "path": "src/verbs/authority_history.rs",
      "purpose": "Byte-preserving signed authority history transfer for the vault owner, and the owner's repair of a damaged…",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -80520,7 +80604,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 220,
+     "files": 224,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80534,7 +80618,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 151,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80975,7 +81059,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81432,7 +81516,7 @@
     "policy_setting_doors": {
      "files": 1,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
@@ -81507,7 +81591,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81992,7 +82076,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5465,
+   "source_files": 5473,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82204,6 +82288,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportActRecord"
+     ],
+     "path": "src/authority/export_act.rs",
+     "purpose": "The owner's whole-vault export as a signed owner act (FIX 4624), and its wire codec",
+     "surface": {
+      "const": 4,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -82340,7 +82439,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 30
+      "re-export": 32
      }
     },
     {
@@ -82495,6 +82594,23 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicySetting",
+      "PolicySettingSet"
+     ],
+     "path": "src/authority/policy_setting.rs",
+     "purpose": "The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660), and its wire codec",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -82800,7 +82916,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 37,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82830,7 +82946,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 48,
+   "source_files": 50,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -99472,7 +99588,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -99703,6 +99819,16 @@
      "purpose": "Archive cleanup and evidence-backed re-mention, under the owner's own proof",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/clock_ingress.rs",
+     "purpose": "A facade or MCP call over a damaged authority clock floor (FIX 11190, FIX 11201, FIX 11202)",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -100802,7 +100928,7 @@
      "path": "src/api/facade/release.rs",
      "purpose": "A facade answer's destination release, once its call has nothing left to wait on (FIX 8170), and again for…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -101728,6 +101854,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/clock_repair_call.rs",
+     "purpose": "An MCP `tools/call` of the owner's authority clock repair whose caller the repair's own writer judges (FIX…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -101954,7 +102090,7 @@
      "path": "src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -101984,7 +102120,7 @@
      "path": "src/api/mcp_gateway/owner_call.rs",
      "purpose": "A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -102182,7 +102318,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 49
+      "crate-vis": 50
      }
     },
     {
@@ -113520,7 +113656,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 605,
+     "files": 607,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114012,7 +114148,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1383,
+   "source_files": 1385,
    "test_files": 182
   },
   "oneiron-spawn": {
