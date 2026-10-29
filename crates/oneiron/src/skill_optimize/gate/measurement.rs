@@ -15,7 +15,7 @@ pub struct BlindPreference {
     pub preferred: PreferredResponse,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PreferredResponse {
     First,

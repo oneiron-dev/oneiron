@@ -361,7 +361,7 @@ pub(crate) mod wiped {
 
 /// What a custody change recorded for the owner's other machines,
 /// value-free (WILL L04 row 04).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct CustodyReply {
     /// The custody request's shared receipt; absent when nothing was
     /// recorded.
@@ -578,7 +578,7 @@ pub(crate) fn rewrap(
 }
 
 /// What the owner's kit push of a secret's custody did (OF-422).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct AnchorSigned {
     pub(crate) name: String,
     /// Whether a transition was written. None is for a record that stays on

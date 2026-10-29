@@ -84,7 +84,7 @@ pub(crate) struct RepoFileKeys {
 
 /// The reach of the owner's grant on a repo file read: the scope the
 /// owner's standing answer to one repo file reveal picks (FIX 9236).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RepoFileRevealScope {
     /// This file, until revoked.

@@ -842,7 +842,7 @@ async fn self_heal_minted(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct LabelFinding {
     family: String,
