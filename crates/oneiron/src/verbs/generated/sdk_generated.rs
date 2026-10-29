@@ -4652,6 +4652,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.settings.web_connector",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.settings.web_connector.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::web_connector::WebConnectorSetting,
+                >(),
+            ),
+            (
+                "vault.connectors.web.usage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::web_connector::WebConnectorUsageRead,
+                >(),
+            ),
+            (
                 "vault.models.oneironer.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::manifest::doors::OneironerBind,
@@ -7402,6 +7419,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.propose_deck",
     "vault.models.manifest.read",
     "vault.models.manifest.replace",
+    "vault.settings.web_connector",
+    "vault.settings.web_connector.replace",
+    "vault.connectors.web.usage",
     "vault.models.oneironer.bind",
     "vault.models.routes.read",
     "vault.models.routes.replace",
@@ -9367,6 +9387,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.models.manifest.replace" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
+        "vault.settings.web_connector" => crate::code_run::vault_read::request_schema::<
+            crate::web_connector::WebConnectorSetting,
+        >(),
+        "vault.settings.web_connector.replace" => crate::code_run::vault_read::request_schema::<
+            crate::web_connector::WebConnectorSetting,
+        >(),
+        "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
+            crate::web_connector::WebConnectorUsagePage,
+        >(),
         "vault.models.oneironer.bind" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
@@ -16081,6 +16110,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.settings.web_connector" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.web_connector.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.web.usage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.models.oneironer.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21318,6 +21368,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.models.manifest.replace" => {
             let _input: crate::llm::manifest::doors::ModelManifestReplace = decode(value.clone())?;
         }
+        "vault.settings.web_connector" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.settings.web_connector.replace" => {
+            let _input: crate::web_connector::WebConnectorSetting = decode(value.clone())?;
+        }
+        "vault.connectors.web.usage" => {
+            let _input: crate::web_connector::WebConnectorUsageRead = decode(value.clone())?;
+        }
         "vault.models.oneironer.bind" => {
             let _input: crate::llm::manifest::doors::OneironerBind = decode(value.clone())?;
         }
@@ -24284,6 +24343,14 @@ pub fn invoke(
         "vault.models.manifest.replace" => {
             encode(vault_models_manifest_replace(memory, decode(value)?)?)
         }
+        "vault.settings.web_connector" => {
+            encode(vault_settings_web_connector(memory, decode(value)?)?)
+        }
+        "vault.settings.web_connector.replace" => encode(vault_settings_web_connector_replace(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.connectors.web.usage" => encode(vault_connectors_web_usage(memory, decode(value)?)?),
         "vault.models.oneironer.bind" => {
             encode(vault_models_oneironer_bind(memory, decode(value)?)?)
         }
@@ -32116,6 +32183,24 @@ pub fn vault_models_manifest_replace(
     input: crate::llm::manifest::doors::ModelManifestReplace,
 ) -> MemoryResult<crate::llm::manifest::ModelManifest> {
     crate::task_verb::sdk::replace_model_manifest(memory, input)
+}
+pub fn vault_settings_web_connector(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+    crate::task_verb::sdk::read_web_connector_setting(memory)
+}
+pub fn vault_settings_web_connector_replace(
+    memory: &Memory<'_>,
+    input: crate::web_connector::WebConnectorSetting,
+) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+    crate::task_verb::sdk::replace_web_connector_setting(memory, input)
+}
+pub fn vault_connectors_web_usage(
+    memory: &Memory<'_>,
+    input: crate::web_connector::WebConnectorUsageRead,
+) -> MemoryResult<crate::web_connector::WebConnectorUsagePage> {
+    crate::task_verb::sdk::read_web_connector_usage(memory, input)
 }
 pub fn vault_models_oneironer_bind(
     memory: &Memory<'_>,

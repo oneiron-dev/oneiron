@@ -16,7 +16,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/checkpoint_policy.rs` | src | s | 2 struct · 5 fn · 2 const · 2 crate-vis | CheckpointPolicySet, CheckpointRootChoice | The owner's choice of his vault's checkpoint root policy (mesh PR2c, §A 06, K06), and its wire codec |
 | `src/authority/comm_reach.rs` | src | s | 1 enum · 3 fn | CommReach | FIX 1380 / FIX 3899: the comm reach, whom an agent may address |
 | `src/authority/confirm.rs` | src | s | 3 struct · 3 enum · 6 fn · 2 const | AuthorityConfirmAction, AuthorityConfirmKind, CriticalWriteConfirmAction, CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState | Owner-confirm and critical-write-confirm action and state types |
-| `src/authority/constants.rs` | src | s | 1 type · 91 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
+| `src/authority/constants.rs` | src | s | 1 type · 92 const · 1 re-export | — | Pinned AUTHORITY_LOG constant table |
 | `src/authority/conversation_training.rs` | src | s | 1 struct · 2 fn · 2 const · 2 crate-vis | ConversationTrainingSet | A person's own "Learn from my conversations" opt-out (FIX 4489, FIX 5502 owner rulings, OF-420), and its… |
 | `src/authority/conversation_training_vault.rs` | src | s | 1 struct · 3 fn · 2 const · 2 crate-vis | ConversationTrainingVaultSet | The vault's "Learn from my conversations" setting (FIX 5502 owner rulings, OF-420), and its wire codec |
 | `src/authority/crypto.rs` | src | s | 2 struct · 3 enum · 12 fn | AuthorityAttestation, AuthorityKey, AuthoritySignature, AuthoritySignatureSuite, AuthorityTier | Authority key material and signature verification |
@@ -45,7 +45,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/residence.rs` | src | m | 2 struct · 2 enum · 5 fn · 4 const · 5 crate-vis | ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus | The owner's residence directives to one of their machines, and each machine's result for one (OF-534) |
 | `src/authority/slip_claims.rs` | src | s | 2 struct · 4 fn · 1 const | SlipClaims, SlipMintAction | Capability-slip payloads as the authority log commits them: the claims a host mints and their shape and… |
 | `src/authority/slip_wire.rs` | src | m | 2 fn · 2 crate-vis | — | Field-by-field signed capability claims and six-axis Scope wire codec |
-| `src/authority/support_delegation.rs` | src | s | 1 struct · 3 fn · 4 const | SupportDelegation | OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`… |
+| `src/authority/support_delegation.rs` | src | s | 1 struct · 1 enum · 5 fn · 5 const | SupportDelegation, SupportRepair | OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`… |
 | `src/authority/wire_decode.rs` | src | m | 13 fn · 1 crate-vis | — | `rmpv::Value` decoding for every authority type |
 | `src/authority/wire_encode.rs` | src | m | 7 fn · 1 crate-vis | — | `rmpv::Value` encoding for every authority type |
 | `src/authority/world_key_wraps.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 const · 3 crate-vis | PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient | A private world's key records and their wire codec (world privacy P6b) |

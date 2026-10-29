@@ -299,6 +299,16 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds the managed vault's attested owner the host bound this caller
+    /// to (FIX 11129), carried apart from the vault's authority id, so a
+    /// rootless managed vault's owner is still known. It grants and narrows
+    /// nothing.
+    #[must_use]
+    pub fn with_attested_owner(mut self, holder: EntityId) -> Self {
+        self.attested_owner = Some(holder);
+        self
+    }
+
     /// Binds the door the caller came in by, which its host can run the call
     /// through again. It grants and narrows nothing.
     #[must_use]
@@ -363,24 +373,28 @@ impl Memory<'_> {
     }
 
     /// The managed vault's attested owner this surface's caller is, as the
-    /// host bound his credential's source (FIX 11063): the holder it names,
-    /// when he is this surface's actor, as a human, and no slip rides it.
-    /// Work he queues carries his person alone and runs while the vault
-    /// records him as its live owner then (FIX 11090). `None` for any other
-    /// caller.
+    /// host bound his credential's source (FIX 11063), or the holder the
+    /// host bound apart from it (FIX 11129) when no instrument names one:
+    /// the holder, when he is this surface's actor, as a human, and no slip
+    /// rides it. Work he queues carries his person alone and runs while the
+    /// vault records him as its live owner then (FIX 11090). `None` for any
+    /// other caller.
     pub(crate) fn attested_owner_holder(&self) -> Option<EntityId> {
         use crate::runtime_hooks::verb::VerbAskCredentialSource;
-        match self.credential_instrument.as_ref()?.source {
-            VerbAskCredentialSource::AttestedOwner { holder }
-                if self.credential
-                    && self.invocation_slip.is_none()
-                    && holder == self.actor
-                    && self.actor_class == crate::EdgeActorClass::Human =>
-            {
-                Some(holder)
-            }
+        let named = match self
+            .credential_instrument
+            .as_ref()
+            .map(|instrument| &instrument.source)
+        {
+            Some(VerbAskCredentialSource::AttestedOwner { holder }) => Some(*holder),
             _ => None,
-        }
+        };
+        let holder = named.or(self.attested_owner)?;
+        (self.credential
+            && self.invocation_slip.is_none()
+            && holder == self.actor
+            && self.actor_class == crate::EdgeActorClass::Human)
+            .then_some(holder)
     }
 
     /// Binds the door's admission of a hook's rewritten args: a rewrite the

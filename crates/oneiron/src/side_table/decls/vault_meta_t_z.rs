@@ -320,6 +320,12 @@ side_tables! {
     /// One immutable wrong-link label filed from a live weave report. Key: edge ref (33 bytes) +
     /// id16 (label receipt id).
     WEAVE_WRONG_LINK_LABEL: VaultMeta b"weave:wrong-link:v1:" Named;
+    /// The owner's web connector switch (FIX 11598): which provider serves `connector.web.*`, on
+    /// whose key. Absent means Tavily on the deploy's backend key. Key: ().
+    WEB_CONNECTOR_SETTING: VaultMeta b"web_connector:setting:v1" Named;
+    /// One usage row per web connector call: provider, tool, key source, latency, cost and the
+    /// provider's request id; never the query, URL or results. Key: u64 BE (ms) + id16.
+    WEB_CONNECTOR_USAGE: VaultMeta b"web_connector:usage:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw

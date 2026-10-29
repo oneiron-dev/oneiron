@@ -13,8 +13,9 @@
 //! last in its write, after each mandatory row, so the optional record never
 //! takes the room a mandatory one needs.
 //!
-//! An agent-carried act (an agent's free-time policy act, an agent's export)
-//! names a Grant the fold cannot read. The fold keeps its agent, Grant, kind
+//! An agent-carried act (an agent's free-time policy act, an agent's
+//! export, an agent's world privacy edit) names a Grant the fold cannot
+//! read. The fold keeps its agent, Grant, kind
 //! and advisory time ([`AgentCarriedAct`]); the vault's view then judges the
 //! Grant on the rows this install holds ([`grant_refused_agent_acts`],
 //! contract §4): one positively withdrawn, expired at the act's time, or
@@ -82,19 +83,19 @@ pub(super) fn grant_refused_agent_acts(
         .collect()
 }
 
-/// `fold` with each of `refused` held back, and a setting act among them
-/// without effect beside the refused ones.
+/// `fold` with each of `refused` held back, a setting act among them
+/// without effect beside the refused ones, and a world privacy edit among
+/// them without effect on its world (FIX 11426).
 pub(super) fn hold_back_agent_acts(fold: &mut AuthorityFold, refused: &[AuthorityEntryHash]) {
     for hash in refused {
         fold.install.held_back.insert(*hash);
-        if fold
-            .agent_carried_acts
-            .get(hash)
-            .is_some_and(|act| act.act != OwnerActKind::Export)
-        {
+        if fold.agent_carried_acts.get(hash).is_some_and(|act| {
+            !matches!(act.act, OwnerActKind::Export | OwnerActKind::WorldPrivacy)
+        }) {
             fold.policy_settings.refused.insert(*hash);
         }
     }
+    super::agent_world_undo::AgentWorldUndo::hold_back(fold, refused);
 }
 
 /// This install cannot carry the act: it has no machine identity or install
