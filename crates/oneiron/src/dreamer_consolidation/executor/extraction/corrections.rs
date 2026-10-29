@@ -105,6 +105,12 @@ impl ConsolidationExecutor<'_> {
         let mut groups: Vec<Vec<KeptDecision>> = vec![Vec::new(); parsed.len()];
         for read in &reads {
             measure_state(step_ctx.vault, &read.state);
+            let sources = Some(correction_sources(
+                parsed,
+                &read.owners,
+                &evidence,
+                &read.labels,
+            ));
             let Some(decided) = self
                 .decide(
                     step_ctx,
@@ -116,6 +122,7 @@ impl ConsolidationExecutor<'_> {
                     &evidence,
                     &read.state,
                     &read.labels,
+                    sources,
                     charges,
                 )
                 .await?
@@ -152,9 +159,21 @@ impl ConsolidationExecutor<'_> {
                 let asks: [(usize, Vec<usize>); 1] = [(position, (0..questions.len()).collect())];
                 correction_state(parsed, &asks, questions, &rows, StatePart::Final, labels)
             };
+            let sources_for = |_: &[EntityId], labels: &CallLabelMap| {
+                Some(correction_sources(parsed, &[position], &evidence, labels))
+            };
             let Some((corrects, finals)) = self
                 .choose_identity(
-                    step_ctx, pass, resources, &to, key, &evidence, &choice, &decisions, &state,
+                    step_ctx,
+                    pass,
+                    resources,
+                    &to,
+                    key,
+                    &evidence,
+                    &choice,
+                    &decisions,
+                    &state,
+                    &sources_for,
                     charges,
                 )
                 .await?
@@ -371,6 +390,27 @@ impl Correction {
     pub(super) fn waiting(&self) -> bool {
         self.decisions.iter().any(KeptDecision::waiting)
     }
+}
+
+/// The rows one correction read sends under (FIX 11526): its candidates'
+/// extraction rows, the pack's evidence, and the rows its labels name.
+fn correction_sources(
+    parsed: &[ParsedCandidate<'_>],
+    owners: &[usize],
+    evidence: &[EntityId],
+    labels: &CallLabelMap,
+) -> Vec<EntityId> {
+    let mut set: Vec<EntityId> = Vec::new();
+    for position in owners {
+        if let Some(candidate) = parsed.get(*position) {
+            set.extend(candidate.sources().iter().copied());
+        }
+    }
+    set.extend(evidence.iter().copied());
+    set.extend(labels.rows());
+    set.sort_unstable();
+    set.dedup();
+    set
 }
 
 /// The candidates and the listed claims as one read of the correction pack

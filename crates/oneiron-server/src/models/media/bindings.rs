@@ -128,6 +128,22 @@ impl MediaRuntime {
     pub fn renders_from_refs(&self, target: &str) -> bool {
         self.reference_targets.contains(target)
     }
+
+    /// Where reference target `target` runs (FIX 4394): the locality its
+    /// provider states on the media rows of this host's seats that name it.
+    /// `None` when it is no reference target, or no seat's row names it, so
+    /// no call reaches it here.
+    #[must_use]
+    pub fn reference_target_locality(&self, target: &str) -> Option<oneiron::llm::ModelLocality> {
+        if !self.renders_from_refs(target) {
+            return None;
+        }
+        self.seats
+            .values()
+            .flat_map(|seat| &seat.rows)
+            .find(|row| row.provider == target)
+            .map(|row| row.locality)
+    }
 }
 
 impl RetryHint {

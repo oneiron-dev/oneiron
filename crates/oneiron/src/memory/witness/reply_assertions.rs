@@ -27,8 +27,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::{ReplyAssertionRecord, ReplyAssertions};
 use crate::memory::WitnessAssertions;
-use crate::side_table::{self, Named, SideTable};
-use crate::store::Store;
+use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::store::{ResponseCarriage, ResponseOwners, ResponseScan, Store};
 
 /// The reply assertions one MESSAGE was born with whole. Key: id16(message).
 const BIRTHS: SideTable<EntityId, MessageReplyAssertions, Named> =
@@ -154,9 +154,28 @@ pub(crate) fn birth_reply_assertions_in_txn(
     BIRTHS.get(store, txn, message)
 }
 
+/// Drops the birth row the MESSAGE `message` was born with whole, in `txn`.
+/// The row's key is the MESSAGE, so it goes by key, even when its value does
+/// not decode (FIX 10631). A restore's removal scrub calls this; the live
+/// erase below calls it first.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_birth_reply_assertions_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    message: &EntityId,
+) -> Result<()> {
+    BIRTHS.delete(store, txn, message)?;
+    Ok(())
+}
+
 /// Drops the rows an erase of `id` covers: its own MESSAGE's, and every row
 /// whose TURN, conversation or writer is `id`, and takes the assertions off
-/// its stream receipts. Registered in `deletion/derived_rows.rs`.
+/// its stream receipts. Registered in `deletion/derived_rows.rs`. A row that
+/// does not decode names no TURN, conversation or writer and stays, never
+/// refused (FIX 10631).
 ///
 /// # Errors
 ///
@@ -166,13 +185,19 @@ pub(crate) fn erase_reply_assertions_in_txn(
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    BIRTHS.delete(store, txn, id)?;
-    let covered: Vec<EntityId> = BIRTHS
-        .scan(store, txn)?
-        .into_iter()
-        .filter(|(_, row)| owners_of(row).contains(id))
-        .map(|(message, _)| message)
-        .collect();
+    erase_birth_reply_assertions_in_txn(store, txn, id)?;
+    let mut covered = Vec::new();
+    for row in BIRTHS.iter_raw_from(store, txn, &[])? {
+        let (key, value) = row?;
+        let Ok(decoded) = BIRTHS.decode_value(&value) else {
+            continue;
+        };
+        if owners_of(&decoded).contains(id)
+            && let Some(message) = <EntityId as SideKey>::decode_key(&key)
+        {
+            covered.push(message);
+        }
+    }
     for message in covered {
         BIRTHS.delete(store, txn, &message)?;
     }
@@ -191,10 +216,39 @@ pub(crate) fn reply_assertions_stub(value: &[u8]) -> Option<Vec<u8>> {
     BIRTHS.decode_value(value).ok().map(|_| Vec::new())
 }
 
+/// What a checkpoint carries of the birth row `value`: the whole row, and
+/// nothing once retired, as a captured request is carried (its retirement
+/// drops the row, in images and live alike). A row that does not decode is
+/// carried whole as an opaque response (FIX 6227).
+pub(crate) fn reply_assertions_scan(value: &[u8]) -> ResponseScan {
+    if BIRTHS.decode_value(value).is_err() {
+        return ResponseScan::opaque_row();
+    }
+    ResponseScan::Decoded(ResponseCarriage {
+        keep: 0,
+        stub: Vec::new(),
+        retired: 0,
+    })
+}
+
 /// Who owns the row `value`'s copies; none for a row that does not decode.
 pub(crate) fn reply_assertions_owners(value: &[u8]) -> Vec<EntityId> {
     BIRTHS
         .decode_value(value)
         .map(|row| owners_of(&row).to_vec())
         .unwrap_or_default()
+}
+
+/// Who owns the opaque response in the row `key` holding `value`, as far as
+/// its key proves (FIX 10631): its MESSAGE alone, never a guessed TURN,
+/// conversation or writer; the decoded row's four owners when it decodes.
+pub(crate) fn reply_assertions_opaque_owners(key: &[u8], value: &[u8]) -> ResponseOwners {
+    if let Ok(row) = BIRTHS.decode_value(value) {
+        return ResponseOwners::Partial(owners_of(&row).to_vec());
+    }
+    key.strip_prefix(side_table::MESSAGE_REPLY_ASSERTIONS.prefix)
+        .and_then(<EntityId as SideKey>::decode_key)
+        .map_or(ResponseOwners::Unknown, |message| {
+            ResponseOwners::Partial(vec![message])
+        })
 }

@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 const ROOTS: SideTable<EntityId, Root, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_ROOT);
 
+mod work;
+pub(crate) use work::{frontier_frozen, pin_frozen};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Root {
     owner: EntityId,
@@ -262,13 +265,29 @@ fn pin_reference(
     })
 }
 
-pub(crate) fn pin_in_txn(
+/// Pins every bucket's references inside the writer, at its revision: the
+/// path a pin takes when a commit raced its snapshot (`pin_frozen`).
+fn pin_in_txn(
     vault: &Vault,
     read: &ScopedRead<'_>,
     txn: &mut heed::RwTxn<'_>,
     owner: EntityId,
     input: &ConsolidationPinRequest,
 ) -> Result<ConsolidationRootAccounting> {
+    let buckets = pinned_buckets_in_txn(vault, read, txn, input)?;
+    let revision = vault.store.env.info().last_txn_id as u64;
+    put_root_in_txn(vault, txn, owner, buckets, revision)
+}
+
+/// Every bucket of `input` with each of its references pinned as `txn`
+/// reads them, however many (FIX 8698): the validity checks refuse, a count
+/// never does.
+fn pinned_buckets_in_txn(
+    vault: &Vault,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    input: &ConsolidationPinRequest,
+) -> Result<Vec<ConsolidationBucketAccounting>> {
     if input.buckets.is_empty() {
         return Err(invalid_consolidation("root needs at least one bucket"));
     }
@@ -310,10 +329,21 @@ pub(crate) fn pin_in_txn(
             source_meet: ClaimSource::Generated,
         });
     }
+    Ok(buckets)
+}
+
+/// Stores a new root for `owner` over `buckets`, pinned at `revision`.
+fn put_root_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+    buckets: Vec<ConsolidationBucketAccounting>,
+    revision: u64,
+) -> Result<ConsolidationRootAccounting> {
     let id = EntityId::now();
     let accounting = ConsolidationRootAccounting {
         root_ref: id.to_hex(),
-        revision: vault.store.env.info().last_txn_id as u64,
+        revision,
         buckets,
     };
     ROOTS.put(
@@ -335,6 +365,18 @@ fn held_root(
     owner: EntityId,
     reference: &str,
 ) -> Result<(EntityId, Root)> {
+    let (id, root) = owned_root(vault, txn, owner, reference)?;
+    require_readable(read, txn, &source_ids(&root.accounting)?)?;
+    Ok((id, root))
+}
+
+/// `owner`'s root `reference` as `txn` holds it.
+fn owned_root(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: EntityId,
+    reference: &str,
+) -> Result<(EntityId, Root)> {
     let id = EntityId::from_hex(reference)?;
     let root = ROOTS
         .get(&vault.store, txn, &id)?
@@ -344,7 +386,6 @@ fn held_root(
             "evidence root belongs to another owner",
         ));
     }
-    require_readable(read, txn, &source_ids(&root.accounting)?)?;
     Ok((id, root))
 }
 
@@ -386,96 +427,20 @@ pub(crate) fn accounting_in_txn(
     Ok(held_root(vault, read, txn, owner, reference)?.1.accounting)
 }
 
-/// Children may finish in any order. Each identity is immutable, and no
-/// newly introduced source or changed quote is substituted after the pin.
-pub(crate) fn frontier_in_txn(
-    vault: &Vault,
-    read: &ScopedRead<'_>,
-    txn: &mut heed::RwTxn<'_>,
-    owner: EntityId,
-    input: &ConsolidationFrontierRequest,
-) -> Result<ConsolidationRootAccounting> {
-    let (id, mut root) = held_root(vault, read, txn, owner, &input.root_ref)?;
-    for child in &input.children {
-        EntityId::from_hex(&child.child_ref)?;
-        if !child.judgement.confidence.is_finite()
-            || !(0.0..=1.0).contains(&child.judgement.confidence)
-            || child.evidence.is_empty()
-        {
-            return Err(invalid_consolidation(
-                "invalid child judgement or empty frontier",
-            ));
-        }
-        if root.accounting.buckets.iter().any(|bucket| {
-            bucket.bucket_hash != child.bucket_hash
-                && bucket
-                    .children
-                    .iter()
-                    .any(|row| row.child_ref == child.child_ref)
-        }) {
-            return Err(invalid_consolidation("child identity crossed its bucket"));
-        }
-        let bucket = root
-            .accounting
-            .buckets
-            .iter_mut()
-            .find(|bucket| bucket.bucket_hash == child.bucket_hash)
-            .ok_or_else(|| invalid_consolidation("child names an unpinned bucket"))?;
-        crate::claim::validate_predicate(&child.judgement.predicate, false)?;
-        if crate::claim::predicate_root(&child.judgement.predicate) != bucket.bucket.predicate_root
-        {
-            return Err(invalid_consolidation("child judgement crossed its bucket"));
-        }
-        let mut evidence = child.evidence.clone();
-        evidence.sort();
-        evidence.dedup();
-        for entry in &evidence {
-            reference(entry)?;
-            if !bucket.pinned.iter().any(|row| row.reference == *entry) {
-                return Err(invalid_consolidation(
-                    "child citation was not pinned by the root",
-                ));
-            }
-        }
-        let encoded = serde_json::to_vec(&child.judgement)
-            .map_err(|_| invalid_consolidation("child judgement does not encode"))?;
-        let receipt = ConsolidationChildReceipt {
-            child_ref: child.child_ref.clone(),
-            judgement_hash: *blake3::hash(&encoded).as_bytes(),
-            evidence,
-        };
-        if let Some(old) = bucket
-            .children
-            .iter()
-            .find(|old| old.child_ref == receipt.child_ref)
-        {
-            if old.judgement_hash != receipt.judgement_hash || old.evidence != receipt.evidence {
-                return Err(invalid_consolidation(
-                    "child frontier changed after submission",
-                ));
-            }
-        } else {
-            bucket.children.push(receipt);
-        }
-        bucket
-            .children
-            .sort_by(|left, right| left.child_ref.cmp(&right.child_ref));
-        account_bucket(bucket)?;
-    }
-    ROOTS.put(&vault.store, txn, &id, &root)?;
-    Ok(root.accounting)
-}
-
 fn account_bucket(bucket: &mut ConsolidationBucketAccounting) -> Result<()> {
     let mut verified = Vec::new();
     let mut rows = BTreeMap::new();
     let mut excluded = 0_u32;
     let mut meet = ClaimSource::Generated;
+    // Each citation is looked up in the pins once, never scanned for.
+    let pinned: BTreeMap<&ConsolidationReference, &ConsolidationRootEvidence> = bucket
+        .pinned
+        .iter()
+        .map(|row| (&row.reference, row))
+        .collect();
     for entry in bucket.children.iter().flat_map(|child| &child.evidence) {
-        let row = bucket
-            .pinned
-            .iter()
-            .find(|row| row.reference == *entry)
+        let row = *pinned
+            .get(entry)
             .ok_or_else(|| invalid_consolidation("child citation is not pinned"))?;
         meet = source_meet(meet, row.trust_class);
         if !row.corroborates {

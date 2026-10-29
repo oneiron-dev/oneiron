@@ -334,9 +334,14 @@ pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
-pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub use witness::{
+    TurnProgramWakeOutcome, UnpersistedWakeReason, WitnessAssertions, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
+};
 pub(crate) use witness::{
-    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
+    erase_birth_reply_assertions_in_txn, erase_reply_assertions_in_txn,
+    erase_turn_wake_label_in_txn, reply_assertions_opaque_owners, reply_assertions_owners,
+    reply_assertions_scan, reply_assertions_stub, turn_wake_outcome_in_txn,
 };
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;

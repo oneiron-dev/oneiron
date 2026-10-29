@@ -511,6 +511,12 @@ pub struct DreamerBudgetRecord {
     pub total_units: u64,
     pub remaining_units: u64,
     pub reserved_units: u64,
+    /// Spend settled beyond what was left (FIX 8702): incurred, never
+    /// refused. Nonzero only while `remaining_units` is 0.
+    pub overdraft_units: u64,
+    /// Admitted calls whose terminal usage is still owed to this line
+    /// (FIX 9015): each is charged when it settles.
+    pub owed_calls: u64,
     pub updated_at: u64,
 }
 
@@ -546,6 +552,9 @@ pub struct DreamerBudgetReservation {
     pub budget_id: String,
     pub attempt_id: AttemptId,
     pub reserved_units: u64,
+    /// Measured spend this child owes that no settlement has charged yet
+    /// (FIX 8728, 9015); its settlement or abort charges it.
+    pub owed_units: u64,
     pub created_at: u64,
     pub updated_at: u64,
 }

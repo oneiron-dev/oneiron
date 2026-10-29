@@ -4,7 +4,8 @@
 //! folder reads them; a file whose extension is on the text list reads whole
 //! as UTF-8. Every other file, and one whose bytes hold no text, is held by
 //! its name only: its bytes are never read for a format the source takes no
-//! text from.
+//! text from. One whose bytes the walk read carries them, kept as its
+//! original once its ledger row lands (FIX 11276).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -76,12 +77,15 @@ pub(super) fn read_files(
             bytes: metadata.len(),
             modified_at: written_at(&metadata),
         };
-        let why = if super::hard_linked(&metadata) {
+        // The reason with the bytes the walk read, when it read them: a
+        // format the source takes no text from, a file with another name and
+        // one that did not open are held by name with none (FIX 11276).
+        let held = if super::hard_linked(&metadata) {
             counts.hard_linked += 1;
-            Some(NameOnlyReason::Linked)
+            Some((NameOnlyReason::Linked, None))
         } else {
             match text_kind(&path) {
-                None => Some(NameOnlyReason::Unsupported),
+                None => Some((NameOnlyReason::Unsupported, None)),
                 Some(kind) => match read_all(file, shown) {
                     Ok(bytes) => read_text(
                         (path.clone(), FILES_PART_MARK),
@@ -90,13 +94,19 @@ pub(super) fn read_files(
                         kind,
                         counts,
                         &mut read.notes,
-                    ),
-                    Err(_) => Some(NameOnlyReason::Unreadable),
+                    )
+                    .map(|(why, original)| (why, Some(original))),
+                    Err(_) => Some((NameOnlyReason::Unreadable, None)),
                 },
             }
         };
-        match why {
-            Some(why) => read.name_only.push(NameOnlyFile { path, why, facts }),
+        match held {
+            Some((why, original)) => read.name_only.push(NameOnlyFile {
+                path,
+                why,
+                facts,
+                original,
+            }),
             None => {
                 read.facts.insert(path, facts);
             }
@@ -124,6 +134,7 @@ pub(super) fn read_files(
             path,
             why: NameOnlyReason::Unreadable,
             facts,
+            original: None,
         });
     }
     // A part carries its file's facts.

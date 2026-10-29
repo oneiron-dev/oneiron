@@ -233,6 +233,16 @@ pub(super) async fn run_read_set<'a>(
     MutexGuard::map(store, |store| store.read_sets.entry(key).or_default())
 }
 
+/// A copy of a pumped run's own session read set, as it stands now: what
+/// the run's self brief reads its loaded skills from (FIX 2086).
+pub(crate) async fn run_session_reads(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+) -> SessionReadSet {
+    run_read_set(server, actor, connection).await.clone()
+}
+
 pub(super) fn run_read_set_key(
     actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,

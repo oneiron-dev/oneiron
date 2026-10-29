@@ -168,6 +168,16 @@ impl WakeLedger {
         action.verify(&self.token, &self.vault_name, request)
     }
 
+    /// Whether the supervisor signed `request` as `action`'s person's own
+    /// act at a member door (FIX 1302), under this vault's spawn token.
+    pub(super) fn verify_person_action(
+        &self,
+        action: &oneiron_vault_contract::ManagedPersonAction,
+        request: &oneiron_vault_contract::ManagedOwnerRequest<'_>,
+    ) -> bool {
+        action.verify(&self.token, &self.vault_name, request)
+    }
+
     /// Proves this vault's owner signing on the supervisor's `challenge`
     /// (FIX 5260): the spawn token goes to the supervisor socket this ledger
     /// pushes to, and nowhere else. Whether the supervisor acked.

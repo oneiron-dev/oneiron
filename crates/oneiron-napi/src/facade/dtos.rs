@@ -3,7 +3,9 @@
 use napi_derive::napi;
 
 mod read_scope;
+mod witness_assertions;
 pub(super) use self::read_scope::{NapiReadReceipt, NapiReadScope, NapiRecallScope};
+pub(super) use self::witness_assertions::NapiWitnessAssertions;
 
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
 
@@ -63,6 +65,9 @@ pub struct NapiWitnessTurn {
     /// AGENT_DEF ids), edited later through `vault.rooms.thread_audience`;
     /// omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
+    /// The records this reply names as cited or created (OF-063), judged by
+    /// the engine under the writer's own read; omitted ⇒ it asserts nothing.
+    pub assertions: Option<NapiWitnessAssertions>,
 }
 
 /// The quoted span of one MESSAGE: half-open Unicode scalar indices into
@@ -86,6 +91,21 @@ pub struct NapiWitnessReceipt {
     pub message_short_ids: Vec<String>,
     /// Facade write marker (`witness:<hex>`).
     pub receipt_ref: String,
+    /// What the wake this turn owes its actor's armed programs came to
+    /// (FIX 9970); absent when the turn owes none.
+    pub wake_outcome: Option<NapiTurnProgramWakeOutcome>,
+}
+
+/// What a landed turn's program wake came to (FIX 9970).
+#[napi(object)]
+pub struct NapiTurnProgramWakeOutcome {
+    /// `not_armed`, `evaluated` or `unpersisted`.
+    pub outcome: String,
+    /// Wakes this landing recorded, when `outcome` is `evaluated`. Zero means
+    /// none matched or each was already recorded, not a failure.
+    pub newly_recorded: Option<u32>,
+    /// `no_authority` or `storage_failure`, when `outcome` is `unpersisted`.
+    pub reason: Option<String>,
 }
 
 /// One claim to commit (`approval` is not settable by callers).

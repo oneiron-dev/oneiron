@@ -107,10 +107,7 @@ impl ScopedChildPorts for ThingChildPorts {
         };
         Ok(self
             .ask_parent(request)
-            .map(|output| AgentVerbAnswer {
-                output,
-                rows: Some(rows),
-            })
+            .map(|output| AgentVerbAnswer::new(output, Some(rows)))
             .map_err(refusal))
     }
 }

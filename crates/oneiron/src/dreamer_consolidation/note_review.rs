@@ -42,12 +42,13 @@ use super::note_classification::{PadAsk, note_classification_reply};
 use super::note_topics::{
     NoteTopicLineage, NoteTopicMembership, queue_note_topic_summaries_in_txn,
 };
+use super::residency::spent_or_deferred;
 use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::step_charge::StepChargeTally;
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
-use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims};
+use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims_with_checker};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
@@ -157,13 +158,29 @@ impl ConsolidationExecutor<'_> {
                 return Ok(charges.checkpoint());
             }
             let after = {
-                let txn = ctx.vault.store.env.read_txn()?;
-                CURSOR.get(&ctx.vault.store, &txn, &())?
+                let txn = match ctx.vault.store.env.read_txn() {
+                    Ok(txn) => txn,
+                    Err(error) => return spent_or_deferred(error.into(), ctx, &charges),
+                };
+                match CURSOR.get(&ctx.vault.store, &txn, &()) {
+                    Ok(after) => after,
+                    Err(error) => return spent_or_deferred(error, ctx, &charges),
+                }
             };
-            let page = ctx
+            let page = match ctx
                 .vault
-                .entities_by_type_page(ENTITY_TYPE_NOTE, after.as_ref(), PAGE)?;
-            for note in readable_notes(ctx.vault, &read, &page, attempt_id)? {
+                .entities_by_type_page(ENTITY_TYPE_NOTE, after.as_ref(), PAGE)
+            {
+                Ok(page) => page,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            let notes = match readable_notes(ctx.vault, &read, &page, attempt_id) {
+                Ok(notes) => notes,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            for note in notes {
+                // review_note's own errors already settle their spend; this
+                // `?` only forwards them, never hands them over again.
                 if let Some(stop) = self
                     .review_note(attempt, ctx, &run, &note, &mut charges)
                     .await?
@@ -172,17 +189,24 @@ impl ConsolidationExecutor<'_> {
                 }
             }
             let full = page.len() == PAGE;
-            ctx.vault
-                .with_write_txn_grouped(|txn| match page.last().filter(|_| full) {
-                    Some(last) => CURSOR.put(&ctx.vault.store, txn, &(), last),
-                    None => CURSOR.delete(&ctx.vault.store, txn, &()).map(|_| ()),
-                })?;
+            if let Err(error) =
+                ctx.vault
+                    .with_write_txn_grouped(|txn| match page.last().filter(|_| full) {
+                        Some(last) => CURSOR.put(&ctx.vault.store, txn, &(), last),
+                        None => CURSOR.delete(&ctx.vault.store, txn, &()).map(|_| ()),
+                    })
+            {
+                return spent_or_deferred(error, ctx, &charges);
+            }
             if !full {
                 // The month's first finished NOTE review also proposes the
                 // month's NOTE tombstones (FIX 2419); it only asks the owner.
-                crate::note::review_note_tombstones(ctx.vault)?;
+                if let Err(error) = crate::note::review_note_tombstones(ctx.vault) {
+                    return spent_or_deferred(error, ctx, &charges);
+                }
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
         }
@@ -205,8 +229,12 @@ impl ConsolidationExecutor<'_> {
         // The people a reply declares are minted under the review's queued
         // parent, else its lineage's first try (FIX 7579), from the NOTE's own
         // axes (FIX 7506).
+        let original = match super::extracted_people::original_try(ctx.vault, run.attempt_id) {
+            Ok(original) => original,
+            Err(error) => return spent_or_deferred(error, ctx, charges).map(Some),
+        };
         let namespace = MintNamespace::new(
-            super::extracted_people::original_try(ctx.vault, run.attempt_id)?,
+            original,
             attempt.status.payload.parent_attempt,
             None,
             Some(note.facet),
@@ -263,20 +291,31 @@ impl ConsolidationExecutor<'_> {
         {
             Ok(StepOutcome::Finished {
                 response,
+                memoized,
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(ctx.vault, run.attempt_id, hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(ctx.vault, run.attempt_id, hash, &response.usage)
+                {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
+                    return spent_or_deferred(error, ctx, charges).map(Some);
+                }
                 // A fallback reply is no review: the NOTE stays unseen, so
                 // the next pass asks the model again.
                 if failure_policy.is_some() {
-                    return Ok(Some(charges.park_on_fallback(
+                    return match charges.park_on_fallback(
                         ctx.vault,
                         run.attempt_id,
                         hash,
                         NOTE_FALLBACK,
                         &response,
-                    )?));
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => spent_or_deferred(error, ctx, charges).map(Some),
+                    };
                 }
                 response
             }
@@ -383,7 +422,7 @@ impl ConsolidationExecutor<'_> {
             );
         }
         // The NOTE's people land before the beliefs about them.
-        mint_note_people(
+        if let Err(error) = mint_note_people(
             ctx.vault,
             &people,
             &NoteSource {
@@ -392,12 +431,22 @@ impl ConsolidationExecutor<'_> {
                 markdown: &note.markdown,
             },
             ctx.now_ms,
-        )?;
+        ) {
+            return spent_or_deferred(error, ctx, charges).map(Some);
+        }
         if !candidates.is_empty() {
             // A refusal is the gate's answer about one belief (a persona
             // belief, say, needs turns from two sessions), never a reason
             // to read the NOTE again.
-            let outcome = promote_consolidated_claims(ctx.vault, run, candidates)?;
+            let outcome = match promote_consolidated_claims_with_checker(
+                ctx.vault,
+                run,
+                candidates,
+                self.decisions.checker.as_ref(),
+            ) {
+                Ok(outcome) => outcome,
+                Err(error) => return spent_or_deferred(error, ctx, charges).map(Some),
+            };
             for (claim, reason) in &outcome.rejected {
                 tracing::info!(
                     target: "oneiron::dreamer",
@@ -413,7 +462,7 @@ impl ConsolidationExecutor<'_> {
             run_id: attempt.status.attempt.run_id.as_deref(),
             now: ctx.now_ms / 1_000,
         };
-        let declared = ctx.vault.with_write_txn_grouped(|txn| {
+        let declared = match ctx.vault.with_write_txn_grouped(|txn| {
             // The topic the NOTE's last review kept, when this review moves
             // it to another or to none: that group is declared again
             // without it (FIX 7459).
@@ -444,7 +493,10 @@ impl ConsolidationExecutor<'_> {
                 declared |= queue_note_topic_summaries_in_txn(ctx.vault, txn, left, &lineage)?;
             }
             Ok(declared)
-        })?;
+        }) {
+            Ok(declared) => declared,
+            Err(error) => return spent_or_deferred(error, ctx, charges).map(Some),
+        };
         if declared {
             ctx.vault.store.notify_attempt_observers();
         }

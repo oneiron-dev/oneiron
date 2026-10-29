@@ -474,6 +474,11 @@ pub struct VaultConfig {
     /// with its seal ([`crate::world_keys::unlock_page_seal`]), and a new one
     /// is created sealed with [`crate::world_keys::new_page_seal`].
     pub page_seal: Option<crate::world_keys::VaultPageSeal>,
+    /// Whether this vault's checkpoints carry its host-order legal holds,
+    /// sealed to its host's recipient (FIX 6598): only a host sets one,
+    /// from the recipient its supervisor delivered, never from the owner's
+    /// settings. Both presets seal none, a self-hosted vault's way.
+    pub checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing,
 }
 
 /// Text analyzer configuration. Kept minimal in v1 — the full analyzer
@@ -674,6 +679,7 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: crate::authority::MachineDeviceClass::Computer,
             page_seal: None,
+            checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
         }
     }
 
@@ -709,6 +715,25 @@ impl VaultConfig {
             limits: crate::limit_ask::EngineLimits::default(),
             machine_device_class: crate::authority::MachineDeviceClass::Computer,
             page_seal: None,
+            checkpoint_host_holds: crate::recovery::checkpoint::HostHoldsSealing::NotHosted,
         }
+    }
+
+    /// This config, its checkpoints' host-order legal holds sealed to
+    /// `recipient`, the one its host's supervisor pinned and delivered (FIX
+    /// 6598); `None` where a host carries the vault and delivered none, which
+    /// each checkpoint's receipt says is unavailable and never refuses.
+    #[must_use]
+    pub fn with_checkpoint_host_holds_recipient(
+        mut self,
+        recipient: Option<crate::recovery::checkpoint::HostHoldsRecipient>,
+    ) -> Self {
+        self.checkpoint_host_holds = match recipient {
+            Some(recipient) => {
+                crate::recovery::checkpoint::HostHoldsSealing::To(Box::new(recipient))
+            }
+            None => crate::recovery::checkpoint::HostHoldsSealing::RecipientMissing,
+        };
+        self
     }
 }

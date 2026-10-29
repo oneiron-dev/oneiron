@@ -247,7 +247,7 @@
         "output": "crate::task_verb::sdk::BoardFrameReply",
         "description": "Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -272,7 +272,7 @@
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -297,7 +297,7 @@
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Unsubscribes the attached run's board STREAM connection from the named scopes.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -756,7 +756,7 @@
     },
     {
       "name": "vault.personas.export",
-      "description": "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent.",
+      "description": "Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent.",
       "input": "crate::persona_snapshot::PersonaSnapshotCopyRequest",
       "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.export\", &input)?",
@@ -771,7 +771,7 @@
     },
     {
       "name": "vault.personas.edit",
-      "description": "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version.",
+      "description": "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out.",
       "input": "crate::persona_snapshot::PersonaSnapshotCopyEditRequest",
       "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.edit\", &input)?",
@@ -1388,6 +1388,10 @@
         ]
       },
       "mcp_scope": "born",
+      "mcp_fields": {
+        "spec": "$",
+        "task_ref": "=task_ref"
+      },
       "section": true
     },
     {
@@ -3031,13 +3035,14 @@
     },
     {
       "name": "vault.weave.lens",
-      "description": "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events.",
-      "input": "crate::claim::WeaveReportRequest",
+      "description": "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events.",
+      "input": "crate::lens::WeaveLensRequest",
       "output": "crate::lens::LensFrameCard",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.weave.lens\", &input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_lens_owner": true,
+      "host_door_client_surface": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -3278,9 +3283,9 @@
     },
     {
       "name": "vault.inbox.groups",
-      "description": "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.",
+      "description": "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.",
       "input": "crate::agent_inbox_lens::InboxRunGroupsRequest",
-      "output": "Vec<crate::inbox::InboxGroup>",
+      "output": "crate::inbox::InboxGroupPage",
       "call": "memory.inbox_run_groups(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -3288,6 +3293,12 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
+      },
+      "page": {
+        "rows": "groups",
+        "cursor": "next",
+        "resume": "spec",
+        "within": "after"
       },
       "section": false,
       "openapi": true
@@ -4567,7 +4578,7 @@
       "description": "Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so.",
       "input": "EmptyRequest",
       "output": "crate::task_verb::sdk::AuthorityClockRepair",
-      "call": "crate::task_verb::sdk::repair_authority_clock_as_owner(memory.vault(), &memory.embedded_owner(\"vault.authority.clock.repair\")?)?",
+      "call": "crate::task_verb::sdk::repair_authority_clock_as(memory.vault(), memory.embedded_clock_repair_caller(\"vault.authority.clock.repair\")?)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -5229,6 +5240,21 @@
       "input": "crate::task_verb::sdk::SharedActPolicyChangeRequest",
       "output": "crate::federation::SharedActPolicyChange",
       "call": "crate::task_verb::sdk::read_shared_act_policy_change(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.change\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.shared.policy.changes",
+      "description": "A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::SharedActPolicyChange>",
+      "call": "crate::task_verb::sdk::read_shared_act_policy_changes(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.changes\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -6117,10 +6143,74 @@
     },
     {
       "name": "self.off_record.execute",
-      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer.",
       "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
       "output": "crate::task_verb::sdk::OffRecordExecuted",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.results.list",
+      "description": "The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not.",
+      "input": "crate::task_verb::sdk::OffRecordResultsRequest",
+      "output": "crate::task_verb::sdk::OffRecordResultCards",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.results.list\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.results.read",
+      "description": "The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint.",
+      "input": "crate::task_verb::sdk::OffRecordResultReadRequest",
+      "output": "crate::task_verb::sdk::OffRecordResultRead",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.results.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.waits.get",
+      "description": "The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered.",
+      "input": "crate::task_verb::sdk::OffRecordWaitRequest",
+      "output": "crate::task_verb::sdk::OffRecordWaitView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.waits.get\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.waits.answer",
+      "description": "The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on.",
+      "input": "crate::task_verb::sdk::OffRecordWaitAnswerRequest",
+      "output": "crate::task_verb::sdk::OffRecordWaitAnswered",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.waits.answer\", &input)?",
       "host_door": true,
       "host_door_lists": true,
       "no_record": true,
@@ -6208,8 +6298,8 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in.",
-      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "description": "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
+      "input": "crate::task_verb::sdk::OffRecordRoomExportRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
       "host_door": true,
@@ -7057,7 +7147,54 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.roots.requests.create",
+      "description": "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was.",
+      "input": "crate::task_verb::sdk::RootRequestCreateRequest",
+      "output": "crate::world_keys::OwnerWorkReceipt",
+      "call": "crate::task_verb::sdk::create_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.create\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.roots.requests.list",
+      "description": "The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::PendingRootRequestView>",
+      "call": "crate::task_verb::sdk::list_root_requests_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.list\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.owner_work.get",
+      "description": "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it.",
+      "input": "crate::task_verb::sdk::OwnerWorkGetRequest",
+      "output": "crate::world_keys::OwnerWorkReceipt",
+      "call": "crate::task_verb::sdk::owner_work_receipt_as(memory.vault(), &memory.embedded_owner(\"vault.owner_work.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.cleanup.run",
@@ -7162,6 +7299,21 @@
       "host_door_lists": true,
       "host_door_surface": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.usage.repair.receipts",
+      "description": "Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted.",
+      "input": "crate::memory::usage_repair::UsageRepairReceiptsRequest",
+      "output": "crate::memory::usage_repair::UsageRepairReceiptList",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.usage.repair.receipts\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -7315,7 +7467,7 @@
     },
     {
       "name": "vault.embedding_spaces.list",
-      "description": "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.",
+      "description": "Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move.",
       "input": "EmptyRequest",
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::read_embedding_spaces(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.list\")?)?",
@@ -8150,6 +8302,83 @@
       "section": false
     },
     {
+      "name": "vault.secrets.register",
+      "description": "The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call.",
+      "input": "crate::task_verb::sdk::SecretRegisterRequest",
+      "output": "crate::task_verb::sdk::SecretRegisterReply",
+      "call": "crate::task_verb::sdk::register_secret_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.register\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.rotate",
+      "description": "The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call.",
+      "input": "crate::task_verb::sdk::SecretRotateRequest",
+      "output": "crate::task_verb::sdk::SecretRotateReply",
+      "call": "crate::task_verb::sdk::rotate_secret_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.rotate\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.rewrap",
+      "description": "The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown.",
+      "input": "crate::task_verb::sdk::SecretRewrapRequest",
+      "output": "crate::task_verb::sdk::SecretCustodyReply",
+      "call": "crate::task_verb::sdk::rewrap_secret_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.rewrap\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.custody.get",
+      "description": "The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to.",
+      "input": "crate::task_verb::sdk::SecretCustodyGetRequest",
+      "output": "crate::task_verb::sdk::SecretCustodyViewReply",
+      "call": "crate::task_verb::sdk::secret_custody_get_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.custody.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.custody.submit",
+      "description": "The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call.",
+      "input": "crate::task_verb::sdk::SecretCustodySubmitRequest",
+      "output": "crate::task_verb::sdk::SecretCustodyReply",
+      "call": "crate::task_verb::sdk::submit_sealed_custody_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.custody.submit\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.widen_proposals",
       "description": "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined.",
       "input": "crate::agent_dispatch::widen_doors::WidenProposalsRequest",
@@ -8350,6 +8579,19 @@
       "section": false
     },
     {
+      "name": "vault.lenses.export_pack",
+      "description": "Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt.",
+      "input": "crate::lens::LensPackExportRequest",
+      "output": "crate::lens::LensPackExport",
+      "call": "memory.lenses_export_pack(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.lenses.select",
       "description": "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card.",
       "input": "crate::lens::LensSelectRequest",
@@ -8405,6 +8647,7 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_lens_owner": true,
+      "host_door_client_surface": true,
       "scope": "Read",
       "admission": {
         "projection_record_scope": true
@@ -9533,7 +9776,7 @@
     },
     {
       "name": "execute_code",
-      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.",
+      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
       "output": "crate::memory::foreign_code::ForeignCodeRunResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
@@ -9565,7 +9808,7 @@
     },
     {
       "name": "vault.code.type_diagnostics",
-      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.",
+      "description": "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref.",
       "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
       "output": "Option<crate::code_run::ProgramStepFeedbackRelease>",
       "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
@@ -11304,6 +11547,22 @@
       "openapi": true
     },
     {
+      "name": "vault.tasks.comm_widen.revoke",
+      "description": "The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended.",
+      "input": "crate::task_verb::sdk::CommWidenRevokeRequest",
+      "output": "crate::task_verb::CommWidenRevokeReceipt",
+      "call": "crate::task_verb::sdk::revoke_comm_widen_as(memory, &memory.embedded_owner(\"vault.tasks.comm_widen.revoke\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.runs.branches.get",
       "description": "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts.",
       "input": "crate::task_verb::run_doors::RunBranchesRequest",
@@ -12672,6 +12931,19 @@
       "section": false
     },
     {
+      "name": "vault.conversations.turn.rebind",
+      "description": "Rebinds the caller's queued turn action whose credential no longer stands to the live credential this request was admitted on; the action keeps its scope.",
+      "input": "crate::conversation::TurnActionRebindRequest",
+      "output": "crate::conversation::TurnActionRebindReceipt",
+      "call": "memory.conversations_turn_rebind(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.messages.react",
       "description": "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress.",
       "input": "crate::reaction::MessageReactionRequest",
@@ -13036,7 +13308,7 @@
     },
     {
       "name": "vault.skills.attribution.settle",
-      "description": "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.",
+      "description": "The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer.",
       "input": "ProposalDeltaSettleRequest",
       "output": "crate::task_verb::sdk::ProposalDeltaSettlement",
       "call": "crate::task_verb::sdk::skill_attribution_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.settle\")?, &input)?",
@@ -13782,7 +14054,7 @@
     },
     {
       "name": "vault.voices.inspect",
-      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone.",
+      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target.",
       "input": "crate::task_verb::sdk::VoiceBankInspectRequest",
       "output": "crate::task_verb::sdk::VoiceBankInspection",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.inspect\", &input)?",
@@ -13879,6 +14151,21 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "ai.ask_image",
+      "description": "One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt.",
+      "input": "crate::task_verb::sdk::AskImageRequest",
+      "output": "crate::task_verb::sdk::AskImageAnswer",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.ask_image\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered"
     },
     {
       "name": "ai.verdict",
@@ -14625,7 +14912,7 @@
     },
     {
       "name": "self.browser.switch_engine",
-      "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
+      "description": "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds.",
       "input": "crate::task_verb::sdk::BrowserSwitchEngineInput",
       "output": "crate::task_verb::sdk::BrowserSwitchEngineOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.switch_engine(input)?)",
@@ -14635,7 +14922,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>",
-        "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
+        "description": "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -17540,9 +17827,10 @@
       "description": "The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming.",
       "input": "crate::dreamer_runner::FreeTimePolicySetRequest",
       "output": "crate::dreamer_runner::FreeTimePolicyView",
-      "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "call": "crate::dreamer_runner::free_time_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.free_time.policy.set\")?, crate::authority::ActSurface::ThisInstall, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,
+      "host_door_surface": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

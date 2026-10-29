@@ -15,8 +15,8 @@ use crate::claim::ClaimSource;
 use crate::code_run::{CodeRunDeterminism, SelfCall};
 use crate::code_sandbox::{SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
-    JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream, SelfDispatchResponse,
-    StepCancellation,
+    CallableProgram, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStream,
+    SelfDispatchResponse, StepCancellation,
 };
 use crate::error::{ArtifactError, Error, Result};
 use crate::skill::SkillRole;
@@ -288,6 +288,18 @@ pub(crate) fn execute_callable_skill_cancellable(
         "const skillArgs = {};\n{source}",
         serde_json::to_string(args).map_err(|_| invalid("call arguments cannot be encoded"))?
     );
+    // Prepared once (FIX 8276): a TypeScript skill runs as the JavaScript Oxc
+    // prints for it. The arguments line is the host's prelude, so a failed
+    // TypeScript skill names the line of its own stored file.
+    let prepared = crate::code_sandbox::source::prepare_source(&script).with_prelude_lines(1);
+    // Its stored file is checked once, here, as its author wrote it, on the
+    // caller's host, which keeps its feedback beside the run however the
+    // call ends (FIX 10389); the call never waits on it.
+    let program = CallableProgram {
+        original: source,
+        prepared: &prepared,
+    };
+    host.start_callable_check(seq, program);
     crate::skill_reliability::record_callable_invocation(
         vault,
         leased,
@@ -315,10 +327,6 @@ pub(crate) fn execute_callable_skill_cancellable(
         host,
         answer: CallableSkillAnswer::spool(),
     };
-    // Prepared once (FIX 8276): a TypeScript skill runs as the JavaScript Oxc
-    // prints for it. The arguments line is the host's prelude, so a failed
-    // TypeScript skill names the line of its own stored file.
-    let prepared = crate::code_sandbox::source::prepare_source(&script).with_prelude_lines(1);
     let outcome = runtime.run_prepared_step_cancellable(
         JsCodeModeStep {
             run_id,

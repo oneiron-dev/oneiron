@@ -81,10 +81,10 @@ impl HostSelfDispatcher<'_> {
         };
         let output = serde_json::to_value(&view)
             .map_err(|_| Error::InvariantViolation("workflow run answer encode"))?;
-        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
             output,
-            rows: Some(run_rows(&view, task)),
-        }))
+            Some(run_rows(&view, task)),
+        )))
     }
 
     /// The live lease of the agent try this run is, read now; `None` for a

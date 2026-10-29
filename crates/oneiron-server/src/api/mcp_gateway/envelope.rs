@@ -6,8 +6,8 @@ use super::booking_call::resolve_handshake_caller;
 use super::call_meta::MCP_INVOCATION_META;
 use super::tool_receipt::mcp_call_receipt;
 use super::{
-    admission, booking_call, device_release, ensure_mcp_actor_matches, execute_mcp_tool,
-    mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
+    admission, booking_call, clock_repair_call, device_release, ensure_mcp_actor_matches,
+    execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
     mcp_validated_call_args, wakes, wire,
 };
 use crate::api::facade::{self, DoorClaim};
@@ -109,6 +109,9 @@ pub(crate) struct McpGatewayError {
     /// Never among the words its release reads. Boxed for size, as
     /// `effective_scope` is.
     pub(super) program_steps: Option<Box<super::type_feedback_release::ErrorProgramSteps>>,
+    /// The refusal's stable reason codes, in its producer's order (FIX
+    /// 7398), surfaced as `error.data.reason_codes` when it named any.
+    pub(super) reason_codes: Vec<String>,
 }
 
 impl McpGatewayError {
@@ -128,6 +131,7 @@ impl McpGatewayError {
             hook: None,
             retry_after: None,
             program_steps: None,
+            reason_codes: Vec::new(),
         }
     }
 
@@ -204,6 +208,13 @@ pub(crate) struct McpCallContext {
     /// carried it, for the home an opened device asks (FIX 2905, FIX 2907).
     /// `None` for an owner-grade caller and off that ingress.
     pub(crate) forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    /// The generated-UI surface profile the request's
+    /// `_meta.clientCapabilities` declares (FIX 7969), read on every call
+    /// because the MCP leg is stateless (ARCH-0048 G3). A lens the call
+    /// renders is lowered for it unless its arguments name their own;
+    /// `None` lowers for the whole atom kit. It selects a rendering and
+    /// grants nothing.
+    pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
 }
 
 impl std::ops::Deref for McpCallContext {

@@ -248,6 +248,7 @@ fn booking_context(
         room_turn,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 

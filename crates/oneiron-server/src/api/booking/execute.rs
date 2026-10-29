@@ -151,9 +151,16 @@ async fn execute(
         BookingOperationRequest::Availability(mut input) => {
             // Free text is parsed first; only its object reaches the oracle.
             if let Some(BookingConstraintInput::FreeText(text)) = &input.constraint {
+                // The page's publication-time sponsor pays an anonymous
+                // visitor's parse while one is stored and live (FIX 5288).
+                // An authenticated caller pays as itself either way.
+                let sponsor = public_authority
+                    .as_ref()
+                    .and_then(|authority| authority.publication.sponsor);
                 let (object, visitor_tz) = free_text::parse_free_text(
                     server,
                     &transport,
+                    sponsor,
                     text.clone(),
                     input.visitor_tz.clone(),
                     now,

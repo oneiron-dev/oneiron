@@ -3,27 +3,33 @@
 //! Types and private call/job helpers stay in the parent; this module owns the listed impls.
 
 use super::{
-    Arc, FatalLlmError, Held, JobRow, JobStore, LlmResult, MediaAnswer, MediaJobState,
+    Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer, MediaJobState,
     MediaRequest, MediaResponse, MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission,
     RungVoices, Vault, job_ticket, submit_stamps,
 };
 
 /// A runtime that keeps its jobs hands each running job's permit off as it
 /// stops, charging nothing: the job runs on at its provider, and the runtime
-/// that takes it up from its kept row pays its end, once. A job in a poll
-/// that holds it is left to its own permit.
+/// that takes it up from its kept row pays its end, once. A program's job
+/// whose row was not kept has no row to take it up from: it pays its
+/// reservation on its run's line now (FIX 780, 6083). A job in a poll that
+/// holds it is left to its own permit.
 impl Drop for MediaRuntime {
     fn drop(&mut self) {
         if self.store.is_none() {
             return;
         }
-        for job in self.lock_jobs().values() {
+        for (ticket, job) in self.lock_jobs().iter() {
             let Held::Running(job) = job else {
                 continue;
             };
             let Ok(mut job) = job.try_lock() else {
                 continue;
             };
+            if self.unkept_program_job(ticket) {
+                job.settle_failed();
+                continue;
+            }
             if let Some(permit) = job.permit.take()
                 && let Err(denied) = permit.hand_off_media()
             {
@@ -144,10 +150,75 @@ impl MediaRuntime {
                     payer,
                     stamps,
                     erased: false,
+                    line: None,
                 },
             )
         {
             tracing::error!(%error, ticket = %id, "a media job was not kept: it runs held here");
+        }
+        self.lock_jobs()
+            .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
+        Ok(ticket)
+    }
+
+    /// [`Self::submit`] on `run`, the line its caller admitted it on (FIX
+    /// 780, FIX 6083): a program's run's own. The job's permit is held on
+    /// that line until the job ends, and its end, its cancel and its take-up
+    /// after a restart settle there, never on the media meter. Its row keeps
+    /// the run's name and payer, and is stamped as [`Self::submit`]'s is.
+    pub(crate) async fn submit_run_admitted(
+        &self,
+        run: &RunAdmission,
+        request: MediaRequest,
+        actor: Option<oneiron::EntityId>,
+    ) -> LlmResult<MediaTicket> {
+        if !request.operation.is_job() {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let operation = request.operation;
+        let stamps = submit_stamps(actor, &request);
+        let sent = self.store.as_ref().map(|_| request.clone());
+        let ladder = self.ladder(&request)?;
+        // A media call's one deadline is its caller's (FIX 8134), as
+        // `submit`'s walk.
+        let deadline = crate::models::CallDeadline::Open;
+        let walked = ladder.media_by(run, request, None, None, deadline);
+        let MediaAnswer::Job(job) = walked.await? else {
+            return Err(FatalLlmError::EmptyResponse.into());
+        };
+        let id = job_ticket(&job.provider_job);
+        let line = JobLine {
+            run: run.run().to_owned(),
+        };
+        let ticket = MediaTicket {
+            job: id.clone(),
+            model: job.model.to_string(),
+            operation,
+        };
+        let mut kept = self.store.is_some();
+        if let (Some(store), Some(request)) = (&self.store, sent)
+            && let Err(error) = store.put(
+                &id,
+                JobRow {
+                    model: job.model.clone(),
+                    operation,
+                    provider_job: job.provider_job.clone(),
+                    request,
+                    ended: None,
+                    receipt: job.receipt.clone(),
+                    payer: run.payer().cloned(),
+                    stamps,
+                    erased: false,
+                    line: Some(line.clone()),
+                },
+            )
+        {
+            tracing::error!(%error, ticket = %id, "a media job was not kept: it runs held here");
+            kept = false;
+        }
+        // A job whose row was not kept still answers its own run.
+        if !kept {
+            self.submitted_on(&id, line);
         }
         self.lock_jobs()
             .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));

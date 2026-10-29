@@ -1,14 +1,21 @@
 //! The owner's free-time policy for one agent (FIX 4453): the total budget
 //! one cycle may spend, the cycle's clock in an IANA zone, and an optional
-//! pinned split between the two kinds. Only the owner sets or clears it,
-//! revalidated against this vault in the write, as every owner setting is;
-//! the engine stamps the revision, the owner and the time. Neither the
-//! agent's words nor a hosted root stand in for the owner.
+//! pinned split between the two kinds. The owner sets or clears it,
+//! revalidated against this vault in the write, as every owner setting is,
+//! or an agent whose live Grant names the act (`free_time_policy_set`, FIX
+//! 5660), its Grant checked again in the write; the engine stamps the
+//! revision, who set it and the time. Neither the agent's words nor a hosted
+//! root stand in for the owner. Every set and clear is also signed as a
+//! `PolicySettingSet` every machine the owner admits folds and checks, best
+//! effort: the row stands whatever that meets.
 
 use serde::{Deserialize, Serialize};
 
 use super::{CLOCK, CYCLE, POLICY};
-use crate::authority::ActSurface;
+use crate::authority::{
+    ActAuthority, ActBy, ActSurface, GrantedAct, OwnerAct, OwnerActKind, PolicySetting,
+    PolicySettingAct,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -86,9 +93,15 @@ pub struct FreeTimePolicy {
     pub schedule: FreeTimeSchedule,
     pub pinned_split: Option<FreeTimeSplit>,
     pub cap_shown_at_ms: u64,
-    /// The owner, as this vault revalidated them in the write; `None` once
-    /// that owner was erased (FIX 8875). Audit only; no rule reads it.
+    /// The owner, as this vault revalidated them in the write; `None` for an
+    /// agent's set (`set_by_agent`), and once that owner was erased (FIX
+    /// 8875). Audit only; no rule reads it.
     pub set_by: Option<EntityId>,
+    /// The agent whose act within its live Grant set it (FIX 5660), its
+    /// signed record naming the Grant; `None` for the owner's own set, and
+    /// once that agent was erased. Audit only; no rule reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_by_agent: Option<EntityId>,
     /// Vault clock seconds. No cycle opens at a boundary before this.
     pub set_at: u64,
     /// Where the owner said so; `None` also once the linked machine it was
@@ -112,6 +125,12 @@ pub(super) struct FreeTimePolicyRecord {
     /// it with its act, so a record's list is a prefix of the list of every
     /// record that follows it.
     pub(super) acts: Vec<[u8; 32]>,
+    /// Where the owner said the clear this row witnesses (FIX 5721), while
+    /// no policy is in force; `None` once a set follows it (the policy's own
+    /// `surface` says where that was said), and once the linked machine it
+    /// was said on was erased. Audit only; no rule reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) clear_surface: Option<ActSurface>,
 }
 
 impl FreeTimePolicyRecord {
@@ -132,7 +151,11 @@ impl FreeTimePolicyRecord {
         witness.update(acts.last().unwrap_or(&[0; 32]));
         witness.update(&act);
         acts.push(*witness.finalize().as_bytes());
-        Ok(Self { policy, acts })
+        Ok(Self {
+            policy,
+            acts,
+            clear_surface: None,
+        })
     }
 }
 
@@ -212,11 +235,122 @@ pub(crate) fn free_time_owns_reflection_in_txn(
     CYCLE.contains(&vault.store, txn, &(resident, boundary))
 }
 
-/// BLAKE3 over the policy a write replaces, as JSON.
-fn prior_digest(prior: Option<&FreeTimePolicy>) -> Result<[u8; 32]> {
-    let bytes = serde_json::to_vec(&prior)
+/// BLAKE3 over a policy as JSON (`null` for none): the one a write
+/// replaces, or the one it leaves.
+fn policy_digest(policy: Option<&FreeTimePolicy>) -> Result<[u8; 32]> {
+    let bytes = serde_json::to_vec(&policy)
         .map_err(|_| Error::InvariantViolation("free-time policy act encoding"))?;
     Ok(*blake3::hash(&bytes).as_bytes())
+}
+
+/// Who sets or clears a policy, as the doors pass it (FIX 5660): the owner's
+/// own proof, with where he said so when the door named it, or an agent's
+/// act its live Grant names.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum FreeTimeAuthority<'a> {
+    Owner(&'a AuthenticatedOwner, Option<ActSurface>),
+    Agent(&'a GrantedAct),
+}
+
+impl<'a> From<&'a ActAuthority> for FreeTimeAuthority<'a> {
+    fn from(authority: &'a ActAuthority) -> Self {
+        match authority {
+            ActAuthority::Owner(owner, surface) => Self::Owner(owner, Some(*surface)),
+            ActAuthority::Agent(granted) => Self::Agent(granted),
+        }
+    }
+}
+
+/// Who one set or clear is, as its write judged them.
+struct FreeTimeActor {
+    /// The vault owner whose will the act is: the owner himself, or the one
+    /// an agent's Grant carries.
+    owner: EntityId,
+    by: ActBy,
+    /// Who acted: the owner, or the agent.
+    acting: EntityId,
+    /// Where the owner said so, as the row keeps it.
+    surface: Option<ActSurface>,
+}
+
+impl FreeTimeAuthority<'_> {
+    /// The owner revalidated in `txn`, or the agent's Grant checked again
+    /// in it for this act.
+    fn actor_in_txn(self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<FreeTimeActor> {
+        Ok(match self {
+            Self::Owner(owner, surface) => {
+                let actor =
+                    crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, txn, owner)?;
+                FreeTimeActor {
+                    owner: actor,
+                    by: ActBy::Owner,
+                    acting: actor,
+                    surface,
+                }
+            }
+            Self::Agent(granted) => FreeTimeActor {
+                owner: vault.granted_act_owner_in_txn(
+                    txn,
+                    granted,
+                    OwnerActKind::FreeTimePolicy,
+                )?,
+                by: ActBy::Agent {
+                    agent: granted.agent(),
+                    grant: granted.grant(),
+                },
+                acting: granted.agent(),
+                surface: None,
+            },
+        })
+    }
+}
+
+/// Signs `actor`'s act on `agent`'s policy, from `prior` to `value`
+/// (`None` for a clear), in the write `txn` that made it (FIX 5660), after
+/// every write of its own, best effort: a digest or a revision that does not
+/// read is logged and the row stands. A surface the door did not name is this
+/// install's.
+fn record_act_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &FreeTimeActor,
+    agent: EntityId,
+    prior: Option<&FreeTimePolicy>,
+    value: Option<&FreeTimePolicy>,
+) {
+    let digests = policy_digest(prior).and_then(|prior| {
+        let value = value.map(|value| policy_digest(Some(value))).transpose()?;
+        Ok((
+            prior,
+            value,
+            vault.policy_setting_revision_in_txn(txn, agent)?,
+        ))
+    });
+    let (prior, value, seen) = match digests {
+        Ok(digests) => digests,
+        Err(error) => {
+            tracing::warn!(%error, agent = %agent.to_hex(), "free-time policy act not signed");
+            return;
+        }
+    };
+    let act = OwnerAct {
+        owner: actor.owner,
+        by: actor.by,
+        surface: actor.surface.unwrap_or(ActSurface::ThisInstall),
+        act: OwnerActKind::FreeTimePolicy,
+        target: agent,
+        seen,
+        answer: None,
+    };
+    vault.record_policy_setting_op_in_txn(
+        txn,
+        PolicySettingAct {
+            act,
+            setting: PolicySetting::FreeTimePolicy,
+            prior,
+            value,
+        },
+    );
 }
 
 /// `agent`'s policy row in `txn`, refused unless the revision its policy
@@ -270,10 +404,27 @@ impl Vault {
         expected_revision: u64,
         input: FreeTimePolicyInput,
     ) -> Result<FreeTimePolicy> {
+        self.set_free_time_policy_as(
+            FreeTimeAuthority::Owner(owner, surface),
+            agent,
+            expected_revision,
+            input,
+        )
+    }
+
+    /// [`Self::set_free_time_policy`] as `authority` (FIX 5660): an agent
+    /// whose Grant names the act sets any policy its Grant's verb covers, its
+    /// Grant checked again in the write.
+    pub(super) fn set_free_time_policy_as(
+        &self,
+        authority: FreeTimeAuthority<'_>,
+        agent: EntityId,
+        expected_revision: u64,
+        input: FreeTimePolicyInput,
+    ) -> Result<FreeTimePolicy> {
         input.validate()?;
         let policy = self.with_write_txn_grouped(|txn| {
-            let actor =
-                crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
+            let actor = authority.actor_in_txn(self, txn)?;
             self.read_agent_definition_in_txn(txn, &agent)?;
             let record = current_revision_in_txn(self, txn, agent, expected_revision)?;
             let prior = record.as_ref().and_then(|record| record.policy.as_ref());
@@ -287,14 +438,22 @@ impl Vault {
                 schedule: input.schedule,
                 pinned_split: input.pinned_split,
                 cap_shown_at_ms: input.cap_shown_at_ms,
-                set_by: Some(actor),
+                set_by: matches!(actor.by, ActBy::Owner).then_some(actor.owner),
+                set_by_agent: matches!(actor.by, ActBy::Agent { .. }).then_some(actor.acting),
                 set_at,
-                surface,
-                prior: prior_digest(prior)?,
+                surface: actor.surface,
+                prior: policy_digest(prior)?,
             };
-            let record =
-                FreeTimePolicyRecord::after(record, agent, Some(policy.clone()), actor, set_at)?;
+            let prior = prior.cloned();
+            let record = FreeTimePolicyRecord::after(
+                record,
+                agent,
+                Some(policy.clone()),
+                actor.acting,
+                set_at,
+            )?;
             POLICY.put(&self.store, txn, &agent, &record)?;
+            record_act_in_txn(self, txn, &actor, agent, prior.as_ref(), Some(&policy));
             Ok(policy)
         })?;
         // The home's timer arms on the policy's next boundary.
@@ -306,7 +465,8 @@ impl Vault {
     /// revision `expected_revision`: its open cycle ends now, no new cycle
     /// opens, and the agent goes back to its nightly dreaming. Calls already
     /// made settle normally. Clearing a policy that is not there, at
-    /// revision 0, does nothing.
+    /// revision 0, does nothing. The row that witnesses the clear keeps
+    /// `surface`, where the owner said so (FIX 5721): audit only.
     ///
     /// # Errors
     /// A proof that does not hold here, [`Error::ConcurrentWrite`] for a
@@ -314,25 +474,44 @@ impl Vault {
     pub fn clear_free_time_policy(
         &self,
         owner: &AuthenticatedOwner,
+        surface: Option<ActSurface>,
+        agent: EntityId,
+        expected_revision: u64,
+    ) -> Result<()> {
+        self.clear_free_time_policy_as(
+            FreeTimeAuthority::Owner(owner, surface),
+            agent,
+            expected_revision,
+        )
+    }
+
+    /// [`Self::clear_free_time_policy`] as `authority` (FIX 5660), as
+    /// [`Self::set_free_time_policy_as`] judges it.
+    pub(super) fn clear_free_time_policy_as(
+        &self,
+        authority: FreeTimeAuthority<'_>,
         agent: EntityId,
         expected_revision: u64,
     ) -> Result<()> {
         let cleared = self.with_write_txn_grouped(|txn| {
-            let actor =
-                crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
+            let actor = authority.actor_in_txn(self, txn)?;
             let record = match current_revision_in_txn(self, txn, agent, expected_revision)? {
                 Some(record) if record.policy.is_some() => record,
                 _ => return Ok(false),
             };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            let prior = record.policy.clone();
             // The row stays as the witness of this clear (FIX 5661), with no
             // policy in force.
-            let record = FreeTimePolicyRecord::after(Some(record), agent, None, actor, now)?;
+            let mut record =
+                FreeTimePolicyRecord::after(Some(record), agent, None, actor.acting, now)?;
+            record.clear_surface = actor.surface;
             POLICY.put(&self.store, txn, &agent, &record)?;
             super::cycle::close_open_cycle_in_txn(self, txn, agent, now)?;
             // The clock goes with the policy: a later policy starts at its
             // own first boundary, and until then the agent dreams nightly.
             CLOCK.delete(&self.store, txn, &agent)?;
+            record_act_in_txn(self, txn, &actor, agent, prior.as_ref(), None);
             Ok(true)
         })?;
         if cleared {

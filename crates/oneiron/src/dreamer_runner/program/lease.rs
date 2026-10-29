@@ -40,11 +40,13 @@ impl DreamerRunnerStore<'_> {
     /// (DOOR-141 PR3b, FIX 5711); every other park (a trapped step's signal
     /// park, a pass's Checkpoint park) holds. The abandon an owner's Stop
     /// still owes is retried on every wake host (`stop_recovery`, FIX 7352),
-    /// not only here.
+    /// not only here. Only a program `worker` may run is a candidate (FIX
+    /// 8703).
     pub(in crate::dreamer_runner) fn ready_unparked_program_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         now: u64,
+        worker: &str,
     ) -> Result<Option<AttemptId>> {
         let held: Vec<(AttemptId, DreamerParkCause, String)> = PARKED
             .scan(&self.vault.store, &*txn)?
@@ -64,7 +66,7 @@ impl DreamerRunnerStore<'_> {
             txn,
             DREAMER_TURN_PROGRAM_ATTEMPT_KIND,
             now,
-            |row| Ok(!parked.contains(&row.id)),
+            |row| Ok(row.accepts_worker(worker) && !parked.contains(&row.id)),
         )
     }
 }

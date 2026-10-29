@@ -79,7 +79,7 @@ struct Counts {
     imports: AtomicU64,
     replays: AtomicU64,
     restores_cold: AtomicU64,
-    skips: [AtomicU64; 6],
+    skips: [AtomicU64; 7],
 }
 
 /// One park or restore event, as the status counts it.
@@ -116,6 +116,9 @@ pub(super) enum Skip {
     Oversize,
     /// What it was computed with is not named whole.
     Unsupported,
+    /// Its checkpoint restores slower than it recomputes: too short to
+    /// pay back its transfer.
+    Short,
 }
 
 /// Counts `event`.
@@ -434,6 +437,7 @@ pub(in crate::models::worker_host) fn status() -> SnapshotStatus {
             kept_local: skip(Skip::KeptLocal),
             oversize: skip(Skip::Oversize),
             unsupported: skip(Skip::Unsupported),
+            short: skip(Skip::Short),
         },
     };
     let add = |total: &mut Option<u64>, part: Option<u64>| {

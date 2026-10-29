@@ -572,8 +572,19 @@ fn step(value: &Value) -> Result<MemberStep> {
             entry: small(entry)?,
         }),
         [kind] if kind.as_str() == Some("gzip") => Ok(MemberStep::Gzip),
+        // FIX 2471: a tar entry and an xz payload.
+        [kind, entry] if kind.as_str() == Some("tar") => Ok(MemberStep::Tar {
+            entry: small(entry)?,
+        }),
+        [kind] if kind.as_str() == Some("xz") => Ok(MemberStep::Xz),
         [kind, object, generation] if kind.as_str() == Some("pdf_stream") => {
             Ok(MemberStep::PdfStream {
+                object: small(object)?,
+                generation: small(generation)?,
+            })
+        }
+        [kind, object, generation] if kind.as_str() == Some("pdf_strings") => {
+            Ok(MemberStep::PdfStrings {
                 object: small(object)?,
                 generation: small(generation)?,
             })

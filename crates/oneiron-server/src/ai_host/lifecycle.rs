@@ -74,8 +74,11 @@ impl AiHost {
         // D4), settled whether or not the code sandbox binds.
         let shared =
             compaction::CodeModeCompaction::bind_shared(&server, &host.handle.runtime, models);
-        if let Some((compaction, _)) = &shared {
+        if let Some((compaction, guard)) = &shared {
             let _ = host.handle.writer_compaction.set(compaction.clone());
+            // A program's media jobs live on code mode's meter, its run's
+            // line (FIX 780, 6083): a restart takes them up there again.
+            host.handle.runtime.bind_program_media_line(guard.clone());
         }
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server = code_mode::bind(
@@ -214,6 +217,9 @@ impl AiHost {
         }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         handle.device = device;
+        handle.dreamer_control = attached
+            .as_ref()
+            .and_then(|attached| attached.control.clone());
         let mut host = Self {
             handle: handle.clone(),
             dreamer: None,

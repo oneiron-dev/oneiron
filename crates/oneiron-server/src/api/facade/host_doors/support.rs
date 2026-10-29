@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use oneiron::llm::media::{AiOperation, MediaRequest};
 use oneiron::llm::run_admission::RunAdmission;
+use oneiron::memory::foreign_code::ForeignCodeFailure;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
@@ -14,7 +15,9 @@ use oneiron::memory::{
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
-use crate::api::facade::facade_actor;
+use crate::api::clock_ingress;
+use crate::api::facade::{FacadeApiError, facade_actor};
+use crate::api::type_feedback_release::{FeedbackScan, release_step_feedback};
 use crate::auth::CoreAuth;
 use crate::models::RungVoices;
 use crate::server::SyncServer;
@@ -253,7 +256,7 @@ pub(in crate::api::facade) async fn off_runtime_listing<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&ProducerRows) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let producers = ProducerRows::default();
         let answer = act(&producers);
         (answer, producers.take())
@@ -302,6 +305,71 @@ pub(in crate::api::facade) async fn credential_listing<T: Send + 'static>(
         read(&*server, &auth, memory)
     })
     .await
+}
+
+/// [`Listed`] for a door that runs its caller's program (FIX 10389): its
+/// failure keeps the program's type feedback beside its typed refusal until
+/// the surface it answers on converts it ([`source_run_refusal`], or the MCP
+/// gateway's own), never erased into a bare [`MemoryError`] first.
+pub(crate) type SourceListed<T> = (Result<T, ForeignCodeFailure>, Vec<EntityId>);
+
+/// A source door's refusal before its program's source is admitted: it
+/// lists no row and carries no feedback.
+pub(in crate::api::facade) fn source_refused<T>(refusal: MemoryError) -> SourceListed<T> {
+    (Err(refusal.into()), Vec::new())
+}
+
+/// [`credential_listing`] for a door that runs its caller's program: the
+/// same handle, origin and collector, its failure kept whole
+/// ([`SourceListed`]). A worker that does not finish answers [`internal`]
+/// and lists none.
+pub(in crate::api::facade) async fn credential_source_listing<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    verb: &'static str,
+    run: impl FnOnce(&SyncServer, &CoreAuth, Memory<'_>) -> Result<T, ForeignCodeFailure>
+    + Send
+    + 'static,
+) -> SourceListed<T> {
+    let (answer, rows) =
+        credential_listing(server, auth, caller, verb, move |server, auth, memory| {
+            Ok(run(server, auth, memory))
+        })
+        .await;
+    let answer = match answer {
+        Ok(ran) => ran,
+        Err(refusal) => Err(refusal.into()),
+    };
+    (answer, rows)
+}
+
+/// A source door's failure as the facade answers it (FIX 10389): its
+/// refusal under the status, code and retry it has today, and its program's
+/// type feedback beside it, each item released apart for `auth`'s
+/// destination by `rows`, those the call read before it failed. A hold on
+/// one withholds only that item's text, never the refusal.
+pub(crate) fn source_run_refusal(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    rows: Option<&[EntityId]>,
+    failure: ForeignCodeFailure,
+) -> FacadeApiError {
+    let destination = auth.destination();
+    let program_steps = failure
+        .program_steps
+        .into_iter()
+        .map(|feedback| {
+            release_step_feedback(
+                server.vault(),
+                &destination,
+                rows,
+                feedback,
+                FeedbackScan::Named,
+            )
+        })
+        .collect();
+    FacadeApiError::from(failure.error).with_program_steps(program_steps)
 }
 
 /// The rows a door reads beside its handle's own reads, as its caller names

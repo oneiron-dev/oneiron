@@ -6563,6 +6563,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "lzma-rust2"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47bb1e988e6fb779cf720ad431242d3f03167c1b3f2b1aae7f1a94b2495b36ae"
+dependencies = [
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "mac-addr"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7921,6 +7930,7 @@ dependencies = [
  "libc",
  "lopdf",
  "loro",
+ "lzma-rust2",
  "ocrs",
  "oneiron",
  "oneiron-authority",
@@ -7965,6 +7975,7 @@ dependencies = [
  "serde_json",
  "serde_path_to_error",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "thiserror 2.0.20",
  "tiktoken-rs",
@@ -8009,6 +8020,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "ed25519-dalek 2.2.0",
+ "getrandom 0.4.3",
  "oneiron-contracts",
  "oneiron-crypto",
  "p256",
@@ -8017,6 +8029,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]
@@ -8086,6 +8099,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tracing",
  "tungstenite 0.29.0",
  "url",
 ]
@@ -12150,6 +12164,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
 ]
 
 [[package]]

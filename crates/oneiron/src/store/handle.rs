@@ -3,7 +3,6 @@
 //! The canonical open sequence lives in [`super::open_gates`]; see the
 //! module doc on [`crate::store`] for the gate order.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
@@ -20,32 +19,7 @@ use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration};
 
 use super::*;
 
-thread_local! {
-    static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
-}
-
 pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
-
-pub(crate) struct ActiveWriteTxnGuard;
-
-impl Drop for ActiveWriteTxnGuard {
-    fn drop(&mut self) {
-        ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
-            depth.set(depth.get().saturating_sub(1));
-        });
-    }
-}
-
-pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
-    ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
-        depth.set(depth.get().saturating_add(1));
-    });
-    ActiveWriteTxnGuard
-}
-
-pub(crate) fn active_write_txn_depth() -> usize {
-    ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
-}
 
 pub struct RawDatabases {
     pub(crate) entities: Database<Bytes, Bytes>,
@@ -325,10 +299,15 @@ pub struct StoreCore {
     /// A failed digest lane stays quiet until a committed relevant change.
     /// This is per-vault, content-free and never gates unrelated deadlines.
     pub(crate) proactivity_suspended: Mutex<Option<u64>>,
+    /// Content-free, per-vault: bumped after each commit that may have
+    /// changed an admitted policy manifest (FIX 11402). Never persisted.
+    pub(crate) policy_manifest_updates: tokio::sync::watch::Sender<u64>,
     /// The one decision-answer signal every ask door and waiter on this open
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// The committed-notification signal live queries wake on (FIX 3084).
+    pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
     pub(crate) container_output: crate::conversation::ContainerOutputGuard,

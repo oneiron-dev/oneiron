@@ -1,13 +1,15 @@
 //! Routing scope and rung types.
 
 use super::version::model_version_token;
+use crate::edit_distance::delta::MEASUREMENT_ENGINE_VERSION;
 use crate::llm::ModelId;
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/// The axis one aggregate is keyed on: a model generation, and a kind of work.
+/// The axis one aggregate is keyed on: a model generation, a kind of work, and
+/// the measurement engine version its edit masses were measured under.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RoutingScopeKey {
     /// `ModelStack` identity of the generation that drafted the proposals —
@@ -16,16 +18,28 @@ pub struct RoutingScopeKey {
     /// The amendment scope the judgments were recorded in, which is the same
     /// string ED-03 keys its cost rows on.
     pub task_class: String,
+    /// The measurement engine version (`engine_ver`) of the folded edit
+    /// masses: two versions never share an aggregate (FIX 7822).
+    pub measurement_version: String,
 }
 
 impl RoutingScopeKey {
-    /// The scope for an already-resolved version token.
+    /// The scope for an already-resolved version token, under the version
+    /// this engine measures with.
     #[must_use]
     pub fn new(model_version: impl Into<String>, task_class: impl Into<String>) -> Self {
         Self {
             model_version: model_version.into(),
             task_class: task_class.into(),
+            measurement_version: MEASUREMENT_ENGINE_VERSION.to_owned(),
         }
+    }
+
+    /// This scope under another measurement version.
+    #[must_use]
+    pub fn measured_under(mut self, measurement_version: impl Into<String>) -> Self {
+        self.measurement_version = measurement_version.into();
+        self
     }
 
     /// The scope a given model would be read under.
