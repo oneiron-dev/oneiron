@@ -62,6 +62,7 @@ impl SyncServer {
         input: RecallRequest,
         payer: Option<&PayerPerson>,
     ) -> MemoryResult<MemoryPack> {
+        let detail = recall_effort_name(input.effort);
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
         let media = self.recall_media(&input)?;
@@ -81,7 +82,11 @@ impl SyncServer {
             rerank: rerank.engine(),
             ..RecallDoor::now()
         };
-        oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door)
+        let pack = oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door);
+        if pack.is_ok() {
+            self.push_retrieval_meter(detail);
+        }
+        pack
     }
 
     /// A recall's `media` (OF-370), decoded before any work, as the context
@@ -308,6 +313,7 @@ impl SyncServer {
         home: HomeRecallCaller,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let destination: ReadDestination = destination.into();
+        let detail = recall_effort_name(input.effort);
         let producers = Arc::new(ProducerRows::default());
         let listing = Arc::clone(&producers);
         let pack: MemoryResult<MemoryPack> = async move {
@@ -376,6 +382,9 @@ impl SyncServer {
             Ok(pack)
         }
         .await;
+        if pack.is_ok() {
+            self.push_retrieval_meter(detail);
+        }
         (pack, producers.take())
     }
 
@@ -475,6 +484,20 @@ impl SyncServer {
                 None
             }
         }
+    }
+}
+
+/// The snake_case name of the effort a recall asked for, for its retrieval
+/// meter row's `detail`: the dial's own position, `call` included; omitted
+/// means `medium`.
+fn recall_effort_name(effort: Option<RecallEffort>) -> &'static str {
+    match effort.unwrap_or(RecallEffort::Medium) {
+        RecallEffort::Light => "light",
+        RecallEffort::Medium => "medium",
+        RecallEffort::High => "high",
+        RecallEffort::Xhigh => "xhigh",
+        RecallEffort::Max => "max",
+        RecallEffort::Call => "call",
     }
 }
 
