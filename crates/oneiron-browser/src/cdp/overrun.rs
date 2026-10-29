@@ -16,8 +16,10 @@
 //! stays up, and the cut answers once by what those bytes prove. A reply
 //! fails only its own call, naming why; a paused request ends with its
 //! request id and page session, failed by the pipe rather than left paused
-//! (`unread_request_policy`); any other event is dropped. A message the
-//! pipe read whole but cannot parse is answered the same way.
+//! (`unread_request_policy`); one whose identity those bytes do not prove
+//! is noted on the session's custody as transport custody lost and warned
+//! once (FIX 10329). Any other event is dropped. A message the pipe read
+//! whole but cannot parse is answered the same way.
 
 use super::{MAX_MESSAGE, Pipe};
 use crate::retention::HandleRetention;
@@ -210,7 +212,9 @@ impl Cut {
 
     /// Answers the cut once, by what its bytes prove: a reply fails its own
     /// call with why; a paused request is ended (`unread_request_policy`);
-    /// any other event is dropped. False once the routes are lost.
+    /// one whose identity those bytes do not prove is noted on the session's
+    /// custody as transport custody lost and warned once (FIX 10329). Any
+    /// other event is dropped. False once the routes are lost.
     pub(super) fn answer(self, pipe: &Pipe) -> bool {
         if let Some(id) = reply_id(&self.prefix) {
             let Ok(mut routes) = pipe.pending.lock() else {
@@ -223,6 +227,15 @@ impl Cut {
         }
         if let Some((session, request)) = paused_request(&self.prefix, &self.tail) {
             end_unread(pipe.clone(), session, request);
+        } else if root_string(&self.prefix, &["method"]).as_deref() == Some("Fetch.requestPaused") {
+            pipe.custody.refuse(crate::DestinationRefusal {
+                reason: TRANSPORT_CUSTODY_LOST.to_owned(),
+                message: format!(
+                    "transport custody lost for a paused request: {why}",
+                    why = self.why
+                ),
+            });
+            tracing::warn!(cause = %self.why, "browser transport custody lost for a paused request");
         }
         true
     }
@@ -238,9 +251,15 @@ pub(super) fn unreadable(pipe: &Pipe, message: &[u8], why: &str) -> bool {
 /// (`unread_request_policy`, CALLS row, open): failed once, by the request
 /// id and page session its event's first and last bytes name, as
 /// `Failed`, never passed on unread and never left paused. A request whose
-/// identity those bytes do not prove cannot be ended by the pipe: it waits
-/// out its page's own load, as before.
+/// identity those bytes do not prove is noted on the session's custody as
+/// transport custody lost and warned once (FIX 10329); it still waits out
+/// its page's own load, as before, with no wait or timing changed.
 const UNREAD_REQUEST_REASON: &str = "Failed";
+
+/// The reason a paused request whose identity the pipe could not prove is
+/// noted as lost on the session's custody (FIX 10329): transport custody
+/// was lost for that request.
+const TRANSPORT_CUSTODY_LOST: &str = "transport_custody_lost";
 
 /// Ends paused request `request` of page `session`, from its own thread:
 /// the reader never waits for its own CDP reply.
