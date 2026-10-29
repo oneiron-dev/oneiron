@@ -11,7 +11,7 @@ use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::task_verb::sdk::EmptyRequest;
+use oneiron::task_verb::sdk::{ConnectAccepted, ConnectGrant, EmptyRequest, Offer};
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
@@ -27,6 +27,42 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/federation/connect/grants", post(mint_grant))
         .route("/federation/connect/offer", post(offer))
         .route("/federation/connect/accept", post(accept))
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/grants`'s body
+/// (FIX 11611): [`MintConnectGrant`].
+pub(crate) fn mint_grant_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<MintConnectGrant>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/grants`'s answer
+/// (FIX 11611): [`ConnectGrant`].
+pub(crate) fn connect_grant_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConnectGrant>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/offer`'s body
+/// (FIX 11611): [`OfferConnect`].
+pub(crate) fn offer_connect_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OfferConnect>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/offer`'s answer
+/// (FIX 11611): this host's signed half, [`Offer`].
+pub(crate) fn connect_offer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Offer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/accept`'s body
+/// (FIX 11611): [`AcceptConnect`].
+pub(crate) fn accept_connect_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AcceptConnect>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/connect/accept`'s answer
+/// (FIX 11611): [`ConnectAccepted`].
+pub(crate) fn connect_accepted_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConnectAccepted>()
 }
 
 /// `GET /v1/owner/federation/connect`: this vault's id and host key, what a

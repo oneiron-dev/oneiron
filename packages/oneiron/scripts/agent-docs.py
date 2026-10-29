@@ -71,7 +71,7 @@ def artifacts():
     }
     if set(server_codes) != server_remedies.keys():
         raise ValueError("Document remediation for each added/removed server refusal code")
-    error_doc = "# Memory Wire typed errors\n\nEvery SDK failure carries `code`, `message`, and nonempty `suggestions`.\nUse the returned suggestions; do not parse message prose. No adapter swallows\nor downgrades the engine's refusal. Future remote codes pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
+    error_doc = "# Memory Wire typed errors\n\nEvery SDK failure carries `code`, `message`, and nonempty `suggestions`.\nA refusal whose producer named stable reason codes also carries them, in that\nproducer's order (FIX 7398): `reasonCodes` on a JS `MemoryError` and in an HTTP\nerror body, `reason_codes` on a Python `MemoryError` and in an MCP error's\n`data.reason_codes`. Read them there, never out of `message`.\nUse the returned suggestions; do not parse message prose. No adapter swallows\nor downgrades the engine's refusal. Future remote codes pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {remedies[code]} |\n" for code in codes)
     error_doc += "\n## Server refusal codes\n\nA server door refuses with these too; they pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {server_remedies[code]} |\n" for code in server_codes)

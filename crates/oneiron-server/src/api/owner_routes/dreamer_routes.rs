@@ -67,7 +67,7 @@ struct PersonAboutView {
     at: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertChange {
     /// The change, as 32 hex: a claim, a summary, a NOTE or a PERSON.
@@ -75,19 +75,19 @@ struct RevertChange {
 }
 
 /// `POST /v1/owner/dreamer/pause` and `/resume` carry no fields: `{}`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DreamerPauseRequest {}
 
 /// The Dreamer's pause after the call, and the owner's own cause of it:
 /// a managed freeze can still hold the pause past a resume.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct DreamerPaused {
     paused: bool,
     owner_paused: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ChangeReverted {
     change: String,
     kind: &'static str,
@@ -111,6 +111,29 @@ struct ChangeReverted {
     /// What a later write changed, left as it is.
     left_alone: Vec<String>,
     receipt_ref: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/revert`'s body (FIX 11611): [`RevertChange`].
+pub(crate) fn revert_change_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertChange>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/revert`'s answer (FIX 11611):
+/// [`ChangeReverted`].
+pub(crate) fn change_reverted_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ChangeReverted>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/pause`'s body (FIX 11611), shared
+/// with `POST /v1/owner/dreamer/resume`: [`DreamerPauseRequest`].
+pub(crate) fn dreamer_pause_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DreamerPauseRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/pause`'s answer (FIX 11611), shared
+/// with `POST /v1/owner/dreamer/resume`: [`DreamerPaused`].
+pub(crate) fn dreamer_paused_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DreamerPaused>()
 }
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {

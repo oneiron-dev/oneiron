@@ -32,7 +32,7 @@ use crate::{EntityId, Error, Result, Vault};
 type CardKey = ([u8; 16], [u8; 1], [u8; 16]);
 
 /// `/v1/owner/inbox/concern/apply`'s input: the one edit the owner approves.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConcernApplyRequest {
     /// The card's `health:` handle, the row's `payload_ref`.
@@ -48,7 +48,7 @@ pub struct ConcernApplyRequest {
 }
 
 /// Where an approved edit stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthApplicationState {
     /// The candidate waits on the gate: not yet ruled, deferred, or short of
@@ -61,7 +61,7 @@ pub enum AgentHealthApplicationState {
 }
 
 /// The owner's approval of one ask's skill edit, and where the gate took it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCoachApplication {
     /// The owner who approved it.
@@ -83,7 +83,7 @@ pub struct AgentHealthCoachApplication {
 }
 
 /// The card's application after the owner's call.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConcernApplyOutcome {
     /// The card's `health:` handle.
     pub card: String,
