@@ -44,14 +44,16 @@ pub(super) fn refresh_with(
         }
         let mut arrival_marker = None;
         let mut backfill_marker = None;
-        let units = match trigger {
-            RefreshTrigger::Manual => record.definition.units.clone(),
+        // Each unit to answer, with a backfill join's own sources when it has
+        // them (FIX 2383); `None` shows the unit its neighbourhood.
+        let units: Vec<(EntityId, Option<Vec<EntityId>>)> = match trigger {
+            RefreshTrigger::Manual => record.definition.units.iter().map(|u| (*u, None)).collect(),
             RefreshTrigger::Backfill => {
                 let key = BackfillAtKey(question);
-                match QUESTION_BACKFILL_AT.get(&vault.store, &txn, &key)? {
-                    Some(backfill) if backfill.version == head.version => {}
+                let joins = match QUESTION_BACKFILL_AT.get(&vault.store, &txn, &key)? {
+                    Some(backfill) if backfill.version == head.version => backfill.joins,
                     _ => return Ok(Vec::new()),
-                }
+                };
                 backfill_marker = QUESTION_BACKFILL_AT.get_bytes(&vault.store, &txn, &key)?;
                 let answered: std::collections::BTreeSet<EntityId> = QUESTION_ANSWER
                     .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))?
@@ -59,13 +61,24 @@ pub(super) fn refresh_with(
                     .filter(|(_, answer)| answer.decision.receipt.question_version == head.version)
                     .map(|(_, answer)| answer.unit)
                     .collect();
-                record
-                    .definition
-                    .units
-                    .iter()
-                    .copied()
-                    .filter(|unit| !answered.contains(unit))
-                    .collect()
+                // An explicit recipe answers its joins whose unit is still
+                // unanswered, each variant once; without one, every unit.
+                if joins.is_empty() {
+                    record
+                        .definition
+                        .units
+                        .iter()
+                        .copied()
+                        .filter(|unit| !answered.contains(unit))
+                        .map(|unit| (unit, None))
+                        .collect()
+                } else {
+                    joins
+                        .into_iter()
+                        .filter(|join| !answered.contains(&join.unit))
+                        .map(|join| (join.unit, Some(join.evidence)))
+                        .collect()
+                }
             }
             RefreshTrigger::Schedule => {
                 let Some(interval) = record.definition.refresh.every_seconds else {
@@ -79,7 +92,7 @@ pub(super) fn refresh_with(
                 {
                     return Ok(Vec::new());
                 }
-                record.definition.units.clone()
+                record.definition.units.iter().map(|u| (*u, None)).collect()
             }
             RefreshTrigger::Arrival(unit) => {
                 if !record.definition.refresh.on_arrival || !record.definition.units.contains(&unit)
@@ -91,7 +104,7 @@ pub(super) fn refresh_with(
                 if arrival_marker.is_none() {
                     return Ok(Vec::new());
                 }
-                vec![unit]
+                vec![(unit, None)]
             }
         };
         (record, head, units, arrival_marker, backfill_marker)
@@ -100,7 +113,7 @@ pub(super) fn refresh_with(
     // runner's own, as before (FIX 1588: no read narrows).
     let (actor, reader) = (writer.for_record(&record), writer.reader());
     let mut prepared = Vec::new();
-    for unit in units {
+    for (unit, evidence) in units {
         let snapshot = {
             let txn = vault.store.env.read_txn()?;
             source(vault, &txn, principal, reader, unit)?
@@ -113,8 +126,13 @@ pub(super) fn refresh_with(
         else {
             continue;
         };
-        let Some(Answered { proposal, context }) =
-            answerer(&record, unit, kind, &raw[ENTITY_METADATA_HEADER_LEN..])?
+        let Some(Answered { proposal, context }) = answerer(
+            &record,
+            unit,
+            kind,
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+            evidence.as_deref(),
+        )?
         else {
             continue;
         };
@@ -127,6 +145,7 @@ pub(super) fn refresh_with(
             frontier,
             proposal,
             context,
+            joined: evidence.is_some(),
             arrival_marker: {
                 let txn = vault.store.env.read_txn()?;
                 arrival::PENDING.get_bytes(&vault.store, &txn, &(question, unit))?
@@ -172,7 +191,7 @@ pub(super) fn refresh_with(
             }
             let rows = match (&p.context, &lane) {
                 (Some(context), Some(lane)) => {
-                    if !graph_ask::neighbors_unchanged_in_txn(lane, txn, context)? {
+                    if !p.joined && !graph_ask::neighbors_unchanged_in_txn(lane, txn, context)? {
                         return Err(Error::ConcurrentWrite("standing question source changed"));
                     }
                     let Some(rows) = graph_ask::sources_unchanged_in_txn(lane, txn, context)?

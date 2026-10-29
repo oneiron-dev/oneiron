@@ -109,6 +109,8 @@ pub(crate) struct CoreContextPackStats {
     /// Claims suppressed by read-path gates.
     #[schema(example = 0)]
     claims_suppressed: usize,
+    /// Assembly stopped optional work at the answer deadline (retrieval stages or L2/edge/hydration).
+    deadline_exceeded: bool,
     /// Item truncation accounting.
     items_truncated: CoreContextPackItemAccounting,
     /// Item drop accounting.
@@ -559,6 +561,7 @@ pub(crate) fn core_context_pack_stats(stats: oneiron::PackStats) -> CoreContextP
         neighbors_hydrated: stats.neighbors_hydrated,
         cosine_ghosts_dampened: stats.cosine_ghosts_dampened,
         claims_suppressed: stats.claims_suppressed,
+        deadline_exceeded: stats.deadline_exceeded,
         items_truncated: CoreContextPackItemAccounting {
             count: stats.items_truncated.count,
             reason: stats.items_truncated.reason.as_str().to_owned(),
