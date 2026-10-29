@@ -44,7 +44,7 @@ type NoClosure = fn(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>;
 
 /// An ask's census, read in one snapshot: its recipients, its effective
 /// spec and one validated member TASK per recipient.
-struct AskCensus {
+pub(super) struct AskCensus {
     holders: Vec<EntityId>,
     context_class: Option<TaskAskClass>,
     governed_task: Option<EntityId>,
@@ -55,6 +55,32 @@ struct AskCensus {
 }
 
 /// What a first admission, or an approval releasing a held ask, mints.
+impl AskCensus {
+    /// The effective question, for a session-owned digest.
+    pub(super) fn question(&self) -> &TaskAskQuestion {
+        &self.effective.what
+    }
+
+    /// The validated, session-owned projection: no member TASK or launch
+    /// work escapes the ordinary census (FIX 10087).
+    pub(super) fn into_session_parts(
+        self,
+        group_ref: EntityId,
+        owner: EntityId,
+        requested: &TaskAskSpec,
+        question_digest: [u8; 32],
+    ) -> super::session_ask::SessionAskParts {
+        super::session_ask::SessionAskParts {
+            group_ref,
+            owner,
+            requested: requested.clone(),
+            effective: self.effective,
+            holders: self.holders,
+            question_digest,
+        }
+    }
+}
+
 struct AskMint<'a> {
     group_ref: EntityId,
     request_digest: &'a str,

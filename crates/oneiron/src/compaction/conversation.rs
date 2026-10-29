@@ -26,6 +26,7 @@ use super::{
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
 use crate::edge::EdgeActorClass;
+use crate::runtime_hooks::VerbHookStop;
 use crate::{EntityId, LlmRequest, Vault, WriteActor};
 
 mod log;
@@ -71,7 +72,7 @@ pub struct ConversationEvidence {
 
 /// Why a conversation's self-written compaction did not fly at a
 /// breakpoint. The log stays raw for the turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConversationCompactionUnavailable {
     /// No compaction writer serves this host.
     Off(CompactionOff),
@@ -91,12 +92,14 @@ pub enum ConversationCompactionUnavailable {
     /// The chat actor's budget line could not be read for the flight's own
     /// guard.
     Unmetered,
+    /// A blocking host.compact hook saved an ask/Pending stop (FIX 10085).
+    Pending(VerbHookStop),
 }
 
 impl ConversationCompactionUnavailable {
     /// The stable name a log line carries.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Off(why) => why.as_str(),
             Self::Writer(why) => why.as_str(),
@@ -105,6 +108,7 @@ impl ConversationCompactionUnavailable {
             Self::WindowNotSealed => "window_not_sealed",
             Self::LogUnreadable => "log_unreadable",
             Self::Unmetered => "unmetered",
+            Self::Pending(_) => "pending",
         }
     }
 }
@@ -127,8 +131,8 @@ pub fn capture_conversation_fork(
 
 /// One sealed conversation flight: the driver that sealed it, its window's
 /// request, the fork its backend froze, and the evidence its receipt names.
-pub struct ConversationFlight {
-    driver: CompactionDriver,
+pub struct ConversationFlight<'a> {
+    driver: &'a mut CompactionDriver,
     request: CompactionRequest,
     policy: CompactionGatePolicy,
     byline: WriteActor,
@@ -149,15 +153,15 @@ pub struct ConversationFlight {
 /// # Errors
 ///
 /// Why no flight runs; the driver is let go with the error.
-pub fn seal_conversation_flight(
-    vault: &Vault,
-    mut driver: CompactionDriver,
+pub fn seal_conversation_flight<'a>(
+    vault: &'a Vault,
+    driver: &'a mut CompactionDriver,
     policy: CompactionGatePolicy,
     byline: WriteActor,
     captured: Option<Result<LiveCompactionFork, SelfCompactionUnavailable>>,
-    log: &ChatLog,
+    log: &'a ChatLog,
     job: EntityId,
-) -> Result<ConversationFlight, ConversationCompactionUnavailable> {
+) -> Result<ConversationFlight<'a>, ConversationCompactionUnavailable> {
     use ConversationCompactionUnavailable as Why;
     match driver.observe_from_context_build(vault, log.uncompacted_tokens) {
         Ok(CompactionDirective::Begin { .. }) => {}
@@ -217,6 +221,11 @@ pub fn seal_conversation_flight(
         budget,
         &fits,
     );
+    if let Some(stop) = hooks.pending() {
+        driver.backend().end_flight();
+        driver.abandon();
+        return Err(Why::Pending(stop.clone()));
+    }
     let Ok(request) = driver.seal_request(
         vault,
         &window.session,
@@ -298,11 +307,11 @@ pub enum ConversationFlightOutcome {
     Refused(String),
 }
 
-impl ConversationFlight {
+impl ConversationFlight<'_> {
     /// Runs the flight's passes on its frozen fork, files every paid try,
     /// and lands an accepted summary with its receipt and its check.
     #[must_use]
-    pub fn fly(mut self, vault: &Vault) -> ConversationFlightOutcome {
+    pub fn fly(self, vault: &Vault) -> ConversationFlightOutcome {
         let backend = std::sync::Arc::clone(self.driver.backend());
         let (pass, mut execution) = run_pass(backend.as_ref(), &self.request, &self.policy);
         if let Some(execution) = execution.as_mut() {

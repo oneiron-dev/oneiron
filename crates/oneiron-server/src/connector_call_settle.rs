@@ -256,7 +256,10 @@ fn settle_connector_calls(
                         %error,
                         "code consent browser effect not settled"
                     );
-                } else if !vault.code_consent_browser_wait_open(wait_id).unwrap_or(true) {
+                } else if !vault
+                    .code_consent_browser_wait_open(wait_id)
+                    .unwrap_or(true)
+                {
                     settled += 1;
                 }
             }

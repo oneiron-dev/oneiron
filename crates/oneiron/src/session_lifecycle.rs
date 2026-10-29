@@ -896,6 +896,7 @@ fn session_hook_call(verb: &str, session: EntityId, actor: EntityId, step: u64) 
         class: HookActorClass::System,
         scope: None,
         board_epoch: None,
+        turn: None,
         domain: VerbDomain::Write,
         // A host's own call reads as its actor.
         reader: None,

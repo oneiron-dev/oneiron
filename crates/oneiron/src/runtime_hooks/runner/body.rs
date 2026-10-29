@@ -13,9 +13,11 @@ use crate::runtime_hooks::body::{
 use crate::runtime_hooks::grant::HookGrant;
 use crate::runtime_hooks::lineage::HookCheckReason;
 use crate::runtime_hooks::outcome::{HookOutcome, kind_token};
-use crate::runtime_hooks::store::{self, HookReadPin, HookRunRecord, HookRunState, HookVerdictPin};
+use crate::runtime_hooks::store::{
+    self, HookReadPin, HookRunDerivation, HookRunRecord, HookRunState, HookVerdictPin,
+};
 use crate::skill_hub::pack_catalog::{HookPhase, HookRenderClass, PackHookBinding};
-use crate::{EntityId, Result};
+use crate::{EntityId, Result, Vault};
 
 use super::{MAX_PINNED_INPUT, Run, bounded};
 
@@ -79,6 +81,8 @@ pub(super) struct VerdictPins {
     /// Verdicts heard so far, pinned or not.
     heard: u32,
     calls: Vec<HookSettledCallRef>,
+    /// Every evidence id, including one whose request/reply pin did not fit.
+    evidence: Vec<EntityId>,
 }
 
 impl VerdictPins {
@@ -89,6 +93,7 @@ impl VerdictPins {
             complete: true,
             heard: 0,
             calls: Vec::new(),
+            evidence: Vec::new(),
         }
     }
 
@@ -105,6 +110,8 @@ impl VerdictPins {
         } = answer;
         self.heard = self.heard.saturating_add(1);
         self.calls.extend(calls);
+        self.evidence
+            .extend(evidence.as_deref().unwrap_or_default().iter().copied());
         let (Ok(text) | Err(text)) = &reply;
         // Each evidence row pins as its 32-hex id.
         let rows = evidence.as_ref().map_or(0, Vec::len).saturating_mul(32);
@@ -229,6 +236,7 @@ fn accept(binding: &PackHookBinding, json: &str) -> std::result::Result<HookOutc
 
 /// The run's memo row; the commit stamps its write time.
 pub(super) fn record(
+    vault: &Vault,
     run: &Run<'_>,
     input: &str,
     reads: Vec<HookReadPin>,
@@ -236,8 +244,20 @@ pub(super) fn record(
     verdict: &Verdict,
     duration_ms: u64,
     now: u64,
-) -> HookRunRecord {
-    HookRunRecord {
+    runtime_identity: Option<String>,
+) -> Result<HookRunRecord> {
+    let derivation = HookRunDerivation::new(
+        vault,
+        run.binding_id,
+        run.binding,
+        run.grant,
+        run.entry,
+        &reads,
+        &verdicts.evidence,
+        runtime_identity,
+    )?;
+    let mut memo = HookRunRecord {
+        derivation,
         binding: run.binding_id,
         code: run.binding.code,
         body_hash: run.binding.body_hash.clone(),
@@ -246,6 +266,7 @@ pub(super) fn record(
         fact: run.entry.kind,
         entity: run.entry.entity,
         input_json: (input.len() <= MAX_PINNED_INPUT).then(|| input.to_owned()),
+        history_erased: false,
         input_hash: blake3::hash(input.as_bytes()).to_hex().to_string(),
         reads,
         verdicts: verdicts.pins,
@@ -261,7 +282,9 @@ pub(super) fn record(
         budget_overrun: verdict.budget_overrun,
         now,
         committed_at: 0,
-    }
+    };
+    store::finalize_derivation(&mut memo)?;
+    Ok(memo)
 }
 
 /// The run's Hook receipt: the hook, its CODE id and body hash, the duration,

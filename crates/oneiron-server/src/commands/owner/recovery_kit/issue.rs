@@ -14,9 +14,7 @@ use oneiron::world_keys::{IssuedVaultKeyKit, IssuedWorldKit, StoredCost, VaultKe
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::super::vault_key::{
-    KeyNeed, UnlockRequest, open_with_unlock, refuse_two_stdin_secrets,
-};
+use super::super::vault_key::{KeyNeed, UnlockRequest, open_with_unlock, refuse_two_stdin_secrets};
 use super::{INSTEAD, emit, read_passphrase};
 use crate::cli::RecoveryKitIssueArgs;
 use crate::commands::credential_file;
