@@ -66,11 +66,13 @@ pub(crate) use contribution_targets::Experiment;
 pub use contribution_targets::{CheckedEdge, ContributionTarget};
 mod credit_join;
 pub(crate) use credit_join::erase_credit_adjustments_in_txn;
+pub(crate) use credit_join::standing_credit_observation_in_txn;
 pub use credit_join::{CreditAdjustmentReceipt, credit_adjustments};
 mod decay_fit;
 mod late_credit;
 mod pack_learning;
 pub(crate) use late_credit::erase_late_credit_in_txn;
+pub(crate) use late_credit::late_credit_receipt_in_txn;
 pub use late_credit::{
     LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
 };

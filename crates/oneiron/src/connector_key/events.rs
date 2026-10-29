@@ -4,8 +4,8 @@ use super::txn::{
     append_connector_key_op_record, read_connector_key_in_txn, suspend_connector_key_in_txn,
 };
 use super::{
-    ConnectorKeyStatus, EffectorBudgetChargeOutcome, EffectorBudgetOnExhaust,
-    budget_exhausted_reason, charge_effector_budgets,
+    BudgetBlock, ConnectorKeyStatus, EffectorBudgetChargeOutcome, EffectorBudgetOnExhaust,
+    budget_block_pooled, budget_exhausted_reason, charge_effector_budgets,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
@@ -84,12 +84,20 @@ pub struct ConnectorSubscription {
     pub filter: ConnectorEventFilter,
     pub active: bool,
 }
+/// The key of a connector wake's payload input that carries the budget
+/// steering messages its charge fired (FIX 3761), an array of strings,
+/// present only when one fired.
+pub const CONNECTOR_WAKE_BUDGET_STEERING: &str = "budget_steering";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorWakeStatus {
     Enqueued,
     KeyInactive,
     BudgetExhausted,
+    /// A full count-bound budget window paces the wake (FIX 8686): the
+    /// event waits, uncharged, and is admitted again once the window opens.
+    Deferred,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -101,6 +109,19 @@ pub struct ConnectorWakeDecision {
     pub status: ConnectorWakeStatus,
     pub attempt_id: Option<[u8; 16]>,
     pub event_hash: String,
+    /// A deferred wake's due instant, Unix seconds: when its window opens
+    /// and it is admitted again (FIX 8686).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paced_until: Option<u64>,
+}
+
+/// What admitting one wake on its key's budget came to.
+struct WakeAdmission {
+    status: ConnectorWakeStatus,
+    /// The steering messages its charge fired (FIX 3761).
+    budget_steering: Vec<String>,
+    /// When a full count-bound window paces it, the window's opening.
+    paced_until: Option<u64>,
 }
 fn invalid() -> Error {
     Error::InvalidConfig("invalid connector event subscription".into())
@@ -422,98 +443,172 @@ impl Vault {
                 decisions.push(old);
                 continue;
             }
-            let status = self.admit_connector_event_wake(txn, &row, now)?;
-            let attempt_id = if status == ConnectorWakeStatus::Enqueued {
-                let payload = DreamerAttemptPayload {
-                    attempt_type: "connector_event".into(),
-                    input: Value::Map(vec![
-                        (
-                            Value::from("agent_ref"),
-                            Value::Binary(row.agent.as_bytes().to_vec()),
-                        ),
-                        (
-                            Value::from("connector_event"),
-                            Value::from(String::from_utf8(frozen.clone()).map_err(|_| invalid())?),
-                        ),
-                        (Value::from("source"), Value::from("tool_output")),
-                    ]),
-                    parent_attempt: None,
-                };
-                let outcome = crate::dreamer_wake::request_wake_in_txn(
-                    &DreamerRunnerStore::new(self),
-                    txn,
-                    crate::dreamer_wake::WakeTrigger::Event,
-                    payload,
-                    Some(identity.to_hex().to_string()),
-                    None,
-                    now,
-                )?;
-                let (EnqueueDreamerAttemptOutcome::Enqueued(attempt)
-                | EnqueueDreamerAttemptOutcome::Existing(attempt)) = outcome;
-                Some(*attempt.attempt.id.as_bytes())
-            } else {
-                None
-            };
-            let decision = ConnectorWakeDecision {
-                subscription: id,
-                agent: row.agent,
-                status,
-                attempt_id,
-                event_hash: event_hash.clone(),
-            };
-            let reason = match status {
-                ConnectorWakeStatus::Enqueued => "gate.connector_wake.enqueued",
-                ConnectorWakeStatus::KeyInactive => "gate.connector_wake.key_inactive",
-                ConnectorWakeStatus::BudgetExhausted => "gate.connector_wake.budget_exhausted",
-            };
-            let receipt = GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::now(),
-                created_at: now,
-                outcome: if status == ConnectorWakeStatus::Enqueued {
-                    "allow"
-                } else {
-                    "pending"
-                }
-                .into(),
-                reason_codes: vec![reason.into()],
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: "agent".into(),
-                actor_ref: Some(row.agent.to_hex()),
-                content_kind: "connector_wake".into(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                claim_id: Some(*id.as_bytes()),
-                grant_ref: None,
-                diff_handle: identity.as_bytes().to_vec(),
-                read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &*txn)?
-                    .read_frontier_hash()?,
-                context: Default::default(),
-                redacted_at: None,
-            };
-            self.store.append_gate_decision_in_txn(txn, &receipt)?;
-            WAKE_DECISION.put(&self.store, txn, &key, &decision)?;
-            self.record_connector_notification_in_txn(txn, id, &event.event_id, attempt_id, now)?;
-            decisions.push(decision);
+            decisions.push(self.wake_subscription_in_txn(
+                txn,
+                id,
+                &row,
+                event,
+                &frozen,
+                &event_hash,
+                now,
+            )?);
         }
         Ok(decisions)
     }
 
+    /// Admits, wakes and records one matched subscription `id` for `event`
+    /// (`frozen` is its JSON, `event_hash` its digest), in the ingress
+    /// writer: the budget charge, the Dreamer wake or the paced admission
+    /// item, the gate receipt, the stored decision and the notification. A
+    /// paced wake admitted again when its window opens overwrites its
+    /// decision (FIX 8686).
+    #[expect(clippy::too_many_arguments)]
+    fn wake_subscription_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        row: &ConnectorSubscription,
+        event: &ConnectorEvent,
+        frozen: &[u8],
+        event_hash: &str,
+        now: u64,
+    ) -> Result<ConnectorWakeDecision> {
+        let identity = wake_decision_identity(&id, &event.event_id);
+        let key = *identity.as_bytes();
+        let WakeAdmission {
+            status,
+            budget_steering,
+            paced_until,
+        } = self.admit_connector_event_wake(txn, row, now)?;
+        // A wake a full count-bound window paces waits as an admission item
+        // due when the window opens, and is admitted again then (FIX 8686).
+        if let Some(due) = paced_until {
+            self.defer_connector_wake_in_txn(txn, id, event, due, now)?;
+        }
+        let attempt_id = if status == ConnectorWakeStatus::Enqueued {
+            let mut input = vec![
+                (
+                    Value::from("agent_ref"),
+                    Value::Binary(row.agent.as_bytes().to_vec()),
+                ),
+                (
+                    Value::from("connector_event"),
+                    Value::from(String::from_utf8(frozen.to_vec()).map_err(|_| invalid())?),
+                ),
+                (Value::from("source"), Value::from("tool_output")),
+            ];
+            // The budget messages the wake's charge fired ride the wake
+            // to the agent it wakes (FIX 3761).
+            if !budget_steering.is_empty() {
+                input.push((
+                    Value::from(CONNECTOR_WAKE_BUDGET_STEERING),
+                    Value::Array(budget_steering.into_iter().map(Value::from).collect()),
+                ));
+            }
+            let payload = DreamerAttemptPayload {
+                attempt_type: "connector_event".into(),
+                input: Value::Map(input),
+                parent_attempt: None,
+            };
+            let outcome = crate::dreamer_wake::request_wake_in_txn(
+                &DreamerRunnerStore::new(self),
+                txn,
+                crate::dreamer_wake::WakeTrigger::Event,
+                payload,
+                Some(identity.to_hex().to_string()),
+                None,
+                now,
+            )?;
+            let (EnqueueDreamerAttemptOutcome::Enqueued(attempt)
+            | EnqueueDreamerAttemptOutcome::Existing(attempt)) = outcome;
+            Some(*attempt.attempt.id.as_bytes())
+        } else {
+            None
+        };
+        let decision = ConnectorWakeDecision {
+            subscription: id,
+            agent: row.agent,
+            status,
+            attempt_id,
+            event_hash: event_hash.to_owned(),
+            paced_until,
+        };
+        let reason = match status {
+            ConnectorWakeStatus::Enqueued => "gate.connector_wake.enqueued",
+            ConnectorWakeStatus::KeyInactive => "gate.connector_wake.key_inactive",
+            ConnectorWakeStatus::BudgetExhausted => "gate.connector_wake.budget_exhausted",
+            ConnectorWakeStatus::Deferred => "gate.connector_wake.paced",
+        };
+        let receipt = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id: GateDecisionId::now(),
+            created_at: now,
+            outcome: if status == ConnectorWakeStatus::Enqueued {
+                "allow"
+            } else {
+                "pending"
+            }
+            .into(),
+            reason_codes: vec![reason.into()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "agent".into(),
+            actor_ref: Some(row.agent.to_hex()),
+            content_kind: "connector_wake".into(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
+            claim_id: Some(*id.as_bytes()),
+            grant_ref: None,
+            diff_handle: identity.as_bytes().to_vec(),
+            read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &*txn)?
+                .read_frontier_hash()?,
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(txn, &receipt)?;
+        WAKE_DECISION.put(&self.store, txn, &key, &decision)?;
+        self.record_connector_notification_in_txn(txn, id, &event.event_id, attempt_id, now)?;
+        Ok(decision)
+    }
+
+    /// Admits one wake of `row`'s agent on its key's budget, with the
+    /// steering messages the charge fired (FIX 3761). A wake whose only full
+    /// rows are count-bound windows that refuse is paced, uncharged, until
+    /// they open (FIX 8686).
     fn admit_connector_event_wake(
         &self,
         txn: &mut heed::RwTxn<'_>,
         row: &ConnectorSubscription,
         now: u64,
-    ) -> Result<ConnectorWakeStatus> {
+    ) -> Result<WakeAdmission> {
+        let settled = |status| WakeAdmission {
+            status,
+            budget_steering: Vec::new(),
+            paced_until: None,
+        };
         let Some(mut key) = read_connector_key_in_txn(&self.store, &*txn, &row.connector_key)?
         else {
-            return Ok(ConnectorWakeStatus::KeyInactive);
+            return Ok(settled(ConnectorWakeStatus::KeyInactive));
         };
         if key.status != ConnectorKeyStatus::Active
             || key.connector != row.filter.connector
             || key.actor_entity_ref.is_some_and(|actor| actor != row.agent)
         {
-            return Ok(ConnectorWakeStatus::KeyInactive);
+            return Ok(settled(ConnectorWakeStatus::KeyInactive));
+        }
+        if let BudgetBlock::Paced { next_eligible_at } = budget_block_pooled(
+            &self.store,
+            txn,
+            &row.connector_key,
+            &key,
+            &row.filter.connector,
+            false,
+            now,
+            true,
+        )? {
+            return Ok(WakeAdmission {
+                paced_until: Some(next_eligible_at),
+                ..settled(ConnectorWakeStatus::Deferred)
+            });
         }
         match charge_effector_budgets(
             &self.store,
@@ -524,9 +619,11 @@ impl Vault {
             false,
             now,
         )? {
-            EffectorBudgetChargeOutcome::Charged(_) | EffectorBudgetChargeOutcome::NoRows(_) => {
-                Ok(ConnectorWakeStatus::Enqueued)
-            }
+            EffectorBudgetChargeOutcome::Charged(charge)
+            | EffectorBudgetChargeOutcome::NoRows(charge) => Ok(WakeAdmission {
+                budget_steering: charge.steering_messages(),
+                ..settled(ConnectorWakeStatus::Enqueued)
+            }),
             EffectorBudgetChargeOutcome::Exhausted {
                 location,
                 on_exhaust,
@@ -553,10 +650,11 @@ impl Vault {
                         now,
                     )?;
                 }
-                Ok(ConnectorWakeStatus::BudgetExhausted)
+                Ok(settled(ConnectorWakeStatus::BudgetExhausted))
             }
         }
     }
 }
+mod paced;
 #[cfg(test)]
 mod tests;
