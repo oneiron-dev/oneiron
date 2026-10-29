@@ -572,6 +572,7 @@ impl Vault {
                 outcome,
                 scope,
                 amended_body,
+                applied,
             },
             None,
             Vec::new(),

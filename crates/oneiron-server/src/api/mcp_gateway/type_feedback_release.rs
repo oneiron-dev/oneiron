@@ -11,18 +11,25 @@
 //!
 //! The carriers are the known typed ones, each found by the host's own
 //! record of what it is, never by its JSON's shape: an `execute_code`
-//! answer's `program_steps`, a wait set's answer among its bridge steps, and
-//! the owner's feedback read and a run's history, called directly or from
-//! inside the run.
+//! answer's `program_steps`, a wait set's answer among its bridge steps, the
+//! owner's feedback read, a run's history, a session-bound run's entry and
+//! a foreign program's run (FIX 10389), called directly or from inside the
+//! run. A foreign program's refusal keeps its program's feedback beside it
+//! ([`source_run_error`]).
 
 use super::{McpCallContext, McpGatewayError};
+use crate::api::type_feedback_release::{
+    FOREIGN_EXECUTE_CODE_VERB, FeedbackScan, OFF_RECORD_EXECUTE_VERB, program_steps_of,
+    put_program_step, release_step_feedback,
+};
 use crate::server::SyncServer;
 use oneiron::EntityId;
 use oneiron::code_run::{
-    CodeRunBridgeCall, CodeRunReplayRecord, FeedbackWithheldReason, KeptProgramSteps,
-    ProgramPreparationNote, ProgramStepFeedback, ProgramStepFeedbackRelease, ProgramStepIdentity,
-    SelfEffect, TYPE_FEEDBACK_NOT_KEPT, TaskWaitSetResult, TypeDiagnostics,
+    CodeRunBridgeCall, CodeRunReplayRecord, KeptProgramSteps, ProgramPreparationNote,
+    ProgramStepFeedback, ProgramStepFeedbackRelease, ProgramStepIdentity, SelfEffect,
+    TYPE_FEEDBACK_NOT_KEPT, TaskWaitSetResult, TypeDiagnostics,
 };
+use oneiron::memory::foreign_code::ForeignCodeFailure;
 use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
@@ -30,16 +37,6 @@ use std::sync::Arc;
 const OWNER_FEEDBACK_VERB: &str = "vault.code.type_diagnostics";
 /// A run's history, each step's feedback beside it.
 const HISTORY_VERB: &str = "self.history";
-
-/// How a carrier's feedback was read inside its answer, and is read alone
-/// now: as JSON whose whole strings may be short refs, and by its bytes for
-/// whole ids; or, for one its answer carries as an opaque string, by its
-/// bytes alone.
-#[derive(Clone, Copy)]
-enum Scan {
-    Named,
-    Bytes,
-}
 
 /// A known typed carrier of step feedback.
 #[derive(Clone, Copy)]
@@ -51,6 +48,10 @@ enum Carrier {
     /// A run's history: each step's `type_diagnostics` and
     /// `preparation_note`.
     History,
+    /// A door's answer carrying its run's `program_steps`, each released
+    /// whole by its door: a session-bound run's entry, a foreign program's
+    /// run.
+    ProgramSteps,
 }
 
 impl Carrier {
@@ -120,6 +121,7 @@ impl Carrier {
                 }
                 Some((base, feedback))
             }
+            Self::ProgramSteps => program_steps_of(value),
         }
     }
 
@@ -147,6 +149,7 @@ impl Carrier {
                     step.insert("type_feedback".to_owned(), withheld);
                 }
             }
+            Self::ProgramSteps => put_program_step(value, slot, withheld),
         }
     }
 }
@@ -155,14 +158,14 @@ impl Carrier {
 /// carrier as it was recorded, and its feedback by slot.
 struct Held {
     carrier: Carrier,
-    scan: Scan,
+    scan: FeedbackScan,
     original: Value,
     feedback: Vec<(usize, ProgramStepFeedback)>,
 }
 
 impl Held {
     /// Takes `value`'s feedback out of it, leaving the carrier without it.
-    fn of(carrier: Carrier, scan: Scan, value: &mut Value) -> Option<Self> {
+    fn of(carrier: Carrier, scan: FeedbackScan, value: &mut Value) -> Option<Self> {
         let (base, feedback) = carrier.take(value)?;
         let original = std::mem::replace(value, base);
         Some(Self {
@@ -221,7 +224,7 @@ struct HeldStep {
 }
 
 /// A generated verb's feedback, held out of its answer: the owner's read of
-/// one step's feedback, or a run's history.
+/// one step's feedback, a run's history, or a session-bound run's entry.
 pub(super) struct HeldVerbFeedback(Held);
 
 /// A failed run's kept feedback, released apart beside its refusal (FIX
@@ -233,58 +236,16 @@ pub(super) enum ErrorProgramSteps {
     NotKept,
 }
 
-/// `feedback` as `actor`'s destination is given it: whole on this device;
-/// off it, whole when none of `rows` (the rows its answer was derived from)
-/// nor any row it names is one a device-local world keeps from that
-/// destination now, else withheld, with the hold's content-free reason.
-/// Rows that are unknown, a short ref naming no row, or a check that cannot
-/// run withhold it too. Never fails: only this feedback changes.
+/// `feedback` as `actor`'s destination is given it
+/// ([`release_step_feedback`]). Never fails: only this feedback changes.
 fn release_feedback(
     server: &SyncServer,
     actor: &McpCallContext,
     rows: Option<&[EntityId]>,
     feedback: ProgramStepFeedback,
-    scan: Scan,
+    scan: FeedbackScan,
 ) -> ProgramStepFeedbackRelease {
-    match feedback_hold(server, actor, rows, &feedback, scan) {
-        None => ProgramStepFeedbackRelease::Released(feedback),
-        Some(reason) => ProgramStepFeedbackRelease::withheld(&feedback, reason),
-    }
-}
-
-/// Why `feedback` may not leave for `actor`'s destination now, or `None`.
-fn feedback_hold(
-    server: &SyncServer,
-    actor: &McpCallContext,
-    rows: Option<&[EntityId]>,
-    feedback: &ProgramStepFeedback,
-    scan: Scan,
-) -> Option<FeedbackWithheldReason> {
-    let destination = actor.destination();
-    if !destination.is_off_device() {
-        return None;
-    }
-    let Some(rows) = rows else {
-        return Some(FeedbackWithheldReason::ProducersUnknown);
-    };
-    let Ok(value) = serde_json::to_value(feedback) else {
-        return Some(FeedbackWithheldReason::ReleaseCheckFailed);
-    };
-    let mut named = match scan {
-        Scan::Named => match crate::device_local::short_refs_named(&server.vault, &value) {
-            Some(named) => named,
-            None => return Some(FeedbackWithheldReason::Placement),
-        },
-        Scan::Bytes => Vec::new(),
-    };
-    named.extend_from_slice(rows);
-    let Ok(bytes) = serde_json::to_vec(&value) else {
-        return Some(FeedbackWithheldReason::ReleaseCheckFailed);
-    };
-    match crate::device_local::retained_hold(&server.vault, &destination, &named, &bytes) {
-        Ok(hold) => hold.map(FeedbackWithheldReason::from),
-        Err(_) => Some(FeedbackWithheldReason::ReleaseCheckFailed),
-    }
+    release_step_feedback(&server.vault, &actor.destination(), rows, feedback, scan)
 }
 
 /// An `execute_code` answer's feedback, held apart before its rows are read
@@ -346,12 +307,23 @@ fn hold_step_feedback(structured: &mut Value, record: &CodeRunReplayRecord) -> V
 
 /// The carrier a recorded bridge call's outcome is, its scan, the outcome
 /// kind its recorder wrote and the field holding its JSON text.
-fn step_carrier(call: &CodeRunBridgeCall) -> Option<(Carrier, Scan, &'static str, &'static str)> {
+fn step_carrier(
+    call: &CodeRunBridgeCall,
+) -> Option<(Carrier, FeedbackScan, &'static str, &'static str)> {
+    let named = FeedbackScan::Named;
     match call.effect {
-        SelfEffect::TasksWaitSet => Some((Carrier::WaitSet, Scan::Bytes, "task_wait_set", "json")),
+        SelfEffect::TasksWaitSet => Some((
+            Carrier::WaitSet,
+            FeedbackScan::Bytes,
+            "task_wait_set",
+            "json",
+        )),
         SelfEffect::AgentVerb => match recorded_verb(call)? {
-            OWNER_FEEDBACK_VERB => Some((Carrier::Owner, Scan::Named, "agent_verb", "output")),
-            HISTORY_VERB => Some((Carrier::History, Scan::Named, "agent_verb", "output")),
+            OWNER_FEEDBACK_VERB => Some((Carrier::Owner, named, "agent_verb", "output")),
+            HISTORY_VERB => Some((Carrier::History, named, "agent_verb", "output")),
+            OFF_RECORD_EXECUTE_VERB | FOREIGN_EXECUTE_CODE_VERB => {
+                Some((Carrier::ProgramSteps, named, "agent_verb", "output"))
+            }
             _ => None,
         },
         _ => None,
@@ -388,7 +360,7 @@ pub(super) fn release_run_answer(
     let program_steps = held
         .program_steps
         .into_iter()
-        .map(|feedback| release_feedback(server, actor, rows, feedback, Scan::Named))
+        .map(|feedback| release_feedback(server, actor, rows, feedback, FeedbackScan::Named))
         .collect::<Vec<_>>();
     if let Some(structured) = result.get_mut("structuredContent") {
         for HeldStep {
@@ -417,14 +389,16 @@ pub(super) fn release_run_answer(
 }
 
 /// Takes the feedback out of `tool`'s output before its answer is released:
-/// the owner's read of one step's feedback, or a run's history.
+/// the owner's read of one step's feedback, a run's history, or a
+/// session-bound run's entry.
 pub(super) fn hold_verb_feedback(tool: &str, output: &mut Value) -> Option<HeldVerbFeedback> {
     let carrier = match tool {
         OWNER_FEEDBACK_VERB => Carrier::Owner,
         HISTORY_VERB => Carrier::History,
+        OFF_RECORD_EXECUTE_VERB | FOREIGN_EXECUTE_CODE_VERB => Carrier::ProgramSteps,
         _ => return None,
     };
-    Held::of(carrier, Scan::Named, output).map(HeldVerbFeedback)
+    Held::of(carrier, FeedbackScan::Named, output).map(HeldVerbFeedback)
 }
 
 /// A generated verb's answer, released, with its held feedback back in its
@@ -467,7 +441,9 @@ pub(super) fn release_run_error(
         KeptProgramSteps::Kept(steps) => ErrorProgramSteps::Kept(
             steps
                 .into_iter()
-                .map(|feedback| release_feedback(server, actor, rows, feedback, Scan::Named))
+                .map(|feedback| {
+                    release_feedback(server, actor, rows, feedback, FeedbackScan::Named)
+                })
                 .collect(),
         ),
         KeptProgramSteps::NotKept { detail } => {
@@ -482,6 +458,33 @@ pub(super) fn release_run_error(
     };
     McpGatewayError {
         program_steps: Some(Box::new(steps)),
+        ..error
+    }
+}
+
+/// A foreign program's refusal (FIX 10389): its error under the gateway's
+/// vocabulary, its code, kind and retry as they are today, and its
+/// program's type feedback released apart beside it, by `rows`, those the
+/// call served before it failed. The refusal itself is released by the
+/// call's own path, as every refusal is; a refusal before the program's
+/// source was admitted carries no feedback.
+pub(super) fn source_run_error(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    rows: Option<&[EntityId]>,
+    failure: ForeignCodeFailure,
+) -> McpGatewayError {
+    let error = super::mcp_facade_error(failure.error);
+    if failure.program_steps.is_empty() {
+        return error;
+    }
+    let steps = failure
+        .program_steps
+        .into_iter()
+        .map(|feedback| release_feedback(server, actor, rows, feedback, FeedbackScan::Named))
+        .collect();
+    McpGatewayError {
+        program_steps: Some(Box::new(ErrorProgramSteps::Kept(steps))),
         ..error
     }
 }

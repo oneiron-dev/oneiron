@@ -23,9 +23,6 @@ use serde::Serialize;
 
 use super::{OwnerError, OwnerResult};
 
-/// Pending rows read when listing runs; a run past this is still resolvable.
-const PENDING_SCAN_LIMIT: usize = 10_000;
-
 /// A run with proposals waiting for the owner.
 #[derive(Debug, Serialize)]
 pub(crate) struct PendingRun {
@@ -86,17 +83,17 @@ pub(crate) struct CommitmentWakeScheduled {
 }
 
 /// Runs with proposals waiting, most proposals first, of those a caller
-/// whose rows go to `destination` may see. Each run found among the first
-/// waiting rows is judged, and counted, by every proposal it holds, read in
-/// the same snapshot (FIX 9524): a run with a withheld member past those
-/// rows is hidden whole.
+/// whose rows go to `destination` may see. Every run with a waiting row is
+/// found, however many rows wait ahead of it (FIX 10496), and is judged, and
+/// counted, by every proposal it holds, read in the same snapshot (FIX
+/// 9524): a run with a withheld member is hidden whole.
 pub(crate) fn pending(
     vault: &Vault,
     destination: impl Into<ReadDestination>,
 ) -> OwnerResult<Vec<PendingRun>> {
     let destination = destination.into();
     let mut runs = Vec::new();
-    for group in vault.pending_gate_consent_run_groups(PENDING_SCAN_LIMIT)? {
+    for group in vault.pending_gate_consent_run_groups(usize::MAX)? {
         let Some(run_id) = group.dreamer_run_id else {
             continue;
         };
@@ -154,14 +151,14 @@ impl<'a> RunName<'a> {
 }
 
 /// The id of the run `run` names: the id itself, or the waiting run whose
-/// `run_ref` it is.
+/// `run_ref` it is, found among every run with a pending proposal, however
+/// many rows wait ahead of it (FIX 9523).
 fn run_named(vault: &Vault, run: RunName<'_>) -> OwnerResult<String> {
     match run {
         RunName::Id(run_id) => Ok(run_id.to_owned()),
         RunName::Ref(reference) => vault
-            .pending_gate_consent_groups(PENDING_SCAN_LIMIT)?
+            .pending_dreamer_run_ids()?
             .into_iter()
-            .filter_map(|group| group.dreamer_run_id)
             .find(|run_id| run_ref(run_id) == reference)
             .ok_or_else(|| oneiron::Error::EntityNotFound.into()),
     }

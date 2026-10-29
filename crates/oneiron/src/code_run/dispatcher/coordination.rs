@@ -297,7 +297,11 @@ impl<'a> HostSelfDispatcher<'a> {
                     );
                     unapplied.clone_from(&receipt.unapplied);
                     context.direct_spawn = Some(receipt);
-                    super::leader::narrow_budget(&mut context, ask.budget_cap_units.as_ref());
+                    super::leader::narrow_budget(
+                        &mut context,
+                        ask.budget_cap_units.as_ref(),
+                        None,
+                    );
                     // With no planner bound, a leased agent's spawn is still
                     // placed on its need text (the rule rung reads it);
                     // dispatch keeps the stamp.
