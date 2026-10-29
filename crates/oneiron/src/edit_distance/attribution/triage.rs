@@ -15,10 +15,10 @@
 //! writes nothing, and a row its owner deleted stays deleted.
 //!
 //! Routing by publisher (r5): the packet names its artifact's publisher, and
-//! every packet reaches the owner's inbox. A shipped artifact's issue
-//! signature is not emitted here: the ED-08 signature door needs a
-//! registered model stack and a numbered artifact version, which these
-//! receipts do not carry.
+//! every packet reaches the owner's inbox. A shipped subject's packet also
+//! earns its ED-08 issue signature in the same write (FIX 11634), resolved
+//! from the packet's own receipts; it is stored local — whether it may
+//! leave stays the delivery lane's switches to decide.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -391,6 +391,7 @@ pub(super) fn escalate_in_txn(
             subject_refs.push(id);
         }
     }
+    let mut wrote = false;
     for owner in crate::policy_model::owners_in_txn(vault, &*txn)? {
         let owner_ref = owner.to_hex();
         let event = NotificationEvent {
@@ -439,6 +440,15 @@ pub(super) fn escalate_in_txn(
         body.seen_by.remove(&owner_ref);
         body.acked_by.remove(&owner_ref);
         vault.put_notification_in_txn(txn, &id, &body)?;
+        wrote = true;
+    }
+    // One signature per new trigger, not per owner (FIX 11634): a trigger
+    // every row already held earned its signature when it landed.
+    if wrote
+        && packet.publisher == ArtifactPublisher::Shipped
+        && let Some(signature) = vault.packet_issue_signature_in_txn(&*txn, packet)?
+    {
+        crate::edit_distance::publisher::emit_issue_signature_local_in_txn(vault, txn, &signature)?;
     }
     Ok(())
 }

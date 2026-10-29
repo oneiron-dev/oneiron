@@ -125,6 +125,23 @@ pub(crate) fn emit_issue_signature_in_txn(
     Ok(id)
 }
 
+/// [`emit_issue_signature`] in the caller's write, with no send lane: the
+/// signature lands with what else that write records and reads
+/// [`SignatureSendState::Local`] until a lane takes it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn emit_issue_signature_local_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    sig: &IssueSignature,
+) -> Result<EntityId> {
+    let id = vault.store.clock.entity_id()?;
+    SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
+    Ok(id)
+}
+
 /// Reads back the signature stored under `id`.
 ///
 /// # Errors
