@@ -78,6 +78,10 @@ impl Vault {
             if fold.world_policy_revision(world) != expected {
                 return Err(refused("the world's settings changed since they were read"));
             }
+            // A widen goes through the settings door's approval rule first
+            // (FIX 8205).
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            self.refuse_unanimous_widen_in_txn(txn, actor, world, &settings)?;
             let receipt = self.set_world_privacy_in_txn(
                 txn,
                 owner,
