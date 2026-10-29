@@ -15,7 +15,9 @@ mod tool_grant;
 pub use self::catalog_views::{
     ActorConnectorRegistration, ConnectorCallRoute, ConnectorDescription,
 };
-pub use self::manifest_ops::{ConnectorManifestQualifier, ProbeManifestQualifier};
+pub use self::manifest_ops::{
+    ConnectorManifestQualifier, OwnerAttestedManifestQualifier, ProbeManifestQualifier,
+};
 pub use self::proxy::PROXY_CONNECTOR;
 pub use self::qualification::ConnectorQualificationError;
 pub use self::tool_grant::{

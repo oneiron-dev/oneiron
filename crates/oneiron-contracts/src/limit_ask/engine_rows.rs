@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 127] = [
+    pub const ALL: [Self; 128] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -133,6 +133,7 @@ impl EngineLimit {
         Self::ConnectorCharterCaps,
         Self::ConnectorCatalogVerbs,
         Self::ConnectorDispatchBatch,
+        Self::ConnectorManifestEntries,
     ];
 
     /// The config key that sets the row.
@@ -265,6 +266,7 @@ impl EngineLimit {
             Self::ConnectorCharterCaps => "limits.connector_charter_caps",
             Self::ConnectorCatalogVerbs => "limits.connector_catalog_verbs",
             Self::ConnectorDispatchBatch => "limits.connector_dispatch_batch",
+            Self::ConnectorManifestEntries => "limits.connector_manifest_entries",
         }
     }
 
@@ -458,6 +460,8 @@ impl EngineLimit {
             | Self::ConnectorCharterCaps => 16,
             Self::ConnectorCatalogVerbs => 64,
             Self::ConnectorDispatchBatch => 4_096,
+            // The manifest's old fixed refusal.
+            Self::ConnectorManifestEntries => 4_096,
         }
     }
 }

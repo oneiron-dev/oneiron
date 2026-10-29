@@ -128,7 +128,7 @@ impl DeviceSyncHost {
         admission: Option<Admission>,
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396).
-        let removal = removal_delivery::Receiver::start(&dial);
+        let removal = removal_delivery::Receiver::start(&dial, mesh);
         match open(server, dial, mesh, admission).await {
             Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {
@@ -400,7 +400,7 @@ impl Link {
         home: &str,
     ) {
         loop {
-            let config = {
+            let (config, committed) = {
                 let (end, ended) = oneshot::channel();
                 let observed = connection.run_observed(
                     ended,
@@ -440,15 +440,15 @@ impl Link {
                             if stop_sent(&mut stop) {
                                 break None;
                             }
-                            if renewal.commit(&candidate) {
-                                break Some(config);
+                            if let Some(committed) = renewal.commit(&candidate) {
+                                break Some((config, committed));
                             }
                         }
                     }
                 };
                 let _ = end.send(());
                 let ran = observed.await;
-                let Some(config) = renewed else {
+                let Some((config, committed)) = renewed else {
                     stopped(home, ran);
                     return;
                 };
@@ -461,7 +461,7 @@ impl Link {
                     tracing::info!(%home, "device sync stopped");
                     return;
                 }
-                config
+                (config, committed)
             };
             drop(connection);
             connection = match self.connection(config) {
@@ -475,7 +475,14 @@ impl Link {
                     return;
                 }
             };
-            tracing::info!(%home, "device sync reconnects on its renewed credential");
+            match committed {
+                renewal::CommitOutcome::Retargeted => {
+                    tracing::info!(%home, "device sync reconnects on its moved route");
+                }
+                renewal::CommitOutcome::Renewed => {
+                    tracing::info!(%home, "device sync reconnects on its renewed credential");
+                }
+            }
         }
     }
 }

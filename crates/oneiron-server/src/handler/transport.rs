@@ -11,7 +11,7 @@ use oneiron::sync::transport::{
 };
 use tokio::time::Duration;
 
-use super::connection::session_credential_revoked;
+use super::connection::{session_credential_revoked, vault_deleted};
 use super::protocol_close::ProtocolRefusal;
 use crate::auth::RevokedTokenJtis;
 use crate::protocol::close_codes;
@@ -193,10 +193,13 @@ pub(super) struct GuardedTransport<S> {
     pub(super) socket: Option<S>,
     revoked: Arc<dyn RevokedTokenJtis + Send + Sync>,
     session_jti: Option<String>,
-    /// A managed vault's attested owner this socket serves, and the vault
-    /// that must still record him as its live owner (FIX 5255). No token id
-    /// names him, so every consult asks that instead.
-    live_owner: Option<(Arc<oneiron::Vault>, crate::auth::CoreAuth)>,
+    /// The vault this socket serves: every consult asks whether its Owners
+    /// have since deleted it (FIX 1930), and, for its managed attested owner
+    /// below, whether it still records him as its live owner.
+    vault: Option<Arc<oneiron::Vault>>,
+    /// A managed vault's attested owner this socket serves (FIX 5255). No
+    /// token id names him, so every consult asks the vault instead.
+    live_owner: Option<crate::auth::CoreAuth>,
     /// Set only while an app-tier frame is draining; sync keeps its owner guard.
     pub(super) app_jti: Option<String>,
     conn_id: u32,
@@ -257,6 +260,7 @@ where
             socket: Some(socket),
             revoked,
             session_jti,
+            vault: None,
             live_owner: None,
             app_jti: None,
             conn_id,
@@ -276,15 +280,17 @@ where
         self
     }
 
-    /// Serves `owner`, a managed vault's attested owner, when there is one:
-    /// every consult then also asks `vault` whether he is still its live
-    /// owner, so a session no token id names is never unguarded.
+    /// Serves `vault`, and `owner`, its managed attested owner, when there is
+    /// one: every consult then asks `vault` whether its Owners deleted it
+    /// (FIX 1930) and whether he is still its live owner, so a session no
+    /// token id names is never unguarded.
     pub(super) fn with_live_owner(
         mut self,
         vault: &Arc<oneiron::Vault>,
         owner: Option<crate::auth::CoreAuth>,
     ) -> Self {
-        self.live_owner = owner.map(|owner| (Arc::clone(vault), owner));
+        self.vault = Some(Arc::clone(vault));
+        self.live_owner = owner;
         self
     }
 
@@ -303,10 +309,18 @@ where
     fn credential_revoked(&self) -> bool {
         session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref())
             || session_credential_revoked(self.revoked.as_ref(), self.app_jti.as_deref())
+            || self.vault_deleted()
             || self
-                .live_owner
-                .as_ref()
+                .vault
+                .as_deref()
+                .zip(self.live_owner.as_ref())
                 .is_some_and(|(vault, owner)| !owner.credential_is_live(vault))
+    }
+
+    /// Whether the served vault's deletion marker is present, or unreadable:
+    /// an open session stops as a new request is refused (OF-163).
+    fn vault_deleted(&self) -> bool {
+        self.vault.as_deref().is_some_and(vault_deleted)
     }
 
     /// Reads the next inbound frame.
@@ -338,13 +352,19 @@ where
         }
     }
 
-    /// Ends a socket whose credential was revoked, saying so: a peer then
-    /// tells revocation from a dropped link (the MCP bridge answers
-    /// `mcp_auth_required`, not `server_unreachable`).
+    /// Ends a socket whose credential was revoked, or whose vault was
+    /// deleted, saying which: a peer then tells revocation from a dropped
+    /// link (the MCP bridge answers `mcp_auth_required`, not
+    /// `server_unreachable`).
     async fn close_revoked(&mut self) {
+        let reason = if self.vault_deleted() {
+            "vault deleted"
+        } else {
+            "credential revoked"
+        };
         self.send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
             code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
-            reason: Utf8Bytes::from_static("credential revoked"),
+            reason: Utf8Bytes::from_static(reason),
         })))
         .await;
         self.socket.take();

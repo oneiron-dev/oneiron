@@ -45,6 +45,15 @@ pub(super) enum EnrollmentOutboundLeg {
     /// The member's effective state is paused, suppressed or exited
     /// (FIX 9662), on a first run or a replay alike; nothing was sent.
     MembershipNotReady,
+    /// The member does not resolve to a sendable target on the step's
+    /// pinned channel and sender (FIX 11513 K12: a non-PERSON, a PERSON
+    /// with no comm address, a sender that is not Active on this channel
+    /// or may not send, or no live contact); nothing was sent.
+    UnresolvableTarget,
+    /// The step's filed body does not pin to the program row (FIX 11513
+    /// K11: no filed body, or the blob's latest version runs ahead of the
+    /// accepted row); nothing was sent.
+    BodyUnpinned,
 }
 
 /// One outward leg's chokepoint result (FIX 6424 part 2a).
@@ -118,6 +127,53 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     if !membership_sends(vault, &event) {
         return Ok(EnrollmentOutboundLeg::MembershipNotReady);
     }
+    // The send waits on a resolvable target (FIX 11513 K12): without one
+    // there is no address to freeze, so the leg ends before the chokepoint
+    // rather than minting an intent that can never send. Ids only: the
+    // target address never reaches the log.
+    let Some(target) =
+        super::target::resolve_campaign_member_target(vault, event.entity_ref, &step)?
+    else {
+        tracing::warn!(
+            event_ref = %event.event_ref.to_hex(),
+            program_ref = %step.program_ref.to_hex(),
+            step_ref = %step.step_ref.to_hex(),
+            "a campaign enrollment's member does not resolve to a sendable target on the step's pinned channel; nothing is sent (FIX 11513 K12)"
+        );
+        return Ok(EnrollmentOutboundLeg::UnresolvableTarget);
+    };
+    // The send waits on the filed body pinning to the program row
+    // (FIX 11513 K11): the blob's latest version can run ahead of the
+    // accepted row, and then the send waits rather than carrying words the
+    // program never accepted.
+    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches(
+        step.program_ref,
+        step.step_ref,
+        outbound.call_seq,
+        &outbound.payload,
+    )?
+    else {
+        tracing::warn!(
+            event_ref = %event.event_ref.to_hex(),
+            program_ref = %step.program_ref.to_hex(),
+            step_ref = %step.step_ref.to_hex(),
+            "a campaign enrollment's filed body does not pin to its program row; nothing is sent (FIX 11513 K11)"
+        );
+        return Ok(EnrollmentOutboundLeg::BodyUnpinned);
+    };
+    // The wire payload is the v1 envelope the channel sender decodes with
+    // `deny_unknown_fields`, never the raw body: exactly these five keys,
+    // none of the chokepoint-sniffed ones (FIX 11513).
+    let envelope = serde_json::json!({
+        "target": target.target,
+        "content_ref": content_ref,
+        "counterparty_ref": target.party_key,
+        "actor": event.owner_actor.to_hex(),
+        "trigger_ref": event.event_ref.to_hex(),
+    });
+    let envelope_bytes = serde_json::to_vec(&envelope).map_err(|_| {
+        OutboundEffectError::InvalidInput("a campaign envelope is not JSON-encodable")
+    })?;
     let consequence_id = enrollment_consequence_id(&event, &step)?;
     // FIX 6424 part 2a (Engine ruling 7): the request retained for this call
     // is read before its gate input is built; a new one is retained before
@@ -128,7 +184,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         call_seq: outbound.call_seq,
         server: step.channel.clone(),
         tool: outbound.verb.clone(),
-        payload: outbound.payload.clone(),
+        payload: envelope_bytes,
         idempotency_supported: outbound.idempotency_supported,
         resolved_endpoint: None,
         gate: enrollment_gate_input(&step, outbound, &event, ask.target),
@@ -167,8 +223,9 @@ pub enum EnrollmentLegDrive {
         /// The digest the press names, 64 lower-hex.
         approval_digest: String,
     },
-    /// Nothing is owed outward: the step declares no outward leg, or the
-    /// member's own state holds the send.
+    /// Nothing is owed outward: the step declares no outward leg, the
+    /// member's own state holds the send, or the send does not resolve
+    /// (an unresolvable member or an unpinned body, FIX 11513 K11/K12).
     NothingOwed,
     /// Another node holds the designation; nothing was sent.
     NotHomeNode(CampaignHomeNodeDesignation),
@@ -209,9 +266,10 @@ pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
                 Some(approval_digest) => EnrollmentLegDrive::AwaitingApproval { approval_digest },
                 None => EnrollmentLegDrive::Dispatched,
             },
-            EnrollmentOutboundLeg::NoOutboundStep | EnrollmentOutboundLeg::MembershipNotReady => {
-                EnrollmentLegDrive::NothingOwed
-            }
+            EnrollmentOutboundLeg::NoOutboundStep
+            | EnrollmentOutboundLeg::MembershipNotReady
+            | EnrollmentOutboundLeg::UnresolvableTarget
+            | EnrollmentOutboundLeg::BodyUnpinned => EnrollmentLegDrive::NothingOwed,
             EnrollmentOutboundLeg::NotHomeNode(designation) => {
                 EnrollmentLegDrive::NotHomeNode(designation)
             }

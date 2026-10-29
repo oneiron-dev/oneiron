@@ -108,14 +108,14 @@ pub(crate) fn run_graph_question_with_proposals(
             };
             let question = &record.definition.question;
             let images = if answerer.reads_images() && record.definition.media.images {
-                let key = super::graph_ask::asker_reader(vault, principal)?;
+                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
                 let lane = super::reader_authority::question_lane(vault, key);
                 super::graph_ask::unit_images(&lane, &context)?
             } else {
                 Vec::new()
             };
             let audio = if answerer.reads_audio() && record.definition.media.audio {
-                let key = super::graph_ask::asker_reader(vault, principal)?;
+                let key = super::saved_reader::saved_reader(vault, principal, &record.read_lane)?;
                 let lane = super::reader_authority::question_lane(vault, key);
                 super::graph_ask::unit_audio(&lane, &context)?
             } else {

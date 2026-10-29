@@ -422,8 +422,8 @@ side_tables! {
     /// sequence).
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence; one that
-    /// charges an erased skill goes, with the edit proposals naming it, and a lapse charging an
-    /// erased actor stays with its subject nil. Key: u64be.
+    /// charges an erased skill stays with its subject nil, the edit proposals naming it go, and a
+    /// lapse charging an erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
         => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's
@@ -638,6 +638,10 @@ side_tables! {
     /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
     SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
+    /// The erase selector of each asker a hard erase reached: value-free and permanent, one
+    /// marker per erased asker, so the intent fence still reaches a stale copy whose asker a
+    /// plain scrub already forgot. Never a name or count. Key: blake3 (32) asker erase key.
+    SPAWN_PLANNED_INTENT_ASKER_ERASED: VaultMeta b"spawn:planned_intent_asker_erased:v1:" Raw Engine;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64
     /// (blake3 of prefix+agent+world).
     STANDING_BLOCK: VaultMeta b"standing.block.v1:" LegacyJson;

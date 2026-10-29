@@ -41,11 +41,11 @@ pub use bundle::{
 };
 #[allow(unused_imports, reason = "02A2 wires the object copy (L02)")]
 pub(crate) use bundle::{
-    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMeta, PadObjectRefillSource,
-    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
-    current_pad_objects_in_txn, index_in, install_captured_pad_objects_in_txn,
-    pad_objects_identity_in_txn, read_back_captured_in_txn, read_back_pad_objects_in_txn,
-    refill_pad_object,
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMembership, PadObjectMeta,
+    PadObjectRefillSource, capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
+    current_pad_objects_in_txn, generations_an_install_retires_in_txn, index_in,
+    install_captured_pad_objects_in_txn, pad_objects_identity_in_txn, read_back_captured_in_txn,
+    read_back_pad_objects_in_txn, refill_pad_object,
 };
 pub(crate) use bundle::{held_pad_object, holds_sealed_bundle, read_back_generation_in};
 pub use bundle_access::{
@@ -70,8 +70,10 @@ pub(crate) use directives::{
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
 pub use home_handoff::{
-    FreeTimeArming, HomeHandoffCancel, HomeHandoffStanding, free_time_arming, home_handoff_cancel,
-    home_handoff_commit, home_handoff_part, home_handoff_status, prepare_home_handoff,
+    FreeTimeArming, HomeHandoffCancel, HomeHandoffKey, HomeHandoffSession, HomeHandoffStanding,
+    free_time_arming, home_handoff_cancel, home_handoff_commit, home_handoff_keys,
+    home_handoff_part, home_handoff_retire, home_handoff_retired, home_handoff_session,
+    home_handoff_status, prepare_home_handoff,
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
