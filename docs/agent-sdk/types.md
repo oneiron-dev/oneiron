@@ -1686,8 +1686,15 @@ class Oneiron:
             """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> Facade.ExportAnswer: ...
+        @property
+        def transfer(self) -> "Oneiron._VaultExportTransferVerbs": ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
+    class _VaultExportTransferVerbs:
+        def read(self, spec: Facade.ExportTransferReadRequest) -> Facade.ExportTransferPiece:
+            """Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."""
+        def release(self, spec: Facade.ExportTransferReleaseRequest) -> Facade.ExportTransferReleased:
+            """Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."""
     class _VaultScopeVerbs:
         def position(self, spec: Facade.RecordPositionRequest) -> Facade.ScopedReadResult[Facade.RecordPosition | None]:
             """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""

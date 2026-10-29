@@ -150,6 +150,8 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.policy.admit`
 - `vault.retrieval.policy.update`
 - `vault.export`
+- `vault.export.transfer.read`
+- `vault.export.transfer.release`
 - `self.credential.attenuate`
 - `vault.scope.position`
 - `vault.scope.ceiling`

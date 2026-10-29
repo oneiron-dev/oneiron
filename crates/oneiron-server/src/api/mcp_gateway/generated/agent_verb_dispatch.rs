@@ -292,6 +292,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.retrieval.policy.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.policy.update" => a.spec.clone().ok_or_else(invalid),
         "vault.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.export.transfer.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.export.transfer.release" => a.spec.clone().ok_or_else(invalid),
         "self.credential.attenuate" => a.spec.clone().ok_or_else(invalid),
         "vault.scope.position" => a.spec.clone().ok_or_else(invalid),
         "vault.scope.ceiling" => a.spec.clone().ok_or_else(invalid),
@@ -1975,6 +1977,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.export.transfer.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.export.transfer.release" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.credential.attenuate" => {
@@ -7557,6 +7565,20 @@ async fn execute_agent_verb_row(
             // The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.
             // Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).
             let surface = crate::api::facade::owner_binding::act_surface(auth);
+            // A transfer is kept on the server, as on REST, and read through vault.export.transfer.read (FIX 11176).
+            if input.delivery.unwrap_or_default() == oneiron::memory::ExportDelivery::Transfer {
+                let (transfer, listed) = crate::api::facade::mcp_export_transfer(
+                    server,
+                    auth,
+                    surface,
+                    &actor.destination(),
+                    &input,
+                    action,
+                )
+                .map_err(mcp_facade_error)?;
+                served.extend(listed);
+                return mcp_agent_verb_output(transfer, crate::mcp::McpPageSource::complete(1));
+            }
             let output = match (auth.verified_slip(), action) {
                 (Some(proof), _) if proof.claims().holder_ref == "host" => server
                     .vault
@@ -7609,6 +7631,40 @@ async fn execute_agent_verb_row(
                 }
             }
             .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.export.transfer.read" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.export.transfer.read", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::ExportTransferReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_export_transfer_read(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.export.transfer.release" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.export.transfer.release", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::ExportTransferReleaseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_export_transfer_release(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

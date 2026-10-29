@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1201 facade rows, 4337 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1153.
+// UniFFI census: 1203 facade rows, 4341 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1155.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -11080,6 +11080,56 @@ pub struct ExportTransfer {
 pub enum ExportAnswer {
     Inline(MemoryExport),
     Transfer(ExportTransfer),
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferReadRequest {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+    #[serde(rename = "offset", default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
+    #[serde(rename = "length", default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<u64>,
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferPiece`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferPiece {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+    #[serde(rename = "offset")]
+    pub offset: u64,
+    #[serde(rename = "bytes_base64")]
+    pub bytes_base64: String,
+    #[serde(rename = "length")]
+    pub length: u64,
+    #[serde(rename = "total_bytes")]
+    pub total_bytes: u64,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "end")]
+    pub end: bool,
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferReleaseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferReleaseRequest {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+}
+
+/// `oneiron::memory::export_transfer_read::ExportTransferReleased`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ExportTransferReleased {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+    #[serde(rename = "released")]
+    pub released: bool,
 }
 
 /// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `ScopeId`.

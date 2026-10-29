@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1201 facade rows, 4345 declarations.
-Inputs: 1129 of 1201 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1035 of 1201 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1203 facade rows, 4349 declarations.
+Inputs: 1131 of 1203 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1037 of 1203 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
@@ -3573,6 +3573,23 @@ class ExportTransfer(TypedDict):
     bytes: int
     digest: str
 ExportAnswer = MemoryExport | ExportTransfer
+class ExportTransferReadRequest(TypedDict):
+    transfer_ref: str
+    offset: NotRequired[int]
+    length: NotRequired[int | None]
+class ExportTransferPiece(TypedDict):
+    transfer_ref: str
+    offset: int
+    bytes_base64: str
+    length: int
+    total_bytes: int
+    digest: str
+    end: bool
+class ExportTransferReleaseRequest(TypedDict):
+    transfer_ref: str
+class ExportTransferReleased(TypedDict):
+    transfer_ref: str
+    released: bool
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
