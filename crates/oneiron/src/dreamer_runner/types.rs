@@ -15,6 +15,9 @@ use super::claim_authoring::{
 use super::codec::invalid_dreamer_runner;
 // A Retry park's pause, resolved per vault (FIX 8716).
 mod retry_policy;
+mod park;
+
+pub use park::ParkDreamerAttempt;
 
 use super::constants::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
@@ -762,19 +765,6 @@ impl DreamerParkCause {
             _ => Self::Retry,
         }
     }
-}
-
-/// Input for parking a Dreamer attempt in local runner state.
-///
-/// `park_owner` is the parker's ownership token: only the owner recorded on
-/// the row may overwrite it or resume the attempt (fail-closed on mismatch).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParkDreamerAttempt {
-    pub attempt_id: AttemptId,
-    pub reason: String,
-    pub cause: DreamerParkCause,
-    pub park_owner: String,
-    pub now: u64,
 }
 
 /// Private parked-attempt row keyed by attempt id.
