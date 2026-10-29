@@ -8,7 +8,7 @@ use rmpv::Value;
 
 use crate::attempt_queue::AttemptId;
 use crate::claim::CallerLocality;
-use crate::{EdgeActorClass, Error, Result};
+use crate::{EdgeActorClass, EntityId, Error, Result};
 
 use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
@@ -25,7 +25,7 @@ use super::support::{
     validate_text,
 };
 
-pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 9] = [
+pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 10] = [
     "schema_version",
     "run_id",
     "determinism",
@@ -35,9 +35,10 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 9] = [
     "abi_layout_checks",
     "bindings",
     "live_run",
+    "callable_rows",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
-pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 8] = [
+pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 9] = [
     "seq",
     "effect",
     "request",
@@ -46,6 +47,7 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 8] = [
     "finished_at_ms",
     "action_digest",
     "spawn_targets",
+    "hook_view_served",
 ];
 pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
     ["seq", "label", "state_hash", "created_at_ms"];
@@ -83,6 +85,7 @@ const KEY_OUTPUTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[5];
 const KEY_ABI_LAYOUT_CHECKS: &str = CODE_RUN_REPLAY_RECORD_KEYS[6];
 const KEY_BINDINGS: &str = CODE_RUN_REPLAY_RECORD_KEYS[7];
 const KEY_LIVE_RUN: &str = CODE_RUN_REPLAY_RECORD_KEYS[8];
+const KEY_CALLABLE_ROWS: &str = CODE_RUN_REPLAY_RECORD_KEYS[9];
 
 const KEY_FROZEN_UNIX_MS: &str = CODE_RUN_DETERMINISM_KEYS[0];
 const KEY_RNG_SEED: &str = CODE_RUN_DETERMINISM_KEYS[1];
@@ -95,6 +98,7 @@ const KEY_STARTED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[4];
 const KEY_FINISHED_AT_MS: &str = CODE_RUN_BRIDGE_CALL_KEYS[5];
 const KEY_ACTION_DIGEST: &str = CODE_RUN_BRIDGE_CALL_KEYS[6];
 const KEY_SPAWN_TARGETS: &str = CODE_RUN_BRIDGE_CALL_KEYS[7];
+const KEY_HOOK_VIEW_SERVED: &str = CODE_RUN_BRIDGE_CALL_KEYS[8];
 
 const KEY_LABEL: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[1];
 const KEY_STATE_HASH: &str = CODE_RUN_STEP_CHECKPOINT_KEYS[2];
@@ -169,6 +173,10 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
             Value::from(KEY_LIVE_RUN),
             record.live_run.as_ref().map_or(Value::Nil, encode_live_run),
         ),
+        (
+            Value::from(KEY_CALLABLE_ROWS),
+            encode_optional_entity_rows(&record.callable_rows),
+        ),
     ]);
     encode_value(&value, "code-run replay record MessagePack encode failed")
 }
@@ -224,9 +232,28 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
             decode_binding,
         )?,
         live_run: decode_live_run(required(fields[8], "missing replay live_run")?)?,
+        // A pre-carrier record cannot prove its callable/result reads.
+        callable_rows: decode_optional_entity_rows(fields[9])?,
     };
     validate_code_run_replay_record(&record)?;
     Ok(record)
+}
+
+fn encode_optional_entity_rows(rows: &Option<Vec<EntityId>>) -> Value {
+    rows.as_ref().map_or(Value::Nil, |rows| {
+        Value::Array(
+            rows.iter()
+                .map(|row| Value::Binary(row.as_bytes().to_vec()))
+                .collect(),
+        )
+    })
+}
+
+fn decode_optional_entity_rows(value: Option<&Value>) -> Result<Option<Vec<EntityId>>> {
+    match value {
+        None | Some(Value::Nil) => Ok(None),
+        Some(value) => decode_array(value, entity_value).map(Some),
+    }
 }
 
 fn encode_determinism(determinism: &CodeRunDeterminism) -> Value {
@@ -274,6 +301,10 @@ fn encode_bridge_call(call: &CodeRunBridgeCall) -> Value {
             Value::from(KEY_SPAWN_TARGETS),
             spawn_targets_value(&call.spawn_targets),
         ),
+        (
+            Value::from(KEY_HOOK_VIEW_SERVED),
+            Value::Boolean(call.hook_view_served),
+        ),
     ])
 }
 
@@ -291,6 +322,8 @@ fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
             digest => Some(str_value(digest)?.to_owned()),
         },
         spawn_targets: decode_spawn_targets(required(fields[7], "missing bridge spawn_targets")?)?,
+        // A pre-carrier row cannot prove that no hook view was served.
+        hook_view_served: fields[8].map_or(Ok(true), bool_value)?,
     })
 }
 

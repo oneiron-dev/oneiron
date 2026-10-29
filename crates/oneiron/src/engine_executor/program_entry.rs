@@ -497,6 +497,7 @@ impl<'a> EngineNativeExecutor<'a> {
             }
             calls.push(program_resume_call(row, None)?);
         }
+        record.record_callable_rows(host.result_rows());
         record.bridge_calls.extend(host.bridge_calls);
         record.outputs.extend(host.captured);
         let bindings: Vec<(String, String)> = host

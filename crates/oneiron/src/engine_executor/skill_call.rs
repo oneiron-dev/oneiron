@@ -97,6 +97,7 @@ fn live_skill_call(
     // Read before the record takes the step's calls, failed or not: the
     // run's result rows already hold the callable rows (FIX 5460).
     *rows = host.result_rows();
+    record.record_callable_rows(rows.clone());
     // Keep all recorded nested calls even when the callable failed. Loading
     // and a callable invocation witness never settle the attempt's outcome.
     record.bridge_calls.extend(host.bridge_calls);
