@@ -14,16 +14,17 @@ use super::{
 use crate::ai_host::{WeaveLensCaller, render_live_weave_lens_for_run};
 use crate::lens_frames::CardOwner;
 
-/// Answers the run's `describe(self)`: the self brief of the snapshot
-/// installed for the run's own board connection, read for its agent, and
-/// the rows the brief is derived from. Blocking: call it on a blocking
-/// thread of the server's runtime.
+/// Answers the run's `describe(self)`: its self brief as the run stands
+/// now, read for its agent over the run's own board connection, its budget
+/// the run's own `line`, and the rows the brief is derived from. Blocking:
+/// call it on a blocking thread of the server's runtime.
 pub(super) fn self_brief_as_agent(
     server: &Arc<SyncServer>,
     actor: WriteActor,
     origin: &HostWriteOrigin,
     invocation: InvocationId,
     board: &StreamConnectionId,
+    line: Option<&RunAdmission>,
     input: Value,
 ) -> MemoryResult<(Value, Vec<EntityId>)> {
     let memory = agent_memory(server, actor, origin, invocation);
@@ -33,8 +34,9 @@ pub(super) fn self_brief_as_agent(
         sdk::validate_input(name, &input)?;
         let request: DescribeRequest = decode(input)?;
         let handle = tokio::runtime::Handle::current();
-        let (output, sources) =
-            handle.block_on(crate::api::describe_self_for_run(server, actor, board, &request))?;
+        let (output, sources) = handle.block_on(crate::api::describe_self_for_run(
+            server, actor, board, line, &request,
+        ))?;
         rows = sources;
         Ok(output)
     })?;

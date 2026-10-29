@@ -169,6 +169,45 @@ impl SelfBrief {
         out
     }
 
+    /// [`Self::render`] for a brief whose host resolved only some of its
+    /// fields (FIX 2086): each identity field `unavailable` names is left
+    /// out, and an `<unavailable>` block lists them, so no placeholder
+    /// value reads as a resolved fact. Escaped as [`Self::render`] escapes.
+    #[must_use]
+    pub fn render_available(&self, unavailable: &[&str]) -> String {
+        let mut identity = serde_json::to_value(self).expect("typed self brief JSON");
+        let fields = identity.as_object_mut().expect("self brief is a struct");
+        let skills = fields
+            .remove("skills")
+            .expect("self brief always carries skill index rows");
+        for field in unavailable {
+            fields.remove(*field);
+        }
+        let safe = |value: &serde_json::Value| {
+            value
+                .to_string()
+                .replace('&', "\\u0026")
+                .replace('<', "\\u003c")
+                .replace('>', "\\u003e")
+        };
+        let mut out = format!(
+            "<skills>{}</skills>\n<identity>{}</identity>",
+            safe(&skills),
+            safe(&identity)
+        );
+        if !unavailable.is_empty() {
+            out.push_str(&format!(
+                "\n<unavailable>{}</unavailable>",
+                safe(&serde_json::json!(unavailable))
+            ));
+        }
+        if let Some(people) = &self.people {
+            out.push('\n');
+            out.push_str(&people.render());
+        }
+        out
+    }
+
     /// The persons this brief's `people` roster holds.
     #[must_use]
     pub fn resident_people(&self) -> BTreeSet<EntityId> {
