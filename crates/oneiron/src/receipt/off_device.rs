@@ -37,8 +37,91 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
             "agent",
             "code_artifact_id",
             "blob_artifact_id",
+            "ask_ref",
         ],
     ),
+    // A gate decision: the grant it ruled under and the bundle that grant
+    // names; an escalation's TASK; a graduation answer's answerer and
+    // decision; a skill-edit verdict's proposal, skill, accepted verdict
+    // and missing sources; a cleanup digest's archived, skipped and
+    // rejected rows. (FIX 4848)
+    (
+        ReceiptKind::Gate,
+        &[
+            "grant_ref",
+            "bundle_ref",
+            "task_ref",
+            "answerer",
+            "decision_ref",
+            "skill_edit_proposal",
+            "skill_edit_skill",
+            "skill_edit_accepted_verdict",
+            "skill_edit_missing_sources",
+            "cleanup_archived_ids",
+            "cleanup_skipped_ids",
+            "cleanup_rejected_ids",
+        ],
+    ),
+    // An outbound send: its TASK; a craft reply's MESSAGE; an emit's
+    // activated memories and the project its run froze. (FIX 4848)
+    (
+        ReceiptKind::Outbound,
+        &[
+            "task_ref",
+            "message_id",
+            "activated_memory_ids",
+            "type_ref.project",
+        ],
+    ),
+    // A scoped read: the grant's scope rows. (FIX 4848)
+    (
+        ReceiptKind::ScopedRead,
+        &[
+            "space_ref",
+            "conversation_ref",
+            "identity_ref",
+            "envelope_ref",
+            "person_ref",
+            "facet_ref",
+            "calendar_ref",
+            "page_ref",
+        ],
+    ),
+    // A served form: the ASSET it served, and the ASSET_TEXT it read in
+    // place of the body. (FIX 4848)
+    (
+        ReceiptKind::ServedForm,
+        &["asset_ref", "asset_text_ref"],
+    ),
+    // A task-highway call: its parked proposal, the TASK a copy redid and
+    // the parent it dropped, its stale brief pins, and its composer's
+    // lens rows. (FIX 4848)
+    (
+        ReceiptKind::TaskLifecycle,
+        &[
+            "proposal_ref",
+            "redo_of",
+            "redo_parent_dropped",
+            "stale_pins",
+            "lens_refs",
+        ],
+    ),
+    // An identity-topology assertion: the pair it distinguished, a
+    // cancellation's participant, and a held channel request's ref.
+    // (FIX 4848)
+    (
+        ReceiptKind::IdentityLifecycle,
+        &["pair_a", "pair_b", "participant", "request_ref"],
+    ),
+    // A commitment's terminal status: its obligor and beneficiary.
+    // (FIX 4848)
+    (
+        ReceiptKind::CommitmentLifecycle,
+        &["obligor_ref", "beneficiary_ref"],
+    ),
+    // A settlement: the artifact it settled. Its trigger names the
+    // artifact at a version, which is not a row spelling. (FIX 4848)
+    (ReceiptKind::ArtifactSettle, &["artifact_ref"]),
 ];
 
 /// The families whose `actor` and `on_behalf_of` are parties the receipt
