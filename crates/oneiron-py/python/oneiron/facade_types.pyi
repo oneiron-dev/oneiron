@@ -1957,9 +1957,15 @@ class PinnedRef(TypedDict):
     target: EntityId
     frontier: NotRequired[list[int] | None]
     digest: str
+class SecretArgHandle(TypedDict):
+    handle: str
+class SecretArgText(TypedDict):
+    text: str
+SecretArg = SecretArgHandle | SecretArgText
 class WorkflowBinding(TypedDict):
     handle: str
     args: NotRequired[dict[str, str]]
+    secret_args: NotRequired[dict[str, SecretArg]]
 class BriefContext(TypedDict):
     pack: NotRequired[PinnedPack | None]
     read_first: NotRequired[list[PinnedRef]]
@@ -10304,6 +10310,7 @@ class CreditOptions(TypedDict):
 class PackAttributionFields(TypedDict):
     typeRef: CellTypeRef
     executor: str
+    agent_definition: NotRequired[str | None]
     judge: NotRequired[str | None]
     pattern: EntityId
     team_shape: list[str]
@@ -21608,11 +21615,6 @@ class WorkflowSeed(TypedDict):
     path: str
     digest: str
     license: str
-class SecretArgHandle(TypedDict):
-    handle: str
-class SecretArgText(TypedDict):
-    text: str
-SecretArg = SecretArgHandle | SecretArgText
 class SnapshotBounds(TypedDict):
     read_chars: NotRequired[int | None]
     snapshot_origins: NotRequired[int | None]

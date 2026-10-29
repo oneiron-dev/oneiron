@@ -306,10 +306,12 @@ pub(super) fn upgrade(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
-    // OF-237: over an embedded engine's channel or mesh the whole carrier,
-    // hello and calls included, lives under the engine's stop, which it
-    // answers itself, and the stop waits for it and every call it admitted
-    // from before the upgrade registers.
+    // OF-237: on a request carrying an upgrade lifetime (an embedded
+    // channel or mesh, or plain/managed serve through `upgrade_lifetime`)
+    // the whole carrier, hello and calls included, lives under the
+    // server's stop, which it answers itself, and the stop waits for it
+    // and every call it admitted from before the upgrade registers;
+    // without one it runs as before.
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])

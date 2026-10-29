@@ -404,18 +404,13 @@ pub(super) async fn handle_connection(
                     Some(&oneiron::sync::transport::TAG_DOCUMENT)
                         | Some(&oneiron::sync::transport::TAG_BATCH)
                 ) {
-                    let mut retry = Vec::new();
-                    let delivered = super::super::documents::document_delivery_retrying(
-                        &server,
-                        &conn_state,
-                        &data,
-                        &mut retry,
-                    );
-                    super::super::documents::retry_later(&direct_tx, retry);
-                    match delivered {
-                        Ok(mut frames) if frames.len() == 1 => data = frames.remove(0),
-                        Ok(frames) if frames.is_empty() => continue,
-                        _ => break,
+                    use super::super::documents::{DirectDelivery, direct_delivery};
+                    match direct_delivery(&server, &conn_state, &mut transport, &direct_tx, &data)
+                        .await
+                    {
+                        DirectDelivery::Send(frame) => data = frame,
+                        DirectDelivery::Done => continue,
+                        DirectDelivery::Close => break,
                     }
                 }
                 let peer = conn_state.peer_machine(server.vault());
