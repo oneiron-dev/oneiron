@@ -6,10 +6,11 @@
 //! characters it spoke. Each answers raw 24 kHz PCM16, handed back as a WAV
 //! so the caller reads its rate from the header. Each provider also clones:
 //! [`HostedCloner`] makes the provider voice a banked identity renders as,
-//! and deletes it, each call on its own paid permit.
+//! asks whether one its vendor holds for verification is verified, and
+//! deletes it, each call on its own paid permit.
 use std::collections::BTreeMap;
 
-use oneiron::llm::media::wav::pcm16_wav;
+use oneiron::llm::media::wav::{WavClip, pcm16_wav};
 use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaUsage,
     MediaVoice,
@@ -151,6 +152,16 @@ impl MediaBackend for HostedSpeech {
     }
 }
 
+/// A provider voice a clone call made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VendorVoice {
+    /// The provider's id for it, safe in a URL path.
+    pub id: String,
+    /// The provider holds it until the voice is verified there (ElevenLabs'
+    /// `requires_verification`, FIX 1567): no finished clone yet.
+    pub awaiting_verification: bool,
+}
+
 /// A hosted provider's clone wire: it makes a provider voice from a banked
 /// identity's refs, and deletes one. The provider's id is a disposable
 /// locator, never the identity; the bank records it only while the refs it
@@ -181,25 +192,33 @@ impl HostedCloner {
     }
 
     /// Makes a provider voice named `name` from `clips`, on `run`. Cartesia
-    /// clones from one clip, the first, and must be told its `language`;
-    /// ElevenLabs takes them all.
+    /// takes one clip, made of every clip that joins into one (FIX 1567),
+    /// and must be told its `language`; ElevenLabs takes them all, and may
+    /// hold the voice until it is verified there.
     pub async fn create(
         &self,
         run: &RunAdmission,
         name: &str,
         clips: &[VoiceRegisterClip],
         language: Option<&str>,
-    ) -> LlmResult<String> {
+    ) -> LlmResult<VendorVoice> {
         let first = clips.first().ok_or(FatalLlmError::InvalidRequest)?;
         let (path, form, id_field) = match self.wire {
             HostedWire::Cartesia => {
                 let language = language
                     .filter(|language| !language.trim().is_empty())
                     .ok_or(FatalLlmError::InvalidRequest)?;
+                let clip = match joined_wav(clips) {
+                    Some(joined) => Part::bytes(joined)
+                        .file_name("clip-0.wav")
+                        .mime_str("audio/wav")
+                        .map_err(|_| FatalLlmError::InvalidRequest)?,
+                    None => clip_part(0, first)?,
+                };
                 let form = Form::new()
                     .text("name", name.to_owned())
                     .text("language", language.to_owned())
-                    .part("clip", clip_part(0, first)?);
+                    .part("clip", clip);
                 ("/voices/clone", form, "id")
             }
             HostedWire::ElevenLabs => {
@@ -229,11 +248,52 @@ impl HostedCloner {
             })
             .await?;
         // The id is later interpolated into URL paths.
-        body.get(id_field)
+        let id = body
+            .get(id_field)
             .and_then(JsonValue::as_str)
             .filter(|id| url_safe(id))
             .map(str::to_owned)
-            .ok_or_else(|| FatalLlmError::EmptyResponse.into())
+            .ok_or(FatalLlmError::EmptyResponse)?;
+        Ok(VendorVoice {
+            id,
+            awaiting_verification: self.wire == HostedWire::ElevenLabs
+                && body.get("requires_verification") == Some(&JsonValue::Bool(true)),
+        })
+    }
+
+    /// Whether the provider voice `vendor_voice_id`, held for verification,
+    /// is verified there now, on `run` (FIX 1567). ElevenLabs is asked for
+    /// the voice's `voice_verification`; Cartesia holds none, so says yes
+    /// without a call.
+    pub async fn verified(&self, run: &RunAdmission, vendor_voice_id: &str) -> LlmResult<bool> {
+        if self.wire == HostedWire::Cartesia {
+            return Ok(true);
+        }
+        if !url_safe(vendor_voice_id) {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let path = format!("/v1/voices/{vendor_voice_id}");
+        let http = &self.http;
+        let body = self
+            .paid(run, async move {
+                let reply = http
+                    .send_media(&path, MediaSend::Get)
+                    .await
+                    .map_err(transport)?;
+                let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
+                if !(200..300).contains(&reply.status) {
+                    return Err(oneiron_llm_openai::classify_openai_status(
+                        reply.status,
+                        &reply.headers,
+                        &body,
+                    ));
+                }
+                Ok(body)
+            })
+            .await?;
+        let verification = &body["voice_verification"];
+        Ok(verification["is_verified"] == JsonValue::Bool(true)
+            || verification["requires_verification"] == JsonValue::Bool(false))
     }
 
     /// Deletes the provider voice `vendor_voice_id`, on `run`; one already
@@ -296,6 +356,30 @@ fn url_safe(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Every clip as one PCM16 WAV, their samples joined in order: Cartesia
+/// clones from one clip (FIX 1567). `None` unless there are several and
+/// each is a PCM16 WAV of whole frames at one rate and channel count; the
+/// first clip goes alone then, as before.
+fn joined_wav(clips: &[VoiceRegisterClip]) -> Option<Vec<u8>> {
+    let wavs = clips
+        .iter()
+        .map(|clip| WavClip::parse(&clip.audio).filter(WavClip::is_pcm16))
+        .collect::<Option<Vec<_>>>()?;
+    let (first, rest) = wavs.split_first()?;
+    let frame = usize::from(first.channels) * 2;
+    let joins = |wav: &WavClip<'_>| {
+        wav.sample_rate == first.sample_rate
+            && wav.channels == first.channels
+            && frame > 0
+            && wav.data.len().is_multiple_of(frame)
+    };
+    if rest.is_empty() || !wavs.iter().all(joins) {
+        return None;
+    }
+    let samples: Vec<u8> = wavs.iter().flat_map(|wav| wav.data).copied().collect();
+    pcm16_wav(first.sample_rate, first.channels, &samples)
 }
 
 /// One clip as a form file, named by its place rather than its register.

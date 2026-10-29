@@ -28,6 +28,7 @@ use oneiron::{EntityId, Error, Vault};
 
 use crate::server::SyncServer;
 
+mod parity;
 mod trainer;
 mod wire;
 
@@ -42,6 +43,9 @@ const HOLD_NO_ADMISSION: &str = "training.no_admission";
 const HOLD_REFUSED: &str = "training.refused";
 /// A returned run waits: no seat evaluator or trained-weight loader here.
 const HOLD_NO_EVALUATOR: &str = "training.no_evaluator";
+/// A returned question head stops: its receipt did not reproduce on this
+/// host's stack (FIX 7568), so it never serves.
+const HOLD_PARITY_FAILED: &str = "training.parity_failed";
 
 /// A seat evaluator: it scores the held-out bytes `open_training_held_out`
 /// served against the returned checkpoint, and records nothing itself.
@@ -202,9 +206,23 @@ fn dispatch(
 /// Scores a returned run through the held-out door, or holds it until this
 /// host has an evaluator for its seat. The evaluator sees only what
 /// `open_training_held_out` serves, and its result goes through
-/// `record_training_evaluation`.
+/// `record_training_evaluation`. A question head whose receipt did not
+/// reproduce on this host (FIX 7568) holds as parity-failed first.
 fn evaluate(server: &SyncServer, run: &TrainingRun, now: u64) -> oneiron::Result<()> {
     let vault = server.vault();
+    let parity = run
+        .result
+        .as_ref()
+        .and_then(|result| result.checks.candle_parity.as_ref());
+    if let Some(parity) = parity.filter(|parity| !parity.passed()) {
+        let detail = format!(
+            "{} probe(s) did not reproduce on this host: {}",
+            parity.token_mismatches.len(),
+            parity.token_mismatches.join(", ")
+        );
+        vault.hold_training_run(&run.id, HOLD_PARITY_FAILED, &detail, now)?;
+        return Ok(());
+    }
     let Some(evaluator) = training_evaluator(server, run) else {
         vault.hold_training_run(
             &run.id,

@@ -170,10 +170,11 @@ pub(crate) fn setup_models(
     let staged = stage_config(path, &config_text)?;
     let result = (|| {
         let config = read_config(&staged, env)?;
-        // The same slot serve builds: a local bundle loads on its engine, and
-        // a reachable tagger must be the configured one.
+        // The slot serve builds, validated only: a local bundle loads on its
+        // engine, and a reachable tagger must be the configured one, without
+        // starting a worker thread or its warm-up call.
         // Checked first, so a refusal comes before the local model download.
-        let tagger_slot = crate::oneironer::build_slot(config.oneironer.as_ref())?;
+        let tagger_slot = crate::oneironer::build_slot_for_validation(config.oneironer.as_ref())?;
         let device = match config.embedder.as_ref().filter(|c| c.is_active()) {
             Some(embedder) if embedder.provider == EmbedderProvider::Local => {
                 crate::embedder::prepare_local(embedder)?.to_owned()

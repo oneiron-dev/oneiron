@@ -12,7 +12,7 @@ use crate::side_table::{self, Named, SideTable};
 
 use super::evidence::WakeEvaluationReport;
 
-const HEALTH: SideTable<EntityId, SavedQueryHealth, Named> =
+pub(super) const HEALTH: SideTable<EntityId, SavedQueryHealth, Named> =
     SideTable::new(&side_table::SAVED_QUERY_HEALTH);
 
 /// Which of the host's passes woke a query.

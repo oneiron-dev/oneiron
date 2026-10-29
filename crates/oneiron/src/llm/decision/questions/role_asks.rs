@@ -4,14 +4,16 @@
 //! only requests the escalation; the caller binds the route, and the work the
 //! ask decides is the unit's, so each unit keeps its own ask.
 //!
-//! A graph unit's ask is kept by its number while it waits (FIX 11231), and
-//! the answer its role holder settles lands back on that unit as the
-//! holder's own act: a `judgment.answer` claim whose receipt names the ask,
-//! user-stated and approved from a person, generated and Auto from a bound
-//! agent, as a settled conflict lands. The model never grants authority
-//! here: an abstention lands nothing, and an answer whose holder was erased
-//! stays on the ask alone. The kept row is the unit's projection of its ask
-//! numbers ([`Vault::question_unit_asks`]).
+//! A graph or artifact unit's ask is kept by its number while it waits (FIX
+//! 11231), and the answer its role holder settles lands back on that unit as
+//! the holder's own act: a `judgment.answer` claim whose receipt names the
+//! ask, user-stated and approved from a person, generated and Auto from a
+//! bound agent, as a settled conflict lands. An artifact unit (a sheet row, a
+//! paragraph, a file in a folder) lands on its artifact, and its kept row
+//! names the unit as the ask's caller named it. The model never grants
+//! authority here: an abstention lands nothing, and an answer whose holder
+//! was erased stays on the ask alone. No unit view carries ask numbers; the
+//! kept rows are the read ([`Vault::question_unit_asks`]).
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -19,7 +21,9 @@ use serde::{Deserialize, Serialize};
 use super::records::AnswerRecord;
 use super::store::encode;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
-use crate::llm::decision::{DecisionAnswer, DecisionQuestion, HolderKind, TypedDecision};
+use crate::llm::decision::{
+    DecisionAnswer, DecisionQuestion, EvidenceVersion, HolderKind, TypedDecision,
+};
 use crate::side_table::{self, Named, SideTable};
 use crate::{
     ClaimCandidate, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault, WriteActor,
@@ -28,13 +32,13 @@ use crate::{
 
 const QUESTION_UNIT_ASK_DOMAIN: &[u8] = b"oneiron:question-unit-ask:v1";
 
-/// Every graph unit's person ask, keyed by its arrival number.
+/// Every graph or artifact unit's person ask, keyed by its arrival number.
 const UNIT_ASKS: SideTable<u64, QuestionUnitAsk, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_UNIT_ASK);
 
-/// One graph unit's person ask: the unit, the declined decision it went up from (its
-/// receipt names the question, principal and ask) and, once its holder's answer landed on
-/// the unit, that answer's claim.
+/// One unit's person ask: the unit (an artifact unit's artifact), the declined decision it
+/// went up from (its receipt names the question, principal and ask) and, once its holder's
+/// answer landed on the unit, that answer's claim.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionUnitAsk {
@@ -50,6 +54,10 @@ pub struct QuestionUnitAsk {
     /// The `judgment.answer` claim the holder's answer landed as; none while the ask waits.
     #[serde(with = "super::super::codec::optional_entity")]
     pub applied: Option<EntityId>,
+    /// The artifact unit the ask is for, as its caller named it (a sheet row, a paragraph,
+    /// a folder file); none for a graph unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_unit: Option<serde_json::Value>,
 }
 
 /// The work one unit's ask decides: `question`'s version, asked for
@@ -75,6 +83,24 @@ pub fn question_unit_correlation(
     )
 }
 
+/// [`keep_question_unit_ask`] for an artifact unit: `unit`, as its caller named it, of the
+/// artifact version `pin` read (FIX 11231). Its answer lands on the artifact.
+pub(crate) fn keep_artifact_unit_ask(
+    vault: &Vault,
+    pin: &EvidenceVersion,
+    unit: &serde_json::Value,
+    declined: &TypedDecision,
+) {
+    keep_question_unit_ask(
+        vault,
+        pin.id,
+        pin.body_hash,
+        crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
+        Some(unit.clone()),
+        declined,
+    );
+}
+
 /// Keeps `unit`'s person ask, when its `declined` decision went up as a numbered one, and
 /// lands an answer its holder already gave. Never a refusal: a row that does not keep
 /// leaves the ask on its queue, answered there as before.
@@ -83,6 +109,7 @@ pub(super) fn keep_question_unit_ask(
     unit: EntityId,
     frontier: [u8; 32],
     source_kind: u8,
+    artifact_unit: Option<serde_json::Value>,
     declined: &TypedDecision,
 ) {
     let Some(seq) = declined.receipt.asked.as_ref().and_then(|asked| asked.seq) else {
@@ -106,13 +133,14 @@ pub(super) fn keep_question_unit_ask(
                 source_kind,
                 declined: declined.clone(),
                 applied: None,
+                artifact_unit,
             },
         )
     });
     match kept {
         Ok(()) => vault.land_question_unit_answer(seq),
         Err(error) => {
-            tracing::warn!(seq, kind = ?error.kind(), "a graph unit's person ask was not kept");
+            tracing::warn!(seq, kind = ?error.kind(), "a unit's person ask was not kept");
         }
     }
 }
@@ -120,8 +148,8 @@ pub(super) fn keep_question_unit_ask(
 impl Vault {
     /// Lands the settled answer to unit ask `seq` on its unit, as its holder's own act, and
     /// returns the claim it landed as. `None` while the ask waits, for an abstention, for an
-    /// answer whose holder was erased, and for an ask no graph unit kept. Landing twice
-    /// returns the first claim.
+    /// answer whose holder was erased, and for an ask no unit kept. Landing twice returns
+    /// the first claim.
     pub fn resume_question_unit_ask(&self, seq: u64) -> Result<Option<EntityId>> {
         let now = self.store.clock.now_recorded_at();
         self.with_write_txn_grouped(|txn| {
@@ -228,8 +256,9 @@ impl Vault {
         }
     }
 
-    /// The person asks kept on graph unit `unit`, oldest first: each ask's number, the
-    /// decision it went up from, and the answer claim once one landed.
+    /// The person asks kept on unit `unit`, a graph unit or an artifact, oldest first: each
+    /// ask's number, the decision it went up from, the artifact unit it names, and the
+    /// answer claim once one landed.
     pub fn question_unit_asks(&self, unit: EntityId) -> Result<Vec<QuestionUnitAsk>> {
         let txn = self.store.env.read_txn()?;
         let mut asks = Vec::new();

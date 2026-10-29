@@ -82,6 +82,10 @@ pub struct ProbeCase {
 pub struct ProbeMeasurement {
     pub probe_id: String,
     pub input_blake3: [u8; 32],
+    /// The trainer's BLAKE3 of the probe's token ids, as the windows it fed
+    /// the encoder (FIX 7568); none from a trainer that reports none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_blake3: Option<[u8; 32]>,
     pub training_argmax: u64,
     pub export_argmax: u64,
     pub max_logit_difference: f64,
@@ -309,6 +313,36 @@ pub struct ExportCheck {
     /// A question head's own producer check; a role run has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question_check: Option<QuestionExportCheck>,
+    /// The host's Candle-side reproduction of a question head's probe
+    /// evidence (FIX 7568); a role run has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candle_parity: Option<CandleParityCheck>,
+}
+
+/// What the host reproduced of a trained classifier's receipt on the stack
+/// that would serve it (FIX 7568), before it may serve: a check of our own
+/// artifact against the trainer's word.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandleParityCheck {
+    /// Every probe's token ids, rendered and tokenized here with the
+    /// export's own pinned tokenizer and cut into its windows, hash to the
+    /// trainer's.
+    pub tokens_match: bool,
+    /// The probes whose ids did not reproduce, by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub token_mismatches: Vec<String>,
+    /// Whether the export's logits reproduced in Candle: `None` while no
+    /// Candle classifier loader is built here, so none was run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logits_match: Option<bool>,
+}
+
+impl CandleParityCheck {
+    /// No half that ran failed.
+    #[must_use]
+    pub fn passed(&self) -> bool {
+        self.tokens_match && self.logits_match != Some(false)
+    }
 }
 
 /// What a question head's trainer also measured on its fixed probes: every

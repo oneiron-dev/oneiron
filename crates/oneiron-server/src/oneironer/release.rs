@@ -615,8 +615,9 @@ fn verify_placed(
 }
 
 /// Sets the staged flat files' and the directory's modes, then renames the
-/// directory into place whole. An extracted tree keeps the modes its
-/// archive's entries gave it.
+/// directory into place whole and fsyncs its parent, so the placement
+/// survives a crash. An extracted tree keeps the modes its archive's entries
+/// gave it.
 fn commit(staging: &Path, dir: &Path, files: &[&ReleaseFile]) -> Result<(), OneironerFetchError> {
     #[cfg(unix)]
     {
@@ -627,7 +628,15 @@ fn commit(staging: &Path, dir: &Path, files: &[&ReleaseFile]) -> Result<(), Onei
     }
     #[cfg(not(unix))]
     let _ = files;
-    std::fs::rename(staging, dir).map_err(io_error("placing", staging))
+    std::fs::rename(staging, dir).map_err(io_error("placing", staging))?;
+    #[cfg(unix)]
+    if let Some(parent) = dir.parent() {
+        std::fs::File::open(parent)
+            .map_err(io_error("opening", parent))?
+            .sync_all()
+            .map_err(io_error("syncing", parent))?;
+    }
+    Ok(())
 }
 
 /// Creates one directory, `0755` on Unix, or takes the one already there.

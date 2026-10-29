@@ -303,6 +303,11 @@ export_facade! {
     let output = client.self_budget_land(&input)?;
     crate::codec::lift_record("self.budget.land", &output)
 };
+"self.billing.account.file" => fn self_billing_account_file(&self, input: BillingAccountFiling) -> Option<FiledBillingAccount> = |client| {
+    let input: oneiron::llm::run_admission::BillingAccountFiling = crate::codec::lower_record("self.billing.account.file", input)?;
+    let output = client.self_billing_account_file(&input)?;
+    crate::codec::lift_record("self.billing.account.file", &output)
+};
 "vault.budgets.lease.open" => fn vault_budgets_lease_open(&self, input: OpenSpendLeaseRequest) -> SpendLeaseView = |client| {
     let input: oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest = crate::codec::lower_record("vault.budgets.lease.open", input)?;
     let output = client.vault_budgets_lease_open(&input)?;
@@ -4406,6 +4411,11 @@ export_facade! {
     let output = client.vault_models_trials_run(&input)?;
     crate::codec::lift_record("vault.models.trials.run", &output)
 };
+"vault.models.trials.resend_arm" => fn vault_models_trials_resend_arm(&self, input: ModelTrialArmRef) -> ModelTrialView = |client| {
+    let input: oneiron::llm::catalog_doors::ModelTrialArmRef = crate::codec::lower_record("vault.models.trials.resend_arm", input)?;
+    let output = client.vault_models_trials_resend_arm(&input)?;
+    crate::codec::lift_record("vault.models.trials.resend_arm", &output)
+};
 "vault.models.trials.complete" => fn vault_models_trials_complete(&self, input: ModelTrialComplete) -> ModelTrialView = |client| {
     let input: oneiron::llm::catalog_doors::ModelTrialComplete = crate::codec::lower_record("vault.models.trials.complete", input)?;
     let output = client.vault_models_trials_complete(&input)?;
@@ -4551,6 +4561,11 @@ export_facade! {
     let output = client.vault_questions_read(&input)?;
     crate::codec::lift_record("vault.questions.read", &output)
 };
+"vault.questions.outcome_windows" => fn vault_questions_outcome_windows(&self, input: QuestionOutcomeWindowsRequest) -> Vec<OutcomeWindowClose> = |client| {
+    let input: oneiron::receipt::QuestionOutcomeWindowsRequest = crate::codec::lower_record("vault.questions.outcome_windows", input)?;
+    let output = client.vault_questions_outcome_windows(&input)?;
+    crate::codec::lift_record("vault.questions.outcome_windows", &output)
+};
 "vault.questions.answers" => fn vault_questions_answers(&self, input: QuestionAnswersRequest) -> QuestionAnswersReply = |client| {
     let input: oneiron::receipt::QuestionAnswersRequest = crate::codec::lower_record("vault.questions.answers", input)?;
     let output = client.vault_questions_answers(&input)?;
@@ -4600,6 +4615,11 @@ export_facade! {
     let input: oneiron::receipt::DecisionAskClimbRequest = crate::codec::lower_record("vault.decisions.asks.climb", input)?;
     let output = client.vault_decisions_asks_climb(&input)?;
     crate::codec::lift_record("vault.decisions.asks.climb", &output)
+};
+"vault.decisions.asks.confirm_grant" => fn vault_decisions_asks_confirm_grant(&self, input: DecisionAskConfirmGrantRequest) -> DecisionAsk = |client| {
+    let input: oneiron::receipt::DecisionAskConfirmGrantRequest = crate::codec::lower_record("vault.decisions.asks.confirm_grant", input)?;
+    let output = client.vault_decisions_asks_confirm_grant(&input)?;
+    crate::codec::lift_record("vault.decisions.asks.confirm_grant", &output)
 };
 "self.decisions.asks" => fn self_decisions_asks(&self) -> Vec<DecisionAsk> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.decisions.asks")?;

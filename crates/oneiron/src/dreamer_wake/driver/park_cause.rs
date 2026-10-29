@@ -71,13 +71,15 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::RateLimited { .. }
             | RetryableLlmError::ServerError
             | RetryableLlmError::Timeout
-            | RetryableLlmError::StreamCut => false,
+            | RetryableLlmError::StreamCut
+            | RetryableLlmError::TransportFault(_) => false,
         },
         LlmError::Fatal(fatal) => match fatal {
             FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {
                 true
             }
             FatalLlmError::InvalidRequest
+            | FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContentFiltered
             | FatalLlmError::EmptyResponse
             | FatalLlmError::LabelRead(_) => false,

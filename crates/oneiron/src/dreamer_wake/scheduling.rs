@@ -308,6 +308,16 @@ pub fn request_turn_wake(
     Ok(Some(outcome))
 }
 
+/// Which test a turn wake's window is due on.
+#[derive(Clone, Copy)]
+enum TurnWakeTest {
+    /// A landed turn's: each window ordinal on the grain or the agent's cadence
+    /// dial, and the agent's signals.
+    Turn,
+    /// A surprising save's: the agent's signals alone, at no ordinal.
+    Surprise,
+}
+
 /// Whether any of `ordinals` is due on the per-vault wake grain, or on the
 /// agent's stored cadence dial on top of it, read in the caller's transaction.
 fn turn_wake_due_in_txn(
@@ -394,6 +404,7 @@ fn read_turn_wake_in_txn(
     txn: &heed::RoTxn<'_>,
     subject: WakeTurnSubject,
     stop: WakeStop<'_>,
+    test: TurnWakeTest,
 ) -> Result<Option<TurnWakeReads>> {
     let scope = DreamerConsolidationScope::Micro;
     let watermark = read_watermark_in_txn(vault, txn, scope)?;
@@ -412,8 +423,12 @@ fn read_turn_wake_in_txn(
         }
     }
     let subject = measured_surprise_in_txn(vault, txn, subject, window.iter().map(|t| t.turn_id))?;
-    let due =
-        !window.is_empty() && turn_wake_due_in_txn(vault, txn, subject, 1..=window.len() as u64)?;
+    // A surprise test reads ordinal 0 alone, which no cadence dial is due on.
+    let ordinals = match test {
+        TurnWakeTest::Turn => 1..=window.len() as u64,
+        TurnWakeTest::Surprise => 0..=0,
+    };
+    let due = !window.is_empty() && turn_wake_due_in_txn(vault, txn, subject, ordinals)?;
     // The watermark settles every turn up to where it moves, so an
     // undue wake stops it before the first live turn it leaves.
     let first_live = window.iter().map(|turn| turn.learned_at).min();
@@ -512,6 +527,39 @@ impl Vault {
         stop: WakeStop<'_>,
         on_stale: OnStale,
     ) -> Result<ReadWrite<bool>> {
+        self.wake_dreamer_tested_until(subject, now, stop, on_stale, TurnWakeTest::Turn)
+    }
+
+    /// [`Self::wake_dreamer_on_turn`] for `agent` at a save whose surprise
+    /// reached the wake policy's floor (FIX 11410): the window is due on the
+    /// surprise test alone, the agent's role admitting a surprise wake, so no
+    /// cadence ordinal fires at a save.
+    pub(crate) fn wake_dreamer_on_surprise(&self, agent: EntityId, now: u64) -> Result<bool> {
+        let subject = WakeTurnSubject::Agent {
+            id: agent,
+            signals: AgentWakeSignals {
+                surprise: true,
+                ..AgentWakeSignals::default()
+            },
+        };
+        let outcome = self.wake_dreamer_tested_until(
+            subject,
+            now,
+            WakeStop::NEVER,
+            OnStale::OneWriter,
+            TurnWakeTest::Surprise,
+        )?;
+        Ok(matches!(outcome, ReadWrite::Written(true)))
+    }
+
+    fn wake_dreamer_tested_until(
+        &self,
+        subject: WakeTurnSubject,
+        now: u64,
+        stop: WakeStop<'_>,
+        on_stale: OnStale,
+        test: TurnWakeTest,
+    ) -> Result<ReadWrite<bool>> {
         let commit = match self.sieve_pass_until(now, stop, on_stale, true)? {
             ReadWrite::Written(commit) => commit,
             ReadWrite::Stopped => return Ok(ReadWrite::Stopped),
@@ -521,7 +569,7 @@ impl Vault {
             self,
             "turn wake",
             on_stale,
-            |txn| read_turn_wake_in_txn(self, txn, subject, stop),
+            |txn| read_turn_wake_in_txn(self, txn, subject, stop, test),
             |txn, reads| apply_turn_wake_in_txn(self, txn, reads, now),
         )?;
         if commit.followed || matches!(outcome, ReadWrite::Written(true)) {

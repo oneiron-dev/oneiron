@@ -2,9 +2,13 @@
 //! writes it (ARCH-0063). A delegated identity names its custody record,
 //! never a token. Apply provisions through the identity's own lifecycle
 //! gate, so a row lands only where the vault's policy lets that effect run.
-//! A provisioned identity waits for fulfillment, as any other does.
-use super::invalid;
+//! A provisioned identity waits for fulfillment, as any other does. A
+//! provision the gate holds for the owner's approve-once press waits (FIX
+//! 2300), and the owner's next apply asks again as exactly that request.
+use super::apply::{LiveByTarget, ShapeItemState};
 use super::live::ShapeSources;
+use super::plan::ShapePlanItem;
+use super::{ShapeRow, ShapeTarget, invalid};
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityBinding, ChannelIdentityFulfillment, ChannelIdentityState,
     DelegatedGrant, DelegatedGrantScope, DelegatedProvisionRequest, SelfHeldShape,
@@ -81,6 +85,16 @@ impl From<ShapeMailScope> for DelegatedGrantScope {
     }
 }
 
+impl From<DelegatedGrantScope> for ShapeMailScope {
+    fn from(scope: DelegatedGrantScope) -> Self {
+        match scope {
+            DelegatedGrantScope::MailRead => Self::MailRead,
+            DelegatedGrantScope::MailMetadata => Self::MailMetadata,
+            DelegatedGrantScope::MailSend => Self::MailSend,
+        }
+    }
+}
+
 /// Whom the identity speaks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "to", rename_all = "snake_case")]
@@ -146,6 +160,16 @@ impl From<ShapeChannelFulfillment> for ChannelIdentityFulfillment {
     }
 }
 
+impl From<ChannelIdentityFulfillment> for ShapeChannelFulfillment {
+    fn from(mode: ChannelIdentityFulfillment) -> Self {
+        match mode {
+            ChannelIdentityFulfillment::Api => Self::Api,
+            ChannelIdentityFulfillment::Manual => Self::Manual,
+            ChannelIdentityFulfillment::Review => Self::Review,
+        }
+    }
+}
+
 impl ShapeChannelProvision {
     /// The door a new identity of this custody lands through.
     pub(super) const fn door(&self) -> &'static str {
@@ -156,26 +180,138 @@ impl ShapeChannelProvision {
     }
 }
 
+/// What a provision the lifecycle gate held asked with, read back from where
+/// its item rests (FIX 2300): its retry names the same request, identity and
+/// clock, so the gate reads the same request and asks for no second press.
+struct HeldProvision {
+    request_ref: EntityId,
+    identity_id: EntityId,
+    requested_at: u64,
+}
+
+impl HeldProvision {
+    /// The request a [`ShapeItemState::HeldProvision`] item keeps; none for
+    /// any other state, whose provision is a request of its own.
+    fn of(resting: &ShapeItemState) -> Result<Option<Self>> {
+        let ShapeItemState::HeldProvision {
+            request_ref,
+            identity_ref,
+            requested_at,
+            ..
+        } = resting
+        else {
+            return Ok(None);
+        };
+        let id = |hex: &str| {
+            EntityId::from_hex(hex)
+                .map_err(|_| invalid("a held provision names its request by entity id hex"))
+        };
+        Ok(Some(Self {
+            request_ref: id(request_ref.as_str())?,
+            identity_id: id(identity_ref.as_str())?,
+            requested_at: *requested_at,
+        }))
+    }
+}
+
 impl Vault {
+    /// Provisions the channel identity `item` declares, as `owner`, after
+    /// checking the structure is still as the plan read it; an identity
+    /// already live as declared is landed. A provision the lifecycle gate
+    /// holds for the owner's approve-once press rests
+    /// [`ShapeItemState::HeldProvision`]; from there (`resting`) it asks
+    /// again as exactly that request (FIX 2300). A door's refusal is the
+    /// item's state.
+    pub(super) fn provision_shape_channel_item(
+        &self,
+        owner: &AuthenticatedOwner,
+        item: &ShapePlanItem,
+        live: &LiveByTarget,
+        resting: &ShapeItemState,
+        now: u64,
+        sources: &mut ShapeSources,
+    ) -> ShapeItemState {
+        self.provision_declared_channel(owner, item, live, resting, now, sources)
+            .unwrap_or_else(|error| ShapeItemState::Refused {
+                reason: error.to_string(),
+            })
+    }
+
+    fn provision_declared_channel(
+        &self,
+        owner: &AuthenticatedOwner,
+        item: &ShapePlanItem,
+        live: &LiveByTarget,
+        resting: &ShapeItemState,
+        now: u64,
+        sources: &mut ShapeSources,
+    ) -> Result<ShapeItemState> {
+        let (
+            ShapeTarget::Channel { channel, address },
+            Some(
+                declared @ ShapeRow::Channel {
+                    provision: Some(provision),
+                    ..
+                },
+            ),
+        ) = (&item.target, &item.after)
+        else {
+            return Err(invalid("the vault has no door for this item"));
+        };
+        match live.get(&item.target) {
+            None => {}
+            Some((row, _)) if declared.satisfied_by(row) => {
+                return Ok(ShapeItemState::Landed {
+                    at: now,
+                    receipt: "already so".to_owned(),
+                });
+            }
+            Some(_) => return Err(invalid("the structure changed since the plan read it")),
+        }
+        let binding = provision.binding.resolve(|agent_id| {
+            live.get(&ShapeTarget::Actor {
+                agent_id: agent_id.to_owned(),
+            })
+            .and_then(|(_, entity)| *entity)
+        })?;
+        let held = HeldProvision::of(resting)?;
+        self.provision_shape_channel(
+            owner,
+            channel,
+            address,
+            provision,
+            binding,
+            held.as_ref(),
+            now,
+            sources,
+        )
+    }
+
     /// Provisions the identity `channel`/`address` as `owner`. A self-held
     /// one passes the lifecycle gate's provision; a delegated one is
     /// requested against its custody record, then passes the gate's bind.
-    /// The item lands once the identity waits for fulfillment. `sources`
-    /// lists the identity once a writer wrote it, beside the ledger receipt
-    /// and beside a refusal after that write; a delegated one's custody
-    /// record is resolved by name inside its writer, so its rows are unknown.
+    /// The item lands once the identity waits for fulfillment. A gate hold
+    /// rests the item with the request it held, and a `held` retry asks
+    /// again under that request, for the same identity on the same clock (a
+    /// delegated one is already requested, so only its bind asks again).
+    /// `sources` lists the identity once a writer wrote it, beside the
+    /// ledger receipt and beside a refusal after that write; a delegated
+    /// one's custody record is resolved by name inside its writer, so its
+    /// rows are unknown.
     #[expect(clippy::too_many_arguments, reason = "one landing's plain inputs")]
-    pub(super) fn provision_shape_channel(
+    fn provision_shape_channel(
         &self,
         owner: &AuthenticatedOwner,
         channel: &str,
         address: &str,
         provision: &ShapeChannelProvision,
         binding: ChannelIdentityBinding,
+        held: Option<&HeldProvision>,
         now: u64,
         sources: &mut ShapeSources,
-    ) -> Result<String> {
+    ) -> Result<ShapeItemState> {
         let actor = owner.revalidate(self)?;
+        let requested_at = held.map_or(now, |held| held.requested_at);
         let request = |intent: ChannelIdentityLifecycleIntent| ChannelIdentityLifecycleRequest {
             actor: ChannelIdentityLifecycleActor {
                 actor_class: "human".to_owned(),
@@ -183,18 +319,22 @@ impl Vault {
                 actor_entity_ref: Some(actor),
             },
             gate: ChannelIdentityLifecycleGate::allow_when_policy_grants(),
-            requested_at: now,
+            requested_at,
             intent,
         };
+        let ask = |request: ChannelIdentityLifecycleRequest| match held {
+            Some(held) => self.apply_channel_identity_lifecycle_request(request, held.request_ref),
+            None => self.apply_channel_identity_lifecycle_intent(request),
+        };
         let fulfillment_mode = provision.fulfillment.into();
-        let identity_id = EntityId::now();
+        let identity_id = held.map_or_else(EntityId::now, |held| held.identity_id);
         // The live row reads the vault's spelling; a row spelled otherwise
         // would never read as landed.
         let shape = match provision.custody {
             ShapeChannelCustody::SelfHeld { shape } => shape.into(),
             ShapeChannelCustody::Delegated { .. } => SelfHeldShape::DedicatedAddress,
         };
-        let identity = ChannelIdentity::requested(channel, address, shape, binding, now);
+        let identity = ChannelIdentity::requested(channel, address, shape, binding, requested_at);
         if identity.channel() != channel || identity.address_or_handle() != address {
             return Err(invalid(format!(
                 "the vault spells this identity {} {}; declare it so",
@@ -204,13 +344,13 @@ impl Vault {
         }
         let (result, rests) = match &provision.custody {
             ShapeChannelCustody::SelfHeld { .. } => {
-                let result = self.apply_channel_identity_lifecycle_intent(request(
-                    ChannelIdentityLifecycleIntent::Provision(ProvisionIntent {
+                let result = ask(request(ChannelIdentityLifecycleIntent::Provision(
+                    ProvisionIntent {
                         identity_id,
                         identity,
                         fulfillment_mode,
-                    }),
-                ))?;
+                    },
+                )))?;
                 sources.list(identity_id);
                 (result, String::new())
             }
@@ -219,39 +359,54 @@ impl Vault {
                 scopes,
             } => {
                 sources.unknown();
-                self.provision_delegated_identity(
-                    &identity_id,
-                    DelegatedProvisionRequest {
-                        channel: channel.to_owned(),
-                        address_or_handle: address.to_owned(),
-                        binding,
-                        grant: DelegatedGrant::new(
-                            custody_record_ref.clone(),
-                            scopes.iter().map(|scope| (*scope).into()).collect(),
-                        ),
-                    },
-                    now,
-                )?;
+                if held.is_none() {
+                    self.provision_delegated_identity(
+                        &identity_id,
+                        DelegatedProvisionRequest {
+                            channel: channel.to_owned(),
+                            address_or_handle: address.to_owned(),
+                            binding,
+                            grant: DelegatedGrant::new(
+                                custody_record_ref.clone(),
+                                scopes.iter().map(|scope| (*scope).into()).collect(),
+                            ),
+                        },
+                        now,
+                    )?;
+                }
                 (
-                    self.apply_channel_identity_lifecycle_intent(request(
-                        ChannelIdentityLifecycleIntent::Bind(BindIntent {
-                            identity_id,
-                            fulfillment_mode,
-                        }),
-                    ))?,
+                    ask(request(ChannelIdentityLifecycleIntent::Bind(BindIntent {
+                        identity_id,
+                        fulfillment_mode,
+                    })))?,
                     format!("; identity {} waits requested", identity_id.to_hex()),
                 )
             }
         };
-        if result.outcome != ChannelIdentityState::PendingFulfillment.as_str() {
-            // FIX 6424 part 3: a hold names the press that releases exactly
-            // this request, after the words it had.
-            return Err(invalid(format!(
-                "the provision did not take: {}{rests}{}",
-                result.owner_visible_state,
-                result.held_approval_note()
-            )));
+        if result.outcome == ChannelIdentityState::PendingFulfillment.as_str() {
+            return Ok(ShapeItemState::Landed {
+                at: now,
+                receipt: result.receipt_id,
+            });
         }
-        Ok(result.receipt_id)
+        // Only a hold names an approve-once digest: the provision waits for
+        // the owner's press on it, keeping what a retry asks with.
+        if let (Some(request_ref), Some(approval_digest)) =
+            (result.request_ref, result.approval_digest.clone())
+        {
+            return Ok(ShapeItemState::HeldProvision {
+                request_ref: request_ref.to_hex(),
+                approval_digest,
+                identity_ref: identity_id.to_hex(),
+                requested_at,
+            });
+        }
+        // FIX 6424 part 3: a hold names the press that releases exactly
+        // this request, after the words it had.
+        Err(invalid(format!(
+            "the provision did not take: {}{rests}{}",
+            result.owner_visible_state,
+            result.held_approval_note()
+        )))
     }
 }

@@ -32,7 +32,7 @@ use oneiron::{ModelId, embed::EmbedderLocality};
 
 use crate::config::{OneironerConfig, OneironerProvider};
 use dispatcher::{Completion, Dispatcher, WorkerSpec};
-use engines::Admission;
+use engines::{Admission, BaselineCalibration};
 use local::{InferenceWindows, WindowCounter};
 
 pub(crate) use dispatcher::DispatchClaim;
@@ -45,6 +45,7 @@ pub(crate) mod engines;
 mod local;
 mod mlx;
 pub(crate) mod release;
+pub(crate) mod wire;
 
 #[cfg(test)]
 mod tests;
@@ -228,10 +229,15 @@ pub(crate) struct TaggerSlot {
     config: OneironerConfig,
     tagger: Arc<ProviderTagger>,
     card: Mutex<Option<endpoint::ModelCard>>,
-    /// The engine a local tagger runs on and how it was picked.
-    serving: Option<engines::Serving>,
+    /// The engine a local tagger runs on and how it was picked; the
+    /// after-bind calibration writes its measured choice here once it lands.
+    serving: Arc<Mutex<Option<engines::Serving>>>,
     /// The platform admission the serving build starts, until it does.
     platforms: Option<Admission>,
+    /// The after-bind calibration of the Candle baseline the serving build
+    /// starts, until it does (FIX 7108); it starts the platform admission
+    /// once it lands.
+    calibration: Option<BaselineCalibration>,
     /// The test door onto the traces the worker emitted, bounded.
     #[cfg(test)]
     traces: Mutex<VecDeque<LoggedTrace>>,
@@ -286,11 +292,12 @@ impl TaggerSlot {
         Ok(())
     }
 
-    /// The engine a local tagger was loaded on at startup and how it was
-    /// picked; `None` for an endpoint. Not a call's execution: each call's
-    /// receipt names the worker that ran it.
+    /// The engine a local tagger serves on and how it was picked: the
+    /// provisional engine until the after-bind calibration lands, its
+    /// measured choice after; `None` for an endpoint. Not a call's
+    /// execution: each call's receipt names the worker that ran it.
     pub(crate) fn serving(&self) -> Option<engines::Serving> {
-        self.serving
+        self.serving.lock().ok().and_then(|serving| serving.clone())
     }
 
     /// The last model card a probe accepted.
@@ -333,6 +340,9 @@ impl TaggerSlot {
     /// 6755 slice 3). Only the serving build calls it, never `init`'s
     /// check; a later call starts nothing.
     fn start_platform_workers(&mut self) {
+        if let Some(calibration) = self.calibration.take() {
+            calibration.start();
+        }
         if let Some(admission) = self.platforms.take() {
             admission.start();
         }
@@ -370,14 +380,39 @@ pub(crate) fn build_slot_with_rows(
     config: Option<&OneironerConfig>,
     rows_location: Option<&Path>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
+    build_slot_inner(config, rows_location, true)
+}
+
+/// [`build_slot`], without starting a worker thread or its warm-up call:
+/// what init validates. It loads and checks the same bundle, engine and
+/// probe, and reports the same serving engine, but starts no worker.
+pub(crate) fn build_slot_for_validation(
+    config: Option<&OneironerConfig>,
+) -> anyhow::Result<Option<TaggerSlot>> {
+    build_slot_inner(config, None, false)
+}
+
+fn build_slot_inner(
+    config: Option<&OneironerConfig>,
+    rows_location: Option<&Path>,
+    start_workers: bool,
+) -> anyhow::Result<Option<TaggerSlot>> {
     let Some(config) = config.filter(|config| config.is_active()) else {
         return Ok(None);
     };
     config.validate()?;
-    let (mut serving, mut platforms) = (None, None);
+    let serving = Arc::new(Mutex::new(None));
+    let (mut platforms, mut calibration) = (None, None);
     let tagger = match config.provider {
         OneironerProvider::Local => {
-            let (tagger, engine) = match engines::load(config, rows_location) {
+            // The serving build measures nothing before the listener binds
+            // (FIX 7108); init's check measures as it always did.
+            let loaded = if start_workers {
+                engines::load_serving(config, rows_location)
+            } else {
+                engines::load(config, rows_location)
+            };
+            let (tagger, engine) = match loaded {
                 Ok(loaded) => loaded,
                 Err(error) => {
                     let format = error
@@ -399,7 +434,9 @@ pub(crate) fn build_slot_with_rows(
                 tier = config.tier.as_deref().unwrap_or("-"),
                 "oneironer engine serving"
             );
-            serving = Some(engine);
+            if let Ok(mut current) = serving.lock() {
+                *current = Some(engine);
+            }
             let card = tagger.card();
             let provider = Provider::Local {
                 card: card.clone(),
@@ -411,31 +448,66 @@ pub(crate) fn build_slot_with_rows(
             // device is the one worker the owner pinned.
             let pinned = engine.pick == engines::Pick::Named;
             let windows = tagger.window_counter();
-            let worker = WorkerSpec::local(engine.engine, tagger);
-            let tagger = ProviderTagger::new(
-                model,
-                EmbedderLocality::OnDevice,
-                provider,
-                pinned,
-                Some(windows),
-            );
-            // The Candle baseline the rows chose, or the device the owner
-            // named, ranks first (FIX 6755).
-            let worker = tagger.dispatcher.add(worker)?;
-            tagger.dispatcher.publish_rank(worker, 0);
-            // A platform runtime joins it only from the serving build, in
-            // the background, and never beside a pinned engine.
-            let handle = tagger.dispatcher.handle();
-            platforms = Admission::new(config, rows_location, handle, engine, worker, card);
+            let tagger = if start_workers {
+                let worker = WorkerSpec::local(engine.engine, tagger);
+                let tagger = ProviderTagger::new(
+                    model,
+                    EmbedderLocality::OnDevice,
+                    provider,
+                    pinned,
+                    Some(windows),
+                );
+                // The Candle baseline the rows chose, or the device the owner
+                // named, ranks first (FIX 6755).
+                let worker = tagger.dispatcher.add(worker)?;
+                tagger.dispatcher.publish_rank(worker, 0);
+                // A platform runtime joins it only from the serving build, in
+                // the background, and never beside a pinned engine.
+                let handle = tagger.dispatcher.handle();
+                platforms = Admission::new(
+                    config,
+                    rows_location,
+                    handle.clone(),
+                    engine,
+                    worker,
+                    card.clone(),
+                );
+                calibration = BaselineCalibration::new(
+                    config,
+                    rows_location,
+                    handle,
+                    engine,
+                    worker,
+                    card,
+                    Arc::clone(&serving),
+                );
+                tagger
+            } else {
+                let _ = WorkerSpec::validate_local(engine.engine, &tagger);
+                ProviderTagger::new(
+                    model,
+                    EmbedderLocality::OnDevice,
+                    provider,
+                    pinned,
+                    Some(windows),
+                )
+            };
             tagger
         }
         OneironerProvider::Endpoint => {
             let http = Arc::new(endpoint::HttpTagger::from_config(config)?);
             let (model, locality) = (http.model_id().clone(), http.locality());
             let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
-            let worker = WorkerSpec::endpoint(Arc::clone(&http), checkpoint);
-            let tagger = ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None);
-            tagger.dispatcher.add(worker)?;
+            let tagger = if start_workers {
+                let worker = WorkerSpec::endpoint(Arc::clone(&http), checkpoint);
+                let tagger =
+                    ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None);
+                tagger.dispatcher.add(worker)?;
+                tagger
+            } else {
+                let _ = WorkerSpec::validate_endpoint(checkpoint);
+                ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None)
+            };
             tagger
         }
         OneironerProvider::None => return Ok(None),
@@ -446,6 +518,7 @@ pub(crate) fn build_slot_with_rows(
         card: Mutex::new(None),
         serving,
         platforms,
+        calibration,
         #[cfg(test)]
         traces: Mutex::new(VecDeque::new()),
     };

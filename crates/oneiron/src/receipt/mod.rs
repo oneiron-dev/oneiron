@@ -48,7 +48,9 @@ pub use self::call::{
     call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
 pub use self::context_emit::ContextEmitReceipt;
-pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
+pub use self::decision_asks::{
+    DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
+};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,
@@ -91,15 +93,15 @@ pub use self::questions::{
     GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome,
     GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply,
     QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
-    QuestionOutcomes, QuestionOutcomesProjectRequest, QuestionOutcomesProjected,
-    QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
-    QuestionRefreshRequest, QuestionScheduleRequest,
+    QuestionOutcomeWindowsRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
+    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
     receipt_reference_refusals, receipt_refusal, record_reference_refusals_in_txn,
 };
-pub use self::served_form::{PixelPull, ServedForm, ServedRung};
+pub use self::served_form::{AudioPull, PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 

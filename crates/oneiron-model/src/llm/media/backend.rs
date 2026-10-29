@@ -71,12 +71,26 @@ pub trait MediaBackend: Send + Sync {
     }
 
     /// Starts one long call as a provider job; returns the provider's job id.
+    /// `key` is the job's idempotency key (FIX 2248): a wire whose provider
+    /// takes one sends it, so the same submit sent again under it answers
+    /// the job it started ([`Self::submit_dedupes`]); a wire whose provider
+    /// takes none sends without it.
     fn submit<'a>(
         &'a self,
         _request: MediaRequest,
+        _key: Option<&'a str>,
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, String> {
         Box::pin(async { Err::<String, LlmError>(FatalLlmError::InvalidRequest.into()) })
+    }
+
+    /// Whether this wire's provider starts a job once per idempotency key,
+    /// so a submit sent again under its key answers the job it started
+    /// rather than a new one (FIX 2248). The default, `false`, is a wire
+    /// that sends no key: a submit whose answer was lost cannot be found
+    /// again through it.
+    fn submit_dedupes(&self) -> bool {
+        false
     }
 
     /// Where the provider's job `job` for `model` stands; a done job's

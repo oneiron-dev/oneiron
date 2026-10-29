@@ -358,6 +358,7 @@ pub async fn decide_at_remote_seat(
             person_row: None,
             rule: None,
             asked: None,
+            state_cut: None,
         },
         human_ask,
     })
