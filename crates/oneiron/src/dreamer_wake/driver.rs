@@ -521,6 +521,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,
                     deadline: &self.deadline,
+                    cancel: Some(cancel),
                     budget_id: &line,
                     now_ms: input.now.saturating_mul(1_000),
                     prepared_wake: Some(prepared_wake),

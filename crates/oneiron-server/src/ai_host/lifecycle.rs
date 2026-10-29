@@ -213,6 +213,9 @@ impl AiHost {
         }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         handle.device = device;
+        handle.dreamer_control = attached
+            .as_ref()
+            .and_then(|attached| attached.control.clone());
         let mut host = Self {
             handle: handle.clone(),
             dreamer: None,
