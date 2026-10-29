@@ -23,12 +23,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron_browser::{BatchStopCause, ExpectInput, ExpectOutput, LibraryRunOutput, SubgoalStatus};
+use oneiron_browser::{
+    BatchStopCause, ExpectInput, ExpectOutput, LibraryRunOutput, SecretArg, SubgoalStatus,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::browser_library::{WorkflowResolution, resolve_workflow_in_txn};
+use crate::browser_library::{
+    WorkflowResolution, resolve_workflow_in_txn, secret_param_names_in_txn,
+};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -55,6 +59,9 @@ const ATTEMPTS: SideTable<[u8; 16], AttemptRow, Named> =
 const RECEIPT_NOTE_DOMAIN: &[u8] = b"oneiron.tasks.browser_workflow.receipt.v1";
 /// A try's receipt is a research NOTE, as a workflow run's report is.
 const RECEIPT_NOTE_KIND: &str = "research";
+/// What a masked secret value reads as in a receipt, as the browser's
+/// own displays mask one (`oneiron_browser` secret_fields::SECRET_MARK).
+const SECRET_MARK: &str = "[secret]";
 
 /// One bound try's pin: its TASK, the brief it was leased under, the record
 /// the TASK's handle named, the program that resolved to, the done-means it
@@ -79,6 +86,13 @@ pub enum TaskWorkflowPin {
     Active {
         record: EntityId,
         args: BTreeMap<String, String>,
+        /// Secret slots' arguments in typed form, as bound (FIX 8348).
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        secret_args: BTreeMap<String, SecretArg>,
+        /// The program's secret parameter names at pin time: their values
+        /// are masked in the try's receipt (FIX 8348).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        secret_names: Vec<String>,
     },
     /// No program to run, and why.
     Unavailable { cause: TaskWorkflowUnavailable },
@@ -155,7 +169,16 @@ impl TaskWorkflowAttempt {
     #[must_use]
     pub fn active(&self) -> Option<(EntityId, &BTreeMap<String, String>)> {
         match &self.row.pin {
-            TaskWorkflowPin::Active { record, args } => Some((*record, args)),
+            TaskWorkflowPin::Active { record, args, .. } => Some((*record, args)),
+            TaskWorkflowPin::Unavailable { .. } => None,
+        }
+    }
+
+    /// The pinned program's typed secret arguments, while it pinned one.
+    #[must_use]
+    pub fn active_secret_args(&self) -> Option<&BTreeMap<String, SecretArg>> {
+        match &self.row.pin {
+            TaskWorkflowPin::Active { secret_args, .. } => Some(secret_args),
             TaskWorkflowPin::Unavailable { .. } => None,
         }
     }
@@ -231,6 +254,8 @@ fn pin_row_in(
         Ok(WorkflowResolution::Active { id }) => TaskWorkflowPin::Active {
             record: id,
             args: binding.args.clone(),
+            secret_args: binding.secret_args.clone(),
+            secret_names: secret_param_names_in_txn(vault, txn, id)?,
         },
         Ok(WorkflowResolution::Retired { id, reason }) => TaskWorkflowPin::Unavailable {
             cause: TaskWorkflowUnavailable::Retired { id, reason },
@@ -603,6 +628,34 @@ struct Receipt<'a> {
     report: &'a TaskWorkflowReport,
 }
 
+/// `pin` as its receipt holds it (FIX 8348): secret values masked,
+/// names kept. A typed secret's text and a plain argument under a
+/// secret parameter's name read [`SECRET_MARK`]; a handle is a custody
+/// reference, not a value, and stays. The pin row itself keeps its
+/// values: only the receipt's rendering is masked.
+fn redacted_pin(pin: &TaskWorkflowPin) -> TaskWorkflowPin {
+    let mut pin = pin.clone();
+    if let TaskWorkflowPin::Active {
+        args,
+        secret_args,
+        secret_names,
+        ..
+    } = &mut pin
+    {
+        for (name, value) in args.iter_mut() {
+            if secret_names.contains(name) {
+                *value = SECRET_MARK.to_owned();
+            }
+        }
+        for value in secret_args.values_mut() {
+            if let SecretArg::Text(text) = value {
+                *text = SECRET_MARK.to_owned();
+            }
+        }
+    }
+    pin
+}
+
 /// The receipt NOTE's text: what the try ran and what came of it, then the
 /// whole report as JSON, unclipped.
 fn receipt_markdown(
@@ -656,12 +709,13 @@ fn receipt_markdown(
             "- browser effects: unknown. The strict program was started at {at} and its end was never recorded, so this receipt cannot say what it did or did not do on the page."
         ));
     }
+    let pin = redacted_pin(&row.pin);
     let evidence = Receipt {
         attempt: attempt_hex(record.id),
         task: row.task_ref,
         requested: row.requested,
         brief: row.brief,
-        pin: &row.pin,
+        pin: &pin,
         outcome,
         missed,
         report,

@@ -131,16 +131,41 @@ pub fn project_edit_cost_claims(
 /// an older ledger cannot land over a newer one, and a pass with nothing new
 /// reprojects nothing.
 ///
+/// A floor crossing this pass mints escalates in the same write (FIX 11635):
+/// the charge-side worsening check runs before this pass in the verb, so
+/// without the second join here the crossing would surface only at the
+/// skill's next charge.
+///
 /// # Errors
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
 pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
     vault.with_write_txn_grouped(|wtxn| {
         let mut verdicts = Vec::new();
+        // The newest verdict per skill, for the floor join below: the
+        // scope, project, receipt and time a crossing this pass mints
+        // fires on. A crossing is the skill's own, so it fires once per
+        // skill however many scopes its verdicts span.
+        let mut newest: BTreeMap<EntityId, (String, Option<EntityId>, String, u64)> =
+            BTreeMap::new();
         for (judgment, attempt) in amendment_judgments_in_txn(vault, wtxn)? {
             let Some((attempt_receipt, skill)) = attempt else {
                 continue;
             };
+            let fired = (
+                judgment.scope.clone(),
+                judgment.project,
+                judgment.receipt_id.clone(),
+                judgment.at,
+            );
+            newest
+                .entry(skill)
+                .and_modify(|held| {
+                    if (fired.3, &fired.2) > (held.3, &held.2) {
+                        *held = fired.clone();
+                    }
+                })
+                .or_insert(fired);
             // A verdict that charges this skill nothing is still a verdict on
             // the attempt: it is what lets a later amendment stand over an
             // earlier one.
@@ -160,7 +185,15 @@ pub fn project_amendment_reliability(vault: &Vault) -> Result<Vec<EntityId>> {
                 at: judgment.at,
             });
         }
-        reconcile_amended_outcomes_in_txn(vault, wtxn, &verdicts)
+        let skills = reconcile_amended_outcomes_in_txn(vault, wtxn, &verdicts)?;
+        for skill in &skills {
+            if let Some((scope, project, receipt, at)) = newest.get(skill) {
+                super::worsening::observe_floor_crossing_in_txn(
+                    vault, wtxn, skill, scope, *project, receipt, *at,
+                );
+            }
+        }
+        Ok(skills)
     })
 }
 
