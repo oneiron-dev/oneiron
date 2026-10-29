@@ -120,7 +120,21 @@ pub(super) fn put_amendment_row_in_txn(
 /// Storage errors, and [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn amendment_delta(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentDelta>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(match amendment_delta_in_txn(vault, &rtxn, receipt_id)? {
+    captured_amendment_delta_in_txn(vault, &rtxn, receipt_id)
+}
+
+/// [`amendment_delta`] on the caller's snapshot, so a writer reads the Δ
+/// it decides from in its own transaction.
+///
+/// # Errors
+///
+/// As [`amendment_delta`].
+pub(in crate::edit_distance) fn captured_amendment_delta_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    receipt_id: &str,
+) -> Result<Option<AmendmentDelta>> {
+    Ok(match amendment_delta_in_txn(vault, rtxn, receipt_id)? {
         Some(DeltaRow::Captured(delta)) => Some(delta),
         Some(DeltaRow::Uncaptured) | None => None,
     })

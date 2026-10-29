@@ -70,7 +70,7 @@ mod lifecycle_facade;
 mod lifecycle_receipt;
 pub(crate) use lifecycle_receipt::{
     erase_in_txn as erase_lifecycle_receipts_in_txn, erase_lifecycle_actor_in_txn,
-    task_lifecycle_receipts,
+    settled_receipt_in, task_lifecycle_receipts,
 };
 mod linear_store;
 mod mirror_edit;

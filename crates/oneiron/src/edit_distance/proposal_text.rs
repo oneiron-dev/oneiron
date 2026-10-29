@@ -37,7 +37,7 @@
 //! provenance: finalization refuses any history with missing or untrusted receipts.
 
 mod receipts;
-pub(crate) use receipts::cut_receipted_message;
+pub(crate) use receipts::{birth_process, cut_receipted_message};
 
 use std::ops::ControlFlow;
 
@@ -285,52 +285,7 @@ impl ProposalTextArtifact {
     /// validation; it cannot hide itself or any earlier edit. Incomparable
     /// openings have no unique base and fail closed.
     fn window_base(&self) -> Result<Frontiers> {
-        let heads = self.doc.doc.oplog_frontiers().to_vec();
-        let mut opens = Vec::new();
-        self.doc
-            .doc
-            .travel_change_ancestors(&heads, &mut |meta: ChangeMeta| {
-                if matches!(
-                    parse_stamp(meta.message.as_deref()),
-                    Some((StampKind::Open, _))
-                ) {
-                    opens.push(meta);
-                }
-                ControlFlow::Continue(())
-            })
-            .map_err(|_| Error::CorruptedIndex("proposal artifact history"))?;
-        if opens.is_empty() {
-            return Err(Error::CorruptedIndex(
-                "proposal artifact has no open commit",
-            ));
-        }
-        let frontiers: Vec<_> = opens
-            .iter()
-            .map(|meta| change_last_op(meta).map(Frontiers::from_id))
-            .collect::<Result<_>>()?;
-        for candidate in &frontiers {
-            let mut earliest = true;
-            for other in &frontiers {
-                let ordering = self
-                    .doc
-                    .doc
-                    .cmp_frontiers(candidate, other)
-                    .map_err(|_| Error::CorruptedIndex("proposal opening frontier"))?;
-                if !matches!(
-                    ordering,
-                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
-                ) {
-                    earliest = false;
-                    break;
-                }
-            }
-            if earliest {
-                return Ok(candidate.clone());
-            }
-        }
-        Err(Error::CorruptedIndex(
-            "proposal artifact has incomparable opening frontiers",
-        ))
+        Ok(earliest_opening(&self.doc.doc)?.1)
     }
 
     /// Replays every change in the window into `scratch`, one change at a
@@ -469,6 +424,54 @@ fn parse_stamp(message: Option<&str>) -> Option<(StampKind, WriteActor)> {
     Some((
         kind,
         WriteActor::new(entity_ref, actor_class_from_token(class_token)?),
+    ))
+}
+
+/// The causally earliest opening commit of `doc`, and the version right
+/// after it: see [`ProposalTextArtifact::window_base`]. Incomparable openings
+/// have no unique earliest and fail closed.
+fn earliest_opening(doc: &LoroDoc) -> Result<(ChangeMeta, Frontiers)> {
+    let heads = doc.oplog_frontiers().to_vec();
+    let mut opens = Vec::new();
+    doc.travel_change_ancestors(&heads, &mut |meta: ChangeMeta| {
+        if matches!(
+            parse_stamp(meta.message.as_deref()),
+            Some((StampKind::Open, _))
+        ) {
+            opens.push(meta);
+        }
+        ControlFlow::Continue(())
+    })
+    .map_err(|_| Error::CorruptedIndex("proposal artifact history"))?;
+    if opens.is_empty() {
+        return Err(Error::CorruptedIndex(
+            "proposal artifact has no open commit",
+        ));
+    }
+    let frontiers: Vec<_> = opens
+        .iter()
+        .map(|meta| change_last_op(meta).map(Frontiers::from_id))
+        .collect::<Result<_>>()?;
+    for (index, candidate) in frontiers.iter().enumerate() {
+        let mut earliest = true;
+        for other in &frontiers {
+            let ordering = doc
+                .cmp_frontiers(candidate, other)
+                .map_err(|_| Error::CorruptedIndex("proposal opening frontier"))?;
+            if !matches!(
+                ordering,
+                Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+            ) {
+                earliest = false;
+                break;
+            }
+        }
+        if earliest {
+            return Ok((opens.swap_remove(index), candidate.clone()));
+        }
+    }
+    Err(Error::CorruptedIndex(
+        "proposal artifact has incomparable opening frontiers",
     ))
 }
 

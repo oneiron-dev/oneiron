@@ -97,7 +97,9 @@ fn builtin_hub_ref(name: &str, source: &PackSource) -> Result<HubRef> {
     )
 }
 
-fn engine_hub_id() -> Result<EntityId> {
+/// The derived hub every engine-seeded pack comes from; with
+/// [`ENGINE_PUBLISHER`] it names the engine's publisher ACTOR.
+pub(super) fn engine_hub_id() -> Result<EntityId> {
     EntityId::derive(
         crate::entity_id::derived_domains::BUILTIN_CONNECTOR_PACK_HUB,
         &[],
@@ -105,7 +107,7 @@ fn engine_hub_id() -> Result<EntityId> {
 }
 
 /// The publisher an engine-seeded receipt names.
-const ENGINE_PUBLISHER: &str = "oneiron-engine";
+pub(super) const ENGINE_PUBLISHER: &str = "oneiron-engine";
 
 /// A removed engine-seeded built-in goes back to the Candidate it was seeded
 /// as, and qualifies again on its checked setup.
