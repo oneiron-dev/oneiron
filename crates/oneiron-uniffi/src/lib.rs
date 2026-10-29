@@ -61,11 +61,11 @@ pub use dto::{
     HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
     MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts, OpenOptions,
     OutboundDraftInput, OutboundIntentReceipt, Paired, PendingWrite, QueryAffect, QuoteSpan,
-    ReadReceipt, ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
-    RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
-    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralEdgeSpec,
-    StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor, WitnessMessage,
-    WitnessReceipt, WitnessTurn,
+    ReadReceipt, ReadScope, RecallMedia, RecallResidence, RecallResidenceHit,
+    RecallResidenceSource, RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip,
+    RetrievalDegradation, RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty,
+    StructuralEdgeSpec, StructuralPutInput, TemporalHint, TextIndexField, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 #[cfg(feature = "engine")]
 pub use embedded_engine::{
