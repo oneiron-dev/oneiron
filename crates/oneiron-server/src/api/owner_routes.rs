@@ -80,7 +80,7 @@ mod legal_hold_routes;
 pub(super) mod machine_routes;
 mod model_setting_routes;
 mod owner_key_enrollment_routes;
-mod owner_work_routes;
+pub(super) mod owner_work_routes;
 mod pack_preview_routes;
 mod pack_routes;
 mod pad_routes;

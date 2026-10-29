@@ -35,7 +35,7 @@ use oneiron::llm::{
 use zeroize::Zeroizing;
 
 use super::lifecycle::{self, Admitted, Counted};
-use super::park::{device_room, host_room, identity_part, mib};
+use super::park::{SNAPSHOT_MIN_FRONTIER_TOKENS, device_room, host_room, identity_part, mib};
 use super::registry::{self, HostCopy, Phase, Place, Session, send};
 use super::{AuthorityVerdict, CheckpointAuthority, RestoreClaim, TURNS, policy};
 use crate::models::native_exl3::{OpFault, SnapshotRegion, session_import};
@@ -127,7 +127,10 @@ async fn candidate(vault: &Arc<Vault>, key: &SessionKey) -> Option<SnapshotRecor
     let wanted = identity_part(&key.identity, &key.conditioning);
     records
         .into_iter()
-        .filter(|record| matches(record, key, &wanted))
+        .filter(|record| {
+            record.manifest.frontier_tokens >= SNAPSHOT_MIN_FRONTIER_TOKENS
+                && matches(record, key, &wanted)
+        })
         .max_by_key(|record| record.created_ms)
 }
 

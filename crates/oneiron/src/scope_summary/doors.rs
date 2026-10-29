@@ -682,7 +682,8 @@ pub(super) fn land_in_txn(
         .map_err(|_| invalid("reply body encode failed"))?;
         // The reply copies the summary's words, so it depends on everything
         // they came from: erasing any of it invalidates the reply as well.
-        let sources = word_sources(&body).copied().collect::<Vec<_>>();
+        let words = word_sources(&body).copied().collect();
+        let sources = super::word_sources::reply_sources_in(vault, txn, summary, words)?;
         let input = AppendRecord {
             conversation: scope.conversation,
             parent: head,

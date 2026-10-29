@@ -104,11 +104,13 @@ fn loads(kind: WorkerKind, draft: bool) -> Option<(ArtifactClass, ArtifactFormat
         WorkerKind::LlamaCpp => ArtifactFormat::Gguf,
         WorkerKind::Exl3 => ArtifactFormat::Exl3,
         WorkerKind::VoxCpm2 if !draft => ArtifactFormat::VoxCpm2Checkpoint,
+        WorkerKind::Asr if !draft => ArtifactFormat::Safetensors,
         _ => return None,
     };
     let class = match kind {
         _ if draft => ArtifactClass::Drafter,
         WorkerKind::VoxCpm2 => ArtifactClass::Voice,
+        WorkerKind::Asr => ArtifactClass::Asr,
         _ => ArtifactClass::Llm,
     };
     Some((class, format))
@@ -284,9 +286,10 @@ pub(super) async fn bundle(root: &Path) -> Result<(PathBuf, String), LaunchFailu
     .map_err(|error| transient(WorkerFailure::LoadFailed, error.to_string()))?
 }
 
-/// The EXL3 worker's environment: built once per lock and interpreter under
-/// `<root>/envs/`, from `lock` (the embedded lock when `None`), and checked
-/// against its record at every install.
+/// A Python worker's environment: built once per lock and interpreter under
+/// `<root>/envs/`, from `lock`, and checked against its record at every
+/// install. `None` is the embedded EXL3 lock, which only an EXL3 worker
+/// takes; a media worker always passes its row's own.
 pub(super) async fn environment(
     root: &Path,
     python: &Path,
@@ -520,6 +523,53 @@ pub(super) async fn exl3_digests(
             format!("the EXL3 digests: {error}"),
         )
     })
+}
+
+/// A media worker's weights manifest (FIX 8318): the exact JSON whose
+/// SHA-256 is the install record's digest of the verified weights,
+/// written as `<root>/weights/<that digest>.json`. The worker hashes every
+/// file it pins again before it loads, and names that digest as its
+/// `model`.
+pub(super) async fn media_manifest(
+    root: &Path,
+    weights: &InstalledWeights,
+) -> Result<PathBuf, LaunchFailure> {
+    let root = root.to_path_buf();
+    let weights = weights.clone();
+    tokio::task::spawn_blocking(move || {
+        let bytes = serde_json::to_vec(&weights.manifest).map_err(|error| {
+            permanent(
+                WorkerFailure::LoadFailed,
+                format!("the weights manifest: {error}"),
+            )
+        })?;
+        if sha256_hex(&bytes) != weights.record_sha256 {
+            return Err(permanent(
+                WorkerFailure::ModelMismatch,
+                format!(
+                    "model {}: its manifest does not hash to its install record's digest",
+                    weights.manifest.id
+                ),
+            ));
+        }
+        let dir = root.join("weights");
+        let path = dir.join(format!("{}.json", weights.record_sha256));
+        let written = std::fs::create_dir_all(&dir).and_then(|()| {
+            if std::fs::read(&path).ok().as_deref() == Some(bytes.as_slice()) {
+                Ok(())
+            } else {
+                std::fs::write(&path, &bytes)
+            }
+        });
+        written.map(|()| path).map_err(|error| {
+            transient(
+                WorkerFailure::LoadFailed,
+                format!("writing the weights manifest: {error}"),
+            )
+        })
+    })
+    .await
+    .map_err(|error| transient(WorkerFailure::LoadFailed, error.to_string()))?
 }
 
 /// `weights_manifest.py`'s canonical manifest of the target's top-level

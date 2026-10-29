@@ -234,6 +234,15 @@ impl CallLabelMap {
             })
     }
 
+    /// Every row this call labelled, its questions aside: each id its
+    /// rendered input names (FIX 6998).
+    pub(super) fn rows(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.ids
+            .iter()
+            .filter(|(kind, _)| **kind != LabelKind::Question)
+            .flat_map(|(_, ids)| ids.iter().copied())
+    }
+
     /// The id `label` names in this call, when it names one.
     pub(super) fn resolve(&self, label: CallLabel) -> Option<EntityId> {
         self.ids

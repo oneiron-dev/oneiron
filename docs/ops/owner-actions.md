@@ -1037,9 +1037,10 @@ relationships, and the strongest claims, each with its sources. `GET
 /v1/owner/persona?subject=<person id>` compiles it and returns its rows and a `stamp`. Claims
 about other people start struck. `POST /v1/owner/persona/export` with `{"subject": "…",
 "stamp": "…", "strike": ["<row id>"], "unstrike": ["<row id>"]}` returns the card as
-MemoryPack-lite JSON and markdown and records the export. If the card changed after your
-preview, the export is refused (409) and you preview again. A handed copy is a copy: to stop
-sharing, do not issue another.
+MemoryPack-lite JSON and markdown and records the export. Add `"travel": {"refs": "omit"}` for a
+copy without its vault refs; without `travel` the copy keeps them, as `vault.persona.export`
+does. If the card changed after your preview, the export is refused (409) and you preview again.
+A handed copy is a copy: to stop sharing, do not issue another.
 
 ## Off-record sessions
 
@@ -1802,6 +1803,16 @@ oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt -
 With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
 with any other unlock, it refuses `--piece` and `--vault-id`.
 
+### Publish the sealed bundle to a home
+
+`POST /v1/owner/bundles/publications` with `{"home": "<install id>"}` asks that the vault's
+sealed bundle be published to that linked install, which keeps it. Any install you are signed in
+on records the ask; it carries ids only. The answer is the request's receipt: "recorded, awaiting
+a holder" until the publishing install's result arrives, then enacted or refused. Read it again
+at `GET /v1/owner/owner-work/{request}`. When no install can publish, nothing is recorded and the
+receipt says why. A home that may keep no sealed copy (a phone, or one whose profile is unknown)
+is named beside the receipt; that note decides nothing.
+
 ### Restore a sealed cloud bundle with the world kit
 
 On an install that holds no copy of the vault yet, the world kit alone restores it from its sealed
@@ -2116,6 +2127,10 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
 - `POST /v1/owner/legal-holds` with `{"targets": [...], "matter_ref": "..."}` places a hold, and
   `GET /v1/owner/legal-holds` lists the holds you may see.
 - `POST /v1/owner/legal-holds/widen` with `{"hold_id": "<hex>", "targets": [...]}`.
+- A hold on a claim's gate-decision partition that an erase took, or whose key is retired, is
+  refused with 409 and the state `hold_target_erased` or `hold_target_key_retired`, on these
+  routes, a courtesy delete's hold answer and the SDK verbs (`INVALID_STATE`). Nothing is held;
+  hold the records that remain instead.
 - `GET /v1/owner/legal-holds/log` reads the log, oldest first.
 - `GET /v1/owner/legal-holds/lift-and-erase` returns the confirm's title and prompt, to show
   before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
@@ -2175,7 +2190,9 @@ rung, so one model at two clouds is two spaces. Where the space's model runs is 
 locality. A space whose `@where` names no provider serving its rung embeds nothing.
 
 - `GET /v1/owner/embedding-spaces` lists the declared spaces, the text index, which space each
-  slot reads, every move with its last check, and how many probes each kind holds.
+  slot reads, every move with its last check, how many probes each kind holds, each space's
+  refused documents (`refused`) and each embedder binding a move stages (`binding_moves`). Every
+  space change answers the same list.
 - `PUT /v1/owner/embedding-spaces` with `{"id", "dimensions", "accepts", "query_towers"}` (and
   optional `"evidence": {"floor", "strong"}`) declares a space. `POST .../bind` with
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
@@ -2261,7 +2278,8 @@ oneiron api raw POST /v1/owner/embedding-spaces/move/check --data '{"candidate":
 The SDK verbs `vault.embedding_spaces.list`, `.declare`, `.bind`, `.one_space`, `.retire`,
 `.move`, `.move_check`, `.move_approve`, `.move_undo`, `.move_abandon`, `.probes.list`,
 `.probes.put` and `.probes.delete` do the same under the owner's credential, with the same
-bodies and answers. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
+bodies and answers; only the route answers `running` for a check still going, and only the
+route reads and clears refused documents. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
 SDK client waits up to 30 minutes for a check, as for an export.
 
 ## Choose who holds a portable secret

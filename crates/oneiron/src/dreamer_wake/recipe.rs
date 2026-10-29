@@ -1,7 +1,7 @@
 //! Host-interpreted workflow skill at the Dreamer wake boundary.
 //! Skill bytes supply behavior, never actor identity, read rights or gate authority.
 
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, ReadSetProducer};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -307,6 +307,16 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             .lease_owner
             .as_deref()
             .ok_or_else(invalid)?;
+        // The draft reads the recipe's SKILL and its one evidence row: both
+        // producers are declared before either reads (FIX 7019, 7073).
+        crate::dreamer_consolidation::declare_attempt_reads(
+            vault,
+            attempt.status.attempt.id,
+            &[
+                ReadSetProducer::SKILL_PACK,
+                ReadSetProducer::DREAMER_RECIPE_EVIDENCE,
+            ],
+        );
         let loaded = vault.load_attempt_skill_pack(
             attempt.status.attempt.id,
             &pin.skill,
@@ -337,6 +347,12 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             let txn = vault.store.env.read_txn()?;
             read_evidence(vault, &txn, actor, pin.evidence)?
         };
+        crate::dreamer_consolidation::record_attempt_reads(
+            vault,
+            attempt.status.attempt.id,
+            ReadSetProducer::DREAMER_RECIPE_EVIDENCE,
+            Some(vec![pin.evidence]),
+        );
         if evidence.project.is_none() {
             // Today's placement stands: the output is born in the default
             // project, as before projects were inherited.

@@ -976,7 +976,7 @@ export_facade! {
     let output = client.vault_inbox_lens(&input)?;
     crate::codec::lift_record("vault.inbox.lens", &output)
 };
-"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> Vec<InboxGroup> = |client| {
+"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> InboxGroupPage = |client| {
     let input: oneiron::agent_inbox_lens::InboxRunGroupsRequest = crate::codec::lower_record("vault.inbox.groups", input)?;
     let output = client.vault_inbox_groups(&input)?;
     crate::codec::lift_record("vault.inbox.groups", &output)

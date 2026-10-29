@@ -31,6 +31,53 @@ impl std::fmt::Display for RoomLiveSpeakersHold {
     }
 }
 
+/// The remedy both error projections give [`ErasedHoldTarget`].
+pub const HOLD_TARGET_ERASED_SUGGESTION: &str = "This claim's gate-decision partition was erased or its key retired, so no hold keeps it; hold the records that remain instead.";
+
+/// Why a hold may not take a claim's gate-decision partition (FIX 2923): an
+/// erase committed there, or its key is already retired. A hold cannot bring
+/// back what an erase decided; every other target still takes one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErasedHoldTarget {
+    /// An erase of the claim committed, and its key is not destroyed yet.
+    Erased,
+    /// The partition's key is already retired.
+    KeyRetired,
+}
+
+impl ErasedHoldTarget {
+    /// The stable wire state a surface names it by.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Erased => "hold_target_erased",
+            Self::KeyRetired => "hold_target_key_retired",
+        }
+    }
+}
+
+impl crate::memory::MemoryError {
+    /// [`RecordError::HoldTargetErased`] as the facade answers it (FIX
+    /// 2923): the held partition's own state, never the request's shape.
+    pub(crate) fn hold_target_erased(message: String) -> Self {
+        Self::new(
+            crate::memory::MEMORY_CODE_INVALID_STATE,
+            message,
+            &[HOLD_TARGET_ERASED_SUGGESTION],
+        )
+    }
+}
+
+impl std::fmt::Display for ErasedHoldTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Erased => "gate decision partition was erased",
+            Self::KeyRetired => "gate decision partition key already retired",
+        })
+    }
+}
+
 /// A 32-byte revision as a surface shows it: 64 lower-case hex.
 fn revision_hex(revision: &[u8; 32]) -> String {
     revision.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -391,6 +438,10 @@ pub enum RecordError {
         #[source]
         source: Box<super::Error>,
     },
+    /// A hold named a claim's gate-decision partition an erase took
+    /// (FIX 2923): the record's state, never the request's shape.
+    #[error("{0}")]
+    HoldTargetErased(ErasedHoldTarget),
     #[error("MESSAGE stream already active: {}", message.to_hex())]
     StreamAlreadyActive { message: EntityId },
     #[error("MESSAGE stream handle is not active: {}", message.to_hex())]
@@ -480,6 +531,7 @@ impl RecordError {
             Self::AuthorityHistoryRequired { .. } => ErrorKind::AuthorityHistoryRequired,
             Self::AuthorityClockCorrupt => ErrorKind::AuthorityClockCorrupt,
             Self::SealStandingUnverifiable { .. } => ErrorKind::SealStandingUnverifiable,
+            Self::HoldTargetErased(_) => ErrorKind::HoldTargetErased,
         }
     }
 }

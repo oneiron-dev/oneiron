@@ -8,22 +8,25 @@ use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 use crate::task_verb::HostBinding;
 use crate::{EntityId, ModelId, Vault};
 
-use super::host::RecordingJsHost;
-use super::{JsCodeModeHost, JsCodeModeRuntime};
+use super::host::{CallableChecks, RecordingJsHost};
+use super::{JsCodeModeHost, JsCodeModeRuntime, TypeFeedback};
 
 /// Executes the host projection of `self.skills.call`. The caller has already
 /// admitted its credential and verb hooks; nested calls keep their normal
 /// hooks and this dispatcher's credential door. The sealed binding supplies
-/// the lease and run identity, never request text.
+/// the lease and run identity, never request text. Each callable it runs is
+/// type-checked on `type_feedback`, the host's service, its feedback kept
+/// beside the run and never in the answer (FIX 10389).
 pub fn execute_live_skill_call(
     vault: &Vault,
     binding: &HostBinding,
     dispatcher: &GatedActorWrite<'_>,
     executor: &ModelId,
     input: crate::code_run::SkillCallInput,
-    runtime: &mut dyn JsCodeModeRuntime,
+    (runtime, type_feedback): (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
 ) -> MemoryResult<serde_json::Value> {
-    execute_live_skill_call_listing(vault, binding, dispatcher, executor, input, runtime).0
+    let lent = (runtime, type_feedback);
+    execute_live_skill_call_listing(vault, binding, dispatcher, executor, input, lent).0
 }
 
 /// [`execute_live_skill_call`], beside the rows its answer stands on
@@ -39,12 +42,10 @@ pub fn execute_live_skill_call_listing(
     dispatcher: &GatedActorWrite<'_>,
     executor: &ModelId,
     input: crate::code_run::SkillCallInput,
-    runtime: &mut dyn JsCodeModeRuntime,
+    lent: (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
 ) -> (MemoryResult<serde_json::Value>, Option<Vec<EntityId>>) {
     let mut rows = Some(Vec::new());
-    let answer = live_skill_call(
-        vault, binding, dispatcher, executor, input, runtime, &mut rows,
-    );
+    let answer = live_skill_call(vault, binding, dispatcher, executor, input, lent, &mut rows);
     (answer, rows)
 }
 
@@ -54,7 +55,7 @@ fn live_skill_call(
     dispatcher: &GatedActorWrite<'_>,
     executor: &ModelId,
     input: crate::code_run::SkillCallInput,
-    runtime: &mut dyn JsCodeModeRuntime,
+    (runtime, type_feedback): (&mut dyn JsCodeModeRuntime, Option<&TypeFeedback>),
     rows: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<serde_json::Value> {
     let leased = binding.leased_record(vault)?;
@@ -78,7 +79,13 @@ fn live_skill_call(
         .with_recoverable_outputs(&storage, &record, Vec::new())
         .map_err(engine_error)?
         .with_skill_executor(executor)
-        .with_admitted_skill_call(seq);
+        .with_admitted_skill_call(seq)
+        // A call between turns is checked as a call of the step the run
+        // is at, under its own bridge position (FIX 10389).
+        .with_callable_checks(CallableChecks::new(
+            type_feedback,
+            record.step_checkpoints.len() as u64,
+        ));
     let answer = host.dispatch_self_nested_cancellable(
         SelfCall::SkillsCall(SelfSkillCall {
             skill,

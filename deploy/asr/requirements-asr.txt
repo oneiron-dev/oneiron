@@ -1,0 +1,23 @@
+# The direct requirements of a managed local ASR worker's environment (FIX
+# 8318). The supervisor never installs from this file: a managed row names
+# its hash-locked lock (`env_lock`), compiled from these pins with every
+# transitive dependency pinned by version and SHA-256, and builds the
+# environment with `pip install --require-hashes --no-deps -r <lock>`.
+#
+# Compile the lock for the worker's host (CPython 3.12 on x86_64 Linux,
+# CUDA 12.8 PyTorch), with no build and no GPU:
+#
+#   uv pip compile deploy/asr/requirements-asr.txt \
+#     --python-platform x86_64-manylinux_2_35 --python-version 3.12 \
+#     --generate-hashes --no-build \
+#     --index-url https://pypi.org/simple \
+#     --extra-index-url https://download.pytorch.org/whl/cu128 \
+#     --index-strategy unsafe-best-match --emit-index-url --no-header \
+#     -o whisper-py312.lock
+# The CUDA build the host's driver takes, from the PyTorch cu128 index.
+torch
+# Whisper's long-form decoding of a whole clip.
+transformers>=4.37
+safetensors
+numpy
+scipy

@@ -4,12 +4,12 @@
 //! The generation's backend is the extraction route's ladder on a run of
 //! the parent's own wake guard: each call it answers is counted, so the
 //! parent charges the child's spend to its attempt once, and once the
-//! parent stops the child no further call is admitted. The session reduces
-//! the child's one-child wait each beat and hands the parent each port call
-//! as it comes.
+//! parent stops the child no further call is admitted. A call admitted
+//! before that settles after it is charged to the attempt's line when it
+//! settles (FIX 9015). The session reduces the child's one-child wait each
+//! beat and hands the parent each port call as it comes.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use oneiron::code_run::{ScopedChildStop, collect_scoped_child, read_scoped_finding};
@@ -23,6 +23,7 @@ use oneiron::{
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use super::generation::GenerationCount;
 use super::unix_millis_now;
 use crate::mcp::McpCodeModeProvider;
 use crate::models::RunBackend;
@@ -35,13 +36,17 @@ const COLLECT_BEAT: Duration = Duration::from_millis(200);
 /// counted, and closed once its parent stopped it.
 pub(super) struct CountedBackend {
     inner: RunBackend,
-    units: Arc<AtomicU64>,
+    count: Arc<GenerationCount>,
     stop: ScopedChildStop,
 }
 
 impl CountedBackend {
-    pub(super) fn new(inner: RunBackend, units: Arc<AtomicU64>, stop: ScopedChildStop) -> Self {
-        Self { inner, units, stop }
+    pub(super) fn new(
+        inner: RunBackend,
+        count: Arc<GenerationCount>,
+        stop: ScopedChildStop,
+    ) -> Self {
+        Self { inner, count, stop }
     }
 }
 
@@ -56,16 +61,21 @@ impl LlmBackend for CountedBackend {
         lease: &'a BudgetLease,
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
-            if self.stop.code().is_some() {
+            if self.stop.code().is_some() || !self.count.admit() {
                 return Err(LlmError::BudgetDenied(BudgetDenied::AdmissionDenied));
             }
-            let response = self.inner.generate(request, lease).await?;
-            let usage = &response.usage;
-            self.units.fetch_add(
-                usage.input.total.saturating_add(usage.output.total),
-                Ordering::Relaxed,
-            );
-            Ok(response)
+            // An admitted call runs to its end, a stop meanwhile included,
+            // and settles once on the count (FIX 9015).
+            let generated = self.inner.generate(request, lease).await;
+            let units = generated.as_ref().map_or(0, |response| {
+                response
+                    .usage
+                    .input
+                    .total
+                    .saturating_add(response.usage.output.total)
+            });
+            self.count.settle(units);
+            generated
         })
     }
 
@@ -85,7 +95,7 @@ pub(super) struct ThingSession {
     run: EntityId,
     calls: UnboundedReceiver<ThingPortCall>,
     stop: ScopedChildStop,
-    units: Arc<AtomicU64>,
+    count: Arc<GenerationCount>,
 }
 
 impl ThingSession {
@@ -96,7 +106,7 @@ impl ThingSession {
         parent_run: EntityId,
         calls: UnboundedReceiver<ThingPortCall>,
         stop: ScopedChildStop,
-        units: Arc<AtomicU64>,
+        count: Arc<GenerationCount>,
     ) -> Self {
         Self {
             vault,
@@ -106,7 +116,7 @@ impl ThingSession {
             run: task,
             calls,
             stop,
-            units,
+            count,
         }
     }
 
@@ -160,7 +170,7 @@ impl ThingChildSession for ThingSession {
         self.stop.stop(code);
     }
 
-    fn generation_units(&self) -> u64 {
-        self.units.load(Ordering::Relaxed)
+    fn close_generation(&self) -> u64 {
+        self.count.close()
     }
 }

@@ -67,6 +67,12 @@ const PARK_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// rows and holds parks its candidates at once, idle or not. A Call.
 const PARK_PRESSURE_HEADROOMS: u64 = 2;
 
+/// The shortest checkpoint worth a snapshot, in frontier tokens: a
+/// checkpoint shorter than this restores slower than it recomputes, so it
+/// is neither parked nor restored; measured on one 4090 and one model
+/// (V2-R3 screen). A Call.
+pub(super) const SNAPSHOT_MIN_FRONTIER_TOKENS: u64 = 1700;
+
 const MIB: u64 = 1024 * 1024;
 
 /// Whether the sweep runs.
@@ -247,6 +253,9 @@ async fn attempt(candidate: &Candidate) -> Result<(), Option<Skip>> {
     }
     if kept_local(&vault, &scope.dependencies.worlds).await? {
         return Err(Some(Skip::KeptLocal));
+    }
+    if candidate.checkpoint.frontier_tokens < SNAPSHOT_MIN_FRONTIER_TOKENS {
+        return Err(Some(Skip::Short));
     }
     // The size the worker measured, when it did: the export's region is
     // checked again once its length is known.

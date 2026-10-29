@@ -288,6 +288,21 @@ impl Memory<'_> {
         &self,
         input: &MessagePersonRequest,
     ) -> MemoryResult<MessagePersonReceipt> {
+        self.message_person_linked(input, |_| Ok(()), |_, _| Ok(()))
+    }
+
+    /// [`Self::message_person`], under every rule of that door, for a caller
+    /// that commits its own record in the message's write (FIX 8533):
+    /// `check` runs there before the message lands, `record` after it, given
+    /// the room and the TURN and MESSAGE ids the message actually stored.
+    /// Either refusing rolls the message back, so neither commits without
+    /// the other.
+    pub(crate) fn message_person_linked(
+        &self,
+        input: &MessagePersonRequest,
+        check: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        record: impl FnOnce(&mut heed::RwTxn<'_>, &MessagePersonReceipt) -> MemoryResult<()>,
+    ) -> MemoryResult<MessagePersonReceipt> {
         let text = input.text.trim();
         if text.is_empty() {
             return Err(MemoryError::bad_request("message text is empty"));
@@ -343,7 +358,7 @@ impl Memory<'_> {
             WitnessAuthor::User
         };
         let refused_in_write = std::cell::Cell::new(None);
-        let landed = self.witness_with_room_birth(
+        let landed = self.witness_linked_with_room_birth(
             &WitnessTurn {
                 conversation_ref: room.to_hex(),
                 turn_ref: None,
@@ -362,6 +377,7 @@ impl Memory<'_> {
                 assertions: Default::default(),
             },
             |wtxn| {
+                check(wtxn)?;
                 if let Some(mention) = input.mention.as_ref()
                     && let Some(name) =
                         crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
@@ -417,6 +433,15 @@ impl Memory<'_> {
                         Ok(())
                     }
                 }
+            },
+            |wtxn, receipt| {
+                record(
+                    wtxn,
+                    &MessagePersonReceipt {
+                        room: room.to_hex(),
+                        receipt: receipt.clone(),
+                    },
+                )
             },
         );
         // A refusal the write found is answered once the write has unwound.

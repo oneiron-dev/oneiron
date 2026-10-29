@@ -403,13 +403,16 @@ fn mcp_task_in_world(
 /// scope omission: rows proven inside the credential's world and facet that
 /// another of its bounds withholds. A row in a world or facet the credential
 /// cannot read, or one that cannot prove where it sits, adds to no count
-/// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`.
+/// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`. The
+/// bare rows of `bare_children`, a narrowed board's children it already
+/// judged by their TASK or their dispatch scope (FIX 1052), pass as they are.
 pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
     rows: oneiron::context_board::TasksSectionRows,
     pins: &[oneiron::context_board::HookPin],
     served: &mut Vec<oneiron::EntityId>,
+    bare_children: &std::collections::BTreeSet<String>,
 ) -> Result<(oneiron::context_board::TasksSection, usize), McpGatewayError> {
     let scoped_read = mcp_scoped_read(&server.vault, actor)?;
     let mut omitted = 0_usize;
@@ -430,11 +433,18 @@ pub(super) fn mcp_scoped_tasks_section(
         }
     }
     let mut bare_jobs = Vec::with_capacity(rows.bare_jobs.len());
+    let mut children_served = Vec::new();
     for job in rows.bare_jobs {
-        if admits(&job.id)? {
+        // A narrowed board's child row names its attempt, which no entity
+        // read proves: its board already judged it by its evidence.
+        if bare_children.contains(&job.id) {
+            children_served.extend(oneiron::EntityId::from_hex(&job.id).ok());
+            bare_jobs.push(job);
+        } else if admits(&job.id)? {
             bare_jobs.push(job);
         }
     }
+    served.extend(children_served);
     let rows = oneiron::context_board::TasksSectionRows {
         intents,
         bare_jobs,

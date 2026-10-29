@@ -87,6 +87,7 @@ fn event_receipt(
             outcome,
             scope,
             amended_body,
+            ..
         } => IdentityEventAction::ProposalResolution {
             proposal,
             outcome: outcome.into(),

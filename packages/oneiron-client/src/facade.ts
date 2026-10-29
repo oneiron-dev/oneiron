@@ -1367,7 +1367,7 @@ export interface FacadeResults {
   "vault.weave.owner.digest.render": Facade.WeaveDigestRendered | null;
   "vault.inbox.concerns.review": Facade.DreamerAttemptRef;
   "vault.inbox.lens": Facade.InboxLensPage;
-  "vault.inbox.groups": Facade.InboxGroup[];
+  "vault.inbox.groups": Facade.InboxGroupPage;
   "vault.weave.digest.render": Facade.WeaveDigestRendered | null;
   "vault.weave.link.corrections": Facade.WeaveLinkCorrectionView[];
   "self.inbox.lens": Facade.InboxLensPage;
@@ -2548,7 +2548,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.weave.owner.digest.render": { description: "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.inbox.concerns.review": { description: "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.inbox.lens": { description: "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.inbox.groups": { description: "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.inbox.groups": { description: "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.digest.render": { description: "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.weave.link.corrections": { description: "Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "self.inbox.lens": { description: "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -2739,7 +2739,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.off_record.recall": { description: "The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.off_record.notes.create": { description: "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.claims.upsert": { description: "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "self.off_record.execute": { description: "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "self.off_record.execute": { description: "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.status": { description: "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.start": { description: "A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.off_record.rooms.witness": { description: "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2823,7 +2823,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.courtesy_delete.sent": { description: "Every courtesy delete ask this vault sent, with its delivery status, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.incoming": { description: "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.answer": { description: "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.embedding_spaces.list": { description: "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.list": { description: "Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.declare": { description: "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.bind": { description: "Binds one kind slot to a declared space, or returns it to its default when no space is named.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.one_space": { description: "Binds every kind slot the space accepts, text included, to that one space.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2968,9 +2968,9 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.proposal_settle": { description: "Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.proposal_settlement": { description: "Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.oplog": { description: "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "execute_code": { description: "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "execute_code": { description: "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.model_heal_count": { description: "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.code.type_diagnostics": { description: "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.code.type_diagnostics": { description: "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.resolve": { description: "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.receipt": { description: "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.results.status": { description: "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -4102,7 +4102,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
         /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
         lens: (input: Facade.InboxLensRequest, options?: O): FacadeReturns<"vault.inbox.lens">[K] => invoke("vault.inbox.lens", input, options, newInvocation()),
-        /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
+        /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
         groups: (input: Facade.InboxRunGroupsRequest, options?: O): FacadeReturns<"vault.inbox.groups">[K] => invoke("vault.inbox.groups", input, options, newInvocation()),
       },
       skills: {
@@ -4828,7 +4828,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         answer: (input: Facade.CourtesyDeleteAnswerRequest, options?: O): FacadeReturns<"vault.courtesy_delete.answer">[K] => invoke("vault.courtesy_delete.answer", input, options, newInvocation()),
       },
       embedding_spaces: {
-        /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+        /** Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move. */
         list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.list">[K] => invoke("vault.embedding_spaces.list", input, options, newInvocation()),
         /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
         declare: (input: Facade.EmbeddingSpaceDeclareRequest, options?: O): FacadeReturns<"vault.embedding_spaces.declare">[K] => invoke("vault.embedding_spaces.declare", input, options, newInvocation()),
@@ -5232,7 +5232,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         oplog: (input: Facade.CodeRepoRequest, options?: O): FacadeReturns<"vault.code.oplog">[K] => invoke("vault.code.oplog", input, options, newInvocation()),
         /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
         model_heal_count: (input: Facade.CodeRunModelHealCountRequest, options?: O): FacadeReturns<"vault.code.model_heal_count">[K] => invoke("vault.code.model_heal_count", input, options, newInvocation()),
-        /** Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again. */
+        /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
         type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest, options?: O): FacadeReturns<"vault.code.type_diagnostics">[K] => invoke("vault.code.type_diagnostics", input, options, newInvocation()),
         waits: {
           /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
@@ -6255,7 +6255,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         evaluate: (input: Facade.SavedQueryEvaluateRequest, options?: O): FacadeReturns<"self.saved_query.evaluate">[K] => invoke("self.saved_query.evaluate", input, options, newInvocation()),
       },
       off_record: {
-        /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+        /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer. */
         execute: (input: Facade.OffRecordExecuteRequest, options?: O): FacadeReturns<"self.off_record.execute">[K] => invoke("self.off_record.execute", input, options, newInvocation()),
       },
       consent: {
@@ -6511,7 +6511,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       /** Count lines, words and bytes of a visible file at the mounted reference. */
       wc: (input: Facade.GraphFsLinkRequest, options?: O): FacadeReturns<"graph_fs.wc">[K] => invoke("graph_fs.wc", input, options, newInvocation()),
     },
-    /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
+    /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
     execute_code: (input: Facade.ForeignCodeRunRequest, options?: O): FacadeReturns<"execute_code">[K] => invoke("execute_code", input, options, newInvocation()),
     /** Read-only preflight of an ask: its recipients, faces and channels, without minting a TASK or scheduling anything. */
     can: (input: Facade.TaskCanAskRequest, options?: O): FacadeReturns<"can">[K] => invoke("can", input, options, newInvocation()),

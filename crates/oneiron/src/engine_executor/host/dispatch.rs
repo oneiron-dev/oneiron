@@ -187,6 +187,9 @@ impl RecordingJsHost<'_, '_> {
         );
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
+        // The callable's type feedback stays beside the run, however the
+        // call ended (FIX 10389).
+        self.keep_callable_check(seq, ran.is_ok());
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(failed("host_bridge_halted".to_owned()));
         }
