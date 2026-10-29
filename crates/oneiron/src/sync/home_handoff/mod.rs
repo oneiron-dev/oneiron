@@ -16,6 +16,12 @@
 //! Rows travel as each table's own typed DTO, never as raw rows, and land
 //! through the table's own typed writes. The carrier knows no domain.
 //!
+//! FIX 8875: a table's rows travel as its content-free facts and each
+//! actor's content apart ([`Partitioned`]). The actor content is sealed under
+//! an erasable key per actor and export ([`actor_content`]), not under the
+//! target's machine key, so an erase of the actor makes the retained and
+//! staged copies unreadable while the facts stay as history.
+//!
 //! The election records its move request and L07-A's six tables register
 //! ([`home_tables`]). C2a's delivery ([`delivery`]) carries the handoff: the
 //! target's engine doors on the residence RPC lane
@@ -32,6 +38,7 @@
     reason = "the carrier's surface is wider than this build's callers"
 )]
 
+mod actor_content;
 mod arrival;
 mod delivery;
 mod drain;
@@ -66,7 +73,9 @@ pub(crate) use registry::{
 pub(crate) use restore::{HomeManaged, keep_move_through, restore_managed_keys};
 pub(crate) use routes::{feed_fallback_route, feed_routes};
 pub(crate) use store::{handoff_status_in_txn, incomplete_in_txn, record_incomplete_in_txn};
-pub(crate) use table::{HomeTable, HomeTableRegistration, ImageRows, TableAdopt};
+pub(crate) use table::{
+    ActorContent, HomeTable, HomeTableRegistration, ImageRows, Partitioned, TableAdopt,
+};
 pub(crate) use transfer::{ack_in_txn, adopt, freeze_export, guard_in_txn, request_move_in_txn};
 
 /// The most sealed bytes one stored or delivered part carries (CALLS:
