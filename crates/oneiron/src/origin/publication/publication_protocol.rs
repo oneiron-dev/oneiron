@@ -226,6 +226,9 @@ impl Vault {
         // batched publish) is its own GitWire row: finish it here too.
         git.recover_ref_effects(repo, learned_at)?;
         self.sweep_orphan_origin_publication_owners(git, repo_id, repo, learned_at)?;
+        // Exact publish requests keep their own pins; a pin whose request
+        // is settled or was never recorded goes here.
+        self.sweep_orphan_publish_pins(git, repo_id, repo, learned_at);
         Ok(OriginCensusReport { items })
     }
 

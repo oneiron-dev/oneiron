@@ -72,7 +72,7 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
 use crate::origin::smart_http::origin_repo_dir;
 
 /// The branch namespace a request may name.
@@ -200,6 +200,10 @@ impl Vault {
             )));
         }
         let built = self.build_publish_review(&scope.wire, &handle, &commit, base.as_ref())?;
+        // The coordinator spans the pin and the row, as a publication's
+        // does: the census drops a request pin with no row only under it, so
+        // never the pin of a request still being recorded (FIX 7009).
+        let _coordinator = lock_repository(handle.common_dir())?;
         self.pin_publish_commit(&scope, &handle, request_id, &commit)?;
         let now = self.now_recorded_at();
         let mut txn = self.store.env.write_txn()?;
