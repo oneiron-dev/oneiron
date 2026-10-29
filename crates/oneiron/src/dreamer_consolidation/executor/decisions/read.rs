@@ -197,6 +197,11 @@ impl Decider<'_> {
                 }
                 None => None,
             };
+            // The receipt names the role the ask went to and who answered it,
+            // actor-free (FIX 2225); the kept ask beside it stays as it was.
+            if let Some(ask) = &ask {
+                decision.receipt.bind_ask(ask);
+            }
             kept.push(KeptDecision {
                 decision,
                 ask: ask.as_ref().map(KeptAsk::of),

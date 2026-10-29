@@ -228,14 +228,29 @@ impl AiHandle {
         &self.runtime
     }
 
-    /// Tells the Dreamer's session policy what the app saw. A no-op without
-    /// a running Dreamer: no session is opened that nothing would close.
-    pub fn session_hint(&self, key: oneiron::session_lifecycle::SessionKey, hint: SessionHint) {
+    /// Tells the Dreamer's session policy what the app saw, in arrival order
+    /// (FIX 8602): under real memory pressure the call waits its turn, off
+    /// the runtime's workers, until the fact is kept, the Dreamer is gone, or
+    /// `deadline` passes — the caller's own, never one started here. A no-op
+    /// without a running Dreamer: no session is opened that nothing would
+    /// close.
+    pub fn session_hint(
+        &self,
+        key: oneiron::session_lifecycle::SessionKey,
+        hint: SessionHint,
+        deadline: Option<std::time::Instant>,
+    ) {
         let Some(hints) = &self.hints else {
             return;
         };
-        if let Err(error) = hints.push_session_hint(key, hint, None) {
-            tracing::warn!(?error, ?hint, "dreamer session hint dropped");
+        let kept = match hints.push_session_hint(key, hint, None) {
+            Err(oneiron_driver::TickPushError::MemoryPressure) => crate::server::blocking(|| {
+                hints.push_session_hint_waiting(key, hint, None, deadline)
+            }),
+            kept => kept,
+        };
+        if let Err(error) = kept {
+            tracing::warn!(?error, ?hint, "dreamer session hint not kept");
         }
     }
 

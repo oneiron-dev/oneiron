@@ -29,6 +29,7 @@
 //!   pass, which defers consuming the next already-signalled tick rather
 //!   than generating wakeups of its own.
 
+mod arbiter;
 mod attachment;
 mod budget_ids;
 mod config;
@@ -38,9 +39,12 @@ mod inference_device;
 mod inference_worker;
 mod pass;
 mod program_factory;
+mod retry;
 #[path = "loop.rs"]
 mod run;
 mod shutdown;
+mod supervised_pass;
+mod wave_lane;
 
 pub use self::attachment::{
     AttachedPassFuture, LinkedShutdown, PassAttachment, PassAttachmentSource, WakePassFuture,

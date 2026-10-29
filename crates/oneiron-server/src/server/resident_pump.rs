@@ -42,7 +42,6 @@ pub(crate) use self::execution::seated_planner;
 use self::settlement::settle;
 
 use std::collections::{BTreeMap, HashSet};
-use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -121,12 +120,10 @@ const WAKES_PER_PASS: usize = 16;
 /// enters again, and how many such waits in a row it takes before it ends.
 const WINDOW_FULL_WAIT: Duration = Duration::from_secs(2);
 const WINDOW_FULL_TRIES: u32 = 30;
-/// How many tries in a row a run gets whose model call failed for a reason
-/// that passes (a rate limit, a spent window): the failure ladder's default
-/// bound. Each retry is a fresh attempt, so a fresh run. An outage parks the
-/// run instead (FIX 3194).
-const RUN_MAX_TRIES: NonZeroU16 = NonZeroU16::new(3).expect("three is nonzero");
-/// How long such a retry waits per try when its provider named no reset.
+/// How long a run whose model call failed for a reason that passes (a rate
+/// limit, a spent window) waits per retry when its provider named no reset.
+/// Each retry is a fresh attempt, so a fresh run. An outage parks the run
+/// instead (FIX 3194).
 const RUN_RETRY_BACKOFF_SECS: u64 = 30;
 /// The codes a continuation's fork refuses with at lease time (FIX 3694),
 /// each the stable reason its successor fails under.

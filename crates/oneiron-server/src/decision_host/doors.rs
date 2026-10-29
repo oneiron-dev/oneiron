@@ -47,9 +47,8 @@ impl DecisionHost {
         posture: HostingPrivacyPosture,
     ) -> DecisionLadder<'l> {
         // The rule `DecisionLadder::under_posture` keeps: text leaves only
-        // under MANAGED posture or an explicit opt-in, and never under RELAY.
-        let leaves = (posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
-            && posture != HostingPrivacyPosture::Relay;
+        // under MANAGED posture or the owner's explicit opt-in.
+        let leaves = oneiron::llm::decision::unit_text_may_leave_host(posture, self.remote_opt_in);
         let held = self.ladder.big.as_deref();
         let ours = |big: &dyn DecisionProvider| held.is_some_and(|own| std::ptr::addr_eq(own, big));
         if !leaves

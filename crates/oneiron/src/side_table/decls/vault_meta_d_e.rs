@@ -85,6 +85,10 @@ side_tables! {
     DREAMER_BUDGET_RESERVATION: VaultMeta b"dreamer:budget_reservation:" Raw;
     /// Paid-step receipt keyed by attempt id16 + step hash32. Value: one-byte marker.
     DREAMER_BUDGET_STEP_CHARGE: VaultMeta b"dreamer:budget_step_charge:" Raw;
+    /// FIX 2425: one candidate a Dreamer attempt decided a correction for, kept before the
+    /// branch builds, filters or selects it: its subject, the claim it corrects and its kept
+    /// decisions, never its value. Key: id16 (attempt) + u64be(position).
+    DREAMER_CANDIDATE_DECISION: VaultMeta b"dreamer:candidate_decision:v1:" Named;
     /// Operator-set predicate key rules governing which claim keys the consolidator may fold;
     /// defaults from key_defaults.json when absent. Key: ().
     /// Resident-owned v1 failure rules, stored as the validated JSON payload with its author.

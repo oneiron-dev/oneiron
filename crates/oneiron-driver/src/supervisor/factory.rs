@@ -13,6 +13,7 @@ use oneiron::dreamer_runner::maintenance::{
 };
 use oneiron::dreamer_wake::{ClaimAuthoringSelection, WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
+use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::skill_optimize::{HeldOutReplayNotes, SkillOptimizeAuthor};
 use oneiron::{
@@ -20,7 +21,7 @@ use oneiron::{
     ConsolidationExecutor, ConsolidationSink, DreamerAttemptExecutor,
     DreamerClaimAuthoringStrategy, LlmBackend, ModelId, Result, WriteActor,
 };
-use oneiron::{Vault, WavePlanner};
+use oneiron::{EntityId, Vault, WavePlanner};
 use oneiron_llm_local::{LocalLlmBackend, LocalLlmRuntime};
 
 use super::attachment::{LinkedShutdown, PassAttachment, PassAttachmentSource};
@@ -83,6 +84,20 @@ pub trait PassExecutorFactory {
     /// hardcoded plan or default external effect is supplied by the driver.
     fn wave_planner(&self) -> Option<Arc<dyn WavePlanner + Send + Sync>> {
         None
+    }
+
+    /// The host's fan-out decision loan for one wave cut `principal` applies
+    /// (FIX 8599): `rule` runs once, inside this call, with the host's
+    /// ladder, its wording and the clock its ruling runs on, so the vault's
+    /// MANUAL/AUTO launch mode is decided as its owner chose. The default
+    /// lends none: MANUAL holds the cut, and an AUTO ask that no standing
+    /// row answers holds it for the owner too, as before a host staffs a
+    /// ladder.
+    fn wave_fanout_decisions<R, G>(&self, _principal: EntityId, rule: G) -> R
+    where
+        G: FnOnce(Option<&FanoutDecisions<'_>>) -> R,
+    {
+        rule(None)
     }
 
     /// The existing host TASK dispatch path receives only the live ready set.

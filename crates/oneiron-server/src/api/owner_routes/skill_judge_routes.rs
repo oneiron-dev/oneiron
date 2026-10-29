@@ -22,9 +22,9 @@ use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::skill_optimize::{
-    GoalAxisReport, JudgeIncumbent, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
-    PreferredResponse, ProjectGoalRevisionProposal, ResponsePairPick, SkillTradeoffAsk,
-    SkillTradeoffPreferences, TradeoffChoice, judge_incumbent, judge_swap_policy,
+    GoalAxisReport, HeldOutReplayNotes, JudgeIncumbent, JudgeSwapPick, JudgeSwapPolicy,
+    JudgeSwapReceipt, PreferredResponse, ProjectGoalRevisionProposal, ResponsePairPick,
+    SkillTradeoffAsk, SkillTradeoffPreferences, TradeoffChoice, judge_incumbent, judge_swap_policy,
     judge_swap_receipts, measure_skill_edit_goal_axes, pick_judge_swap_case, pick_response_pair,
     project_goal_revision_proposals, response_pair_picks, set_judge_swap_policy,
     set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project, skill_tradeoff_asks_for,
@@ -157,7 +157,9 @@ struct JournalQuery {
 
 #[derive(Debug, Serialize)]
 struct Journal {
-    revision: &'static str,
+    /// The registered judge's `judge_revision()`; `None` when no judge is
+    /// registered, with every stored row still returned.
+    revision: Option<String>,
     decisions: Vec<JournalRow>,
 }
 
@@ -187,7 +189,9 @@ struct Measure {
     pulls_per_axis: Option<u32>,
 }
 
-/// `GET /v1/owner/skills/judge/decisions`: the newest journal rows.
+/// `GET /v1/owner/skills/judge/decisions`: the newest journal rows, with
+/// the registered judge's revision; `None` when no judge is registered,
+/// with every stored row still returned.
 async fn decisions(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -200,7 +204,7 @@ async fn decisions(
         .clamp(1, MAX_JOURNAL_ROWS);
     let journal = blocking(move || -> OwnerResult<Journal> {
         Ok(Journal {
-            revision: replay_judge::JUDGE_REVISION,
+            revision: replay_judge::registered().map(|judge| judge.judge_revision().to_owned()),
             decisions: replay_judge::journal(server.vault(), limit)?,
         })
     })

@@ -4048,7 +4048,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
-                "vault.tasks.cancel_force",
+                "vault.tasks.cancel.force",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::run_doors::CancelForceRequest,
                 >(),
@@ -4647,6 +4647,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.receipts.context",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
+                "vault.receipts.craft_reply_manifest",
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
             ),
             (
@@ -7220,7 +7224,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.task_types.get",
     "vault.agents.spawn.get",
     "vault.agents.spawn",
-    "vault.tasks.cancel_force",
+    "vault.tasks.cancel.force",
     "vault.runs.branches.get",
     "vault.consults.get",
     "vault.workspace.establish",
@@ -7259,6 +7263,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.streams.terminal",
     "ai.reply",
     "vault.receipts.context",
+    "vault.receipts.craft_reply_manifest",
     "ai.voice.asr.open",
     "ai.voice.asr.hypothesis",
     "ai.voice.asr.finalize",
@@ -9103,7 +9108,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.agents.spawn" => {
             crate::code_run::vault_read::request_schema::<crate::team::doors::SpawnIntentReply>()
         }
-        "vault.tasks.cancel_force" => crate::code_run::vault_read::request_schema::<
+        "vault.tasks.cancel.force" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::run_doors::CancelForceReceipt,
         >(),
         "vault.runs.branches.get" => crate::code_run::vault_read::request_schema::<
@@ -9223,6 +9228,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::ContextEmitReceipt>,
+        >(),
+        "vault.receipts.craft_reply_manifest" => crate::code_run::vault_read::request_schema::<
+            Option<Vec<crate::attempt_queue::ManifestEntry>>,
         >(),
         "ai.voice.asr.open" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AsrSession>()
@@ -15028,7 +15036,7 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
-        "vault.tasks.cancel_force" => {
+        "vault.tasks.cancel.force" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -15856,6 +15864,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts.context" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.receipts.craft_reply_manifest" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -20554,7 +20569,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.spawn" => {
             let _input: crate::team::doors::SpawnIntentRequest = decode(value.clone())?;
         }
-        "vault.tasks.cancel_force" => {
+        "vault.tasks.cancel.force" => {
             let _input: crate::task_verb::run_doors::CancelForceRequest = decode(value.clone())?;
         }
         "vault.runs.branches.get" => {
@@ -20905,6 +20920,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
         }
         "vault.receipts.context" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
+        "vault.receipts.craft_reply_manifest" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
         }
         "ai.voice.asr.open" => {
@@ -23590,7 +23608,7 @@ pub fn invoke(
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
         "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
         "vault.agents.spawn" => encode(vault_agents_spawn(memory, decode(value)?)?),
-        "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
+        "vault.tasks.cancel.force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
         "vault.runs.branches.get" => encode(vault_runs_branches_get(memory, decode(value)?)?),
         "vault.runs.pause" => encode(vault_runs_pause(memory, decode(value)?)?),
         "vault.runs.resume" => encode(vault_runs_resume(memory, decode(value)?)?),
@@ -23786,6 +23804,9 @@ pub fn invoke(
         "ai.streams.terminal" => encode(ai_streams_terminal(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
+        "vault.receipts.craft_reply_manifest" => {
+            encode(vault_receipts_craft_reply_manifest(memory, decode(value)?)?)
+        }
         "ai.voice.asr.open" => encode(ai_voice_asr_open(memory, decode(value)?)?),
         "ai.voice.asr.hypothesis" => encode(ai_voice_asr_hypothesis(memory, decode(value)?)?),
         "ai.voice.asr.finalize" => encode(ai_voice_asr_finalize(memory, decode(value)?)?),
@@ -30659,7 +30680,7 @@ pub fn vault_tasks_cancel_force(
 ) -> MemoryResult<crate::task_verb::run_doors::CancelForceReceipt> {
     crate::task_verb::run_doors::cancel_force_as(
         memory.vault(),
-        &memory.embedded_owner("vault.tasks.cancel_force")?,
+        &memory.embedded_owner("vault.tasks.cancel.force")?,
         input,
     )
 }
@@ -31548,6 +31569,12 @@ pub fn vault_receipts_context(
     input: crate::receipt::CallReceiptRequest,
 ) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
     memory.context_emit_receipt(&input.receipt_ref)
+}
+pub fn vault_receipts_craft_reply_manifest(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<Vec<crate::attempt_queue::ManifestEntry>>> {
+    memory.craft_reply_manifest(&input.receipt_ref)
 }
 pub fn ai_voice_asr_open(
     memory: &Memory<'_>,
@@ -32948,7 +32975,7 @@ pub fn vault_artifacts_body_fork_open(
         memory,
         "vault.artifacts.body.fork.open",
         &input,
-        &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
+        &["/artifact_ref", "/proposal_ref"],
     )?;
     memory.artifacts_body_fork_open(&input)
 }
@@ -34558,7 +34585,7 @@ pub fn receipt_declared_refs(
                 memory,
                 "vault.artifacts.body.fork.open",
                 &input,
-                &["/artifact_ref", "/run_root_ref", "/proposal_ref"],
+                &["/artifact_ref", "/proposal_ref"],
             )?;
         }
         "vault.artifacts.body.fork.edit" => {

@@ -9,6 +9,7 @@ use crate::dreamer_consolidation::provenance::KeptDecision;
 
 mod cited;
 mod corrections;
+mod decided;
 mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;

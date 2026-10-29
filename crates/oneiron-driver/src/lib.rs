@@ -47,8 +47,8 @@ fn provision_test_engine_machines(vault: &oneiron::Vault) {
 }
 
 pub use session::{
-    DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, DEFAULT_SESSION_IDLE_FLOOR_SECS, SessionHint,
-    SessionHintEffect, SessionLifecycleConfig, SessionLifecycleDriver, SessionTicks,
+    DEFAULT_SESSION_ACTIVITY_ROLLUP_GAP_MS, SessionHint, SessionHintEffect, SessionLifecycleConfig,
+    SessionLifecycleDriver, SessionTicks,
 };
 pub use supervisor::{
     AttachedPassFuture, ConsolidationExecutorFactory, LinkedShutdown, NowSeconds, PassAttachment,
