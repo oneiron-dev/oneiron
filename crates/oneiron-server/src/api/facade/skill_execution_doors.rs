@@ -194,6 +194,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
             Ok(Ok(answer)) => Ok(AgentVerbAnswer {
                 output: answer.value,
                 rows: answer.rows,
+                observations: Vec::new(),
             }),
             Ok(Err(error)) => Err(AgentVerbRefusal {
                 code: error.into_memory_error().code,

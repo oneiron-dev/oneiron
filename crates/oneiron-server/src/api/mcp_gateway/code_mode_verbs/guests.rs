@@ -567,6 +567,7 @@ impl RunGuests {
                 Ok(Ok(AgentVerbAnswer {
                     output,
                     rows: answer.rows,
+                    observations: Vec::new(),
                 }))
             }
             Err(error) => refused(super::mcp_facade_error(error)),
@@ -697,6 +698,7 @@ impl RunGuests {
         Ok(Ok(AgentVerbAnswer {
             output,
             rows: Some(Vec::new()),
+            observations: Vec::new(),
         }))
     }
 
