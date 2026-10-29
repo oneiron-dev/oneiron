@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::browser_library::{RetiredWorkflow, SolvedRunEvidence, WorkflowRecord};
 use crate::entity_id::bytes_to_hex_lower;
+use crate::skill::SkillContentHash;
 use crate::skill_hub::HubFile;
 use crate::{EntityId, Error, Result};
 
@@ -27,6 +28,10 @@ const SITE_SKILL_DISTILL_VERSION: u32 = 1;
 
 /// The version a distilled folder declares, in frontmatter and record alike.
 pub(super) const SITE_SKILL_VERSION: &str = "0.1.0";
+
+/// Prefix for a record's content-named revision version. Frontmatter keeps
+/// `SITE_SKILL_VERSION`; Native metadata binds the package, not this string.
+const SITE_SKILL_REVISION_PREFIX: &str = "distill-";
 
 /// The kind a site-skill fingerprint and finding carry.
 const KIND: &str = "site_skill";
@@ -184,6 +189,27 @@ pub(super) fn finding_value(
         "from_runs": candidate.from_runs.iter().map(EntityId::to_hex).collect::<Vec<_>>(),
         "diagnostics": commit_diagnostics,
     })
+}
+
+/// The content-named record version of a revision. Equal bytes take the
+/// duplicate branch, so this differs from its predecessor by construction.
+pub(super) fn revision_version(content_hash: SkillContentHash) -> String {
+    let hex = content_hash.to_hex();
+    format!("{SITE_SKILL_REVISION_PREFIX}{}", &hex[..16])
+}
+
+/// The finding's stable value for a same-site next revision, citing both
+/// the new Candidate and its predecessor.
+pub(super) fn revision_value(
+    candidate: &SiteSkillCandidate,
+    skill: &str,
+    predecessor: &str,
+    commit_diagnostics: &[String],
+) -> serde_json::Value {
+    let mut value = finding_value(candidate, skill, commit_diagnostics);
+    value["kind"] = serde_json::Value::from("site_skill_revision");
+    value["predecessor"] = serde_json::Value::from(predecessor);
+    value
 }
 
 /// The finding's stable value when `skill_id` already has a holder: the

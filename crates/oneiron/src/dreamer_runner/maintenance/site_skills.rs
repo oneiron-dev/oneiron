@@ -14,8 +14,10 @@
 //! skill and the source evidence. A Candidate is inert: it waits on the
 //! ordinary skill gate like any other birth, and the Coach never admits,
 //! activates or queues anything for it. On a content-hash duplicate the
-//! pass points at the existing skill and files no second entity; on a
-//! `site-<slug>` id collision the hub wins and nothing is filed or merged.
+//! pass points at the existing skill and files no second entity. On the
+//! Coach's own earlier site filing it files the next Candidate revision,
+//! with the predecessor cited; a foreign holder still wins with only a
+//! collision finding and no cursor advance.
 //!
 //! The pass owns its own (site, scope) cursor and fingerprint domain. It
 //! never marks a group clean, never marks a program seen, and never queues
@@ -45,7 +47,7 @@ use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::{
     SkillContentHash, SkillLifecycle, SkillRecord, SkillRole, canonical_skill_tree_hash,
-    decode_skill_record, is_legacy_opaque_skill_body,
+    decode_skill_record, is_legacy_opaque_skill_body, resident_of,
 };
 use crate::skill_hub::{SkillPackageFormat, package_from_source};
 use crate::skill_reliability::{ProvenanceTrustClass, SkillReliabilityPosterior};
@@ -213,10 +215,14 @@ enum CommitOutcome {
     Empty,
     /// The bytes already have a holder; the finding points at it.
     Dup,
-    /// The skill id already has a holder; the hub wins.
+    /// A foreign holder already has the skill id; the hub wins.
     Collision,
+    /// More than one own holder exists and the cursor names none.
+    Pending,
     /// A skill, its package and the finding landed.
     Created,
+    /// A next-revision skill, its package and the finding landed.
+    Revised,
 }
 
 impl Pass<'_> {
@@ -416,10 +422,19 @@ impl Pass<'_> {
                 )?;
                 return Ok(CommitOutcome::Dup);
             }
-            if let Some(holder) = skill_holder_in_txn(vault, txn, &candidate.skill_id)? {
+            let mut own = Vec::new();
+            let mut foreign = Vec::new();
+            for (id, record) in skill_holders_in_txn(vault, txn, &candidate.skill_id)? {
+                if is_own_site_revision(&record, &unit.site)? {
+                    own.push((id, record));
+                } else {
+                    foreign.push((id, record));
+                }
+            }
+            if let Some((holder, _)) = foreign.first() {
                 let value = distill::collision_value(&candidate, &holder.to_hex());
                 let mut cites = Vec::with_capacity(sources.len() + 1);
-                cites.push(holder);
+                cites.push(*holder);
                 cites.extend(sources.iter().copied());
                 let _finding = proposals::emit_in_txn(
                     vault,
@@ -431,20 +446,37 @@ impl Pass<'_> {
                     envelope,
                     now,
                 )?;
-                SEEN.put(
-                    &vault.store,
-                    txn,
-                    &(unit.hash, unit.scope),
-                    &CoachSiteSkillSeen {
-                        fingerprint: candidate.fingerprint,
-                        filed_ids: vec![holder],
-                        at: now,
-                    },
-                )?;
+                // A foreign collision retries after the holder changes; the
+                // content-addressed finding dedups, so no cursor advance.
                 return Ok(CommitOutcome::Collision);
             }
+            let seen = SEEN.get(&vault.store, txn, &(unit.hash, unit.scope))?;
+            let cursor = seen
+                .as_ref()
+                .and_then(|seen| seen.filed_ids.last())
+                .copied();
+            let predecessor =
+                match cursor.and_then(|cursor| own.iter().find(|(id, _)| **id == cursor)) {
+                    Some((id, record)) => Some((*id, record.clone())),
+                    None => match own.len() {
+                        0 => None,
+                        1 => Some(own[0].clone()),
+                        _ => return Ok(CommitOutcome::Pending),
+                    },
+                };
             let id = vault.store.clock.entity_id()?;
-            let record = skill_record(&candidate, content_hash);
+            let (version, outcome) = if predecessor.is_some() {
+                (
+                    distill::revision_version(content_hash),
+                    CommitOutcome::Revised,
+                )
+            } else {
+                (
+                    distill::SITE_SKILL_VERSION.to_owned(),
+                    CommitOutcome::Created,
+                )
+            };
+            let record = skill_record(&candidate, content_hash, &version, predecessor.as_ref());
             let package =
                 package_from_source(&record, candidate.files.clone(), SkillPackageFormat::Native)?;
             vault.put_skill_record_in_txn(
@@ -458,10 +490,21 @@ impl Pass<'_> {
                 now,
             )?;
             vault.persist_hub_package_in_txn(txn, &id, &package)?;
-            let mut cites = Vec::with_capacity(sources.len() + 1);
+            let mut cites = Vec::with_capacity(sources.len() + 2);
             cites.push(id);
+            if let Some((predecessor, _)) = &predecessor {
+                cites.push(*predecessor);
+            }
             cites.extend(sources.iter().copied());
-            let value = distill::finding_value(&candidate, &id.to_hex(), &commit_diagnostics);
+            let value = match &predecessor {
+                Some((predecessor, _)) => distill::revision_value(
+                    &candidate,
+                    &id.to_hex(),
+                    &predecessor.to_hex(),
+                    &commit_diagnostics,
+                ),
+                None => distill::finding_value(&candidate, &id.to_hex(), &commit_diagnostics),
+            };
             let _finding = proposals::emit_in_txn(
                 vault,
                 txn,
@@ -482,7 +525,7 @@ impl Pass<'_> {
                     at: now,
                 },
             )?;
-            Ok(CommitOutcome::Created)
+            Ok(outcome)
         })?;
         let report = &mut self.report;
         match outcome {
@@ -497,7 +540,8 @@ impl Pass<'_> {
                 report.diagnostics += 1;
                 report.findings += 1;
             }
-            CommitOutcome::Created => {
+            CommitOutcome::Pending => report.diagnostics += 1,
+            CommitOutcome::Created | CommitOutcome::Revised => {
                 report.skills_created += 1;
                 report.findings += 1;
             }
@@ -520,12 +564,29 @@ fn failures_of(live: &[WorkflowRecord], retired: &[RetiredWorkflow]) -> u64 {
 }
 
 /// The born-Proposed, Candidate record a landing files: Generated on the
-/// Dreamer-distill road, knowledge role, no dependencies.
-fn skill_record(candidate: &SiteSkillCandidate, content_hash: SkillContentHash) -> SkillRecord {
+/// Dreamer-distill road, knowledge role, no dependencies. A revision keeps
+/// the same skill id and cites its predecessor, without changing that row.
+fn skill_record(
+    candidate: &SiteSkillCandidate,
+    content_hash: SkillContentHash,
+    version: &str,
+    predecessor: Option<&(EntityId, SkillRecord)>,
+) -> SkillRecord {
+    let mut provenance = vec![
+        (Value::from("birth"), Value::from("dreamer_distill")),
+        (Value::from("site"), Value::from(candidate.site.as_str())),
+    ];
+    if let Some((id, prior)) = predecessor {
+        provenance.push((Value::from("merge_of"), Value::from(id.to_hex())));
+        provenance.push((
+            Value::from("prev_version"),
+            Value::from(prior.version.as_str()),
+        ));
+    }
     SkillRecord::new(
         candidate.skill_id.clone(),
         distill::description_for_site(&candidate.site),
-        distill::SITE_SKILL_VERSION,
+        version,
         ClaimApprovalStatus::Proposed,
         SkillLifecycle::Candidate,
         ClaimSource::Generated,
@@ -533,10 +594,7 @@ fn skill_record(candidate: &SiteSkillCandidate, content_hash: SkillContentHash) 
         true,
         false,
         Vec::new(),
-        Value::Map(vec![
-            (Value::from("birth"), Value::from("dreamer_distill")),
-            (Value::from("site"), Value::from(candidate.site.as_str())),
-        ]),
+        Value::Map(provenance),
     )
     .with_content_hash(content_hash)
     .with_role(SkillRole::Knowledge, None)
@@ -546,14 +604,15 @@ fn skill_record(candidate: &SiteSkillCandidate, content_hash: SkillContentHash) 
 /// refuses, like the content-hash index walk.
 const MAX_SKILL_HOLDER_SCAN_ENTRIES: usize = 100_000;
 
-/// The live skill entity holding `skill_id`, if one does: a vault-wide
-/// scan that skips tombstone shells and legacy opaque bodies, like the
-/// content-hash index walk.
-fn skill_holder_in_txn(
+/// The skill entities holding `skill_id`: a vault-wide scan that skips
+/// tombstones, legacy opaque bodies and superseded history. Stale and
+/// quarantined holders remain foreign collision blockers.
+fn skill_holders_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     skill_id: &str,
-) -> Result<Option<EntityId>> {
+) -> Result<Vec<(EntityId, SkillRecord)>> {
+    let mut holders = Vec::new();
     for (scanned, entry) in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_SKILL, None)?
@@ -585,9 +644,36 @@ fn skill_holder_in_txn(
             }
             Err(error) => return Err(error),
         };
-        if record.skill_id == skill_id {
-            return Ok(Some(id));
+        if record.skill_id == skill_id && record.lifecycle_status != SkillLifecycle::Superseded {
+            holders.push((id, record));
         }
     }
-    Ok(None)
+    Ok(holders)
+}
+
+/// Whether a current holder is this Coach's own filing for `site`, rather
+/// than a hub, user, fork, resident or different-site holder (FIX 7606).
+fn is_own_site_revision(record: &SkillRecord, site: &str) -> Result<bool> {
+    if !matches!(
+        record.lifecycle_status,
+        SkillLifecycle::Candidate | SkillLifecycle::Active
+    ) || record.source != ClaimSource::Generated
+        || !record.generated
+        || record.human_authored
+        || record.role != SkillRole::Knowledge
+        || record.forked_from.is_some()
+        || resident_of(record)?.is_some()
+    {
+        return Ok(false);
+    }
+    let Value::Map(provenance) = &record.provenance else {
+        return Ok(false);
+    };
+    let birth = provenance.iter().any(|(key, value)| {
+        key.as_str() == Some("birth") && value.as_str() == Some("dreamer_distill")
+    });
+    let same_site = provenance
+        .iter()
+        .any(|(key, value)| key.as_str() == Some("site") && value.as_str() == Some(site));
+    Ok(birth && same_site)
 }
