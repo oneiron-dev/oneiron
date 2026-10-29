@@ -155,15 +155,48 @@ impl EngineNativeExecutor<'_> {
             };
             let request =
                 self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
-            if let Some(reason) = self.feed_compaction(config, &record, &request)? {
-                return Ok(self.outcome(
-                    EngineExecutorStatus::WindowFull {
-                        next_step_seq: completed_steps,
-                        reason,
-                    },
-                    steps_run,
-                    record,
-                ));
+            match self.feed_compaction(config, &record, &request)? {
+                Ok(Some(reason)) => {
+                    return Ok(self.outcome(
+                        EngineExecutorStatus::WindowFull {
+                            next_step_seq: completed_steps,
+                            reason,
+                        },
+                        steps_run,
+                        record,
+                    ));
+                }
+                Ok(None) => {}
+                Err(stop) => {
+                    let Some(wait) = turn_hook_wait(&stop) else {
+                        return Err(Error::from(stop).into());
+                    };
+                    let key = wait_key(&record, &wait);
+                    if !self.storage.park_wait(&key)? {
+                        return Ok(self.outcome(
+                            EngineExecutorStatus::Waiting(wait),
+                            steps_run,
+                            record,
+                        ));
+                    }
+                    // The ask settled before the park: retry the same sealed
+                    // invocation once, with its fold marks still pending.
+                    self.storage.clear_wait(&key)?;
+                    match self.feed_compaction(config, &record, &request)? {
+                        Ok(Some(reason)) => {
+                            return Ok(self.outcome(
+                                EngineExecutorStatus::WindowFull {
+                                    next_step_seq: completed_steps,
+                                    reason,
+                                },
+                                steps_run,
+                                record,
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(stop) => return Err(Error::from(stop).into()),
+                    }
+                }
             }
             // Rule 5 (FIX 4197): the first step past the `[limits]
             // executor_run_steps` row asks whether everything is okay, once

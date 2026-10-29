@@ -22,6 +22,7 @@ use crate::compaction::{
     gate_compaction,
 };
 use crate::entity_id::EntityId;
+use crate::runtime_hooks::VerbHookStop;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmRequest, WriteActor};
 
@@ -90,6 +91,8 @@ pub(super) struct Flight {
     pub(super) live: Option<
         Result<crate::code_run::LiveCompactionFork, crate::compaction::SelfCompactionUnavailable>,
     >,
+    /// A blocking pre-hook's saved stop: no flight starts (FIX 10085).
+    pub(super) pending: Option<VerbHookStop>,
 }
 
 /// One mark of a batch, sealed: its request, and what its stub lists beside
@@ -404,10 +407,10 @@ impl RunCompaction {
         asked: bool,
         marks: bool,
         build: impl FnOnce(&mut CompactionDriver, Option<u64>) -> super::EngineExecutorResult<Flight>,
-    ) -> Option<WindowFullReason> {
+    ) -> std::result::Result<Option<WindowFullReason>, VerbHookStop> {
         self.report.used_tokens = used_tokens;
         let Seat::Live(seat) = &mut self.seat else {
-            return None;
+            return Ok(None);
         };
         let now = Instant::now();
         if let Some((at, tokens)) = seat.last_feed {
@@ -445,7 +448,12 @@ impl RunCompaction {
                         folds,
                         hooks,
                         live,
+                        pending,
                     }) => {
+                        if let Some(stop) = pending {
+                            seat.driver.abandon();
+                            return Err(stop);
+                        }
                         if epoch.is_some() && request.is_none() {
                             seat.driver.abandon();
                         }
@@ -527,15 +535,15 @@ impl RunCompaction {
             }
         }
         if used_tokens < seat.driver.window_token_budget() {
-            return None;
+            return Ok(None);
         }
-        Some(if seat.flight.is_some() {
+        Ok(Some(if seat.flight.is_some() {
             WindowFullReason::InFlight
         } else if let Some(held) = seat.held {
             WindowFullReason::Suppressed(held)
         } else {
             WindowFullReason::NothingToCompact
-        })
+        }))
     }
 }
 
