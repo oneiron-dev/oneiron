@@ -128,6 +128,8 @@ mod body_envelope;
 mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
+mod claim_vad_owed;
+pub(crate) use claim_vad_owed::{owe_claim_vad_in_txn, settle_claim_vad_in_txn};
 mod commitment_due;
 mod credential_custody;
 mod deadline_jobs;
