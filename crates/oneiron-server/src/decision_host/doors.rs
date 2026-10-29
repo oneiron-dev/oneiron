@@ -103,6 +103,34 @@ impl DecisionHost {
         Ok(())
     }
 
+    /// Installs the newest accepted Coach revision of the think row (Q2,
+    /// FIX 2437) above the configured start row, else the start row, on
+    /// every clone of the host's bands. A host whose recipe names no think
+    /// row keeps none.
+    pub(crate) fn refresh_think_threshold(&self, vault: &Vault) -> oneiron::Result<()> {
+        let Some(start) = self.think_start else {
+            return Ok(());
+        };
+        let _turn = self
+            .person_refresh
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let row = vault
+            .latest_accepted_think_threshold()?
+            .map(|(_, row)| row)
+            .filter(|row| row.version > start.version)
+            .unwrap_or(start);
+        if self.bands.think_threshold() != Some(row) {
+            self.bands.replace_think_threshold(row)?;
+            tracing::info!(
+                threshold = row.threshold,
+                version = row.version,
+                "the think threshold row changed"
+            );
+        }
+        Ok(())
+    }
+
     /// A dial from the rule table up to `ceiling`, with the default band.
     #[must_use]
     pub fn dial(&self, ceiling: DecisionRung) -> DecisionDial {

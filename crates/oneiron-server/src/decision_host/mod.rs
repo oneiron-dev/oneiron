@@ -33,7 +33,7 @@ use oneiron::llm::decision::{
     DecisionDial, DecisionLadder, DecisionPack, DecisionProvider, DecisionQuestion,
     DecisionReadGate, DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, HostRuleProvider,
     ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
-    RemoteDecisionSeat, SeatPhase, SeatRequest,
+    RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
 };
 use oneiron::llm::run_admission::{CallOutcome, HostAccount, PaidConnector, RunReceiptSink};
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
@@ -169,7 +169,11 @@ pub struct DecisionHost {
     bands: DecisionBandPolicy,
     /// The configured start row, when the recipe names a person question.
     person_start: Option<PersonThreshold>,
-    /// One person-row refresh at a time, so an older read never lands last.
+    /// The configured ThinkThreshold start row, when the recipe names a
+    /// paired question with one (FIX 2437).
+    think_start: Option<ThinkThreshold>,
+    /// One threshold-row refresh at a time (the person row's or the think
+    /// row's), so an older read never lands last.
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
     image_pick: Option<ImagePickSettings>,
@@ -218,6 +222,7 @@ impl DecisionHost {
             asks,
             bands: DecisionBandPolicy::default(),
             person_start: None,
+            think_start: None,
             person_refresh: Arc::default(),
             auto_checker: None,
             image_pick: None,
@@ -253,6 +258,7 @@ impl DecisionHost {
         self.ladder.presence = None;
         self.bands = DecisionBandPolicy::default();
         self.person_start = None;
+        self.think_start = None;
         let Some((door, meter)) = read else {
             return self;
         };
@@ -272,11 +278,14 @@ impl DecisionHost {
             }
         };
         let mut bands = DecisionBandPolicy::default();
-        // Q2's threshold home: a paired reading at the row climbs a rung.
-        if let Some(threshold) = door.think_threshold()
-            && let Err(error) = bands.set_think_threshold(threshold, THINK_THRESHOLD_VERSION)
-        {
-            tracing::warn!(%error, "the think threshold is invalid");
+        // Q2's threshold home: a paired reading at the row climbs a rung. An
+        // accepted Coach row replaces this start value with a higher version
+        // ([`Self::refresh_think_threshold`], FIX 2437).
+        if let Some(threshold) = door.think_threshold() {
+            match bands.set_think_threshold(threshold, THINK_THRESHOLD_VERSION) {
+                Ok(()) => self.think_start = bands.think_threshold(),
+                Err(error) => tracing::warn!(%error, "the think threshold is invalid"),
+            }
         }
         if let Some(wording) = &probe.person {
             match ASK_UP.question(&[], wording.clone(), AnswerContract::Noul) {
