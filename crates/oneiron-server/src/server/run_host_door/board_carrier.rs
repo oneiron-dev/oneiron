@@ -9,20 +9,24 @@ use oneiron::code_run::RunObservation;
 use oneiron::context_board::{BoardStreamFrame, CommittedTaskBoardState, FrameKind};
 
 use super::{
-    AgentVerbAnswer, AgentVerbRefusal, Arc, EntityId, RunHostDoor, ScopedRead, StreamConnectionId,
-    SyncServer, WriteActor, agent_lane,
+    AgentVerb, AgentVerbAnswer, AgentVerbRefusal, Arc, EntityId, RunHostDoor, ScopedRead,
+    StreamConnectionId, SyncServer, WriteActor, agent_lane,
 };
 
 impl RunHostDoor {
-    /// `answered`, with the frame the run's board connection queued beside
-    /// it when it is an answer: a refusal or a stop carries none, and leaves
-    /// the queue for the next answer.
+    /// `verb`'s `answered`, with the frame the run's board connection queued
+    /// beside it when it is an answer the run reads as it stands, its rows
+    /// known. Every other outcome leaves the queue for the next such answer:
+    /// a refusal or a stop; an answer whose rows are not known, which the
+    /// frame's own rows could not be released beside; and a reply the run
+    /// may still turn into a wait ([`holds_reply`]), which keeps no frame.
     pub(super) fn observed(
         &self,
+        verb: AgentVerb,
         answered: oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>>,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         match answered {
-            Ok(Ok(mut answer)) => {
+            Ok(Ok(mut answer)) if answer.rows.is_some() && !holds_reply(verb) => {
                 answer.observations = self.take_observations();
                 Ok(Ok(answer))
             }
@@ -43,6 +47,13 @@ impl RunHostDoor {
         });
         receiver.recv().ok().flatten().into_iter().collect()
     }
+}
+
+/// Whether the run may turn `verb`'s answer into a durable wait: a
+/// `connector.call` reply, or a `self.use` one, that holds or retries its
+/// connector call parks the run on it, and the wait keeps no frame.
+fn holds_reply(verb: AgentVerb) -> bool {
+    matches!(verb, AgentVerb::ConnectorCall | AgentVerb::SelfUse)
 }
 
 /// Takes exactly one pending coalesced payload of the run's board

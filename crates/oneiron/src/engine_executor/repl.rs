@@ -375,7 +375,7 @@ impl EngineNativeExecutor<'_> {
                 &mut record,
                 completed_steps,
                 bridge_start,
-            )?;
+            );
             // The names the step bound join the record in this same
             // checkpointed append; a rebound name keeps its place.
             let bindings: Vec<_> = host

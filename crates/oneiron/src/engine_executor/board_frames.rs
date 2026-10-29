@@ -3,7 +3,8 @@
 //! a message of the host's own, as an MCP client reads a carrier frame
 //! beside a tool result. None of it enters the guest's output, the step's
 //! result digests or its state hash; the frames themselves stay on the
-//! answers' recorded outcomes.
+//! answers' recorded outcomes. This copy is best effort: one not kept or
+//! not read is logged and the step goes on, as it would with no frame.
 
 use serde_json::json;
 
@@ -16,8 +17,20 @@ use crate::code_run::{CodeRunReplayRecord, ExecutorStorage, agent_verb_observati
 use crate::{ContentPart, Error, LlmMessage, LlmMessageRole};
 
 /// Keeps the frames the answers of step `seq` carried, its calls those from
-/// `bridge_start` on; a step whose answers carried none keeps nothing.
+/// `bridge_start` on; a step whose answers carried none keeps nothing. A
+/// copy that cannot be kept is logged, never the step's failure.
 pub(super) fn record_step_board_frames(
+    storage: &ExecutorStorage<'_>,
+    record: &mut CodeRunReplayRecord,
+    seq: u64,
+    bridge_start: usize,
+) {
+    if let Err(error) = keep_step_board_frames(storage, record, seq, bridge_start) {
+        tracing::warn!(?error, step = seq, "a step's board frames were not kept for its view");
+    }
+}
+
+fn keep_step_board_frames(
     storage: &ExecutorStorage<'_>,
     record: &mut CodeRunReplayRecord,
     seq: u64,
@@ -46,9 +59,26 @@ pub(super) fn record_step_board_frames(
 
 impl EngineNativeExecutor<'_> {
     /// The frames step `seq`'s answers carried, as the model reads them
-    /// beside its console; `None` when they carried none. A body that is
-    /// not clean reaches the model as the withheld mark.
+    /// beside its console; `None` when they carried none, or their copy
+    /// could not be read, which is logged. A body that is not clean reaches
+    /// the model as the withheld mark.
     pub(super) fn step_board_frames_message(
+        &self,
+        record: &CodeRunReplayRecord,
+        seq: u64,
+    ) -> Option<LlmMessage> {
+        self.read_step_board_frames(record, seq)
+            .unwrap_or_else(|error| {
+                tracing::warn!(
+                    ?error,
+                    step = seq,
+                    "a step's board frames were not read for its view"
+                );
+                None
+            })
+    }
+
+    fn read_step_board_frames(
         &self,
         record: &CodeRunReplayRecord,
         seq: u64,
