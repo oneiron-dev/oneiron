@@ -566,6 +566,7 @@ fn probe(
                 ToolClass {
                     data_class: tool.data_class,
                     spends: tool.spends,
+                    price: tool.price.clone(),
                 },
             )
         })
@@ -687,6 +688,7 @@ fn refresh_connector(
                 ToolClass {
                     data_class: tool.data_class,
                     spends: tool.spends,
+                    price: tool.price.clone(),
                 },
             )
         })

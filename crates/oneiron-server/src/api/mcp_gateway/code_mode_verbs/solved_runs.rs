@@ -45,7 +45,9 @@ impl BrowserCapture<'_, '_> {
     /// Keeps what `verb`'s call with `input` reached on `session` (its
     /// answer `output`, its history's latest entry before it `mark`), as
     /// the caller's evidence, when it names its checks and type. Logs what
-    /// it came to; never fails the call.
+    /// it came to; never fails the call. A capture that failed gives its
+    /// caller a note for the call's answer (FIX 10509, the
+    /// `solved_capture` note); anything else gives none.
     pub(super) fn after_call(
         &self,
         session: &mut BrowserSession,
@@ -53,19 +55,23 @@ impl BrowserCapture<'_, '_> {
         input: &Value,
         output: &Value,
         mark: Option<u64>,
-    ) {
+    ) -> Option<String> {
         let span = match checked_span(self.vault, verb, input, output, mark) {
             Ok(Some(span)) => span,
-            Ok(None) => return,
+            Ok(None) => return None,
             Err(cause) => {
                 tracing::info!(verb = verb.as_str(), %cause, "browser call captured no solved run");
-                return;
+                return None;
             }
         };
         match self.capture_checked_run(session, span) {
-            Ok(note) => tracing::info!(verb = verb.as_str(), %note, "browser solved-run capture"),
+            Ok(note) => {
+                tracing::info!(verb = verb.as_str(), %note, "browser solved-run capture");
+                None
+            }
             Err(cause) => {
                 tracing::warn!(verb = verb.as_str(), %cause, "browser solved-run capture failed");
+                Some(format!("solved-run capture failed: {cause}"))
             }
         }
     }
@@ -82,7 +88,9 @@ impl BrowserCapture<'_, '_> {
             subgoal: span.subgoal.clone(),
             postcondition: span.checks,
             after_seq: span.after_seq,
-            through_seq: None,
+            // A span its goal reached before a granted press ends there
+            // (FIX 10511), not on the press.
+            through_seq: session.pre_press_through(span.after_seq),
             past_press: SOLVED_PAST_PRESS,
         };
         let snapshot = session
