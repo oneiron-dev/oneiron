@@ -129,16 +129,15 @@ pub(crate) struct CheckpointCut {
 
 impl CheckpointCut {
     /// When a later pass may resume `park`, whose cut this is, in Unix
-    /// seconds: a Retry park at the reset its try's refusal stated, when one
-    /// did (FIX 11226), else as [`DreamerParkedAttemptRecord::later_pass_due_at`]
-    /// says under the vault's Retry pause `retry_secs`.
-    pub(crate) fn due_at(
-        &self,
-        park: &DreamerParkedAttemptRecord,
-        retry_secs: u64,
-    ) -> Option<u64> {
+    /// seconds: as [`DreamerParkedAttemptRecord::later_pass_due_at`] says
+    /// under the vault's Retry pause `retry_secs`, and a Retry park no sooner
+    /// than the reset its try's refusal stated, when one did (FIX 11226).
+    pub(crate) fn due_at(&self, park: &DreamerParkedAttemptRecord, retry_secs: u64) -> Option<u64> {
         match self.row.not_before {
-            Some(reset) if park.cause == DreamerParkCause::Retry => Some(reset),
+            Some(reset) if park.cause == DreamerParkCause::Retry => Some(
+                park.later_pass_due_at(retry_secs)
+                    .map_or(reset, |due| due.max(reset)),
+            ),
             _ => park.later_pass_due_at(retry_secs),
         }
     }
