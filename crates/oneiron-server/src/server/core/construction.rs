@@ -330,7 +330,11 @@ impl SyncServer {
             ai: crate::ai_host::AiHandle::inert(),
             pattern_launch_runner: None,
             rerank_runtime: Default::default(),
-            hyde_host: Default::default(),
+            // Engine 00:59 for parked L14: the configured queue wait bounds
+            // admission, not a new timeout of its own.
+            hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(
+                config.limits.queue_wait(),
+            )),
             extraction_egress: None,
             owner_host: None,
             feedback: None,

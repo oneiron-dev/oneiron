@@ -327,7 +327,7 @@ impl SyncServer {
             // among its caller's deadline jobs until its work ends; past the
             // row it runs on and raises the row's check.
             let job = budget.map(|_| self.vault.admit_deadline_job(actor));
-            let task = tokio::task::spawn_blocking(move || {
+            let work = move || {
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
                 let memory = reader(&server.vault, actor, class, proof.as_ref())
@@ -354,21 +354,41 @@ impl SyncServer {
                         oneiron::task_verb::sdk::recall_at_door_seeded(&memory, input, embed, &door)
                     }
                 }
-            });
-            let joined = match budget {
-                None => task.await,
-                Some(budget) => {
-                    let due = tokio::time::Instant::from_std(arrived + budget);
-                    match tokio::time::timeout_at(due, task).await {
-                        Ok(joined) => joined,
-                        Err(_) => return ready.take(),
+            };
+            let joined = if effort.requires_rerank() {
+                let task = super::recall_hyde::spawn_hyde_recall_oneshot(work);
+                match budget {
+                    None => task.await.map_err(|error| {
+                        tracing::warn!(%error, "recall task failed to join");
+                    }),
+                    Some(budget) => {
+                        let due = tokio::time::Instant::from_std(arrived + budget);
+                        match tokio::time::timeout_at(due, task).await {
+                            Ok(answer) => answer.map_err(|error| {
+                                tracing::warn!(%error, "recall task failed to join");
+                            }),
+                            Err(_) => return ready.take(),
+                        }
+                    }
+                }
+            } else {
+                let task = tokio::task::spawn_blocking(work);
+                match budget {
+                    None => task.await.map_err(|error| {
+                        tracing::warn!(%error, "recall task failed to join");
+                    }),
+                    Some(budget) => {
+                        let due = tokio::time::Instant::from_std(arrived + budget);
+                        match tokio::time::timeout_at(due, task).await {
+                            Ok(answer) => answer.map_err(|error| {
+                                tracing::warn!(%error, "recall task failed to join");
+                            }),
+                            Err(_) => return ready.take(),
+                        }
                     }
                 }
             };
-            let mut pack = joined.unwrap_or_else(|error| {
-                tracing::warn!(panicked = error.is_panic(), "recall task failed to join");
-                Err(recall_did_not_finish())
-            })?;
+            let mut pack = joined.unwrap_or_else(|_| Err(recall_did_not_finish()))?;
             let due = budget.map(|budget| arrived + budget);
             if due.is_none_or(|due| Instant::now() < due) {
                 complete_with_home(&self.vault, &mut pack, &ask, &home, due).await;
