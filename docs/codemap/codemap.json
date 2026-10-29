@@ -4070,8 +4070,18 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_write/after_mask.rs",
+     "purpose": "Renewing a MACHINE claim's proof after the write door's secret mask rewrote it in the same transaction (FIX…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -80127,7 +80137,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 219,
+     "files": 220,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81599,7 +81609,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5438,
+   "source_files": 5439,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97148,7 +97158,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 17
      }
     },
