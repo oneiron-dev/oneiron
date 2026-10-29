@@ -75,6 +75,7 @@ mod room_thread;
 mod run_proposal_fixture;
 pub use room_thread::RoomThreadFill;
 pub(crate) use room_thread::{RoomThreadManifest, RoomThreadSettings};
+mod session_policy;
 mod share;
 mod skill_edit_goal_policy;
 mod skill_tradeoff_policy;

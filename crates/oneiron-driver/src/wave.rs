@@ -6,10 +6,12 @@
 
 use oneiron::attempt_queue::{AttemptQueue, ClaimAttempt, ClaimOutcome};
 use oneiron::wave_orchestration::{
-    VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WaveOrchestrator, WavePlanReceipt, WavePlanRequest,
+    VaultWaveTaskPort, WAVE_PLAN_ATTEMPT_KIND, WaveApplyOutcome, WaveOrchestrator, WavePlanRequest,
     WavePlanner,
 };
 use oneiron::{EdgeActorClass, EntityId, LinearSyncError, Vault, WaveResult};
+
+use crate::supervisor::PassExecutorFactory;
 
 /// A host-owned agent-side planner, over the production vault and queue ports.
 pub struct WaveHost<'v, P> {
@@ -37,13 +39,21 @@ impl<'v, P: WavePlanner> WaveHost<'v, P> {
     }
 
     /// Claim and execute one `wave.plan` attempt, or return `None` when idle.
-    /// An error leaves the lease for the ordinary retry/cleanup path; in
-    /// particular, a failed apply never marks the attempt completed.
-    pub fn run_plan_once(
+    /// The cut goes through the vault's fan-out approval door with
+    /// `factory`'s host decision loan (FIX 8599), so the owner's MANUAL/AUTO
+    /// launch choice rules it: an `Applied` cut has landed its TASKs, and a
+    /// `Paused` one is frozen whole with its planning attempt parked, each
+    /// durably in the door's own transaction before this returns. Only an
+    /// applied cut has anything to dispatch; a held one stays owed until the
+    /// owner's ruling launches it on the existing resume path. An error
+    /// leaves the lease for the ordinary retry/cleanup path; in particular,
+    /// a failed apply never marks the attempt completed.
+    pub fn run_plan_once<F: PassExecutorFactory>(
         &self,
+        factory: &F,
         lease_owner: &str,
         now: u64,
-    ) -> WaveResult<Option<WavePlanReceipt>> {
+    ) -> WaveResult<Option<WaveApplyOutcome>> {
         let queue = AttemptQueue::new(self.vault);
         let ClaimOutcome::Claimed(attempt) = queue.claim_kind(
             WAVE_PLAN_ATTEMPT_KIND,
@@ -77,14 +87,19 @@ impl<'v, P: WavePlanner> WaveHost<'v, P> {
             constraints,
             now,
         })?;
-        let receipt = self.vault.apply_wave_plan_attempt(
-            self.actor,
-            self.actor_class,
-            &attempt,
-            plan,
-            now,
-        )?;
-        Ok(Some(receipt))
+        // The host's ruling runs on its own clock, from here: the planner's
+        // cut above never spends it.
+        let outcome = factory.wave_fanout_decisions(self.actor, |decisions| {
+            self.vault.apply_wave_plan_attempt_gated(
+                self.actor,
+                self.actor_class,
+                &attempt,
+                plan,
+                decisions,
+                now,
+            )
+        })?;
+        Ok(Some(outcome))
     }
 
     /// Read the current ready subset immediately before a host dispatches
