@@ -6,10 +6,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::Result;
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
 use crate::runtime_hooks::runner::{MAX_PINNED_INPUT, bounded};
 use crate::runtime_hooks::{HookPassReport, apply, block, filter, lineage, store};
+use crate::{EntityId, Result};
 
 use super::super::ask;
 use super::super::record::{self, HookVerbRunRecord};
@@ -48,12 +48,27 @@ impl Chain<'_> {
     /// do not run, holds none.
     pub(super) fn consequences_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         let vault = self.vault;
+        let at = vault.store.clock.now_recorded_at();
+        let erased = self.erased_sources(txn)?;
         for (id, row, chain) in &self.blocks {
+            if row.refs.iter().any(|id| erased.contains(id)) {
+                let mut row = row.clone();
+                block::scrub_block_payload(&mut row, at);
+                block::put_block_in_txn(vault, txn, *id, &row)?;
+                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
+                continue;
+            }
             if block::put_new_block_in_txn(vault, txn, *id, row)? {
                 lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
             }
         }
         for (key, intent, proposal) in &self.intents {
+            if store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)? {
+                let mut intent = intent.clone();
+                store::scrub_intent_payload(&mut intent, at);
+                store::INTENTS.put(vault, txn, key, &intent)?;
+                continue;
+            }
             if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
                 continue;
             }
@@ -63,6 +78,31 @@ impl Chain<'_> {
             store::INTENTS.put(vault, txn, key, intent)?;
         }
         Ok(())
+    }
+
+    /// The permanently erased sources this chain carries, checked in its
+    /// own write snapshot before any original payload can be committed.
+    fn erased_sources(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<std::collections::BTreeSet<EntityId>> {
+        let vault = self.vault;
+        let mut erased = std::collections::BTreeSet::new();
+        for run in &self.runs {
+            erased.extend(store::erased_dependency_ids_in_txn(
+                vault,
+                txn,
+                &run.hook_dependencies(),
+            )?);
+        }
+        for (_, intent, _) in &self.intents {
+            erased.extend(store::erased_dependency_ids_in_txn(
+                vault,
+                txn,
+                &intent.dependencies,
+            )?);
+        }
+        Ok(erased)
     }
 
     /// [`Self::consequences_in_txn`] in a vault write of its own, when the
@@ -89,15 +129,37 @@ impl Chain<'_> {
         }
         let at = vault.store.clock.now_recorded_at().saturating_mul(1_000);
         for run in &self.runs {
-            store::RECEIPTS.put(vault, txn, &run.key, &self.receipt(run))?;
-            record::put_in_txn(vault, vault, txn, &run.key, &self.saved(run, at))?;
+            let mut receipt = self.receipt(run);
+            let mut saved = self.saved(run, at);
+            if !store::erased_dependency_ids_in_txn(vault, txn, &run.hook_dependencies())?
+                .is_empty()
+            {
+                store::scrub_receipt_payload(&mut receipt);
+                store::scrub_verb_payload(&mut saved);
+            }
+            store::RECEIPTS.put(vault, txn, &run.key, &receipt)?;
+            record::put_in_txn(vault, vault, txn, &run.key, &saved)?;
         }
+        let erased = self.erased_sources(txn)?;
         for (id, row, chain) in &self.blocks {
+            if row.refs.iter().any(|id| erased.contains(id)) {
+                let mut row = row.clone();
+                block::scrub_block_payload(&mut row, at / 1_000);
+                block::put_block_in_txn(vault, txn, *id, &row)?;
+                lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
+                continue;
+            }
             if block::put_new_block_in_txn(vault, txn, *id, row)? {
                 lineage::put_in_txn(vault, txn, id.as_bytes(), chain)?;
             }
         }
         for (key, intent, proposal) in &self.intents {
+            if store::dependencies_erased_in_txn(vault, txn, &intent.dependencies)? {
+                let mut intent = intent.clone();
+                store::scrub_intent_payload(&mut intent, at / 1_000);
+                store::INTENTS.put(vault, txn, key, &intent)?;
+                continue;
+            }
             if store::INTENTS.get(&vault.store, txn, key)?.is_some() {
                 continue;
             }

@@ -23,12 +23,22 @@ pub(in crate::runtime_hooks) fn dependencies_erased_in_txn(
     txn: &heed::RoTxn<'_>,
     dependencies: &[HookDependency],
 ) -> Result<bool> {
+    Ok(!erased_dependency_ids_in_txn(vault, txn, dependencies)?.is_empty())
+}
+
+/// The permanently erased ids among a record's dependencies.
+pub(in crate::runtime_hooks) fn erased_dependency_ids_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    dependencies: &[HookDependency],
+) -> Result<BTreeSet<EntityId>> {
+    let mut erased = BTreeSet::new();
     for dependency in dependencies {
         if source_erased_in_txn(vault, txn, &dependency.id)? {
-            return Ok(true);
+            erased.insert(dependency.id);
         }
     }
-    Ok(false)
+    Ok(erased)
 }
 
 /// Retires every content-bearing field of a fact memo, preserving its stable
@@ -44,7 +54,7 @@ pub(in crate::runtime_hooks) fn scrub_memo_payload(memo: &mut HookRunRecord) {
 }
 
 /// The verb-record half of [`scrub_memo_payload`].
-fn scrub_verb_payload(record: &mut HookVerbRunRecord) {
+pub(in crate::runtime_hooks) fn scrub_verb_payload(record: &mut HookVerbRunRecord) {
     record.input_json = None;
     record.history_erased = true;
     record.reads.clear();

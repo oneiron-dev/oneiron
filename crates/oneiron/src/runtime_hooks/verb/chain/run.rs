@@ -58,6 +58,25 @@ pub(super) struct RunRecord<'c> {
     pub(super) outcome_json: Option<String>,
 }
 
+impl RunRecord<'_> {
+    /// Every source row the saved input and callback reads depend on.
+    pub(super) fn hook_dependencies(&self) -> Vec<HookDependency> {
+        self.dependencies
+            .iter()
+            .chain(
+                self.reads
+                    .iter()
+                    .flat_map(|pin| pin.rows.iter().map(|row| &row.id)),
+            )
+            .map(|id| HookDependency {
+                id: *id,
+                revision: None,
+                body_hash: None,
+            })
+            .collect()
+    }
+}
+
 impl<'c> Chain<'c> {
     /// One body run, judged. Its input is built for this hook alone, under
     /// what both its caller and its current grant may read (FIX 10084). A
@@ -175,16 +194,7 @@ impl<'c> Chain<'c> {
                     _ => None,
                 };
                 let intent = HookIntent {
-                    dependencies: run
-                        .dependencies
-                        .iter()
-                        .chain(run.reads.iter().flat_map(|pin| pin.rows.iter().map(|row| &row.id)))
-                        .map(|id| HookDependency {
-                            id: *id,
-                            revision: None,
-                            body_hash: None,
-                        })
-                        .collect(),
+                    dependencies: run.hook_dependencies(),
                     binding: id,
                     author: binding.author_id(),
                     outcome_json: verdict.outcome_json.clone().unwrap_or_default(),
