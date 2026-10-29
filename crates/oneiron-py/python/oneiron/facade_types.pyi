@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1191 facade rows, 4314 declarations.
+Census: 1191 facade rows, 4315 declarations.
 Inputs: 1120 of 1191 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1036 of 1191 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -16931,12 +16931,19 @@ QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinitionInput
 QuestionAskerClass = Literal["human", "agent", "system"]
+class FrozenReadLane(TypedDict):
+    credential: NotRequired[list[int] | None]
+    authority: NotRequired[Scope | None]
+    records: NotRequired[list[str]]
+    worlds: NotRequired[ScopeAxis[ScopeId] | None]
+    room_facets: NotRequired[EntityId | None]
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
     definition: QuestionDefinition[DecisionQuestion]
     created_at: int
     asker_class: NotRequired[QuestionAskerClass | None]
+    read_lane: FrozenReadLane
 class QuestionEditRequest(TypedDict):
     id: EntityId
     expected_version: int

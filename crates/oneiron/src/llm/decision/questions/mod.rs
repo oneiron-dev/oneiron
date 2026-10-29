@@ -69,7 +69,8 @@ pub use role_asks::{QuestionUnitAsk, question_unit_correlation};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
 pub use store::{
-    create_question, edit_question, pause_question, read_question, read_question_schedule,
+    create_question, create_question_with_lane, edit_question, edit_question_with_lane,
+    pause_question, read_question, read_question_schedule,
 };
 pub(crate) use task_ask::{TaskAnswerBinding, bind_task_answer_in_txn, validate_task_answer_unit};
 pub use windows::{

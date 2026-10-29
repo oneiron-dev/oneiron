@@ -14328,7 +14328,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14341,7 +14342,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14354,7 +14356,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14380,7 +14383,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false
     },
@@ -14468,7 +14471,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false,
       "openapi": true

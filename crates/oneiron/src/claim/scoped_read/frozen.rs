@@ -93,8 +93,13 @@ impl FrozenReadLane {
                 "a saved read lane carries no room turn, audience or peer read".into(),
             ));
         }
-        let claims = key.proof.as_ref().map(crate::authority::VerifiedSlip::claims);
-        let records = claims.map(|claims| claims.records.clone()).unwrap_or_default();
+        let claims = key
+            .proof
+            .as_ref()
+            .map(crate::authority::VerifiedSlip::claims);
+        let records = claims
+            .map(|claims| claims.records.clone())
+            .unwrap_or_default();
         let channel_refused = claims.is_some_and(|claims| !lane.credential_channel_allows(claims));
         let scope_narrows = key.authority_scope().is_some_and(|scope| {
             Scope {
