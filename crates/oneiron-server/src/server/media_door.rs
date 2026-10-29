@@ -123,6 +123,17 @@ impl MediaDoor {
         self.runtime.voice_route(&self.vault, lane, None)
     }
 
+    /// The other admitted rungs of `lane`'s seat a banked voice may fall
+    /// back to ([`ModelRuntime::voice_fallback_routes`]).
+    pub(crate) fn voice_fallback_routes(
+        &self,
+        lane: VoiceLane,
+        primary: &MediaVoiceRoute,
+    ) -> Vec<MediaVoiceRoute> {
+        self.runtime
+            .voice_fallback_routes(&self.vault, lane, primary)
+    }
+
     /// The live hearing for `route` when its rung hears live, each of its
     /// segments' leases opened through this door
     /// ([`ModelRuntime::open_voice_asr`]).
