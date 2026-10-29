@@ -239,6 +239,13 @@ pub(super) fn judgment_rows(judgment: &AmendmentJudgment) -> Vec<(LearningCell, 
     rows
 }
 
+/// Whether `judgment` charges `subject` any share.
+pub(super) fn charges_subject(judgment: &AmendmentJudgment, subject: &EntityId) -> bool {
+    charged_cells(judgment)
+        .iter()
+        .any(|(cell, _)| cell.subject == *subject)
+}
+
 /// Brings `receipt`'s rows on `subject`'s edit-cost cells in line with
 /// `rows`: the receipt leaves every cell of `subject` that `rows` does not
 /// name, and each of `subject`'s rows that does not stand as written lands
