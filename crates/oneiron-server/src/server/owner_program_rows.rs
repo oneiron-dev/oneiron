@@ -8,6 +8,12 @@
 //! keeps the agent's door and its refusals. The program stays generated
 //! code: its surface keeps the run's host origin, so nothing it writes reads
 //! as the owner's own in-person act.
+//!
+//! Its media calls spend on its run's line, as its speech and its other
+//! model calls do (FIX 6083): a video job's whole life too, from its submit
+//! to its end. Its `ai.options` lists every media row it can call, with what
+//! that line has left. A run its door bound no line to spends its media on
+//! the owner's media meter, as the owner's own call does.
 use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
@@ -26,11 +32,13 @@ use super::SyncServer;
 use super::run_host_door::{agent_memory, answer_as_agent};
 
 /// Whether `verb` is a row the run host door refuses an agent as the
-/// owner's: a hook replay, or an `ai.*` media call other than speech.
+/// owner's: a hook replay, or an `ai.*` media call other than speech; or
+/// `ai.options`, which lists an owner's program those calls too (FIX 6083).
 pub(super) fn is_owner_row(verb: AgentVerb) -> bool {
     matches!(
         verb,
         AgentVerb::VaultHooksReplay
+            | AgentVerb::AiOptions
             | AgentVerb::AiImage
             | AgentVerb::AiTranscribe
             | AgentVerb::AiEmbed
@@ -54,10 +62,11 @@ fn program_owner(server: &SyncServer, actor: WriteActor) -> Option<Authenticated
 
 /// One owner row ([`is_owner_row`]) of the program `actor` woke, with its
 /// verb hooks once around it on the program's own surface: served through
-/// the owner's door when `actor` is proven the live recorded owner, else
-/// answered exactly as the agent's door answers it. Beside it, the rows its
-/// surface and its door listed, `None` when those are not known. Blocking:
-/// call it on a blocking thread of the server's runtime.
+/// the owner's door when `actor` is proven the live recorded owner, its
+/// media on `line`, the run's own, else answered exactly as the agent's door
+/// answers it. Beside it, the rows its surface and its door listed, `None`
+/// when those are not known. Blocking: call it on a blocking thread of the
+/// server's runtime.
 pub(super) fn answer(
     server: &Arc<SyncServer>,
     actor: WriteActor,
@@ -76,7 +85,7 @@ pub(super) fn answer(
     let mut listed = Some(Vec::new());
     let output = verb_hook_boundary::row(&memory, name, input, |input| {
         sdk::validate_input(name, &input)?;
-        owner_row(server, owner, actor.entity_ref(), verb, input, &mut listed)
+        owner_row(server, owner, actor.entity_ref(), line, verb, input, &mut listed)
     })?;
     let rows = listed.map(|mut listed| {
         let mut rows = producers.take();
@@ -88,21 +97,44 @@ pub(super) fn answer(
 
 /// The owner's door for one owner row, past its credential check: `owner`
 /// is the proof [`program_owner`] made for this row, beside the program's
-/// actor, who asks.
+/// actor, who asks, and `line`, the run's own line its media spends on,
+/// when its door bound one.
 fn owner_row(
     server: &Arc<SyncServer>,
     owner: AuthenticatedOwner,
     actor: EntityId,
+    line: Option<&RunAdmission>,
     verb: AgentVerb,
     input: Value,
     listed: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<Value> {
     let runtime = tokio::runtime::Handle::current();
+    // The program's media spends on its run's line, as its other model
+    // calls do (FIX 6083); with none, on the owner's media meter.
     let media = |operation: AiOperation, input: Value| -> MemoryResult<Value> {
         let input = decode(input)?;
-        encode(runtime.block_on(crate::api::ai_media_as_owner(server, operation, input))?)
+        let answered = match line {
+            Some(line) => {
+                runtime.block_on(crate::api::ai_media_for_run(server, line, operation, input))
+            }
+            None => runtime.block_on(crate::api::ai_media_as_owner(server, operation, input)),
+        };
+        encode(answered?)
     };
     match verb {
+        AgentVerb::AiOptions => {
+            let options = crate::api::ai_options_for_program(server, line, &decode(input)?)?;
+            // Its rows are priced from the installed model catalog pack when
+            // the registry holds none: that pack's source is listed, as the
+            // facade's `ai.options` lists it.
+            if !options.options.is_empty() {
+                match (listed.as_mut(), server.vault.model_catalog_source()) {
+                    (Some(listed), Ok(source)) => listed.extend(source),
+                    _ => *listed = None,
+                }
+            }
+            encode(options)
+        }
         AgentVerb::VaultHooksReplay => {
             let (replayed, rows) = runtime.block_on(crate::api::vault_hooks_replay_as_owner(
                 server,
@@ -118,12 +150,21 @@ fn owner_row(
         AgentVerb::AiImage => media(AiOperation::Image, input),
         AgentVerb::AiTranscribe => media(AiOperation::Transcribe, input),
         AgentVerb::AiEmbed => media(AiOperation::Embed, input),
-        // The program that asked is the job's actor (KS-2B2).
-        AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_as_owner(
-            server,
-            decode(input)?,
-            Some(actor),
-        ))?),
+        // The program that asked is the job's actor (KS-2B2); its job lives
+        // on the run's line from its submit to its end.
+        AgentVerb::AiVideo => {
+            let input = decode(input)?;
+            let ticket = match line {
+                Some(line) => runtime.block_on(crate::api::ai_video_for_run(
+                    server,
+                    line,
+                    input,
+                    Some(actor),
+                )),
+                None => runtime.block_on(crate::api::ai_video_as_owner(server, input, Some(actor))),
+            };
+            encode(ticket?)
+        }
         AgentVerb::AiVideoPoll => {
             encode(runtime.block_on(crate::api::ai_video_poll_as_owner(server, decode(input)?))?)
         }

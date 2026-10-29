@@ -400,16 +400,21 @@ pub(super) async fn run_code_mode_verb(
     let mut served = super::McpServed::default();
     let mut board_hooks = None;
     let origin = run.origin.clone();
+    // A media call spends on the run's own line, as its steps do (FIX 780).
+    let line = media_line(server, tool.name, run.run_id);
     let (output, ..) = crate::api::facade::host_doors::with_calling_origin(
         origin,
-        execute_agent_verb_input(
-            server,
-            tool.name,
-            input,
-            actor,
-            Some(run),
-            &mut served,
-            &mut board_hooks,
+        crate::api::facade::host_doors::with_calling_line(
+            line,
+            execute_agent_verb_input(
+                server,
+                tool.name,
+                input,
+                actor,
+                Some(run),
+                &mut served,
+                &mut board_hooks,
+            ),
         ),
     )
     .await?;
@@ -422,4 +427,37 @@ pub(super) async fn run_code_mode_verb(
     // An act whose rows are unknown answers off this device only that it
     // ran (FIX 5988); a read releases as before.
     super::served_rows::unknown_act_answer(tool.name, actor, output, served)
+}
+
+/// The `ai.*` media verbs a code-mode run's line pays for (FIX 780).
+const LINE_VERBS: [&str; 8] = [
+    "ai.options",
+    "ai.image",
+    "ai.speech",
+    "ai.transcribe",
+    "ai.embed",
+    "ai.video",
+    "ai.video.poll",
+    "ai.video.cancel",
+];
+
+/// The line a code-mode run's `ai.*` media call spends on (FIX 780): code
+/// mode's own meter, the one the run's steps spend on, under the run's own
+/// name. `None` for any other verb, or where code mode lends no meter: that
+/// call takes the owner's door, as a direct tool call does.
+fn media_line(
+    server: &SyncServer,
+    verb: &str,
+    run_id: oneiron::EntityId,
+) -> Option<oneiron::llm::run_admission::RunAdmission> {
+    if !LINE_VERBS.contains(&verb) {
+        return None;
+    }
+    let meter = server
+        .code_execution_host()?
+        .engine_native()?
+        .provider()
+        .host_meter()?;
+    let run = format!("code-mode:{}", run_id.to_hex());
+    Some(server.ai.model_runtime().funded_run(run, meter, None))
 }
