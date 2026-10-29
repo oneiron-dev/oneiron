@@ -24,6 +24,18 @@ pub(crate) struct SpeculativeReadScope {
 }
 
 impl SpeculativeReadScope {
+    pub(super) fn work_key(&self) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"oneiron.speculative.work.v1");
+        hasher.update(self.key.actor_ref().as_bytes());
+        hasher.update(&[u8::from(self.key.actor_class().is_some())]);
+        if let Some(class) = self.key.actor_class() {
+            hasher.update(class.as_bytes());
+        }
+        hasher.update(&[u8::from(self.key.reads_as_vault_owner())]);
+        *hasher.finalize().as_bytes()
+    }
+
     pub(super) fn run(
         &self,
         vault: &crate::Vault,
@@ -71,6 +83,13 @@ impl SpeculativeReadScope {
 }
 
 impl SpeculativeSession {
+    pub(crate) fn speculative_work_key(&self) -> [u8; 32] {
+        self.scope.as_ref().map_or_else(
+            || *blake3::hash(b"oneiron.speculative.native.v1").as_bytes(),
+            SpeculativeReadScope::work_key,
+        )
+    }
+
     pub(crate) fn with_scope(mut self, scope: SpeculativeReadScope) -> Self {
         self.scope = Some(scope);
         self
