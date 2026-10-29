@@ -14,6 +14,14 @@
 //! A root request the owner cancelled, or a newer one superseded, reads as
 //! such, and his cancel says whether it came too late (FIX 4739).
 //!
+//! `POST /v1/owner/bundles/publications` records the owner's ask that the
+//! vault's sealed bundle be published to one home (FIX 4782,
+//! `Vault::request_bundle_publication`). Its answer is that request's view,
+//! polled here at `GET /v1/owner/owner-work/{request}` by its `request`:
+//! "recorded, awaiting a holder" until the publishing install's result
+//! arrives, or why nothing was recorded. Where he spoke from is the request's
+//! own (`machine_routes::act_surface`): audit only.
+//!
 //! `/v1/owner/owner-work/{request}/diagnostics` reads what blocks a pending
 //! request as its executor observes it (FIX 4686, 4784, 4785, 4787): ids and
 //! closed reasons only, and only on the executor; any other install answers
@@ -24,23 +32,26 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::Json;
-use axum::routing::get;
+use axum::http::HeaderMap;
+use axum::routing::{get, post};
 use oneiron::secret_custody::CustodyManifestCheck;
 use oneiron::world_keys::{
     BundleHomeWarning, OwnerWorkDiagnostics, OwnerWorkReceipt, OwnerWorkUnassigned,
 };
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::parse_revision;
+use super::machine_routes::{act_surface, parse_revision};
 use super::{OwnerReply, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult};
+use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/owner-work/{request}", get(status))
         .route("/owner-work/{request}/diagnostics", get(diagnostics))
+        .route("/bundles/publications", post(publish_bundle))
 }
 
 /// One owner work receipt with the holder's manifest judgment as a surface
@@ -118,6 +129,15 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
     }
 }
 
+/// `POST /v1/owner/bundles/publications`'s body: the linked install that is
+/// to keep the sealed bundle. Ids only.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BundlePublicationRequest {
+    /// The home install, 32 hex.
+    home: String,
+}
+
 /// One request's executor diagnostics as a surface shows them: ids and
 /// closed reasons, with the engine's words for what this install observes.
 #[derive(Debug, Serialize)]
@@ -158,6 +178,33 @@ async fn status(
             .owner_work_receipt(&owner, entry)?
             .map(OwnerWorkView::from)
             .ok_or(OwnerError::NotFound("owner_work", request))
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+/// `POST /v1/owner/bundles/publications`: records the owner's ask that the
+/// vault's sealed bundle be published to `home`. Its answer is the request's
+/// view: "recorded, awaiting a holder" until the publishing install's result
+/// arrives, then enacted or refused, each read again at
+/// `GET /v1/owner/owner-work/{request}`; with no install to name, nothing is
+/// recorded and the view says why. A home that may keep no sealed copy says
+/// so beside it, and decides nothing.
+async fn publish_bundle(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<BundlePublicationRequest>,
+) -> OwnerReply<OwnerWorkView> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface(&server, &auth, &headers);
+    let body = payload.read(&server).await?;
+    let view = blocking(move || -> OwnerResult<OwnerWorkView> {
+        let home = entity_id("home", &body.home)?;
+        Ok(server
+            .vault()
+            .request_bundle_publication(&owner, surface, home)?
+            .into())
     })
     .await?;
     Ok(Json(view))
