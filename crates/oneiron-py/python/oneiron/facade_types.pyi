@@ -10274,7 +10274,10 @@ class ObservationMagnitude(TypedDict):
 class ObservationCategory(TypedDict):
     kind: Literal["category"]
     v: str
-Observation = ObservationSuccess | ObservationMagnitude | ObservationCategory
+class ObservationCountOnly(TypedDict):
+    kind: Literal["count_only"]
+    v: str
+Observation = ObservationSuccess | ObservationMagnitude | ObservationCategory | ObservationCountOnly
 class ContributionCheck(TypedDict):
     receipt: str
     contributed: bool
@@ -10315,6 +10318,7 @@ class EvidenceRow(TypedDict):
     outcome_label: NotRequired[str | None]
     pack_attribution: NotRequired[PackLearningContext | None]
     goal_revision: NotRequired[str | None]
+    measurement_version: NotRequired[str | None]
 class LearningEvidenceView(TypedDict):
     receipt: str
     evidence: EvidenceRow
