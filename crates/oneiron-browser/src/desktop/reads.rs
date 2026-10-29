@@ -30,7 +30,7 @@ impl DesktopSession {
         until: Option<Instant>,
     ) -> Result<Snapshot, BrowserError> {
         let key = self.window_key()?;
-        match self.walk(key, shot, on, until) {
+        let read = match self.walk(key, shot, on, until) {
             Ok(snapshot) => Ok(snapshot),
             Err(error) => {
                 let listed = self.listed()?;
@@ -41,7 +41,15 @@ impl DesktopSession {
                 self.switch(key, front, &listed, WindowSwitchCause::Closed);
                 self.walk(front, shot, None, until)
             }
+        };
+        // A read no settle poll took is where the window's rows stand now
+        // (FIX 10430).
+        if let Ok(snapshot) = &read
+            && !self.polling
+        {
+            self.view = acts::desktop_scroll_proof_policy(snapshot);
         }
+        read
     }
 
     /// The session moves from window `from` to window `to` (CUA-001), for

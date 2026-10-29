@@ -1,5 +1,37 @@
 use super::*;
 
+/// What a read of a window shows of its rows' places, as one hash
+/// (`desktop_scroll_proof_policy`, CALLS row, FIX 10430): the window, then
+/// each row's locator and its frame on screen less the window's own place,
+/// in row order. Two reads of one window that differ show rows that moved,
+/// as a scroll that moved the view does; a window moved whole shows its
+/// rows where they were. A cut walk, a read with no tree, or one whose rows
+/// carry no frame proves nothing: none.
+pub(super) fn desktop_scroll_proof_policy(snapshot: &Snapshot) -> Option<[u8; 32]> {
+    if snapshot.partial.is_some()
+        || snapshot.no_tree
+        || snapshot.lines.iter().all(|line| line.frame.is_none())
+    {
+        return None;
+    }
+    let (left, top) = snapshot
+        .bounds
+        .as_ref()
+        .map_or((0.0, 0.0), |at| (at.x, at.y));
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(snapshot.key.name().as_bytes());
+    for line in &snapshot.lines {
+        hasher.update(b"\n");
+        hasher.update(line.row.locator.as_bytes());
+        if let Some(frame) = &line.frame {
+            for value in [frame.x - left, frame.y - top, frame.w, frame.h] {
+                hasher.update(&value.to_bits().to_le_bytes());
+            }
+        }
+    }
+    Some(*hasher.finalize().as_bytes())
+}
+
 impl DesktopSession {
     /// Runs `act` on the desktop as `read` saw it, then returns the settled
     /// window as an edit of `base`, or whole when the act opened a window in
