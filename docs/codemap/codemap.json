@@ -19303,10 +19303,22 @@
      "path": "src/connector_key/events.rs",
      "purpose": "Durable, revocable connector-event subscriptions and atomic wake decisions",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/events/paced.rs",
+     "purpose": "Connector event wakes a full count-bound budget window paces (FIX 8686)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -19498,7 +19510,8 @@
      "purpose": "Effector budget windows, usage rows and the budget charge facade",
      "surface": {
       "const": 4,
-      "crate-vis": 22,
+      "crate-vis": 23,
+      "fn": 1,
       "re-export": 2,
       "struct": 6
      }
@@ -19518,9 +19531,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/meter/rate_window.rs",
-     "purpose": "Whether a key's exhausted rows only pace its next effect (FIX 8788)",
+     "purpose": "Whether a key's exhausted rows only pace its next effect (FIX 8788, FIX 8686)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19552,6 +19565,16 @@
       "enum": 1,
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/meter/spend_reserve.rs",
+     "purpose": "Spend reserved before a call (FIX 8689)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -19647,10 +19670,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarPeriod",
+      "ConnectorSpendBasis",
+      "ConnectorSpendEstimate",
       "EffectorBudget",
       "EffectorBudgetDimension",
       "EffectorBudgetOnExhaust",
@@ -19661,9 +19686,9 @@
      "purpose": "Effector-budget rows: dimension/window/exhaust/reserve enums, EffectorBudget constructors, row and…",
      "surface": {
       "crate-vis": 3,
-      "enum": 5,
+      "enum": 6,
       "fn": 11,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -51469,7 +51494,7 @@
      "path": "src/outbound_chokepoint/budget.rs",
      "purpose": "The new-effect admission's budget steps, moved out of `admission.rs` whole: the co-actor's preflight and the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -51621,7 +51646,7 @@
      "path": "src/outbound_consent/connector_call_asks.rs",
      "purpose": "The owner ask a held connector call queues (ONE-2510)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -51771,7 +51796,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorAwaitingInput",
@@ -51850,7 +51875,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -81578,7 +81603,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 48,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82784,7 +82809,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5529,
+   "source_files": 5531,
    "test_files": 902
   },
   "oneiron-android": {
@@ -116432,6 +116457,7 @@
       "ConnectorSlateRevisionOffersRequest",
       "ConnectorSlateRevisionOffersView",
       "ConnectorSlateView",
+      "ConnectorSpendEstimate",
       "ConnectorToolResult",
       "ConnectorView",
       "ConnectorWitnessReadGrantRequest",
@@ -119818,7 +119844,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1060,
-      "struct": 3243
+      "struct": 3244
      }
     },
     {

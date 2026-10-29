@@ -76,7 +76,12 @@ impl Vault {
         pending: &PendingConnectorCall,
         now_ms: u64,
     ) -> Result<Option<ConnectorCallOutcome>, IntentLedgerError> {
-        if pending.input.is_some() || now_ms < connector_call_deadline(pending.held_at_ms) {
+        // A call a budget window paces waits for its window and no longer
+        // (FIX 8686): it has no deadline of its own.
+        if pending.input.is_some()
+            || pending.paced_until.is_some()
+            || now_ms < connector_call_deadline(pending.held_at_ms)
+        {
             return Ok(None);
         }
         let record = {
