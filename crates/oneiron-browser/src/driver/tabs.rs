@@ -28,6 +28,9 @@ impl CdpDriver {
         let target = str_field(&created, "targetId")?;
         let session = attach_tab(&pipe, &target, engine)?;
         let token = session_token();
+        // One host charge: the live handles, and the answers held for
+        // their later pages (FIX 8007).
+        let (retention, held) = crate::retention::split(retention);
         let driver = Self {
             pipe,
             engine,
@@ -42,7 +45,7 @@ impl CdpDriver {
             seq: 0,
             media: VecDeque::new(),
             captures: Captures::new(&token),
-            pages: Observations::default(),
+            pages: Observations::charged(held),
             handles: Handles::new(token, retention),
             wait_cap,
             switched: None,

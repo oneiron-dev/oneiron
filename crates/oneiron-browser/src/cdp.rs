@@ -12,7 +12,8 @@
 //! left, kept in the session's snapshots (`storage`). A message past the
 //! pipe's framing threshold reads on, charged to the host's memory floor;
 //! one the floor cannot hold, or a reply the pipe cannot parse, is cut and
-//! answers alone, and the pipe reads on (`overrun`, FIX 6851, FIX 7988). A
+//! answers alone, and the pipe reads on (`overrun`, FIX 6851, FIX 7988); the
+//! reply parsed from one stays charged until its call took it (`parsed`). A
 //! message nested past serde_json's limit reads by an explicit stack
 //! (`deep`, FIX 6963). Each paused request goes to the host's request
 //! handler where the session has one, in place of the relay (`requests`,
@@ -22,6 +23,7 @@
 
 pub(crate) mod deep;
 mod overrun;
+mod parsed;
 mod paused;
 pub(crate) mod recorder;
 mod requests;
@@ -59,7 +61,10 @@ const NAVIGATION_EVENTS: [&str; 4] = [
     "Page.navigatedWithinDocument",
 ];
 
-type Reply = Result<Value, String>;
+/// A call's reply: its result, with the charge it holds on the host's
+/// floor where it was read past the framing threshold (`parsed`), or the
+/// error that answered it.
+type Reply = Result<(Value, Option<parsed::Held>), String>;
 type Pending = Arc<Mutex<Option<HashMap<u64, Sender<Reply>>>>>;
 /// Each watched page session's navigation events so far.
 type Navigations = Arc<Mutex<HashMap<String, u64>>>;
@@ -107,6 +112,9 @@ pub(crate) struct Pipe {
     /// The charge on the host's memory floor for a message read past the
     /// framing threshold (`overrun`).
     inbound: Arc<Mutex<overrun::Inbound>>,
+    /// The charge for the replies parsed from such messages, until their
+    /// calls took them (`parsed`, FIX 7988).
+    parsed: Arc<Mutex<parsed::Parsed>>,
     /// The paused requests waiting for a host worker (`paused`).
     paused: paused::Waiting,
     /// The dialog answers that failed, not yet observed (FIX 6768).
@@ -162,6 +170,7 @@ impl Pipe {
             documents: Arc::default(),
             recorder: Arc::default(),
             inbound: Arc::default(),
+            parsed: Arc::default(),
             paused: Arc::default(),
             dialogs: Arc::default(),
         }
@@ -241,7 +250,8 @@ impl Pipe {
         }
         let wait = deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(wait) {
-            Ok(Ok(result)) => Ok(result),
+            // A parsed reply's charge goes back as its result is handed on.
+            Ok(Ok((result, _charged))) => Ok(result),
             Ok(Err(message)) => Err(BrowserError::Protocol(format!("{method}: {message}"))),
             Err(RecvTimeoutError::Disconnected) => Err(BrowserError::GuestLost),
             Err(RecvTimeoutError::Timeout) => {
@@ -327,17 +337,24 @@ fn route(
         }
         return true;
     };
-    // The result is moved to its call, never copied: it may nest deep.
+    // The result is moved to its call, never copied: it may nest deep. One
+    // read past the framing threshold is charged as parsed until its call
+    // took it (FIX 7988).
     let reply = match message.get("error") {
         Some(error) => Err(error
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("error")
             .to_owned()),
-        None => Ok(message
-            .as_object_mut()
-            .and_then(|message| message.remove("result"))
-            .unwrap_or(Value::Null)),
+        None => {
+            let result = message
+                .as_object_mut()
+                .and_then(|message| message.remove("result"))
+                .unwrap_or(Value::Null);
+            let past = u64::try_from(bytes.len()).is_ok_and(|len| len >= MAX_MESSAGE);
+            let charged = past.then(|| pipe.charge_parsed(&result)).flatten();
+            Ok((result, charged))
+        }
     };
     let Ok(mut routes) = pipe.pending.lock() else {
         return false;
@@ -348,7 +365,7 @@ fn route(
     };
     drop(routes);
     // A reply no call waits for any more is taken apart as a deep one is.
-    if let Some(Ok(result)) = undelivered {
+    if let Some(Ok((result, _charged))) = undelivered {
         deep::dismantle(result);
     }
     true

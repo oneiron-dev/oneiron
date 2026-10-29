@@ -278,9 +278,13 @@ impl CdpDriver {
     }
 
     /// Books this driver's CDP messages past the pipe's framing threshold
-    /// to `charge` on the host's memory floor (FIX 7988), so they read on.
+    /// to `charge` on the host's memory floor (FIX 7988), so they read on:
+    /// one part for the message read now, one for the replies parsed from
+    /// such messages until their calls took them.
     pub(crate) fn book_inbound(&self, charge: Box<dyn crate::retention::HandleRetention>) {
-        self.pipe.book_inbound(charge);
+        let (inbound, parsed) = crate::retention::split(charge);
+        self.pipe.book_inbound(inbound);
+        self.pipe.book_parsed(parsed);
     }
 
     /// Keeps a read of the front tab's stores another step took: a
