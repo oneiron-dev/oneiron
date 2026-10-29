@@ -430,6 +430,15 @@ pub const COMPACTION_SUPPORT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// What the owner does about an offer parked on a spent window or spent credit: wait, top
+/// up, add an account, pay as you go, or use the usage left on another provider (OF-305,
+/// FIX 562). Asked of a person only; keyed by the parked offer's row and what was spent.
+pub const QUOTA_SPENT: QuestionFamily = QuestionFamily {
+    name: "models.quota_spent",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -476,4 +485,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     NIGHTLY_LINK,
     URGENT_DIGEST_HARM,
     COMPACTION_SUPPORT,
+    QUOTA_SPENT,
 ];

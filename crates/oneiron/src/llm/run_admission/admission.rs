@@ -256,6 +256,14 @@ impl RunAdmission {
         }
     }
 
+    /// Who this handle's calls answer to (FIX 562): the actor that acted to
+    /// start them ([`Self::initiated_by`]), else the actor the run's budget
+    /// line is bound to. `None` when neither is known.
+    #[must_use]
+    pub fn principal(&self) -> Option<crate::EntityId> {
+        self.initiator.or_else(|| self.inner.guard.actor())
+    }
+
     /// The run's budget line as its meter reads now.
     #[must_use]
     pub fn read(&self) -> BudgetRead {

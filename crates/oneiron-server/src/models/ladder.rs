@@ -679,7 +679,9 @@ impl OfferLadder {
     /// each one parked on a spent window or spent credit (OF-305: asked only
     /// when no rung is left to serve the call). The models it lists for
     /// `use_fallback` are only those that can take this call from this seat.
-    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>) {
+    /// The call's `principal`, when its run names one, is who each question
+    /// is asked for (FIX 562).
+    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>, principal: Option<oneiron::EntityId>) {
         let Some(parked) = walk.parked(self.rungs.len()) else {
             return;
         };
@@ -696,7 +698,7 @@ impl OfferLadder {
                 wire_model: &rung.wire_model,
             };
             self.rests
-                .ask(&rung.offer.binding, rest, asked, &own, &fits);
+                .ask(&rung.offer.binding, rest, asked, &own, &fits, principal);
         }
     }
 
@@ -922,7 +924,7 @@ impl OfferLadder {
     /// ends with its provider's own failure, never a rate refusal.
     /// Every rung parked, the owner is asked about the spent ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
-        self.ask_parked(&walk, call.needs);
+        self.ask_parked(&walk, call.needs, call.run.principal());
         if walk.outage() && !walk.kept() {
             return walk
                 .last
@@ -1179,7 +1181,7 @@ impl OfferLadder {
                         )
                         .await;
                     if fell.is_err() {
-                        self.ask_parked(&walk, call.needs);
+                        self.ask_parked(&walk, call.needs, call.run.principal());
                     }
                     return fell;
                 }
@@ -1366,7 +1368,7 @@ impl OfferLadder {
                             )
                             .await;
                         if fell.is_err() {
-                            self.ask_parked(&walk, call.needs);
+                            self.ask_parked(&walk, call.needs, call.run.principal());
                         }
                         return fell;
                     }
@@ -1563,7 +1565,7 @@ impl OfferLadder {
                     let selector = Some(selector.unwrap_or(self.name.as_str()));
                     let fell = fallback.stream_from(run, fell_request, selector, false, deadline);
                     if fell.is_err() {
-                        self.ask_parked(&walk, call.needs);
+                        self.ask_parked(&walk, call.needs, call.run.principal());
                     }
                     return fell;
                 }
@@ -1716,7 +1718,7 @@ impl OfferLadder {
                 }
             }
             Err(error) => {
-                self.ask_parked(&walk, call.needs);
+                self.ask_parked(&walk, call.needs, call.run.principal());
                 let _ = events.send(Err(error)).await;
             }
         }

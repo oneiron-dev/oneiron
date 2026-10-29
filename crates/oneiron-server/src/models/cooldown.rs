@@ -33,6 +33,7 @@ use super::ladder::OfferLadder;
 use super::status::{HealthState, LimitHold, RungHealth};
 
 mod account_park;
+mod quota_queue;
 mod reply_budgets;
 mod world_hold;
 
@@ -691,8 +692,9 @@ impl OfferCooldowns {
     /// when it must stay there, and accepts the request. A question still
     /// open stays as it was asked; one whose window has reset answered
     /// itself, so a later spent window of the same offer asks again (FIX
-    /// 9512), read and replaced in one write. Nothing when the rest spent
-    /// nothing or no vault keeps rests.
+    /// 9512), read and replaced in one write. With the call's `principal`
+    /// it is asked as a person-only decision (FIX 562). Nothing when the
+    /// rest spent nothing or no vault keeps rests.
     pub(super) fn ask(
         &self,
         offer: &OfferBinding,
@@ -700,6 +702,7 @@ impl OfferCooldowns {
         asked: Asked<'_>,
         own: &[&str],
         fits: &dyn Fn(&OfferLadder) -> bool,
+        principal: Option<oneiron::EntityId>,
     ) {
         let (Some(vault), Some(spent)) = (self.vault.as_ref(), rest.spent) else {
             return;
@@ -741,16 +744,13 @@ impl OfferCooldowns {
             fallbacks,
             account: account_park::parks_account(&rest).then(|| account_park::id(offer)),
         };
-        let kept = rmp_serde::to_vec_named(&question).ok().map(|bytes| {
-            vault.try_with_write_txn_grouped(|txn| {
-                // A question another call opened meanwhile stays.
-                if !open(vault.sync_state_get_in_write_txn(txn, &row)?) {
-                    vault.sync_state_put_in_write_txn(txn, &row, &bytes)?;
-                }
-                Ok::<_, oneiron::Error>(())
-            })
-        });
-        if !matches!(kept, Some(Ok(()))) {
+        // With the call's principal known, the question is a person-only
+        // decision whose queue keeps the same row (FIX 562).
+        let kept = match principal {
+            Some(principal) => quota_queue::ask(vault, principal, &question),
+            None => quota_queue::keep(vault, &question),
+        };
+        if kept.is_err() {
             tracing::warn!(
                 reason = "quota_question_unwritable",
                 "a parked offer's quota question could not be kept"
