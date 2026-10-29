@@ -232,18 +232,33 @@ impl Pipe {
         }
     }
 
-    /// The out-of-process frames attached under page session `parent`:
-    /// each one's frame and own session.
-    pub(crate) fn oopifs(&self, parent: &str) -> Vec<(String, String)> {
+    /// The out-of-process frames attached under page session `page`, and
+    /// under each of those in turn (an OOPIF nested in one, FIX 10332),
+    /// each frame after the one it is in: each one's frame, own session,
+    /// and the session it was attached under.
+    pub(crate) fn oopifs(&self, page: &str) -> Vec<(String, String, String)> {
         let Ok(pages) = self.pages.lock() else {
             return Vec::new();
         };
-        pages
-            .oopifs
-            .iter()
-            .filter(|(_, (page, _))| page == parent)
-            .map(|(session, (_, frame))| (frame.clone(), session.clone()))
-            .collect()
+        let mut found: Vec<(String, String, String)> = Vec::new();
+        let mut parents = vec![page.to_owned()];
+        while !parents.is_empty() {
+            let mut level: Vec<(String, String, String)> = pages
+                .oopifs
+                .iter()
+                .filter(|(session, (parent, _))| {
+                    parents.contains(parent) && !found.iter().any(|(_, held, _)| held == *session)
+                })
+                .map(|(session, (parent, frame))| (frame.clone(), session.clone(), parent.clone()))
+                .collect();
+            level.sort();
+            parents = level
+                .iter()
+                .map(|(_, session, _)| session.clone())
+                .collect();
+            found.extend(level);
+        }
+        found
     }
 
     /// Every out-of-process frame the browser attached: its own session,
