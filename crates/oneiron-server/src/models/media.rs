@@ -50,6 +50,8 @@ use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
+// FIX 3208: the video jobs an agent asked for under the owner's ai.video Grant.
+mod asked_jobs;
 mod bindings;
 mod booked;
 mod calls;
