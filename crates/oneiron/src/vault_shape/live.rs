@@ -15,7 +15,7 @@ use crate::gate::manifest_authenticity::manifest_is_quarantined;
 use crate::ports::{EdgeDirection, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CONNECTOR_KEY,
-    ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL,
     ENTITY_TYPE_WORLD,
 };
 use crate::skill::{SkillLifecycle, decode_skill_record};
@@ -102,7 +102,7 @@ pub(super) fn world_name(body: &[u8]) -> Option<String> {
 }
 
 /// A FACET body's name: its `label` leaf. A person's substrate and a
-/// persona scenario carry none, so they are not named masks.
+/// persona scenario carry none; live names those by id.
 pub(super) fn facet_name(body: &[u8]) -> Option<String> {
     text_leaf(body, &["label"])
 }
@@ -193,9 +193,9 @@ impl Vault {
     /// The live setup plane, keeping an entity-backed row only when
     /// `visible` admits its entity. Base reality and received worlds are not
     /// this vault's arrangement, so they are not rows, and neither is a
-    /// retired skill, a requested (unbound) or retired channel identity, an
-    /// unnamed mask, or a quarantined manifest. A world with no name is
-    /// named by its id.
+    /// retired skill, a requested (unbound) or retired channel identity, or
+    /// a quarantined manifest. A world or mask with no name is named by its
+    /// id.
     pub(super) fn read_live_shape(
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -234,22 +234,20 @@ impl Vault {
                 rows.push((ShapeRow::World { name }, Some(id)));
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_FACET)? {
-                let Some(name) = facet_name(&body) else {
-                    continue;
-                };
-                // A mask is its wearer's: the one person whose has_facet
-                // edge reaches it.
+                let name = facet_name(&body).unwrap_or_else(|| id.to_hex());
+                // A mask is its wearer's: the one entity whose has_facet
+                // edge reaches it, of any kind.
                 let wearers = self.filtered_edge_peers(
                     &txn,
                     EdgeDirection::In,
                     &id,
                     EdgeKind::HasFacet,
-                    Some(ENTITY_TYPE_PERSON),
+                    None,
                 )?;
-                if let [person] = wearers.as_slice() {
+                if let [wearer] = wearers.as_slice() {
                     rows.push((
                         ShapeRow::Facet {
-                            person: person.to_hex(),
+                            person: wearer.to_hex(),
                             name,
                         },
                         Some(id),
