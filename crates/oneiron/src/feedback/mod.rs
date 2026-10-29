@@ -185,8 +185,8 @@ pub use self::triage::{
     GithubSweepContinuation,
 };
 pub(crate) use self::triage::{
-    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, job_handoff_in_txn,
-    job_target, node_target,
+    acknowledge_feedback_triage_in_txn, check_feedback_triage_findings, erase_handoff_in_txn,
+    job_handoff_in_txn, job_target, node_target,
 };
 
 #[cfg(test)]

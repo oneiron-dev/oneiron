@@ -114,15 +114,32 @@ pub(super) fn requeue_unacknowledged(
     let queue = AttemptQueue::new(vault);
     let mut requeued = 0;
     for (key, read) in handoffs {
-        if read.result.is_some() || read.erased_at.is_some() {
+        if read.erased_at.is_some() {
             continue;
+        }
+        // An acknowledged row stays out unless its evidence is erased, for
+        // the backstop below (FIX 10921).
+        if read.result.is_some() {
+            let txn = vault.store.env.read_txn()?;
+            if !erased::evidence_erased_in_txn(vault, &txn, &read)? {
+                continue;
+            }
         }
         // Read again under the writer: the job may have acknowledged since.
         let again = vault.with_write_txn_grouped(|txn| {
             let Some(mut handoff) = HANDOFFS.get(&vault.store, txn, &key)? else {
                 return Ok(false);
             };
-            if handoff.result.is_some() || handoff.erased_at.is_some() {
+            if handoff.erased_at.is_some() {
+                return Ok(false);
+            }
+            // The erase backstop (FIX 10921): an acknowledged row whose
+            // evidence the owner erased settles here and queues nothing.
+            if handoff.result.is_some() {
+                if !erased::evidence_erased_in_txn(vault, txn, &handoff)? {
+                    return Ok(false);
+                }
+                erased::settle_erased_in_txn(vault, txn, &key, &mut handoff, now)?;
                 return Ok(false);
             }
             if queue
