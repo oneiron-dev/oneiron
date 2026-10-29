@@ -115,6 +115,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // An archive delivered to a removed Owner has left the vault: a restore
     // neither revives a purged one nor drops one still within its term.
     (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
+    // A device's record of the archives it took in stands with the archives
+    // it keeps: a restore neither re-imports one nor forgets one.
+    (&t::SHARED_ACT_REMOVAL_IMPORT, LIVE),
     (&t::SHARED_VAULT_CREATION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_DELETION, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_VAULT_INVITATION, SHARED_VAULT_MEMBERSHIP),

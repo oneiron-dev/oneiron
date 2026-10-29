@@ -611,18 +611,10 @@ fn retry_child_of_row(
         vad: decoded.vad.unwrap_or(crate::affect::Vad::NEUTRAL),
         provenance: decoded.provenance,
     };
-    let applied = batch::apply_ops(
-        &vault.store,
-        &vault.config,
-        &vault.analyzer,
-        txn,
-        vec![op],
-        vault
-            .text_index_trusted
-            .load(std::sync::atomic::Ordering::Acquire),
-        false,
-        false,
-    );
+    // In a savepoint (FIX 8856): a refused retry drops the stored parent's
+    // delete its LWW resolution staged, and its quarantine bookkeeping below
+    // lands in the outer transaction only after that rollback.
+    let applied = apply_child_of_attempt(vault, txn, vec![op]);
     match applied {
         Ok(()) => {
             settle_child_of(vault, txn, window, &src, &tgt)?;
