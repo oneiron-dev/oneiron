@@ -328,14 +328,25 @@ impl SpeculativeSession {
     /// (logged as `RetrievalAction::Pipeline`; it IS a real retrieval) and
     /// warm-fill the shortfall. Never counts against `max_fires`.
     pub fn finalize(self, final_partial: SpeculativePartial<'_>) -> Result<SpeculativeFinal> {
+        self.finalize_candidates(final_partial)
+            .map(|candidates| candidates.output)
+    }
+
+    fn finalize_candidates(
+        self,
+        final_partial: SpeculativePartial<'_>,
+    ) -> Result<FinalizedCandidates> {
         let signature = partial_signature(&final_partial);
         if signature == self.last_signature
             && let Some(warm) = self.warm
         {
-            return Ok(SpeculativeFinal::Promoted {
-                scores: warm.scores,
-                run_id: warm.run_id,
-                partial: warm.partial,
+            return Ok(FinalizedCandidates {
+                output: SpeculativeFinal::Promoted {
+                    scores: warm.scores,
+                    run_id: warm.run_id,
+                    partial: warm.partial,
+                },
+                warm_ids: BTreeSet::new(),
             });
         }
 
@@ -364,6 +375,7 @@ impl SpeculativeSession {
         let mut seen: BTreeSet<crate::entity_id::EntityId> =
             scores.iter().map(|scored| scored.id).collect();
         let mut warm_appended = 0;
+        let mut warm_ids = BTreeSet::new();
         if let Some(warm) = self.warm {
             for candidate in warm.scores {
                 if scores.len() >= self.config.final_limit {
@@ -372,18 +384,28 @@ impl SpeculativeSession {
                 if !seen.insert(candidate.id) {
                     continue;
                 }
+                warm_ids.insert(candidate.id);
                 scores.push(candidate);
                 warm_appended += 1;
             }
         }
 
-        Ok(SpeculativeFinal::Finalized {
-            scores,
-            run_id: fresh.run_id,
-            warm_appended,
-            partial: fresh.partial,
+        Ok(FinalizedCandidates {
+            output: SpeculativeFinal::Finalized {
+                scores,
+                run_id: fresh.run_id,
+                warm_appended,
+                partial: fresh.partial,
+            },
+            warm_ids,
         })
     }
+}
+
+struct FinalizedCandidates {
+    output: SpeculativeFinal,
+    /// Warm rows actually appended after fresh/warm dedupe, before release.
+    warm_ids: BTreeSet<crate::entity_id::EntityId>,
 }
 
 /// The share of a vault's LMDB reader slots its speculative passes may hold

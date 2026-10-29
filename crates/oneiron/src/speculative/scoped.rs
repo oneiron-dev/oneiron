@@ -1,4 +1,5 @@
 //! Credential-bound candidate admission, inside every speculative pass.
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult};
@@ -9,7 +10,8 @@ use crate::ports::EntityStoreRead;
 use crate::retrieval_depth::RetrievalDeadline;
 
 use super::{
-    PassOutput, SpeculativeFinal, SpeculativePartial, SpeculativePass, SpeculativeSession,
+    FinalizedCandidates, PassOutput, SpeculativeFinal, SpeculativePartial, SpeculativePass,
+    SpeculativeSession,
 };
 
 #[derive(Clone)]
@@ -103,7 +105,7 @@ impl SpeculativeSession {
             "speculative session has no credential-bound read".to_owned(),
         ))?;
         let vault = Arc::clone(&self.vault);
-        let output = self.finalize(partial)?;
+        let FinalizedCandidates { output, warm_ids } = self.finalize_candidates(partial)?;
         match output {
             SpeculativeFinal::Promoted {
                 scores,
@@ -123,10 +125,16 @@ impl SpeculativeSession {
             SpeculativeFinal::Finalized {
                 scores,
                 run_id,
-                warm_appended,
                 partial,
+                ..
             } => {
                 let released = scope.release(&vault, scores)?;
+                let released_ids: BTreeSet<_> = released
+                    .value
+                    .iter()
+                    .map(|candidate| candidate.id)
+                    .collect();
+                let warm_appended = warm_ids.intersection(&released_ids).count();
                 Ok((
                     SpeculativeFinal::Finalized {
                         scores: released.value,
