@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1215 code-mode rows (1175 host rows, 40 run rows), 4241 declarations.
+// Census: 1215 code-mode rows (1175 host rows, 40 run rows), 4242 declarations.
 // Replies: 1090 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: none.
@@ -219,7 +219,7 @@ declare namespace Sdk {
   type ShapeChange = "create" | "update" | "retire";
   type ShapeItemClass = "receipted" | "widening" | "authority";
   type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
-  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
+  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "file_refused"; reason: string } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
   type ShapeApprovalDependencies = { digest: string };
   type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null };
   type ShapeApplyRun = { run_id: string; root: string; items: string[] };
@@ -2974,7 +2974,7 @@ declare namespace Sdk {
   type RoomUpkeepNudge = { finding: EntityId; room: EntityId; thread: EntityId; host: EntityId; last_activity: number; open_tasks: EntityId[]; approval: ClaimApprovalStatus };
   type RoomUpkeepVoiceRequest = { finding: EntityId; content: string };
   type RoomUpkeepVoiceReceipt = { finding: EntityId; turn?: RecordRef | null; message?: RecordRef | null; receipt_ref: string; replayed: boolean };
-  type RoomSharingClamp = { clamp: "worlds" } | { clamp: "facets" } | { clamp: "contact_clearance"; members: number } | { clamp: "unknown"; members: number };
+  type RoomSharingClamp = { clamp: "worlds" } | { clamp: "facets" } | { clamp: "contact_clearance"; members: number } | { clamp: "unknown"; members: number } | { clamp: "live_call" };
   type RoomSharingView = { room: EntityId; effective: Scope; clamps: RoomSharingClamp[] };
   type CompanionSharingRequest = { companion_ref: string; contact_ref: string };
   type CompanionSharingTarget = { companion: EntityId; contact: EntityId };
@@ -3072,7 +3072,7 @@ declare namespace Sdk {
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input" | "reasoning_content_history" | "token_logprobs";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
-  type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
+  type FatalLlmError = "InvalidRequest" | { InvalidRequestDetail: { message: string } } | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure } | "ResponseErased";
   type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
   type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut";
   type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck";

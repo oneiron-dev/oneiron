@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1164 facade rows, 4181 declarations.
+Census: 1164 facade rows, 4182 declarations.
 Inputs: 1099 of 1164 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1164 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -1098,6 +1098,9 @@ class ShapeItemStateFiled(TypedDict):
     state: Literal["filed"]
     proposal_ref: str
     expires_at: int
+class ShapeItemStateFileRefused(TypedDict):
+    state: Literal["file_refused"]
+    reason: str
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -1105,7 +1108,7 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateFileRefused | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApprovalDependencies(TypedDict):
     digest: str
 class ShapeApplyItem(TypedDict):
@@ -14890,7 +14893,9 @@ class RoomSharingClampContactClearance(TypedDict):
 class RoomSharingClampUnknown(TypedDict):
     clamp: Literal["unknown"]
     members: int
-RoomSharingClamp = RoomSharingClampWorlds | RoomSharingClampFacets | RoomSharingClampContactClearance | RoomSharingClampUnknown
+class RoomSharingClampLiveCall(TypedDict):
+    clamp: Literal["live_call"]
+RoomSharingClamp = RoomSharingClampWorlds | RoomSharingClampFacets | RoomSharingClampContactClearance | RoomSharingClampUnknown | RoomSharingClampLiveCall
 class RoomSharingView(TypedDict):
     room: EntityId
     effective: Scope
@@ -15358,11 +15363,15 @@ class UnsupportedCapability(TypedDict):
     model: NotRequired[ModelId | None]
     reason: NotRequired[str | None]
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
+class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
+    message: str
+class FatalLlmErrorInvalidRequestDetail(TypedDict):
+    InvalidRequestDetail: FatalLlmErrorInvalidRequestDetailBody
 class FatalLlmErrorUnsupported(TypedDict):
     Unsupported: UnsupportedCapability
 class FatalLlmErrorLabelRead(TypedDict):
     LabelRead: LabelReadFailure
-FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased"] | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
+FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased"] | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
 ModelStepFailureClass = Literal["retryable", "fatal", "budget_denied", "schema_validation", "fallback", "finalize_refused", "deadline_hard_cut", "engine"]
 class RetryableLlmErrorRateLimitedBody(TypedDict):
     retry_after: NotRequired[int | None]
