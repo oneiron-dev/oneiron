@@ -1691,6 +1691,9 @@ impl OneironClient {
                 "vault.secrets.rewrap" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SecretCustodyReply,
                 >(client, verb, &input),
+                "vault.secrets.revoke" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretRevokeReply,
+                >(client, verb, &input),
                 "vault.secrets.custody.get" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SecretCustodyViewReply,
                 >(client, verb, &input),
@@ -10373,6 +10376,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.secrets.rewrap", value)
+    }
+    pub fn vault_secrets_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::SecretRevokeRequest,
+    ) -> Result<oneiron::task_verb::sdk::SecretRevokeReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.revoke", value)
     }
     pub fn vault_secrets_custody_get(
         &self,
