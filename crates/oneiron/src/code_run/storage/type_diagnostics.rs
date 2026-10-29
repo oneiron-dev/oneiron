@@ -1,8 +1,9 @@
 //! The late-result store of code-mode type feedback (FIX 8277): one row per
-//! program step, keyed by its run, step and invocation, on the vault's own
-//! storage. The step writes its feedback as it stands when it ends; a check
-//! still running then writes its result here once it lands, never into the
-//! step's replay record. A diagnostics collection past one reply lives in a
+//! program step, keyed by its run, step and invocation, on its run's own
+//! route: the vault's rows, or the route a session-bound run captured in its
+//! stretch (FIX 10389). The step writes its feedback as it stands when it
+//! ends; a check still running then writes its result here once it lands,
+//! never into the step's replay record. A diagnostics collection past one reply lives in a
 //! body the run owns, released with the run, or with the actor's erase.
 //!
 //! A pending row belongs to the checker incarnation that admitted it: read
@@ -22,9 +23,9 @@ use super::super::type_diagnostics::{
 };
 use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::routing::ExecutorStorage;
+use crate::off_record::OffRecordSession;
 use crate::provenance::body::release_body_in_txn;
-use crate::side_table::{self, Named, SideTable};
-use crate::store::Store;
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::{EntityId, Result, Vault};
 
 /// One step's feedback row. Key: (run, step, invocation).
@@ -252,7 +253,7 @@ impl Vault {
     /// Storage errors, and a row that does not decode.
     pub(crate) fn type_diagnostics_row(&self, key: StepKey) -> Result<Option<StoredStepFeedback>> {
         let rtxn = self.store.env.read_txn()?;
-        ROWS.get(&self.store, &rtxn, &key)
+        row_in(&self.store, &rtxn, key)
     }
 
     /// Every step feedback row of `run`, in step order.
@@ -265,7 +266,7 @@ impl Vault {
         run: EntityId,
     ) -> Result<Vec<(StepKey, StoredStepFeedback)>> {
         let rtxn = self.store.env.read_txn()?;
-        ROWS.scan_from(&self.store, &rtxn, run.as_bytes())
+        rows_in(&self.store, &rtxn, run)
     }
 
     /// Every program step's feedback `run` keeps, in step order, each under
@@ -311,48 +312,86 @@ impl Vault {
         row: &StoredStepFeedback,
     ) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        if row.pending()
-            && ROWS
-                .get(&self.store, &wtxn, &key)?
-                .is_some_and(|held| !held.pending())
-        {
-            return Ok(());
-        }
-        ROWS.put(self, &mut wtxn, &key, row)?;
+        put_in(&self.store, self, &mut wtxn, key, row)?;
         Ok(wtxn.commit()?)
     }
 }
 
+/// One step's feedback row, read in `txn` on `dbs`: the vault's own rows,
+/// or a stretch's composed view.
+pub(super) fn row_in(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    key: StepKey,
+) -> Result<Option<StoredStepFeedback>> {
+    ROWS.get(dbs, txn, &key)
+}
+
+/// Every step feedback row of `run`, read in `txn` on `dbs`, in step order.
+pub(super) fn rows_in(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+) -> Result<Vec<(StepKey, StoredStepFeedback)>> {
+    ROWS.scan_from(dbs, txn, run.as_bytes())
+}
+
+/// Writes a step's feedback in `wtxn`, the row it replaces read on `read`
+/// and the row written along `write`: a pending row never takes the place
+/// of a check that has already landed.
+pub(super) fn put_in(
+    read: &impl SideTableDbs,
+    write: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: StepKey,
+    row: &StoredStepFeedback,
+) -> Result<()> {
+    if row.pending()
+        && ROWS
+            .get(read, wtxn, &key)?
+            .is_some_and(|held| !held.pending())
+    {
+        return Ok(());
+    }
+    ROWS.put(write, wtxn, &key, row)
+}
+
 /// The program steps' type feedback of each of `runs`, as it stands, read
-/// in `txn` on the vault's own rows: a wait's settled children's (FIX 8277).
-/// A row that cannot be read gives none; nothing waits on a check.
+/// in `txn` on `dbs`, the rows of the route the runs ran on: a wait's
+/// settled children's (FIX 8277, FIX 10389). A row that cannot be read
+/// gives none; nothing waits on a check.
 pub(crate) fn runs_program_steps_in_txn(
-    store: &Store,
+    dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     runs: &[EntityId],
 ) -> Vec<ProgramStepFeedback> {
     runs.iter()
-        .flat_map(|run| {
-            ROWS.scan_from(store, txn, run.as_bytes())
-                .unwrap_or_default()
-        })
+        .flat_map(|run| rows_in(dbs, txn, *run).unwrap_or_default())
         .map(|(key, row)| row.feedback(key))
         .collect()
 }
 
-/// [`runs_program_steps_in_txn`] on a run's storage: none on a session's
-/// route, whose steps keep their feedback with their run.
+/// One step's feedback row on `session`'s composed view, the route its
+/// session-bound runs keep their rows on, read while the stretch lives
+/// (FIX 10389).
+///
+/// # Errors
+///
+/// Storage errors, and a row that does not decode.
+pub(crate) fn session_type_diagnostics_row(
+    session: &OffRecordSession<'_>,
+    key: StepKey,
+) -> Result<Option<StoredStepFeedback>> {
+    session.routed_side_read(|rtxn, dbs| row_in(&dbs, rtxn, key))
+}
+
+/// [`runs_program_steps_in_txn`] on a run's storage: the vault's own rows,
+/// or the composed view of the stretch a session-bound run is bound to.
 pub(crate) fn runs_program_steps(
     storage: &ExecutorStorage<'_>,
     runs: &[EntityId],
 ) -> Vec<ProgramStepFeedback> {
-    let ExecutorStorage::Canonical(vault) = storage else {
-        return Vec::new();
-    };
-    vault.store.env.read_txn().map_or_else(
-        |_| Vec::new(),
-        |rtxn| runs_program_steps_in_txn(&vault.store, &rtxn, runs),
-    )
+    storage.runs_program_steps(runs)
 }
 
 /// An erased actor's step feedback goes (FIX 8277): each row of a run that

@@ -19676,7 +19676,17 @@ async fn execute_code(
             facade_door_input(&mut hooks)?,
         )
         .await;
-        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+        Ok::<_, FacadeApiError>((
+            facade_output(output.map_err(|failure| {
+                super::host_doors::source_run_refusal(
+                    server,
+                    auth,
+                    Some(listed.as_slice()),
+                    failure,
+                )
+            })?)?,
+            listed,
+        ))
     }
     .await;
     let (output, listed) = match ran {

@@ -298,7 +298,11 @@ impl HostSelfDispatcher<'_> {
         // FIX 9181: the plan names the asker the host authenticated, so that
         // asker's erase takes the ask it carries.
         receipt.asker_ref = Some(self.actor.entity_ref());
-        narrow_budget(&mut context, receipt.asked.budget_cap_units.as_ref());
+        narrow_budget(
+            &mut context,
+            receipt.asked.budget_cap_units.as_ref(),
+            Some(&receipt.plan),
+        );
         context.type_ref = Some(receipt.asked.type_ref.clone());
         let target = AgentDispatchTarget::Custom(receipt.plan.agent_def);
         context.plan = Some(receipt);
@@ -633,13 +637,17 @@ fn refused(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(reason))
 }
 
-/// A budget the spawner set, seed or pin, narrows the child's hard carve; it
-/// never widens it.
+/// A budget the spawner set narrows the child's hard carve; it never
+/// widens it. A pin narrows by its value; a seed by the cap its plan was
+/// fitted under, or the seed itself where no plan states one (FIX 10539).
+/// The planned path passes its receipt's fitted plan; a direct spawn passes
+/// none, since it was never fitted and no learned spend is in reach there.
 pub(super) fn narrow_budget(
     context: &mut AgentSpawnContext,
     asked: Option<&crate::agent_dispatch::SpawnOverride<u64>>,
+    plan: Option<&crate::agent_dispatch::TeamPlan>,
 ) {
-    if let Some(asked) = asked.map(|cap| *cap.value()) {
+    if let Some(asked) = crate::agent_dispatch::resolved_budget_ask(asked, plan) {
         context.budget = Some(context.budget.map_or(asked, |carve| carve.min(asked)));
     }
 }

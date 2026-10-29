@@ -307,6 +307,15 @@ impl JsResultTarget {
     }
 }
 
+/// A callable skill's program as its author wrote it, for the host's type
+/// check of it (FIX 10389): its stored file, never the arguments line the
+/// host puts before it, with the language and note the call's one
+/// preparation found.
+pub struct CallableProgram<'p> {
+    pub original: &'p str,
+    pub prepared: &'p crate::code_sandbox::source::PreparedSource<'p>,
+}
+
 /// Host import bridge exposed to a JS runtime component.
 pub trait JsCodeModeHost {
     /// Takes one frame of the step's streamed result into the host's own
@@ -362,6 +371,13 @@ pub trait JsCodeModeHost {
     ) -> Result<SelfDispatchResponse> {
         self.dispatch_self(call)
     }
+
+    /// Admits the type check of a callable skill's program, which the call
+    /// at bridge position `seq` of this host's run runs (FIX 10389), once,
+    /// at the call's preparation: the host keeps its feedback beside the run
+    /// as the call ends, however it ends. Nothing waits on it and nothing is
+    /// refused for it. A host with no run to keep it by checks nothing.
+    fn start_callable_check(&mut self, _seq: u64, _program: CallableProgram<'_>) {}
 
     /// [`Self::dispatch_self_nested`] for a caller whose step `cancel` may
     /// stop (FIX 600). A host that runs the nested step overrides it and

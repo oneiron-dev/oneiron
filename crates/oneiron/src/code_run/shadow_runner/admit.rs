@@ -13,7 +13,8 @@
 //! copied as is: their source admitted them.
 //!
 //! The prompt and wait copies an arm's result publishes inline take the
-//! same wall, in one writer ([`admit_published_inline`]).
+//! same wall, in one writer ([`admit_published_inline`]), as does the type
+//! feedback of the program it ran (FIX 10389), which quotes that program.
 
 use std::sync::{Arc, Weak};
 
@@ -65,6 +66,24 @@ impl ShadowAdmission {
         }
         Ok(admitted)
     }
+
+    /// `value`, a copy the arm publishes, admitted in place in a writer of
+    /// the source vault that commits the custody records it mints (FIX
+    /// 10389): one the wall cannot place is kept as it was.
+    ///
+    /// # Errors
+    ///
+    /// A source vault that is gone, and storage and custody errors.
+    pub(super) fn admit_value<T: Serialize + DeserializeOwned>(&self, value: &mut T) -> Result<()> {
+        let vault = self.vault.upgrade().ok_or_else(|| {
+            Error::InvalidConfig("a shadow arm's source vault is gone".to_owned())
+        })?;
+        let at = (ARM_PLACE, self.run.as_bytes().as_slice());
+        let mut wtxn = vault.store.env.write_txn()?;
+        admit_or_keep(&vault, &mut wtxn, at, value)?;
+        wtxn.commit()?;
+        Ok(())
+    }
 }
 
 /// The prompt and wait copies `result` publishes inline, admitted by the
@@ -72,7 +91,8 @@ impl ShadowAdmission {
 /// each model receipt's expected route prompt and a waiting arm's wait
 /// prompt. Each is a copy of a row its source admitted, so the wall mostly
 /// finds nothing. A copy the wall cannot place is published as it was, as
-/// before (an Ask-first stop).
+/// before (an Ask-first stop). The type feedback of the program the arm
+/// ran takes the same writer (FIX 10389).
 ///
 /// # Errors
 ///
@@ -82,7 +102,7 @@ pub fn admit_published_inline(vault: &Vault, result: &mut ShadowRunResult) -> Re
         return Ok(());
     };
     let waiting = matches!(result.status, ShadowStatus::Waiting { .. });
-    if result.model_receipts.is_empty() && !waiting {
+    if result.model_receipts.is_empty() && !waiting && result.type_feedback.is_none() {
         return Ok(());
     }
     let at = (PUBLISHED_PLACE, step.run.as_bytes().as_slice());
@@ -92,6 +112,9 @@ pub fn admit_published_inline(vault: &Vault, result: &mut ShadowRunResult) -> Re
     }
     if let ShadowStatus::Waiting { wait } = &mut result.status {
         admit_or_keep(vault, &mut wtxn, at, &mut **wait)?;
+    }
+    if let Some(feedback) = &mut result.type_feedback {
+        admit_or_keep(vault, &mut wtxn, at, feedback)?;
     }
     wtxn.commit()?;
     Ok(())
