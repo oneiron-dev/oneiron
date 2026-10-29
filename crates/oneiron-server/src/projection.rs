@@ -1,5 +1,6 @@
 use std::fmt;
 
+use oneiron::claim::claim_fields;
 use oneiron::memory::ReadMode;
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_EVENT, ENTITY_TYPE_FACET, ENTITY_TYPE_MACHINE,
@@ -433,10 +434,8 @@ fn value_to_label(value: &Value) -> Option<String> {
 fn profile_fields(entity_type: u8, profile: FieldProfile) -> &'static [&'static str] {
     match (entity_type, profile) {
         (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => &["pred", "val"],
-        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => &["pred", "val", "conf", "sal", "evid"],
-        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => &[
-            "pred", "val", "conf", "sal", "evid", "from", "to", "src", "world", "subj", "scope",
-        ],
+        (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => claim_fields(FieldProfile::Standard),
+        (ENTITY_TYPE_CLAIM, FieldProfile::Full) => claim_fields(FieldProfile::Full),
 
         (ENTITY_TYPE_TURN, FieldProfile::Minimal) => &["txt"],
         (ENTITY_TYPE_TURN, FieldProfile::Standard) => &[

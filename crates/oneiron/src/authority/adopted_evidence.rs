@@ -56,6 +56,11 @@ impl AdoptedEvidence {
         }))
     }
 
+    /// The image this vault adopted.
+    pub(super) fn image(&self) -> &AuthorityCheckpointV2 {
+        self.checkpoint.image()
+    }
+
     /// Each covered row's summary, by hash.
     pub(super) fn rows(&self) -> &BTreeMap<AuthorityEntryHash, AuthorityCheckpointRow> {
         &self.checkpoint.image().rows
