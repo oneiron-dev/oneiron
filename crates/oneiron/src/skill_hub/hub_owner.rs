@@ -133,7 +133,9 @@ impl Vault {
     /// it asked for (FIX 10202): the package is fetched once, its declared id
     /// and the requested version are checked before the publisher is
     /// admitted or a candidate is born, and the import commits that same
-    /// package. A mismatch writes nothing.
+    /// package. A mismatch writes nothing. `importing` turns true as the
+    /// import proper (its fit and its writer) begins: a refusal before then
+    /// read no vault row but the hub's record (FIX 3513).
     #[expect(
         clippy::too_many_arguments,
         reason = "the owner door's inputs plus the skill identity the caller asked for"
@@ -147,6 +149,7 @@ impl Vault {
         publisher: &str,
         skill_id: &str,
         version: Option<&str>,
+        importing: &mut bool,
     ) -> Result<EntityId> {
         let source = HubRef::new(hub, folder, pin)?;
         let fetch = self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)?;
@@ -162,6 +165,7 @@ impl Vault {
         let at = self.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
         let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
+        *importing = true;
         match &fetch {
             RefFetch::Git(adapter, _) => self.import_marketplace_skill_with_query(
                 &PrefetchedPackage {
