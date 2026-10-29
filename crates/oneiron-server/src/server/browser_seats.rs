@@ -57,6 +57,18 @@ impl SeatGuest for BrowserSession {
         self.take_abandoned_demonstration()
     }
 
+    fn closed_demonstrations(&mut self) -> Vec<DemonstrationOutput> {
+        self.take_closed_demonstrations()
+    }
+
+    fn land_closed_demonstration(
+        vault: &Vault,
+        run: EntityId,
+        record: &serde_json::Value,
+    ) -> oneiron::Result<String> {
+        vault.append_browser_demonstration_closed_receipt(run, record)
+    }
+
     fn land_abandoned(
         vault: &Vault,
         run: EntityId,

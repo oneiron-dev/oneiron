@@ -75,6 +75,25 @@ pub(crate) trait SeatGuest: Send + Sized + 'static {
         None
     }
 
+    /// The demonstrations the guest's close leaves, each once (FIX 9409):
+    /// a span still recording, ended ones never given. None for a guest
+    /// that records none.
+    fn closed_demonstrations(&mut self) -> Vec<DemonstrationOutput> {
+        Vec::new()
+    }
+
+    /// Lands `record`, a demonstration the seat's end closed, as the run's
+    /// `closed` demonstration receipt. A guest that records none lands
+    /// none.
+    fn land_closed_demonstration(
+        vault: &Vault,
+        run: EntityId,
+        record: &serde_json::Value,
+    ) -> oneiron::Result<String> {
+        let _ = (vault, run, record);
+        Ok(String::new())
+    }
+
     /// Lands `record`, a takeover the seat's end cut short, as the run's
     /// `abandoned` takeover receipt.
     fn land_abandoned(
@@ -392,35 +411,47 @@ fn press_wait_open<S: SeatGuest>(vault: &Vault, session: &S) -> bool {
         .is_some_and(|wait| vault.code_consent_browser_wait_open(wait).unwrap_or(true))
 }
 
-/// Ends a seat taken out of the registry: a takeover still asked or held
-/// lands its `abandoned` receipt with what it held so far (a person's span
-/// it recorded as `demonstration`, CUA E9b), the agent's inbox Ask clears,
-/// and the guest goes with its session, the run-bound secrets it found
-/// hard-erased after it (FIX 8028).
+/// Ends a seat taken out of the registry: each demonstration the close
+/// leaves lands its `closed` receipt (FIX 9409), a takeover still asked
+/// or held lands its `abandoned` receipt with what it held so far (a
+/// person's span it recorded as `demonstration`, CUA E9b), the agent's
+/// inbox Ask clears, and the guest goes with its session, the run-bound
+/// secrets it found hard-erased after it (FIX 8028).
 fn end<S: SeatGuest>(run: EntityId, entry: RunSeat<S>) {
     let session = entry
         .seat
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
-    if let Some(mut session) = session
-        && let Some(cut) = session.abandon_takeover()
-    {
-        let landed = serde_json::to_value(&cut)
-            .and_then(|mut record| {
-                if let (Some(fields), Some(demonstration)) =
-                    (record.as_object_mut(), session.abandoned_demonstration())
-                {
-                    fields.insert("demonstration".into(), serde_json::to_value(demonstration)?);
-                }
-                Ok(record)
-            })
-            .map_err(|error| error.to_string())
-            .and_then(|record| {
-                S::land_abandoned(&entry.vault, run, &record).map_err(|error| error.to_string())
-            });
-        if let Err(error) = landed {
-            tracing::warn!(%error, guest = S::GUEST, run = %run.to_hex(), "an abandoned takeover landed no receipt");
+    if let Some(mut session) = session {
+        for demonstration in session.closed_demonstrations() {
+            let landed = serde_json::to_value(&demonstration)
+                .map_err(|error| error.to_string())
+                .and_then(|record| {
+                    S::land_closed_demonstration(&entry.vault, run, &record)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = landed {
+                tracing::warn!(%error, guest = S::GUEST, run = %run.to_hex(), "a closed demonstration landed no receipt");
+            }
+        }
+        if let Some(cut) = session.abandon_takeover() {
+            let landed = serde_json::to_value(&cut)
+                .and_then(|mut record| {
+                    if let (Some(fields), Some(demonstration)) =
+                        (record.as_object_mut(), session.abandoned_demonstration())
+                    {
+                        fields.insert("demonstration".into(), serde_json::to_value(demonstration)?);
+                    }
+                    Ok(record)
+                })
+                .map_err(|error| error.to_string())
+                .and_then(|record| {
+                    S::land_abandoned(&entry.vault, run, &record).map_err(|error| error.to_string())
+                });
+            if let Err(error) = landed {
+                tracing::warn!(%error, guest = S::GUEST, run = %run.to_hex(), "an abandoned takeover landed no receipt");
+            }
         }
     }
     if let Some((_, rows)) = entry.ask {
