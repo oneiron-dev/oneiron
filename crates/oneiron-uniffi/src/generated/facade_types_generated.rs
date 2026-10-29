@@ -807,6 +807,12 @@ pub struct ReportIssue {
         skip_serializing_if = "Option::is_none"
     )]
     pub disclosure_basis: Option<ReportDisclosureBasis>,
+    #[serde(
+        rename = "disclosure_round",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disclosure_round: Option<u64>,
 }
 
 /// `oneiron::verbs::feedback::ReportRouteRequest`.

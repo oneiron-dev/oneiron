@@ -252,6 +252,7 @@ class ReportIssue(TypedDict):
     review: ReportReview
     disclosure: ReportDisclosure
     disclosure_basis: NotRequired[ReportDisclosureBasis | None]
+    disclosure_round: NotRequired[int]
 class ReportRouteRequest(TypedDict):
     subject_ref: str
     route: ReportRoute
