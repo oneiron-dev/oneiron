@@ -24,6 +24,20 @@ impl InvocationSlipBinding {
     pub fn credential_token(&self) -> Result<String> {
         self.slip.to_token()
     }
+
+    /// The slip this binding keeps, as signed (FIX 6108): no authority.
+    pub(super) const fn slip(&self) -> &CapabilitySlip {
+        &self.slip
+    }
+
+    /// Whether this binding still proves the request it was admitted on:
+    /// the logged mint, the host's and every caveat's signature, and the
+    /// holder's over its challenge ([`CapabilitySlip::verify_origin`]). No
+    /// standing is judged.
+    pub(super) fn verify_origin(&self, fold: &super::AuthorityFold) -> Result<()> {
+        self.slip
+            .verify_origin(fold, &self.challenge, &self.signature)
+    }
 }
 
 impl std::fmt::Debug for InvocationSlipBinding {

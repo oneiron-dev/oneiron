@@ -45,14 +45,42 @@ struct GuestWithdrawal {
     revoked_at: u64,
 }
 
+/// Whether this vault withdrew the guest Grant a slip's `grant_ref` names
+/// (FIX-LIST 1978): what the merged fold tombstones a guest slip by. A
+/// `grant_ref` that names no entity id is no guest Grant. A row that cannot
+/// be read answers by [`super::ISOLATION_NEW_CHECK_ERROR_MODE`]: not known,
+/// with a warning, so the fold stands as it did before the check.
+pub(super) fn guest_grant_known_withdrawn_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    grant_ref: &str,
+) -> bool {
+    let Ok(grant) = EntityId::from_hex(grant_ref) else {
+        return false;
+    };
+    match WITHDRAWN.get(store, txn, &grant) {
+        Ok(withdrawal) => withdrawal.is_some(),
+        Err(error) => match super::ISOLATION_NEW_CHECK_ERROR_MODE {
+            super::NewCheckErrorMode::KeepExistingPath => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a guest withdrawal did not read; the merged fold keeps that grant's slips as they stand"
+                );
+                false
+            }
+        },
+    }
+}
+
 impl Vault {
     /// Mints the capability slip of one Ask or active Connect guest (OF-232; canon names no
     /// issuance door, Engine ruling 2026-10-17): the vault owner's act, under
     /// the host's `issuer`, for the live, unwithdrawn guest FEDERATION_GRANT
     /// `grant_ref`. The slip's signed claims name that grant, carry its
-    /// scope, hold for its member, and bind `holder_key`, the public key the
-    /// guest generated on their own device; no private key is delivered
-    /// anywhere. It lives until `expires_at`, and withdrawing the grant
+    /// scope, hold for its member, and bind the public key the guest
+    /// generated on their own device: the one their ask carried into the
+    /// grant (FIX-LIST 1978), else the owner's `holder_key`; with neither,
+    /// the mint refuses. No private key is delivered anywhere. It lives until `expires_at`, and withdrawing the grant
     /// ([`Vault::revoke_guest_access`]) tombstones it. `comm` is the owner's
     /// cap on whom the guest may message (FIX 3899); `None` is the vault's.
     pub fn mint_guest_slip(
@@ -60,7 +88,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         issuer: &HostSlipIssuer,
         grant_ref: EntityId,
-        holder_key: [u8; 32],
+        holder_key: Option<[u8; 32]>,
         expires_at: u64,
         comm: Option<super::CommReach>,
     ) -> Result<CapabilitySlip> {
@@ -84,6 +112,16 @@ impl Vault {
         if !grant.confers_at(now) || expires_at <= now {
             return Err(invalid_authority());
         }
+        let holder_key = grant
+            .guest
+            .as_ref()
+            .and_then(|guest| guest.holder_key)
+            .or(holder_key)
+            .ok_or_else(|| {
+                Error::InvalidConfig(
+                    "holder_key is required: the guest's grant carries no key of theirs".to_owned(),
+                )
+            })?;
         // FIX 7928/7929: an Ask guest's slip signs its disclosure as its record
         // bound; a Connect guest's meets its pact's current effective scope.
         let (scope, records) = super::current_scope::guest_slip_bounds(&fold, &grant_ref, &grant);

@@ -48,6 +48,12 @@ pub struct TaskAskGuest {
     pub companion_ref: EntityId,
     /// Reference to the person's live, owner-stamped standing disclosure grant.
     pub disclosure_grant_ref: String,
+    /// The public key (64 hex) the guest generated on their own device for
+    /// the companion's slip, when the ask's producer has it (FIX-LIST 1978):
+    /// the guest grant keeps it, and the owner's slip mint binds it without
+    /// asking the owner for it. Absent, the owner supplies one at the mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder_key: Option<String>,
 }
 
 /// Stable option identity. Display text is never a predicate.

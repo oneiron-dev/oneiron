@@ -182,6 +182,14 @@ pub(super) fn check_delegation_record(
         && names_guest(action.bound(), person))
 }
 
+/// The guest's public key an ask carries (FIX-LIST 1978): 64 hex, a key the
+/// slip it is bound into can verify, else the ask refuses.
+fn guest_holder_key(hex: &str) -> Result<[u8; 32]> {
+    let key = super::brief::decode_hex::<32>(hex).ok_or_else(invalid)?;
+    ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| invalid())?;
+    Ok(key)
+}
+
 /// Admit only the exact question facts inside a live owner-stamped bound, then
 /// materialize a disjoint guest grant in the same transaction as the ask.
 pub(super) fn mint_guest_grants(
@@ -207,13 +215,17 @@ pub(super) fn mint_guest_grants(
                 count.rows(refs.len());
                 count.defer(&vault.store);
             }
+            // The guest's own key travels with the ask into the grant, for
+            // the owner's slip mint to bind (FIX-LIST 1978).
+            let holder_key = guest.holder_key.as_deref().map(guest_holder_key).transpose()?;
             let grant = crate::federation::FederationGrant::ask_guest(
                 group_ref,
                 guest.companion_ref,
                 *person,
                 asker,
                 refs,
-            )?;
+            )?
+            .with_guest_holder_key(holder_key);
             let grant_id = crate::EntityId::derive(
                 crate::entity_id::derived_domains::TASK_ASK_GUEST_GRANT,
                 &[group_ref.as_bytes(), person.as_bytes()],

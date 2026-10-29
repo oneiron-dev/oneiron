@@ -7393,6 +7393,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_conversations_turn_rebind(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.conversations.turn.rebind")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.conversations.turn.rebind", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_messages_react(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.messages.react")?;
         let output = py

@@ -606,6 +606,37 @@ impl CapabilitySlip {
     }
 }
 
+/// What a slip's mint and signed caveats leave its holder, met as live
+/// verification meets them, with no clock, liveness or holder proof judged
+/// (FIX 6108): the bounds a rebind holds a successor instrument within.
+pub(crate) struct SignedBounds {
+    pub(crate) claims: SlipClaims,
+    /// The mint or a caveat named a record or channel set, so an empty set
+    /// here admits no record at all.
+    pub(crate) records_bound: bool,
+    /// The pact bound a caveat set: its grant and the scope it requested.
+    pub(crate) pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+}
+
+impl CapabilitySlip {
+    /// [`SignedBounds`] of this slip, over a chain [`Self::verify_origin`]
+    /// already authenticated; a caveat the meet refuses comes back as its
+    /// error.
+    pub(crate) fn signed_bounds(&self) -> EngineResult<SignedBounds> {
+        let mut claims = self.claims.clone();
+        let mut pact = None;
+        let mut records_bound = !claims.records.is_empty() || !claims.channels.is_empty();
+        for block in &self.caveats {
+            meet_caveat(&mut claims, &mut pact, &mut records_bound, &block.caveat)?;
+        }
+        Ok(SignedBounds {
+            claims,
+            records_bound,
+            pact,
+        })
+    }
+}
+
 fn mint_transcript(claims: &SlipClaims) -> EngineResult<Vec<u8>> {
     let mut bytes = MINT_CONTEXT.to_vec();
     bytes.extend_from_slice(&canonical(claims)?);
