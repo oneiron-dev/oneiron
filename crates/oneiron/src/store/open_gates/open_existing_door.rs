@@ -199,6 +199,7 @@ impl Store {
             diagnostics: Diagnostics::default(),
             proactivity_updates: tokio::sync::watch::channel(0).0,
             proactivity_suspended: Mutex::new(None),
+            policy_manifest_updates: tokio::sync::watch::channel(0).0,
             decision_answers: tokio::sync::watch::channel(0).0,
             container_output: Default::default(),
             live_speakers: Default::default(),
