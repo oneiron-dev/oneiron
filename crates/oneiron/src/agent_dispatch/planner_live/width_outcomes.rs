@@ -26,19 +26,10 @@ pub(super) struct WidthOutcomes {
 }
 
 impl WidthOutcomes {
-    /// Every receipt, read once and folded at `at`; none when `wanted` is
-    /// false (no pattern skill to weigh).
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub(super) fn read(vault: &Vault, at: u64, wanted: bool) -> Result<Self> {
-        let txn = vault.store.env.read_txn()?;
-        Self::read_in_txn(vault, &txn, at, wanted)
-    }
-
-    /// [`read`](Self::read) in the caller's snapshot, so the planner folds
-    /// its width evidence on the same snapshot as every measured read.
+    /// Every receipt, read once in the caller's snapshot and folded at
+    /// `at`; none when `wanted` is false (no pattern skill to weigh). The
+    /// planner folds its width evidence on the same snapshot as every
+    /// measured read.
     ///
     /// # Errors
     ///
