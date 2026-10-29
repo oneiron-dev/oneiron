@@ -21,6 +21,9 @@ pub(crate) use oneiron::core_write::shape::{
     PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE, PLATFORM_ANNOUNCEMENT_VOICE,
 };
 
+/// The most rows one list page returns. A larger read pages past it: a list
+/// clamps to it, and a receipt or consent subscription reads one page after
+/// another (FIX 8859); no count past it is refused.
 pub(crate) const CORE_MAX_LIST_LIMIT: usize = 1000;
 
 /// Generic core entity create request.
