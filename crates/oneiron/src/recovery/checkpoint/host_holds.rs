@@ -1,16 +1,17 @@
 //! Legal holds across a restore and against backup expiry (OF-470;
 //! ARCH-0038 #legal-hold: every path that destroys bytes reads a hold).
 //!
-//! A host order and its host-only log are runtime rows no image carries
-//! (`tiers`), so an owner's backup never holds one. A restore that takes a
-//! live vault's place, or makes a copy beside it, takes on that vault's whole
-//! host-order family: rows, target index, log and erase links, so an order
-//! Oneiron must keep never lapses because content came back from an image. A
-//! restore with no live vault (a clean host, a wake, a migration) has nowhere
-//! to read them: the host carries them itself, from
+//! A host order and its host-only log are runtime rows no image's canonical
+//! rows carry (`tiers`), so an owner's backup never holds one. A restore that
+//! takes a live vault's place, or makes a copy beside it, takes on that
+//! vault's whole host-order family: rows, target index, log and erase links,
+//! so an order Oneiron must keep never lapses because content came back from
+//! an image. A restore with no live vault (a clean host, a wake, a migration)
+//! has nowhere to read them: the host carries them itself, from
 //! [`Vault::carried_host_order_holds`] before to
-//! [`Vault::install_carried_host_order_holds`]
-//! after, never inside an owner's artifact.
+//! [`Vault::install_carried_host_order_holds`] after. Where the source is
+//! gone, a hosted vault's checkpoint carries the family itself, sealed to its
+//! host's recipient and never to the owner (`seal`, FIX 6598).
 //!
 //! A backup holds every record its image carries, so while any hold stands,
 //! customer or host order, none expires ([`Vault::legal_hold_keeps_backups`]).
@@ -21,8 +22,15 @@
 //! counter ([`Vault::backup_hold_rechecks`]), so a delete a hold deferred
 //! asks again.
 
+mod seal;
+
 use serde::{Deserialize, Serialize};
 
+pub use self::seal::{
+    ArtifactHostOrderHolds, HostHoldsAvailability, HostHoldsRecipient, HostHoldsSealing,
+    HostHoldsUnavailable,
+};
+pub(super) use self::seal::{HostHoldsMember, artifact_host_holds, export_in_txn, seal_member};
 use super::CanonicalRows;
 use crate::{Result, Vault};
 
@@ -37,6 +45,35 @@ pub struct HostOrderHolds {
 impl std::fmt::Debug for HostOrderHolds {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "HostOrderHolds({} rows)", self.rows.len())
+    }
+}
+
+impl HostOrderHolds {
+    /// Checks that every row is a host-order row (`legal_hold:host:`), the
+    /// rule an install applies (FIX 6818): a host admits a family with it
+    /// before anything is made, and an install and a sealed member's decode
+    /// run it again. Nothing else of a row is read.
+    ///
+    /// # Errors
+    ///
+    /// A row outside the family, named by no byte of it.
+    pub fn validate(&self) -> Result<()> {
+        if self
+            .rows
+            .iter()
+            .any(|(key, _)| !key.starts_with(super::tiers::HOST_HOLD_PREFIX))
+        {
+            return Err(crate::Error::CorruptedIndex("host-order legal hold rows"));
+        }
+        Ok(())
+    }
+
+    /// The family read in `txn` of the open vault `vault`: the snapshot's own
+    /// read, so the family is the one its image's rows saw (FIX 6598).
+    pub(super) fn read_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        Ok(Self {
+            rows: crate::store::host_hold_rows_in_txn(&vault.store, txn)?,
+        })
     }
 }
 
@@ -73,14 +110,13 @@ impl Vault {
     /// a restore with no live source makes.
     pub fn carried_host_order_holds(&self) -> Result<HostOrderHolds> {
         let txn = self.store.env.read_txn()?;
-        Ok(HostOrderHolds {
-            rows: crate::store::host_hold_rows_in_txn(&self.store, &txn)?,
-        })
+        HostOrderHolds::read_in_txn(self, &txn)
     }
 
     /// Puts `holds`, read from the vault this one was restored from, in place
     /// of this vault's host-order legal holds. Call it before the vault serves.
     pub fn install_carried_host_order_holds(&self, holds: &HostOrderHolds) -> Result<()> {
+        holds.validate()?;
         self.with_write_txn(|txn| {
             crate::store::replace_host_holds_in_txn(&self.store, txn, &holds.rows)
         })

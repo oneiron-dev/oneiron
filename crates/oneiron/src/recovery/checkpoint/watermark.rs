@@ -116,6 +116,11 @@ pub struct BackupSnapshotReceipt {
     /// a checkpoint, which publishes none, or where signing it failed, which
     /// was logged and leaves the backup without one.
     pub checkpoint_fact: Option<oneiron_crypto::backup::SignedCheckpointFact>,
+    /// What the artifact carries of the vault's host-order legal holds
+    /// (FIX 6598): none for a self-hosted vault; for a hosted one, the
+    /// sealed member's recipient and BLAKE3, or why it carries none, for its
+    /// host to alert on.
+    pub host_holds: super::HostHoldsAvailability,
 }
 
 /// The suffix of the marker beside a label's newest backup:

@@ -239,9 +239,9 @@ pub use key_custody::sync_dir;
 pub(crate) use key_custody::{
     CUSTODY_COMPLETION_NEEDS_ANCHOR, CUSTODY_HEAD_WRAP_CONTEXT, CustodyBinding, CustodyKind,
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
-    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, Publication,
-    PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
+    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
+    Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
+    TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
 };
 // FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.

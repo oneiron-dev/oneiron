@@ -8,12 +8,12 @@
 //! [`Vault::restore_checkpoint_recovering`] with the plan's checks and
 //! facts: the artifact checked against the plan in the contract's order
 //! before it opens (`source`), every refusal typed by its branch
-//! (`reason`), the takeover fenced, then the fresh escrow wraps added and
-//! the released recipients retired by a consumed-once capability, the page
-//! custody read back, every keep, and last the caller's after-keep step
-//! (the commit marker). It returns the verified facts beside the report
-//! (`facts`). Every other restore path keeps its behaviour: none of these
-//! checks runs there.
+//! (`reason`), the fresh escrow wraps added and the released recipients
+//! retired by a consumed-once capability, the page custody read back, the
+//! takeover fenced last of all that can fail (FIX 6782), every keep, and
+//! last the caller's after-keep step (the commit marker). It returns the
+//! verified facts beside the report (`facts`). Every other restore path
+//! keeps its behaviour: none of these checks runs there.
 
 mod facts;
 mod reason;
@@ -34,7 +34,9 @@ pub use self::reason::{
 };
 use super::{Custody, RestoreReason, RestoreReport, artifact, codec_error, image, write_budget};
 use crate::store::custody_protocol::CustodyPosition;
-use crate::store::{CustodyRoute, refuse_foreign_binding, route_custody};
+use crate::store::{
+    CustodyRoute, PreparedTakeover, TakeoverRefusal, refuse_foreign_binding, route_custody,
+};
 use crate::world_keys::{RecipientCustody, RestoreAdmissionCapability, refused};
 use crate::{Error, Vault};
 
@@ -65,16 +67,22 @@ impl Vault {
     /// file and checked (its checkpoint id, then a registry binding it
     /// carries); its custody routed and admitted as today, after its
     /// binding is checked to be the lineage its manifest requires; its rows
-    /// landed; `finish` (the caller's pre-fence check, as today's); the
-    /// takeover fence; the restored vault checked to be the source vault;
-    /// the fresh escrow wraps added and the released recipients retired,
-    /// journaled at the takeover writer epoch where a head was admitted, or
-    /// the key header's alone where none was (`local_only`); the page
-    /// custody read back; every keep; then `after_keep` with the commit
-    /// facts. A refusal before the keeps removes everything the restore
-    /// made, as any restore's does; `after_keep`'s leaves the destination
-    /// and its custody committed (not serving, or uncertain as it says),
-    /// never rolled back. Returns the verified facts beside the report.
+    /// landed; `finish` (the caller's check, as today's, with the host-order
+    /// family the key carries from the artifact's member when its tag names
+    /// the member this artifact carries, FIX 6817); the restored vault
+    /// checked to be the source vault; the fresh escrow wraps added and the
+    /// released recipients retired, journaled at the takeover writer epoch
+    /// where a head was admitted, or the key header's alone where none was
+    /// (`local_only`); the page custody read back; the takeover fence, the
+    /// anchor advanced to the landed custody's final position, last of all
+    /// that can fail (FIX 6782); every keep; then `after_keep` with the
+    /// commit facts. A refusal before the fence removes everything the
+    /// restore made, as any restore's does, and so does a fence the anchor
+    /// refused; a fence whose advance failed may have published, so the
+    /// destination and its custody stay, uncertain. `after_keep`'s leaves the
+    /// destination and its custody committed (not serving, or uncertain as it
+    /// says), never rolled back. Returns the verified facts beside the
+    /// report.
     ///
     /// # Errors
     /// A [`RestoreAdmissionError`] naming its reason, phase and destination
@@ -83,7 +91,10 @@ impl Vault {
     /// [`CheckpointKey::from_delivered`]: super::CheckpointKey::from_delivered
     pub fn restore_checkpoint_admitted(
         request: AdmittedRestore<'_>,
-        finish: impl FnOnce(&Self) -> Result<(), RestoreAdmissionError>,
+        finish: impl FnOnce(
+            &Self,
+            Option<&super::HostOrderHolds>,
+        ) -> Result<(), RestoreAdmissionError>,
         after_keep: impl FnOnce(&Self, &RestoreCommitFacts) -> Result<(), RestoreAdmissionError>,
     ) -> Result<(Self, RestoreReport, RestoreAdmission), RestoreAdmissionError> {
         use RestorePhase as P;
@@ -130,6 +141,10 @@ impl Vault {
             source::registry(&evidence, expected)?,
         )?;
         image.drop_machine_identity();
+        // The family the key carries from the artifact's member, taken
+        // before the image is consumed and only where its tag names the
+        // member this image carries (FIX 6817).
+        let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
         let rows = image
             .databases
             .get_mut("vault_meta")
@@ -152,14 +167,14 @@ impl Vault {
             Some(&custody_source),
         )
         .map_err(at_custody)?;
-        let (custody, landing, route_fact) = match route {
+        let (custody, mut landing, route_fact) = match route {
             CustodyRoute::Local => (Custody::Keep, None, CustodyRouteFact::Local),
             CustodyRoute::Landed(landing) => {
                 (Custody::Landed, Some(landing), CustodyRouteFact::Landed)
             }
             CustodyRoute::Absent => (Custody::NewHost, None, CustodyRouteFact::NoHead),
         };
-        let (made, forked, mut vault, mut report) = Self::restore_image(
+        let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
             checkpoint_id,
             bodies,
@@ -172,12 +187,9 @@ impl Vault {
             &write_budget::Unfloored,
         )
         .map_err(|rejected| rejected.at(P::RowsLanding))?;
-        finish(&vault)?;
-        let landed = match &landing {
+        finish(&vault, artifact_holds.as_ref())?;
+        let mut landed = match &landing {
             Some(landing) => {
-                landing
-                    .fence(anchor)
-                    .map_err(|rejected| rejected.at(P::TakeoverFence))?;
                 report.custody_note = landing.note().map(str::to_owned);
                 super::credential_custody::note_landed_access(
                     &mut report.credential_notes,
@@ -231,6 +243,17 @@ impl Vault {
             };
             Rejected::new(reason, error).at(P::PageCustody)
         })?;
+        // The takeover's advance, prepared now every private step is done:
+        // from the landed custody's final position, never the admitted one.
+        let prepared = match &landing {
+            Some(landing) => landing
+                .prepare_takeover(&vault.store)
+                .map_err(|rejected| rejected.at(P::TakeoverFence))?,
+            None => None,
+        };
+        if let Some(facts) = landed.as_mut() {
+            facts.anchor_advanced = prepared.as_ref().map(PreparedTakeover::digest);
+        }
         let publication = match vault.custody_status() {
             Ok(status) => Some(status),
             Err(error) => {
@@ -260,7 +283,28 @@ impl Vault {
             pad_notes: report.pad_notes.clone(),
             credential_notes: report.credential_notes.clone(),
         };
+        // The advance is the last step that can fail: the copy and its
+        // custody are armed to stay first, and a refusal the anchor gives
+        // disarms them; one whose advance failed may have published, so they
+        // stay and the destination is uncertain. Nothing undoes or retries it.
+        made.preserve(true);
         forked.keep();
+        if let (Some(landing), Some(anchor), Some(prepared)) =
+            (landing.as_mut(), anchor, prepared.as_ref())
+        {
+            match landing.publish_takeover(anchor, prepared) {
+                Ok(()) => {}
+                Err(TakeoverRefusal::Definitive(rejected)) => {
+                    made.preserve(false);
+                    return Err(rejected.at(P::TakeoverFence));
+                }
+                Err(TakeoverRefusal::Uncertain(rejected)) => {
+                    let mut uncertain = rejected.at(P::TakeoverFence);
+                    uncertain.destination = RestoreDestinationState::Uncertain;
+                    return Err(uncertain);
+                }
+            }
+        }
         made.keep(&mut vault);
         if let Some(landing) = landing {
             landing.keep();

@@ -25,6 +25,7 @@
 mod admission;
 mod credentials;
 mod pads;
+mod takeover;
 mod unopened;
 
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,7 @@ use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because
 use crate::store::Store;
 
 use self::admission::{AdmittedCustody, admit_recovery};
+pub(crate) use self::takeover::{PreparedTakeover, TakeoverRefusal};
 use super::anchor::{anchor_record, anchored_position};
 use super::body_history::merge_history_into_rows;
 use super::erase_evidence::CredentialFenceFact;
@@ -257,41 +259,6 @@ pub(crate) fn land_recovery(
     }
 }
 
-/// Advances the anchor admission read to the next writer epoch at the
-/// admitted position, fencing the lineage's old writer. Refused when the
-/// anchor moved since admission: a retirement may have completed there.
-pub(crate) fn fence_takeover(
-    admitted: &AdmittedCustody,
-    anchor: &dyn AnchorStore,
-) -> std::result::Result<(), Rejected> {
-    let Some(record) = &admitted.anchor else {
-        return Ok(());
-    };
-    let (taken, control) = admitted.taken_over()?;
-    let current = anchored_position(record).map_err(because(R::AnchorInvalid))?;
-    if !current.same_lineage(&taken) {
-        return Err(Rejected::new(
-            R::CustodyLineageMismatch,
-            refused("the custody anchor record is another vault's".into()),
-        ));
-    }
-    match anchor
-        .advance(
-            Some(*blake3::hash(record).as_bytes()),
-            &anchor_record(&taken, &control),
-        )
-        .map_err(because(R::AnchorUnavailable))?
-    {
-        AnchorAdvance::Advanced => Ok(()),
-        AnchorAdvance::Moved => Err(Rejected::new(
-            R::AnchorMoved,
-            refused(
-                "this vault's custody moved on while the restore ran; run the restore again".into(),
-            ),
-        )),
-    }
-}
-
 impl AdmittedCustody {
     /// The admitted position at the next writer epoch, and that epoch's
     /// control state: the takeover a landing journals at and a fence
@@ -308,7 +275,8 @@ impl AdmittedCustody {
 
 /// What a cold managed restore reports of a landing (LC FIX 5384/5385):
 /// positions, the takeover writer epoch and anchor record digests, public
-/// structure only.
+/// structure only. The advanced record's digest is the prepared takeover's
+/// ([`PreparedTakeover::digest`]), set once it is prepared.
 pub(crate) struct LandingFacts {
     pub(crate) head: CustodyPosition,
     pub(crate) admitted: CustodyPosition,
@@ -350,6 +318,9 @@ pub(crate) struct CustodySourceAt<'a> {
 pub(crate) struct CustodyLanding {
     landed: Option<ForkedCustodyDir>,
     admitted: AdmittedCustody,
+    /// Armed while its takeover's advance may have published (FIX 6782):
+    /// the landed custody stays whatever follows.
+    preserved: bool,
 }
 
 impl CustodyLanding {
@@ -358,33 +329,20 @@ impl CustodyLanding {
         self.admitted.note()
     }
 
-    /// With an anchor configured (the one admission read), fences the
-    /// lineage's old writer before the restore is kept.
-    pub(crate) fn fence(
-        &self,
-        anchor: Option<&dyn AnchorStore>,
-    ) -> std::result::Result<(), Rejected> {
-        match anchor {
-            Some(anchor) => fence_takeover(&self.admitted, anchor),
-            None => Ok(()),
-        }
-    }
-
     /// The landing's positions, takeover epoch and anchor records, for a
     /// cold managed restore's receipt.
     pub(crate) fn facts(&self) -> Result<LandingFacts> {
         let admitted = &self.admitted;
-        let (taken, control) = admitted.taken_over()?;
-        let digest = |record: &[u8]| *blake3::hash(record).as_bytes();
+        let (taken, _) = admitted.taken_over()?;
         Ok(LandingFacts {
             head: admitted.head,
             admitted: admitted.position,
             takeover_epoch: taken.epoch.get(),
-            anchor_read: admitted.anchor.as_deref().map(digest),
-            anchor_advanced: admitted
+            anchor_read: admitted
                 .anchor
-                .as_ref()
-                .map(|_| digest(&anchor_record(&taken, &control))),
+                .as_deref()
+                .map(|record| *blake3::hash(record).as_bytes()),
+            anchor_advanced: None,
             retired_ids: admitted.retired.len() + admitted.retired_through.len(),
         })
     }
@@ -402,6 +360,9 @@ impl CustodyLanding {
 
 impl Drop for CustodyLanding {
     fn drop(&mut self) {
+        if self.preserved {
+            return;
+        }
         if let Some(landed) = self.landed.take() {
             landed.remove();
         }
@@ -555,6 +516,7 @@ pub(crate) fn route_custody(
     let landing = Box::new(CustodyLanding {
         landed: Some(landed),
         admitted,
+        preserved: false,
     });
     let raw = crate::side_table::RawValue::to_raw(&binding)
         .map_err(|_| Rejected::new(R::CustodyLandingFailed, super::identity::custody_corrupt()))?;
