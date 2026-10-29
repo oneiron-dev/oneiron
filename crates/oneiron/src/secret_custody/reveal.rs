@@ -27,6 +27,7 @@
 mod actor_erase;
 mod agent;
 mod file;
+mod notice;
 mod owner;
 mod person;
 mod types;
@@ -280,6 +281,11 @@ struct RevealRow {
     /// reveal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     file: Option<FileSight>,
+    /// The inbox Asks this ask raised (FIX 2355), settled (seen and acked)
+    /// when the ask is answered, expires or is asked again; empty for a
+    /// reveal a standing grant covers. Notice ids only, never a value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    notices: Vec<EntityId>,
 }
 
 /// The file an agent's read names: the artifact, its stored bytes' hash, and

@@ -6,6 +6,7 @@ use super::{
     SecretRevealDecision, SecretRevealState, SecretRevealWait, append_reveal_decision_in_txn,
     checked_text, covering_grant, resolve_handle_in_txn, reveal_bound, unknown,
 };
+use super::notice::{notify_reveal_ask_in_txn, settle_reveal_notices_in_txn};
 use crate::consent::{
     approve_once_authorization_in_txn, approve_once_decision_in_txn, load_active_standing_grants,
     spend_approve_once_in_txn,
@@ -87,6 +88,7 @@ impl Vault {
                 lease: None,
                 delivered_at: None,
                 file: None,
+                notices: Vec::new(),
             };
             row.once_digest = Some(*row.ask_digest(&reveal).as_bytes());
             let grants = load_active_standing_grants(&self.store, txn)?;
@@ -166,6 +168,8 @@ impl Vault {
                 SecretRevealState::Expired => return answer(SecretRevealDecision::Expired, &row),
                 _ if now >= row.expires_at => {
                     row.state = SecretRevealState::Expired;
+                    // An expired ask leaves no open notice (FIX 2355).
+                    settle_reveal_notices_in_txn(self, txn, &mut row)?;
                     REVEALS.put(&self.store, txn, reveal, &row)?;
                     return answer(SecretRevealDecision::Expired, &row);
                 }
@@ -272,7 +276,8 @@ impl Vault {
 }
 
 /// Files the owner's ask for `row`, now: its window, the digest an answer
-/// must carry, and the pending Gate record that names both.
+/// must carry, the pending Gate record that names both, and one inbox Ask
+/// per live owner (FIX 2355). A re-ask settles the old ask's notices first.
 pub(super) fn file_ask_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -280,6 +285,7 @@ pub(super) fn file_ask_in_txn(
     row: &mut RevealRow,
     now: u64,
 ) -> Result<()> {
+    settle_reveal_notices_in_txn(vault, txn, row)?;
     row.state = SecretRevealState::Asked;
     row.answered_by = None;
     row.expires_at = now.saturating_add(REVEAL_ASK_TTL_SECS);
@@ -293,6 +299,7 @@ pub(super) fn file_ask_in_txn(
         RevealAct::Asked,
         digest.as_bytes().to_vec(),
     )?);
+    notify_reveal_ask_in_txn(vault, txn, reveal, row)?;
     Ok(())
 }
 

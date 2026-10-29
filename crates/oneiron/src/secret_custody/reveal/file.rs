@@ -450,6 +450,7 @@ impl KeyRead<'_> {
                 siblings: self.siblings(group),
                 repo: self.repo.cloned(),
             }),
+            notices: Vec::new(),
         }
     }
 

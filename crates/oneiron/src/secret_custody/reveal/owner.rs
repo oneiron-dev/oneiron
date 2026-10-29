@@ -7,6 +7,7 @@ use super::{
     SecretRevealAsk, SecretRevealState, append_reveal_decision_in_txn, checked_text, not_active,
     resolve_handle_in_txn, unknown, value_in_txn,
 };
+use super::notice::settle_reveal_notices_in_txn;
 use crate::consent::{AuthenticatedOwner, GrantBound};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
@@ -128,6 +129,8 @@ impl Vault {
             };
             row.answered_by = Some(format!("{READER_OWNER}:{}", actor.to_hex()));
             row.decision = Some(receipt.decision_id());
+            // An answered ask leaves no open notice (FIX 2355).
+            settle_reveal_notices_in_txn(self, txn, &mut row)?;
             REVEALS.put(&self.store, txn, reveal, &row)?;
             Ok(SecretRevealAnswered {
                 reveal: *reveal,
@@ -216,6 +219,7 @@ impl Vault {
                 lease: None,
                 delivered_at: Some(now),
                 file: None,
+                notices: Vec::new(),
             };
             row.decision = Some(append_reveal_decision_in_txn(
                 self,
