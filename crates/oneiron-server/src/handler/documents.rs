@@ -320,12 +320,8 @@ fn owner_document(
                     &operation,
                 )
                 .map_err(|error| ProtocolError::Persistence(error.to_string()))?;
-            // State before receipt on the same ordered channel, as on the
-            // selector lane.
-            let notice = transport::encode_document(entity, document_sub_tags::UPDATE, &[])
-                .into_result()
-                .map_err(|_| ProtocolError::InvalidPayload("invalid document notice"))?;
-            let _ = direct.send(notice);
+            // The receipt brings this device's state with it: its delivery
+            // sends the current state, then the receipt (FIX 9491).
             let payload = serde_json::to_vec(&receipt)
                 .map_err(|_| ProtocolError::InvalidPayload("NOTE receipt encode"))?;
             let frame =
@@ -400,7 +396,7 @@ pub(super) fn document_delivery_retrying(
     data: &[u8],
     retry: &mut Vec<Vec<u8>>,
 ) -> Result<Vec<Vec<u8>>, ProtocolError> {
-    let docs = match data.first() {
+    let mut docs = match data.first() {
         Some(&transport::TAG_DOCUMENT) => vec![transport::decode_document(&data[1..])],
         Some(&transport::TAG_BATCH) => transport::decode_document_batch(&data[1..])
             .map_err(|_| ProtocolError::InvalidPayload("invalid document batch"))?
@@ -409,12 +405,28 @@ pub(super) fn document_delivery_retrying(
             .collect(),
         _ => return Ok(Vec::new()),
     };
-    if state.documents.is_empty() && state.owner_documents.is_empty() {
-        return Ok(Vec::new());
+    // A receipt is only ever queued on the socket whose own request it
+    // answers (no client frame is fanned out as one), so an artifact
+    // publication's receipt goes to that owner lane whether or not it holds
+    // a text subscription (FIX 9492); the last door still checks it.
+    let mut out = Vec::new();
+    docs.retain(|doc| {
+        let Ok(doc) = doc else {
+            return true;
+        };
+        if doc.kind != document_sub_tags::ARTIFACT_RECEIPT {
+            return true;
+        }
+        if owner_auth(server, state, false).is_ok() {
+            out.extend(notice(doc));
+        }
+        false
+    });
+    if docs.is_empty() || (state.documents.is_empty() && state.owner_documents.is_empty()) {
+        return Ok(out);
     }
     let principal = document_principal(server, state)?;
     let peer = state.peer_machine(server.vault());
-    let mut out = Vec::new();
     for doc in docs {
         let doc = doc.map_err(|_| ProtocolError::InvalidPayload("invalid document notice"))?;
         if let Some(remote_vv) = state.owner_documents.get(&doc.entity) {
@@ -422,6 +434,7 @@ pub(super) fn document_delivery_retrying(
                 continue;
             }
             if doc.kind == document_sub_tags::NOTE_RECEIPT {
+                owner_receipt(server, &doc, remote_vv, peer, &mut out, retry)?;
                 continue;
             }
             // Denial withholds this entity; it never falls back to the raw notice.
@@ -510,6 +523,85 @@ pub(super) fn document_delivery_retrying(
 /// again, and a peer's frame is answered [`ProtocolError::WaitedOut`].
 fn waited_out(error: &oneiron::Error) -> bool {
     error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut
+}
+
+/// The requesting own device's NOTE receipt (FIX 9491), while its durable
+/// row stands (erasure removes it): this device's current state, then the
+/// receipt, as one ordered pair. An export that waited out its turn queues
+/// the receipt again, so the pair is retried whole; a denial withholds both.
+fn owner_receipt(
+    server: &SyncServer,
+    doc: &transport::DocumentFrame<'_>,
+    remote_vv: &[u8],
+    peer: oneiron::authority::PeerMachine,
+    out: &mut Vec<Vec<u8>>,
+    retry: &mut Vec<Vec<u8>>,
+) -> Result<(), ProtocolError> {
+    let receipt: oneiron::note::NoteOperationReceipt = serde_json::from_slice(doc.payload)
+        .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?;
+    if !server
+        .vault
+        .note_receipt_is_current(doc.entity, &receipt)
+        .map_err(storage_error)?
+    {
+        return Ok(());
+    }
+    match crate::server::blocking(|| {
+        server
+            .reassert_manager
+            .export_owner_document_for(doc.entity, remote_vv, peer)
+    }) {
+        Ok(state) => {
+            out.push(state);
+            out.extend(notice(doc));
+        }
+        Err(error) if waited_out(&error) => retry.extend(notice(doc)),
+        Err(_) => {}
+    }
+    Ok(())
+}
+
+/// What the connection loop does with one queued direct document frame.
+pub(super) enum DirectDelivery {
+    /// Send this frame through the loop's last doors.
+    Send(Vec<u8>),
+    /// Nothing left to send for it.
+    Done,
+    /// The socket closes.
+    Close,
+}
+
+/// Delivers one queued direct document frame: the delivery filter runs
+/// again, a notice whose export waited out its turn is queued again, and an
+/// ordered run it answers (a NOTE's state, then its receipt) leaves in
+/// order. Every frame but the last passes the last document door and is sent
+/// here; a withheld one withholds the rest, and the last returns to the loop.
+pub(super) async fn direct_delivery(
+    server: &SyncServer,
+    state: &ConnState,
+    transport: &mut super::socket_stop::StoppingTransport,
+    direct: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    data: &[u8],
+) -> DirectDelivery {
+    let mut retry = Vec::new();
+    let delivered = document_delivery_retrying(server, state, data, &mut retry);
+    retry_later(direct, retry);
+    let Ok(mut frames) = delivered else {
+        return DirectDelivery::Close;
+    };
+    let Some(last) = frames.pop() else {
+        return DirectDelivery::Done;
+    };
+    let peer = state.peer_machine(server.vault());
+    for frame in frames {
+        if oneiron::sync::documents::document_frame_withheld_for(server.vault(), peer, &frame) {
+            return DirectDelivery::Done;
+        }
+        if !super::window_pads::send_released(server, state, transport, frame).await {
+            return DirectDelivery::Close;
+        }
+    }
+    DirectDelivery::Send(last)
 }
 
 /// Queues the notices whose export waited out its turn again after a pause,
