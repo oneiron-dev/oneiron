@@ -237,22 +237,19 @@ fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Se
         Err(error) => return Some(Settlement::Fail(error.to_string())),
     };
     let now_ms = crate::runtime::wall_clock_ms();
-    Some(
-        match drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms) {
-            Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {
-                Settlement::Complete
-            }
-            Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => Settlement::Fail(
-                format!("a campaign send awaits the owner's approval press on {approval_digest}"),
-            ),
-            Ok(EnrollmentLegDrive::NotHomeNode(_) | EnrollmentLegDrive::NoHomeNode) => {
-                return None;
-            }
-            // The reason is recorded on the attempt, not logged: it can
-            // quote the vault.
-            Err(error) => Settlement::Fail(error.to_string()),
-        },
-    )
+    let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
+    Some(match drive {
+        Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {
+            Settlement::Complete
+        }
+        Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => Settlement::Fail(format!(
+            "a campaign send awaits the owner's approval press on {approval_digest}"
+        )),
+        Ok(EnrollmentLegDrive::NotHomeNode(_) | EnrollmentLegDrive::NoHomeNode) => return None,
+        // The reason is recorded on the attempt, not logged: it can quote
+        // the vault.
+        Err(error) => Settlement::Fail(error.to_string()),
+    })
 }
 
 /// How one executed attempt settles.
