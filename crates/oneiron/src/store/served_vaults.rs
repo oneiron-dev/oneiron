@@ -21,7 +21,10 @@ impl Vault {
     pub fn register_served(self: &Arc<Self>) {
         let mut served = SERVED.lock().unwrap_or_else(PoisonError::into_inner);
         served.retain(|_, vault| vault.strong_count() > 0);
-        served.insert(self.store.owner._registered_path.path.clone(), Arc::downgrade(self));
+        served.insert(
+            self.store.owner._registered_path.path.clone(),
+            Arc::downgrade(self),
+        );
     }
 }
 
