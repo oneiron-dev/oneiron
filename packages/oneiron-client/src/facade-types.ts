@@ -7991,7 +7991,7 @@ export type ForkStatus = "Pending" | "Merged" | "Switched" | "Rejected"
 /** `oneiron::entity_doc::forks::ForkRecord` */
 export type ForkRecord = { fork: string; proposal: string; entity: string; parent_document: string; base: number[]; actor: DocActor; opened_at: number; rewrite: boolean; status: ForkStatus; read_refs: string[]; keep?: string | null }
 /** `oneiron::entity_doc::forks::ProposalBundle` */
-export type ProposalBundle = { proposal: string; author: DocActor; forks: ForkRecord[]; settled: boolean }
+export type ProposalBundle = { proposal: string; author: DocActor; forks: ForkRecord[]; settled: boolean; opener_lineage: string[] }
 /** `oneiron::scope_summary::public_types::SummaryForkView` */
 export type SummaryForkView = { record: ForkRecord; text?: string | null }
 /** `oneiron::entity_doc::forks::SettleVerb` */

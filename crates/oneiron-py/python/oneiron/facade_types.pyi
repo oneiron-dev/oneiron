@@ -20825,6 +20825,7 @@ class ProposalBundle(TypedDict):
     author: DocActor
     forks: list[ForkRecord]
     settled: bool
+    opener_lineage: list[str]
 class SummaryForkView(TypedDict):
     record: ForkRecord
     text: NotRequired[str | None]

@@ -4105,7 +4105,7 @@ declare namespace Sdk {
   type SummaryEditRequest = { summary_ref: string; base: number[]; edits: SummaryEdit[] };
   type ForkStatus = "Pending" | "Merged" | "Switched" | "Rejected";
   type ForkRecord = { fork: string; proposal: string; entity: string; parent_document: string; base: number[]; actor: DocActor; opened_at: number; rewrite: boolean; status: ForkStatus; read_refs: string[]; keep?: string | null };
-  type ProposalBundle = { proposal: string; author: DocActor; forks: ForkRecord[]; settled: boolean };
+  type ProposalBundle = { proposal: string; author: DocActor; forks: ForkRecord[]; settled: boolean; opener_lineage: string[] };
   type SummaryForkView = { record: ForkRecord; text?: string | null };
   type SettleVerb = "Merge" | "Switch" | "Reject";
   type TextReceipt = { receipt: string; proposal: string; fork: string; entity: string; actor: DocActor; verb: SettleVerb; at: number; before: number[]; after: number[]; read_refs: string[] };

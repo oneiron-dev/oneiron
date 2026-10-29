@@ -64358,6 +64358,8 @@ pub struct ProposalBundle {
     pub forks: Vec<ForkRecord>,
     #[serde(rename = "settled")]
     pub settled: bool,
+    #[serde(rename = "opener_lineage")]
+    pub opener_lineage: Vec<String>,
 }
 
 /// `oneiron::scope_summary::public_types::SummaryForkView`.
