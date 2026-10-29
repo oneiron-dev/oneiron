@@ -10,6 +10,7 @@
 //! SkillRecord confidence is only a diagnostic cache and never a ranking input.
 
 mod amended;
+mod anchored_amendment;
 mod callable;
 mod codec;
 mod equivalent;

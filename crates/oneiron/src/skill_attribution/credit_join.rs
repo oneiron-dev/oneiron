@@ -332,7 +332,7 @@ fn capture_first_prior_in_txn(
 
 /// One subject's observation of `credit`'s outcome at `weight`, under the
 /// sealed receipt's own evidence key, so a later reconciliation replaces it.
-pub(super) fn credit_evidence(
+pub(crate) fn credit_evidence(
     credit: &LateCreditReceipt,
     fields: &PackAttributionFields,
     success: bool,
