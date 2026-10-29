@@ -154,9 +154,13 @@ pub(crate) async fn weave_admin_link_wrong(
     input: WeaveWrongLinkRequest,
 ) -> Listed<WeaveLinkCorrectionView> {
     let caller = admin.caller();
-    credential_listing(server, auth, caller, ADMIN_LINK_WRONG, move |_, _, memory| {
-        memory.weave_admin_wrong_link(&admin.proof, &input)
-    })
+    credential_listing(
+        server,
+        auth,
+        caller,
+        ADMIN_LINK_WRONG,
+        move |_, _, memory| memory.weave_admin_wrong_link(&admin.proof, &input),
+    )
     .await
 }
 
@@ -169,8 +173,12 @@ pub(crate) async fn weave_admin_item_wrong(
     input: WeaveWrongItemRequest,
 ) -> Listed<WeaveItemCorrectionView> {
     let caller = admin.caller();
-    credential_listing(server, auth, caller, ADMIN_ITEM_WRONG, move |_, _, memory| {
-        memory.weave_admin_wrong_item(&admin.proof, &input)
-    })
+    credential_listing(
+        server,
+        auth,
+        caller,
+        ADMIN_ITEM_WRONG,
+        move |_, _, memory| memory.weave_admin_wrong_item(&admin.proof, &input),
+    )
     .await
 }

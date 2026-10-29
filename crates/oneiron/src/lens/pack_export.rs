@@ -126,13 +126,15 @@ impl Memory<'_> {
         let vault = self.vault();
         let (record, tree, prompt_ref, prompt_readable, in_scope) = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
-            let record = PROPOSALS.get(&vault.store, &txn, &lens_ref)?.ok_or_else(|| {
-                if narrowed {
-                    outside()
-                } else {
-                    MemoryError::not_found(format!("no lens {}", input.lens_ref))
-                }
-            })?;
+            let record = PROPOSALS
+                .get(&vault.store, &txn, &lens_ref)?
+                .ok_or_else(|| {
+                    if narrowed {
+                        outside()
+                    } else {
+                        MemoryError::not_found(format!("no lens {}", input.lens_ref))
+                    }
+                })?;
             let tree = lens_tree_in(vault, &txn, &lens_ref, &record.compiled_hash)?;
             let prompt_ref = EntityId::from_hex(&record.prompt_ref)
                 .map_err(|_| Error::CorruptedIndex("lens proposal record"))?;
