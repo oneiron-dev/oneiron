@@ -3538,6 +3538,7 @@ export class Oneiron {
 
 export { OneironError }
 export type { HookStop } from "./error.js"
+export type { LegalHoldNotice } from "./facade-types.js"
 export type * from "./types.js"
 export type * as Facade from "./facade-types.js"
 
