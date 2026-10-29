@@ -78,7 +78,7 @@ pub use secret_slots::SecretParam;
 
 use crate::{BatchStep, BrowserError, ExpectInput};
 #[cfg(feature = "driver")]
-use crate::{BrowserDriver, CheckReceipt, ObserveInput};
+use crate::{BrowserDriver, CheckReceipt};
 use std::collections::BTreeMap;
 
 /// Fills every `{{name}}` slot in `value`'s strings from `args`.
@@ -171,14 +171,5 @@ fn by_locator<D: BrowserDriver + ?Sized>(
         if let Some(info) = driver.handle_info(target.as_str()) {
             *target = info.locator;
         }
-    }
-}
-
-#[cfg(feature = "driver")]
-/// A read the caller never sees: whole, and never its base.
-fn hidden_look() -> ObserveInput {
-    ObserveInput {
-        full: true,
-        ..ObserveInput::default()
     }
 }

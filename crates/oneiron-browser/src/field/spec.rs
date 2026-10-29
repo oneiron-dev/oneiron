@@ -44,6 +44,11 @@ pub struct FieldSpec {
     /// as text. It names no other source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+    /// The `secret` arm holds its slot's own text (FIX 10427), typed as
+    /// text even in a handle's form: set where a call's typed secret
+    /// arguments gave that slot its own text.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret_is_text: bool,
 }
 
 /// One text a Fill step may type, by an id the step's caller gave it: the

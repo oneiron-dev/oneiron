@@ -2,18 +2,18 @@
 //! proof shapes, the solved-page check on the proposing session, and the
 //! no-model replay on a fresh guest that files the program.
 
-use super::live_run;
+use super::live_run::{self, SecretArg};
 use super::{
     AdmissionRefusal, Admitted, ReplayGuest, SupersedeOutcome, SupersedeRefusal, WorkflowSeed,
     secret_slots, validate_replay_args,
 };
 #[cfg(feature = "driver")]
-use super::{by_locator, hidden_look, missed};
+use super::{by_locator, missed};
 #[cfg(feature = "driver")]
 use crate::{
     BatchInput, BrowserDriver, CheckReceipt, NoWriter, RoutineDecider, SubgoalStatus, SwitchStage,
 };
-use crate::{BatchOutput, BatchStep, BrowserError, EffectReceipt, ExpectInput};
+use crate::{BatchOutput, BatchStep, BrowserError, EffectReceipt, ExpectInput, SnapshotBounds};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -59,6 +59,15 @@ pub struct ProposeInput {
     /// caller's.
     #[serde(default)]
     pub candidate: Option<String>,
+    /// Secret slots' arguments in typed form (FIX 10427): a name here
+    /// takes the place of the same name in `args` and in `replay_args`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_args: BTreeMap<String, SecretArg>,
+    /// The bounds the session's per-origin storage snapshots keep from
+    /// this call on, each named one in place of its default (FIX 11580);
+    /// absent, they stay as they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_bounds: Option<SnapshotBounds>,
 }
 
 /// Which check refused a program.
@@ -209,7 +218,7 @@ pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
     let targets = secret_slots::Targets::read(&*driver, &steps, &postcondition);
     by_locator(&*driver, &mut steps, &mut postcondition);
     // The independent check: the host reads the solved run's page itself.
-    let solved = driver.observe(hidden_look())?;
+    let solved = driver.observe_hidden()?;
     let mut program = WorkflowProgram {
         subgoal: input.subgoal,
         params: input.params,
@@ -224,15 +233,24 @@ pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
         &mut args,
         &mut replay_args,
     )?;
+    // The proposal's typed secret arguments take the place of the same
+    // names in both value sets (FIX 10427); the typed reading fills the
+    // checks and the replay, and the filed program keeps its slots.
+    let (overrides, text) = secret_slots::typed_values(&input.secret_args)?;
+    for (name, value) in overrides {
+        args.insert(name.clone(), value.clone());
+        replay_args.insert(name, value);
+    }
+    let typed = secret_slots::as_text(&program, &text);
     let site = program.site()?;
-    let (_, solved_checks) = program.fill(&args)?;
+    let (_, solved_checks) = typed.fill(&args)?;
     let held_out = match validate_replay_args(&program, &args, &replay_args) {
         Ok(held_out) => held_out,
         Err(refusal) => return Ok(Err(refused(WorkflowCheck::HeldOut, Some(refusal)))),
     };
     // The replay fills its steps and its checks from its own values.
     let values = if held_out { &replay_args } else { &args };
-    let (steps, checks) = program.fill(values)?;
+    let (steps, checks) = typed.fill(values)?;
     let missed = missed(driver, &solved_checks)?;
     if !missed.is_empty() {
         let (unmet, missed) = split_missed(missed);
@@ -330,7 +348,7 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
             ..refused(check, refusal)
         });
     }
-    let replayed = fresh.observe(hidden_look())?;
+    let replayed = fresh.observe_hidden()?;
     let withheld = secret_slots::values(&program, &args, &replay_args);
     let (replay_receipts, replay_decisions) =
         secret_slots::unbound(replay.receipts.clone(), replay.decisions.clone(), &withheld);

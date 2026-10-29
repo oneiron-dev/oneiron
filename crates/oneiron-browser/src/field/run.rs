@@ -80,7 +80,7 @@ fn fill_secret<D: BrowserDriver + ?Sized>(
     mut field: FieldSpec,
 ) -> Result<Observation, Stop> {
     let named = field.secret.take().unwrap_or_default();
-    let (text, secret) = if crate::library::handle_form(&named) {
+    let (text, secret) = if !field.secret_is_text && crate::library::handle_form(&named) {
         (None, Some(named.clone()))
     } else {
         (Some(named.clone()), None)

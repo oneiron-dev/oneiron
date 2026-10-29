@@ -37,7 +37,8 @@ pub enum LibraryRunMode {
 #[serde(deny_unknown_fields)]
 pub struct LibraryRunInput {
     pub workflow: String,
-    /// A secret slot's names a handle this run holds, or is its own text.
+    /// A secret slot's argument names a handle this run holds, or is its
+    /// own text.
     #[serde(default)]
     pub args: BTreeMap<String, String>,
     /// The observation the run's last observation edits, as `observe`'s
@@ -248,22 +249,8 @@ fn typed_args(
     input: &LibraryRunInput,
 ) -> Result<(std::collections::BTreeMap<String, String>, Vec<String>), BrowserError> {
     let mut args = input.args.clone();
-    let mut text = Vec::new();
-    for (name, arg) in &input.secret_args {
-        let value = match arg {
-            SecretArg::Handle(handle) if super::handle_form(handle) => handle.clone(),
-            SecretArg::Handle(_) => {
-                return Err(BrowserError::Input(format!(
-                    "the secret argument {name}'s handle names no handle"
-                )));
-            }
-            SecretArg::Text(value) => {
-                text.push(name.clone());
-                value.clone()
-            }
-        };
-        args.insert(name.clone(), value);
-    }
+    let (values, text) = super::secret_slots::typed_values(&input.secret_args)?;
+    args.extend(values);
     Ok((args, text))
 }
 
