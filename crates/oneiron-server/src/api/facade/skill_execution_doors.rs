@@ -229,6 +229,12 @@ impl AgentVerbDoor for SkillCredentialDoor {
         check().map_err(|error| AgentVerbRefusal { code: error.code })
     }
 
+    /// The host turn's hooks read on the credential's lane, with its proof
+    /// and destination, as the run's own search does (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.read_key().ok()
+    }
+
     fn withholds_retained(
         &self,
         rows: Option<&[oneiron::EntityId]>,

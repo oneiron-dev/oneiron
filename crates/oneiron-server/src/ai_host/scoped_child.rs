@@ -100,6 +100,12 @@ impl AgentVerbDoor for ScopedChildDoor {
         }
     }
 
+    /// A scoped child reads only what it was lent: its host turn's hooks
+    /// read nothing, never a broad lane (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        None
+    }
+
     /// Nothing is withheld by where anyone runs: a lent input the child's
     /// authority stands for is read, and one it no longer stands for is
     /// refused.
