@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    DreamCut, PAD_CUT_MARK, PADS, PADS_SECTION, ResidentDreamPartial, ResidentDreamProgress, Room,
-    WORDS_CUT_MARK, diary_review_words, read_on_from, resident_forks,
+    DreamCut, DreamSource, DreamSourceKind, PAD_CUT_MARK, PADS, PADS_SECTION, ResidentDreamPartial,
+    ResidentDreamProgress, Room, WORDS_CUT_MARK, diary_review_words, read_on_from, resident_forks,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
@@ -62,6 +62,13 @@ pub(super) fn cut_pads(
         if room.take(&line) {
             pad_lines.push(line);
             cut.pads.push(pad);
+            cut.read.push(DreamSource {
+                kind: DreamSourceKind::Pad,
+                id: pad.to_hex(),
+                at: 0,
+                text_hash: Some(text_hash(body)),
+                partial: false,
+            });
             continue;
         }
         // The first pad a dreaming reads goes in part when it does not fit
@@ -76,6 +83,13 @@ pub(super) fn cut_pads(
                 at: 0,
                 id: pad.to_hex(),
                 read: (from + read) as u64,
+            });
+            cut.read.push(DreamSource {
+                kind: DreamSourceKind::Pad,
+                id: pad.to_hex(),
+                at: 0,
+                text_hash: Some(text_hash(body)),
+                partial: true,
             });
         }
         break;
@@ -127,6 +141,13 @@ pub(super) fn cut_receipts(
             break;
         }
         receipt_lines.push(line);
+        cut.read.push(DreamSource {
+            kind: DreamSourceKind::Receipt,
+            id: key.1.clone(),
+            at: key.0,
+            text_hash: None,
+            partial: false,
+        });
         cut.receipts_after = Some(key);
     }
     cut.sections.push(("Receipts", receipt_lines));
@@ -202,6 +223,13 @@ pub(super) fn cut_inbox(
                 break;
             }
             inbox_lines.push(index);
+            cut.read.push(DreamSource {
+                kind: DreamSourceKind::Inbox,
+                id: item.item_id.clone(),
+                at: item.occurred_at,
+                text_hash: None,
+                partial: false,
+            });
             cut.inbox_after = Some((item.occurred_at, item.item_id));
             continue;
         };
@@ -236,6 +264,13 @@ pub(super) fn cut_inbox(
         let quoted = render(&words[from..]);
         if room.take(&quoted) {
             inbox_lines.push(quoted);
+            cut.read.push(DreamSource {
+                kind: DreamSourceKind::Inbox,
+                id: item.item_id.clone(),
+                at: item.occurred_at,
+                text_hash: None,
+                partial: false,
+            });
             cut.inbox_after = Some((item.occurred_at, item.item_id));
             continue;
         }
@@ -244,6 +279,13 @@ pub(super) fn cut_inbox(
             && room.take(&part)
         {
             inbox_lines.push(part);
+            cut.read.push(DreamSource {
+                kind: DreamSourceKind::Inbox,
+                id: item.item_id.clone(),
+                at: item.occurred_at,
+                text_hash: None,
+                partial: true,
+            });
             cut.inbox_partial = Some(ResidentDreamPartial {
                 at: item.occurred_at,
                 id: item.item_id,
@@ -279,6 +321,13 @@ pub(super) fn cut_health(
             break;
         }
         health_lines.push(line);
+        cut.read.push(DreamSource {
+            kind: DreamSourceKind::Health,
+            id: key.1.clone(),
+            at: key.0,
+            text_hash: None,
+            partial: false,
+        });
         cut.health_after = Some(key);
     }
     cut.sections.push(("Health cards about you", health_lines));
@@ -296,8 +345,20 @@ pub(super) fn cut_health(
             break;
         }
         fork_lines.push(line);
+        cut.read.push(DreamSource {
+            kind: DreamSourceKind::ForkHealth,
+            id: key.1.clone(),
+            at: key.0,
+            text_hash: None,
+            partial: false,
+        });
         cut.fork_health_after = Some(key);
     }
     cut.sections
         .push(("Health cards about your forks", fork_lines));
+}
+
+/// `blake3:<hex>` of a pad's text as the cut found it (FIX 7753).
+fn text_hash(text: &str) -> String {
+    format!("blake3:{}", blake3::hash(text.as_bytes()).to_hex())
 }
