@@ -42951,7 +42951,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -59175,7 +59175,7 @@
      "path": "src/scope_summary/derivation.rs",
      "purpose": "Scope-summary derivation envelopes and change-driven re-derivation",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 14,
       "fn": 1,
       "struct": 5
      }
@@ -70490,10 +70490,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/forward/edge_pass/apply.rs",
+     "purpose": "The edge pass's mandate-checked write: one edge's reserved-kind mandate, endpoint readiness, stored-byte…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/sync/window/forward/edge_pass.rs",
+     "path": "src/sync/window/forward/edge_pass/mod.rs",
      "purpose": "Edge pass of forward rematerialization: materialize window edge rows into LMDB",
      "surface": {
       "crate-vis": 2
@@ -82551,7 +82561,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 281,
+     "files": 282,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82763,7 +82773,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5527,
+   "source_files": 5528,
    "test_files": 902
   },
   "oneiron-android": {
