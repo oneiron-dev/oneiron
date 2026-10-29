@@ -16,7 +16,7 @@ use super::super::replay::{
 use super::super::support::invalid_code_run_replay;
 use super::records::{
     RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output,
-    load_whole_body, read_body_row_range, replay_generation_matches,
+    finish_output_sourced, load_whole_body, read_body_row_range, replay_generation_matches,
 };
 use super::response_erase::fence_replay_in_txn;
 use super::response_owners::stamp_response_owner_in_txn;
@@ -779,11 +779,26 @@ impl<'a> ExecutorStorage<'a> {
         complete: bool,
         owner: EntityId,
     ) -> Result<CodeRunRawOutput> {
+        self.publish_code_run_output_sourced(path, sink, complete, owner, None)
+    }
+
+    /// [`Self::publish_code_run_output`] with the occurrence's complete
+    /// input rows, or `None` when any constituent is unknown (FIX 7104).
+    pub(crate) fn publish_code_run_output_sourced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+    ) -> Result<CodeRunRawOutput> {
         match self {
             Self::Canonical(vault) => {
-                vault.publish_code_run_output(path, sink, complete, Some(owner))
+                vault.publish_code_run_output_sourced(path, sink, complete, Some(owner), input_rows)
             }
-            Self::Session(binding) => binding.publish_output(path, sink, complete, owner),
+            Self::Session(binding) => {
+                binding.publish_output_sourced(path, sink, complete, owner, input_rows)
+            }
         }
     }
 
