@@ -343,6 +343,9 @@ impl Memory<'_> {
                 owner,
             )?;
         }
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11618).
+        crate::edit_distance::routing::refold_task_outcomes_in_txn(self.vault(), wtxn, task_ref);
 
         // The TASK put above is announced after commit; the board
         // publisher (`context_board::stream::publish`) routes it.
