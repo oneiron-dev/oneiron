@@ -63,7 +63,7 @@ declare namespace Sdk {
   type ReportDisclosureChoice = "approve_once" | "stop_asking_for_publisher" | "deny";
   type ReportDisclosureRequest = { issue_ref: string; choice: ReportDisclosureChoice };
   type ReportReview = { status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null };
-  type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure; disclosure_basis?: ReportDisclosureBasis | null };
+  type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure; disclosure_basis?: ReportDisclosureBasis | null; disclosure_round?: number };
   type ReportRouteRequest = { subject_ref: string; route: ReportRoute };
   type ReportRouteReceipt = { subject_ref: string; route: ReportRoute; updated: boolean };
   type ReportOutboundRequest = { issue_ref: string };

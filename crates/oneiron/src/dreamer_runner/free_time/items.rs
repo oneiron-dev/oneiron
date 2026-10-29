@@ -17,7 +17,10 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::cycle::{FreeTimeCycle, FreeTimeCycleState, FreeTimeNote, FreeTimeOwnTimeChoice};
+use super::cycle::{
+    FreeTimeCycle, FreeTimeCycleState, FreeTimeItemRef, FreeTimeNote, FreeTimeOwnTimeChoice,
+    enqueue_item_in_txn, round_item_id,
+};
 use super::receipt::{
     FreeTimeItemOutcome, FreeTimeItemReceipt, close_cycle_if_done_in_txn, record_receipt_in_txn,
 };
@@ -230,17 +233,63 @@ pub(crate) fn free_time_item_to_run(
 
 /// Records an own-time item's reflection in the commit that lands its diary
 /// entry. The entry stays private; the receipt says only that it landed.
+/// When the reply asked for another round, that round queues before the
+/// cycle's close check runs, so the cycle stays open for it (FIX 7763).
 pub(crate) fn record_own_time_landed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     binding: &FreeTimeItemBinding,
+    another_round: bool,
     at: u64,
 ) -> Result<()> {
     let receipt = FreeTimeItemReceipt::of(binding, FreeTimeItemOutcome::Completed, None, at);
-    if record_receipt_in_txn(vault, txn, &receipt)? {
-        close_cycle_if_done_in_txn(vault, txn, binding.agent, binding.boundary, at)?;
+    if !record_receipt_in_txn(vault, txn, &receipt)? {
+        return Ok(());
     }
-    Ok(())
+    enqueue_round_if_asked_in_txn(vault, txn, binding, another_round, at)?;
+    close_cycle_if_done_in_txn(vault, txn, binding.agent, binding.boundary, at)
+}
+
+/// Queues the dreaming's asked-for round of its own time (FIX 7763): one
+/// more own-time item on what the allowance has left. Only while its cycle
+/// is still open; what the root no longer covers queues nothing, and the
+/// cycle closes as it did.
+fn enqueue_round_if_asked_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: &FreeTimeItemBinding,
+    another_round: bool,
+    now: u64,
+) -> Result<()> {
+    if !another_round {
+        return Ok(());
+    }
+    let key = (binding.agent, binding.boundary);
+    let Some(mut cycle) = CYCLE.get(&vault.store, txn, &key)? else {
+        return Ok(());
+    };
+    if cycle.state != FreeTimeCycleState::Open {
+        return Ok(());
+    }
+    // The round spends from what the root has left: a pinned share carves
+    // again, so it queues only when the root still covers it.
+    let available = AgentDispatcher::new(vault).available_units_in_txn(txn, &cycle.root_scope)?;
+    let affords = match cycle.pinned_split {
+        Some(split) => available >= split.own_time_units,
+        None => available > 0,
+    };
+    if !affords {
+        return Ok(());
+    }
+    cycle.own_time_rounds += 1;
+    let item = round_item_id(cycle.cycle, cycle.own_time_rounds)?;
+    let attempt = enqueue_item_in_txn(vault, txn, &cycle, FreeTimeKind::OwnTime, item, now)?;
+    cycle.items.push(FreeTimeItemRef {
+        item,
+        kind: FreeTimeKind::OwnTime,
+        attempt: Some(*attempt.as_bytes()),
+    });
+    CYCLE.put(&vault.store, txn, &key, &cycle)
 }
 
 /// What an agent's free time for its human came back with, from its reply's
