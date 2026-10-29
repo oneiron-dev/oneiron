@@ -154,10 +154,11 @@ pub(crate) fn birth_reply_assertions_in_txn(
     BIRTHS.get(store, txn, message)
 }
 
-/// Drops the birth row the MESSAGE `message` was born with whole, in `txn`.
-/// The row's key is the MESSAGE, so it goes by key, even when its value does
-/// not decode (FIX 10631). A restore's removal scrub calls this; the live
-/// erase below calls it first.
+/// Drops the birth rows an erase of `id` covers, in `txn`: its own MESSAGE's,
+/// by key, even when its value does not decode, and every row whose TURN,
+/// conversation or writer is `id`. A row that does not decode names no TURN,
+/// conversation or writer and stays, never refused (FIX 10631). A restore's
+/// removal scrub calls this alone; the live erase below calls it first.
 ///
 /// # Errors
 ///
@@ -165,27 +166,9 @@ pub(crate) fn birth_reply_assertions_in_txn(
 pub(crate) fn erase_birth_reply_assertions_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
-    message: &EntityId,
-) -> Result<()> {
-    BIRTHS.delete(store, txn, message)?;
-    Ok(())
-}
-
-/// Drops the rows an erase of `id` covers: its own MESSAGE's, and every row
-/// whose TURN, conversation or writer is `id`, and takes the assertions off
-/// its stream receipts. Registered in `deletion/derived_rows.rs`. A row that
-/// does not decode names no TURN, conversation or writer and stays, never
-/// refused (FIX 10631).
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn erase_reply_assertions_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    erase_birth_reply_assertions_in_txn(store, txn, id)?;
+    BIRTHS.delete(store, txn, id)?;
     let mut covered = Vec::new();
     for row in BIRTHS.iter_raw_from(store, txn, &[])? {
         let (key, value) = row?;
@@ -201,6 +184,22 @@ pub(crate) fn erase_reply_assertions_in_txn(
     for message in covered {
         BIRTHS.delete(store, txn, &message)?;
     }
+    Ok(())
+}
+
+/// Drops the birth rows an erase of `id` covers
+/// ([`erase_birth_reply_assertions_in_txn`]), and takes the assertions off
+/// its stream receipts. Registered in `deletion/derived_rows.rs`.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_reply_assertions_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    erase_birth_reply_assertions_in_txn(store, txn, id)?;
     super::stream::redact_receipt_assertions_in_txn(store, txn, id)
 }
 
