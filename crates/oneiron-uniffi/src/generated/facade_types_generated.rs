@@ -19816,6 +19816,12 @@ pub struct SharedActExecutionReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub authority_entry: Option<String>,
+    #[serde(
+        rename = "authorizer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub authorizer: Option<String>,
     #[serde(rename = "completed_at")]
     pub completed_at: u64,
 }

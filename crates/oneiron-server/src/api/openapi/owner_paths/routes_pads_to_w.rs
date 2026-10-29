@@ -528,6 +528,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/usage/repair/receipts",
+        summary: "Every receipt a removal of an undecodable usage row kept for this server's metering scope (FIX 7036, FIX 11302), in key order, as its write kept it; a kept row that no longer decodes is counted, never read as a receipt. A server that meters no usage answers `usage_metering_unbound`.",
+        row: Some("vault.usage.repair.receipts"),
+    },
+    OwnerRoute {
+        method: "get",
         path: "/vault-key",
         summary: "Whether the vault has a data key, whether this server holds it, and its wraps, each passkey's with its PRF input.",
         row: None,

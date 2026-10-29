@@ -416,6 +416,12 @@ fn persona_snapshot_export_receipt(
         "artifact_fingerprint".to_owned(),
         record.artifact_fingerprint.clone(),
     );
+    // An Omit copy names the vault ref slots both renders left out (FIX
+    // 1199); a copy that carries its refs names none, as the record
+    // stores none.
+    if !record.omitted_refs.is_empty() {
+        fields.insert("omitted_refs".to_owned(), record.omitted_refs.join(","));
+    }
 
     ReceiptRecord {
         receipt_id: format!("share:persona_snapshot:{}", id.to_hex()),
