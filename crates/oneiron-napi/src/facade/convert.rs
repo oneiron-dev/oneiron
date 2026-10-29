@@ -15,8 +15,8 @@ use super::dtos::{
     NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance,
     NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence,
     NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessAssertions,
-    NapiWitnessReceipt, NapiWitnessTurn,
+    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiTurnProgramWakeOutcome,
+    NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -370,6 +370,25 @@ pub(super) fn witness_receipt_from_engine(
         turn_short_id: receipt.turn_short_id,
         message_short_ids: receipt.message_short_ids,
         receipt_ref: receipt.receipt_ref,
+        wake_outcome: receipt.wake_outcome.map(wake_outcome_from_engine),
+    }
+}
+
+/// Projects a turn's program-wake outcome onto the boundary DTO, spelled as
+/// the engine's wire spells it.
+fn wake_outcome_from_engine(
+    outcome: oneiron::memory::TurnProgramWakeOutcome,
+) -> NapiTurnProgramWakeOutcome {
+    use oneiron::memory::TurnProgramWakeOutcome;
+    let (newly_recorded, reason) = match outcome {
+        TurnProgramWakeOutcome::NotArmed => (None, None),
+        TurnProgramWakeOutcome::Evaluated { newly_recorded } => (Some(newly_recorded), None),
+        TurnProgramWakeOutcome::Unpersisted { reason } => (None, Some(reason.as_str().to_owned())),
+    };
+    NapiTurnProgramWakeOutcome {
+        outcome: outcome.as_str().to_owned(),
+        newly_recorded,
+        reason,
     }
 }
 

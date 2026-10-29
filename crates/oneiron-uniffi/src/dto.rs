@@ -141,6 +141,31 @@ pub struct WitnessReceipt {
     pub message_short_ids: Vec<String>,
     /// Write marker for the witnessed turn.
     pub receipt_ref: String,
+    /// What the wake this turn owes its actor's armed programs came to
+    /// (FIX 9970); absent when the turn owes none.
+    #[uniffi(default = None)]
+    pub wake_outcome: Option<TurnProgramWakeOutcome>,
+}
+
+/// What a landed turn's program wake came to (FIX 9970).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum TurnProgramWakeOutcome {
+    /// The actor has no program armed: no wake is owed.
+    NotArmed,
+    /// The wakes this landing recorded; zero means none matched or each was
+    /// already recorded, not a failure.
+    Evaluated { newly_recorded: u32 },
+    /// No wake was recorded, and no program wakes for this turn.
+    Unpersisted { reason: UnpersistedWakeReason },
+}
+
+/// Why a turn's program wake was not recorded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UnpersistedWakeReason {
+    /// The turn's caller seals no authority a program could run under.
+    NoAuthority,
+    /// Reading the armed programs or writing the wake failed in storage.
+    StorageFailure,
 }
 
 // ── claims ──────────────────────────────────────────────────────────────

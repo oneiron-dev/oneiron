@@ -38,6 +38,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::inference_snapshot::erase_in_txn,
     // FIX 10260: a MESSAGE's kept reply assertions.
     crate::memory::erase_reply_assertions_in_txn,
+    // FIX 9970: a TURN's unpersisted-wake label.
+    crate::memory::erase_turn_wake_label_in_txn,
     // FIX 7608 S3F: a derived text's index copy, and the copies derived from it.
     crate::embed::retire_repo_derived_index_copies_in_txn,
     // FIX 9752: a fitted section install's receipt, with the skill or the

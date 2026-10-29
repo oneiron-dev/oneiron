@@ -51,6 +51,10 @@ pub struct TranscriptTurn {
     pub occurred_end: u64,
     /// The turn's visible messages the reader may read, in order.
     pub messages: Vec<TranscriptMessage>,
+    /// The turn's program-wake outcome when a landing of it could not record
+    /// its wake (FIX 9970); absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wake_outcome: Option<super::TurnProgramWakeOutcome>,
 }
 
 /// One message of a transcript turn.
@@ -351,6 +355,7 @@ impl Memory<'_> {
                     occurred_start: turn.occurred_start,
                     occurred_end: turn.occurred_end,
                     messages: messages.into_iter().map(|(_, message)| message).collect(),
+                    wake_outcome: turn_wake_outcome_in_txn(self.vault, &txn, &key.1)?,
                 });
                 last = Some(*key);
             }

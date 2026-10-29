@@ -12,6 +12,7 @@ mod session;
 mod stream;
 mod turn_program;
 mod types;
+mod wake_outcome;
 pub use stream::*;
 pub(crate) use stream::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
@@ -28,6 +29,8 @@ pub(crate) use self::reply_assertions::{
 pub use self::types::{
     WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
+pub use self::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason};
+pub(crate) use self::wake_outcome::{erase_turn_wake_label_in_txn, turn_wake_outcome_in_txn};
 
 pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,

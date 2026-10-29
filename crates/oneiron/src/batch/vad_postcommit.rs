@@ -36,6 +36,9 @@ pub(crate) struct PostcommitWork {
     /// TASKs this transaction settled, whose peer-result waiters wake only
     /// after it commits (FIX 1140).
     pub(crate) settled_tasks: BTreeSet<EntityId>,
+    /// Whether this transaction put or marked a notification, whose live
+    /// queries wake only after it commits (FIX 3084).
+    pub(crate) notifications_changed: bool,
 }
 
 thread_local! {
@@ -100,6 +103,17 @@ pub(crate) fn queue_proactivity_change(vault: &Vault, txn: &RwTxn<'_>) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
             queued.proactivity_changed = true;
+        }
+    });
+}
+
+/// Mark a notification put or inbox mark for the owner's post-commit wake of
+/// the live queries that follow notifications (FIX 3084). A rolled-back scope
+/// drops the marker, so no subscriber re-reads for a write that did not land.
+pub(crate) fn queue_notification_change(vault: &Vault, txn: &RwTxn<'_>) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.notifications_changed = true;
         }
     });
 }

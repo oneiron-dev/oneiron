@@ -54,6 +54,9 @@ class WitnessReceipt(TypedDict):
     message_short_ids: list[str]
     # Always begins `witness:`.
     receipt_ref: str
+    # What the wake this turn owes its actor's armed programs came to; None
+    # when it owes none.
+    wake_outcome: NotRequired[Facade.TurnProgramWakeOutcome | None]
 
 class ClaimInput(TypedDict):
     id: NotRequired[str]
