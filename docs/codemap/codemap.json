@@ -52644,7 +52644,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 43,
       "struct": 1
      }
@@ -52787,6 +52787,26 @@
      "purpose": "The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/ppr_visibility.rs",
+     "purpose": "Caller-visible PPR walks for narrowed retrieval attempts",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/ppr_work.rs",
+     "purpose": "One fair task-work admission for PPR's snapshot",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -54563,7 +54583,17 @@
      "path": "src/ppr/cache_store.rs",
      "purpose": "PPR cache constants, TTL policy, cache IO, and binary codec",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ppr/cache_store/purge.rs",
+     "purpose": "Destructive PPR-cache purge for hard erase",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -54593,7 +54623,7 @@
      "path": "src/ppr/policy.rs",
      "purpose": "PPR alphas, seed weighting, specificity counts, and recency policy",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -54603,7 +54633,7 @@
      "path": "src/ppr/query.rs",
      "purpose": "PPR query dispatch: cache-read context, deferred writes, and VAD evidence scope",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -66856,7 +66886,7 @@
      "path": "src/store/ppr_community.rs",
      "purpose": "Bounded, local community snapshots in the existing `vault_meta` database",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -82300,7 +82330,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 66,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82335,7 +82365,7 @@
      "purpose": "Shared Beta posterior bandit seam"
     },
     "ppr": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82883,7 +82913,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5538,
+   "source_files": 5541,
    "test_files": 902
   },
   "oneiron-android": {
