@@ -48,6 +48,8 @@ pub(in crate::context_pack) struct HydrateOptions<'a> {
     /// OF-365 disclosure clamp: hydrated edge lists filter non-admitted
     /// targets next to the off-record fence check.
     pub(in crate::context_pack) clamp: Option<&'a DisclosureContext>,
+    /// Absolute answer deadline for hydration and edge filtering.
+    pub(in crate::context_pack) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
 }
 
 /// Where this assembly's retrieval-run telemetry lives, CAPTURED ONCE at run
