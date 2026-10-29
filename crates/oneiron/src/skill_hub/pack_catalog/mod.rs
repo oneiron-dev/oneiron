@@ -17,6 +17,7 @@ mod organs;
 mod setup;
 mod setup_cards;
 mod setup_session;
+mod slack_install;
 mod source;
 
 pub use crate::gate::PackInstallPolicyOverride;
@@ -38,9 +39,8 @@ pub use organs::{
 };
 pub use screening::PackInstallRules;
 pub use setup::{
-    MAX_SETUP_ACCOUNTS, MAX_SETUP_CONNECTIONS, MAX_SETUP_PERMISSIONS, MAX_SETUP_SECRETS, PackSetup,
-    PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission, PackSetupRisk,
-    PackSetupSecret,
+    MAX_SETUP_PERMISSIONS, PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection,
+    PackSetupPermission, PackSetupRisk, PackSetupSecret,
 };
 pub use setup_cards::PackSetupCardAction;
 pub use setup_session::{
@@ -49,6 +49,7 @@ pub use setup_session::{
     PackSetupSecretState, PackSetupSession, PackSetupView,
 };
 pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_txn};
+pub use slack_install::{SlackInstallHold, SlackInstallRedeemed};
 pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(
