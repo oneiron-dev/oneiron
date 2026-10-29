@@ -21,7 +21,7 @@ mod authority_clock;
 mod diary;
 mod media;
 mod packs;
-pub(super) mod support;
+pub(in crate::api) mod support;
 mod verdict_hooks;
 mod vision;
 
@@ -31,7 +31,6 @@ pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
-pub(crate) use self::support::*;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
 
