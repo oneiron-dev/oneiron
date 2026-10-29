@@ -259,7 +259,8 @@ impl Vault {
     /// Withdraws one guest's access at this host (OF-232), an ask guest's or a
     /// Connect peer's guest grant (FIX 3016), in one writer:
     /// deletes the guest's FEDERATION_GRANT, disconnects each live pact the
-    /// grant still governs, tombstones every slip minted under the grant, and
+    /// grant still governs, retires the grant's scope opening keys,
+    /// tombstones every slip minted under the grant, and
     /// keeps the withdrawal, so a repeat returns the first revoke with
     /// `changed: false` and no slips. `owner` authorizes the act; `issuer` is
     /// the host's own signing key, which alone signs the disconnects and the
@@ -323,6 +324,10 @@ impl Vault {
         {
             self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
         }
+        // The grant's scope opening key of every epoch retires with it, as a
+        // disconnect's does, so no signed commitment of its pacts tests a
+        // guessed scope again (FIX 7907).
+        crate::store::grant_scope_custody::retire_scope_keys(&self.store, txn, &grant_ref)?;
         let revoked_slips = self.revoke_grant_slips_in_txn(txn, issuer, grant_ref)?;
         // The withdrawal stays known here, in this writer (FIX-LIST 5107).
         super::mark_withdrawn_grant_in_txn(&self.store, txn, grant_ref)?;

@@ -524,19 +524,31 @@ pub(super) fn apply_federation_lifecycle(
             pact.terminal_epoch = Some(pact.pact_epoch);
         }
     }
+    // A pact that ends keeps no plaintext scope, only its keyed digest
+    // (FIX 7907); terminal-wins merging carries the erased side.
+    if pact.status.is_terminal() {
+        pact.erase_scope();
+    }
     state.federation_pacts.insert(action.pact_id, pact);
     Ok(())
 }
 
 /// Deterministic, commutative pick between two equally ranked pact states:
-/// the lexicographic-min (scope_digest, grant_ref) side. The pair is always
-/// discriminating for divergent states, since divergence implies at least one
-/// of the two fields differs.
+/// the lexicographic-min (scope_digest, grant_ref, canonical scope bytes)
+/// side. The triple is always discriminating for divergent states, since
+/// divergence implies at least one of the three differs.
 fn pact_merge_tiebreak_side<'a>(
     left: &'a FederationPactState,
     right: &'a FederationPactState,
 ) -> &'a FederationPactState {
-    if (left.scope_digest, left.grant_ref) <= (right.scope_digest, right.grant_ref) {
+    let key = |pact: &FederationPactState| {
+        (
+            pact.scope_digest,
+            pact.grant_ref,
+            encode_federation_pact_scope(&pact.pact_scope).unwrap_or_default(),
+        )
+    };
+    if key(left) <= key(right) {
         left
     } else {
         right
