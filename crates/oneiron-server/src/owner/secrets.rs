@@ -28,9 +28,10 @@ use zeroize::{Zeroize, Zeroizing};
 
 use super::{OwnerError, OwnerResult};
 
-/// The largest body read: a name, its bindings and one base64 value, far
-/// above any key or certificate.
-const BODY_LIMIT: usize = 1 << 20;
+/// The first buffer a body is read into when it declares no smaller size:
+/// a name, its bindings and one base64 value, far above any key or
+/// certificate. A larger body grows past it (FIX 11144).
+const BODY_START: usize = 1 << 20;
 
 /// The ref a manifest is read at when the request names none.
 const DEFAULT_MANIFEST_REF: &str = "refs/heads/main";
@@ -42,8 +43,9 @@ const DEFAULT_MANIFEST_REF: &str = "refs/heads/main";
 /// Read by [`RotateSecret::read`] rather than an extractor, because every
 /// buffer that holds the value or its encoding has to be wiped on every path,
 /// a refused request included. Above the transport there are three: the
-/// frames the body hands over, the one buffer they are copied into, and the
-/// decoded value. Parsing borrows from the second and copies nothing.
+/// frames the body hands over, the buffer they are copied into (each one it
+/// grows out of wiped as it is left), and the decoded value. Parsing borrows
+/// from the second and copies nothing.
 pub(crate) struct RotateSecret {
     /// The secret's custody name.
     name: String,
@@ -337,34 +339,43 @@ impl std::fmt::Debug for RotateSecret {
     }
 }
 
-/// The body in the one buffer this request owns, wiped when it drops. It is
-/// sized before the first byte arrives and never grows: growing would move
-/// the bytes and free the old allocation unwiped.
+/// The body in a buffer this request owns, wiped when it drops. It is sized
+/// before the first byte arrives, to the declared size up to [`BODY_START`].
+/// A body past it is read on, never refused (FIX 11144): the bytes move to a
+/// larger buffer and the one they leave is wiped before it is freed, since a
+/// `Vec` that grew itself would free its old allocation unwiped.
 struct OwnedBody(Vec<u8>);
 
 impl OwnedBody {
     async fn read(body: Body) -> OwnerResult<Self> {
-        let room = match body.size_hint().upper() {
-            None => BODY_LIMIT,
-            Some(declared) => usize::try_from(declared)
-                .ok()
-                .filter(|declared| *declared <= BODY_LIMIT)
-                .ok_or_else(invalid_body)?,
-        };
+        let room = body
+            .size_hint()
+            .upper()
+            .and_then(|declared| usize::try_from(declared).ok())
+            .map_or(BODY_START, |declared| declared.min(BODY_START));
         let mut owned = Self(Vec::with_capacity(room));
         let mut frames = body.into_data_stream();
         while let Some(frame) = frames.next().await {
             let frame = frame.map_err(|_| invalid_body())?;
-            let fits = frame.len() <= owned.0.capacity() - owned.0.len();
-            if fits {
-                owned.0.extend_from_slice(&frame);
-            }
+            owned.make_room(frame.len());
+            owned.0.extend_from_slice(&frame);
             wipe_frame(frame);
-            if !fits {
-                return Err(invalid_body());
-            }
         }
         Ok(owned)
+    }
+
+    /// Room for `more` bytes past the body read so far, without the buffer
+    /// ever growing in place: a full buffer is copied into one at least twice
+    /// its size, and the one it leaves is wiped.
+    fn make_room(&mut self, more: usize) {
+        let needed = self.0.len().saturating_add(more);
+        if needed <= self.0.capacity() {
+            return;
+        }
+        let mut grown = Vec::with_capacity(needed.max(self.0.capacity().saturating_mul(2)));
+        grown.extend_from_slice(&self.0);
+        let mut left = std::mem::replace(&mut self.0, grown);
+        wipe(&mut left);
     }
 }
 
@@ -600,7 +611,7 @@ impl From<oneiron::secret_rotation::RotationReceipt> for Rotated {
 
 /// Reads a revoke request, `{"name"}`, into the secret's custody name. It
 /// carries no value, but the body goes through [`OwnedBody`] all the same,
-/// under the same limit as the others.
+/// read as the others are.
 pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
