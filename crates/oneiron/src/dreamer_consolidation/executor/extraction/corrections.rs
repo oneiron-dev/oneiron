@@ -167,6 +167,14 @@ impl ConsolidationExecutor<'_> {
                 decisions,
             });
         }
+        // Every decided candidate is kept at the attempt before the branch
+        // builds, filters or selects it (FIX 2425).
+        super::decided::record_decided_candidates(
+            step_ctx.vault,
+            step_ctx.attempt_id,
+            parsed,
+            &corrections,
+        )?;
         Ok(Some(corrections))
     }
 

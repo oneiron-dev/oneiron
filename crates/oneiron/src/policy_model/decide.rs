@@ -3,6 +3,7 @@
 //! the contract the policy declared.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -16,7 +17,10 @@ use crate::llm::decision::{
     GeneratedStep, HeldLadder, MAX_DECISION_STATE_BYTES, ProviderPin, Reversibility, TypedDecision,
     cut_text, fit_state,
 };
-use crate::llm::{BudgetGuard, BudgetLease, DurableStepResult, LlmBackend, LlmRequest};
+use crate::llm::{
+    BudgetGuard, BudgetLease, ContentPart, DurableStepResult, FinishReason, LlmBackend,
+    LlmCapability, LlmGenerateFuture, LlmRequest, LlmResponse, LlmStreamResult, ModelId,
+};
 use crate::{EntityId, Error, Result};
 
 use super::binding::PolicyContentBinding;
@@ -358,7 +362,20 @@ pub(super) async fn safeguard_verdict(
     };
     let wording = Wording::shipped()?;
     let asked = ask(prompt, plane, &wording)?;
-    let decisions = match read(safeguard, request, prompt, &asked, principal, config, clock).await {
+    let checked = CheckedReplies::new(safeguard.backend());
+    let outcome = read(
+        safeguard, &checked, request, prompt, &asked, principal, config, clock,
+    )
+    .await;
+    // A reply that did not finish with Stop, or that calls a tool, decides
+    // nothing (FIX 7803): its weights are kept on the audit, never a verdict.
+    if checked.unusable() {
+        if let Ok(GeneratedDecisions::Decided { decisions, .. }) = outcome {
+            audit.typed_decisions = decisions;
+        }
+        return Ok(skipped(PolicySkipReason::ResponseUnusable, audit));
+    }
+    let decisions = match outcome {
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
         Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(_))) => {
             return Ok(skipped(PolicySkipReason::BudgetExhausted, audit));
@@ -515,9 +532,15 @@ fn option_labels(labels: Vec<&str>) -> Vec<(String, &str)> {
 
 /// The candidate's questions through an unstaffed ladder whose one rung, the
 /// big one, is the safeguard model's generated read over the prompt's own
-/// request.
+/// request, sent through `backend`, the safeguard's backend with its replies
+/// checked.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the checked backend joins the safeguard's read inputs"
+)]
 async fn read(
     safeguard: SafeguardModel<'_>,
+    backend: &dyn LlmBackend,
     request: &PolicyClassifyRequest,
     prompt: &PolicyClassifyPrompt,
     asked: &Asked<'_>,
@@ -534,7 +557,7 @@ async fn read(
             model: model.clone(),
             version: model,
         },
-        backend: safeguard.backend(),
+        backend,
         step: safeguard.step(),
         request: shell,
         seal: &seal,
@@ -559,6 +582,64 @@ async fn read(
             &clock.deadline(SAFEGUARD_READ_BUDGET),
         )
         .await
+}
+
+/// The safeguard model's backend with its decision replies checked at the
+/// read boundary (FIX 7803): a reply that did not finish with Stop, or that
+/// carries a tool call, marks the read unusable, so no weight it carries
+/// becomes a verdict. Every reply passes on unchanged, and settles its spend
+/// as any reply does.
+struct CheckedReplies<'a> {
+    backend: &'a dyn LlmBackend,
+    unusable: AtomicBool,
+}
+
+impl<'a> CheckedReplies<'a> {
+    fn new(backend: &'a dyn LlmBackend) -> Self {
+        Self {
+            backend,
+            unusable: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether any reply through it was unusable.
+    fn unusable(&self) -> bool {
+        self.unusable.load(Ordering::Acquire)
+    }
+}
+
+/// A finished decision reply: stopped, with no tool call among its parts.
+fn finished(response: &LlmResponse) -> bool {
+    response.finish_reason == FinishReason::Stop
+        && !response
+            .message
+            .content
+            .iter()
+            .any(|part| matches!(part, ContentPart::ToolCall { .. }))
+}
+
+impl LlmBackend for CheckedReplies<'_> {
+    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
+        self.backend.supports(model, capability)
+    }
+
+    fn generate<'b>(
+        &'b self,
+        request: LlmRequest,
+        lease: &'b BudgetLease,
+    ) -> LlmGenerateFuture<'b> {
+        Box::pin(async move {
+            let reply = self.backend.generate(request, lease).await;
+            if reply.as_ref().is_ok_and(|response| !finished(response)) {
+                self.unusable.store(true, Ordering::Release);
+            }
+            reply
+        })
+    }
+
+    fn stream<'b>(&'b self, request: LlmRequest, lease: &'b BudgetLease) -> LlmStreamResult<'b> {
+        self.backend.stream(request, lease)
+    }
 }
 
 /// The read's bounded state: the request's subject and scope, and each row by

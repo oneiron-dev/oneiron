@@ -284,15 +284,21 @@ async fn durable_step(
     // of a failure; a capture that fails never fails the step. It stamps the
     // owners the Started row stamps, and keeps nothing for one gone by the
     // time it writes (FIX 6659).
-    crate::self_heal::blocked_reports::capture_durable_step(
+    // Each corrective call's wire is kept the same way, under its own call
+    // index, before it is sent (FIX 6145).
+    let (vault, attempt, actor, subject, now_ms) = (
         ctx.vault,
         ctx.attempt_id,
-        step_hash,
         ctx.envelope_actor.entity_ref(),
         ctx.subject,
-        &request,
         ctx.now_ms,
     );
+    let capture = move |wire: &LlmRequest, call: u32| {
+        crate::self_heal::blocked_reports::capture_durable_step(
+            vault, attempt, step_hash, actor, subject, wire, call, now_ms,
+        );
+    };
+    capture(&request, 0);
     // The admitted call binds to its wake in one short write before it is
     // sent (DOOR-144), best-effort: unobserved, it runs exactly as before.
     // Declared before the settlement guard, it closes after the lease does.
@@ -318,6 +324,7 @@ async fn durable_step(
                 &admission.lease,
                 guard,
                 calls,
+                &capture,
                 check,
                 max_retries,
             ),

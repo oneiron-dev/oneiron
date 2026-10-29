@@ -10,7 +10,7 @@ mod recorded;
 pub(crate) use claim_write::{
     check_claim_policy_for_write, check_claim_policy_for_write_with_preflight_decision,
     check_claim_policy_for_write_with_record, check_claim_policy_for_write_with_record_with_reader,
-    claim_source_trust_admits_auto,
+    claim_source_trust_admits_auto, unresolved_claim_reference,
 };
 pub(super) use consent::{
     GateConsentBinding, claim_gate_input, enforce_gate_decision,

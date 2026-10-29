@@ -5,9 +5,9 @@
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
     DecisionCall, DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
-    HostingPrivacyPosture, HouseGate, HouseRead, LadderNotes, ModelId, ProviderCapability,
-    ProviderDecision, ProviderPin, ReasoningEffort, RemoteDecisionSeat, RetrievalDeadline,
-    SeatCandidate, SeatNotes, SeatPhase, SeatRequest, SeatTask, SystemOneRung,
+    HouseGate, HouseRead, LadderNotes, ModelId, ProviderCapability, ProviderDecision, ProviderPin,
+    ReasoningEffort, RemoteDecisionSeat, RetrievalDeadline, SeatCandidate, SeatNotes, SeatPhase,
+    SeatRequest, SeatTask, SystemOneRung,
 };
 
 impl DecisionReadGate for HouseGate {
@@ -95,8 +95,7 @@ impl DecisionProvider for SystemOneRung {
     /// The seat sends a call's images as named wire assets, when the posture
     /// lets a call leave the host at all.
     fn reads_images(&self) -> bool {
-        (self.posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
-            && self.posture != HostingPrivacyPosture::Relay
+        oneiron::llm::decision::unit_text_may_leave_host(self.posture, self.remote_opt_in)
     }
 
     fn image_edge(&self) -> Option<u32> {

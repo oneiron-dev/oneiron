@@ -15,15 +15,16 @@
 //!   (the `off_record` pattern — high-churn activity bumps never rewrite
 //!   the entity blob or its indexes), and keeps one open pointer per
 //!   actor and machine (OF-536).
-//! * **The driver owns policy** (`oneiron-driver::SessionLifecycleDriver`):
-//!   the 20-minute idle floor, the hard lifetime ceiling, hint handling,
-//!   and firing SessionEnd → Meso consolidation. The engine owns no timer
-//!   and no cutoff constant (ARCH-0026: hosts pump; ARCH-0002: open-ended
-//!   sessions stay valid until the driver's floor fires). Policy values
-//!   still ride into [`Vault::end_session_with_wake`] as data
+//! * **The driver owns the lifecycle** (`oneiron-driver::SessionLifecycleDriver`):
+//!   hint handling, the expiry timer and firing SessionEnd → Meso
+//!   consolidation. The idle floor and the hard lifetime ceiling are the
+//!   vault owner's policy rows ([`SessionExpiryPolicy`], FIX 8600), which a
+//!   host may only narrow. The engine owns no timer (ARCH-0026: hosts pump;
+//!   ARCH-0002: open-ended sessions stay valid until the floor fires). The
+//!   host's narrowing rides into [`Vault::end_session_with_wake`] as data
 //!   ([`SessionClosePredicate`]) because the close protocol is ATOMIC
-//!   mechanism: identity check, predicate re-validation, `ended_at` stamp
-//!   and the SessionEnd → Meso enqueue are one transaction.
+//!   mechanism: identity check, policy re-read, predicate re-validation,
+//!   `ended_at` stamp and the SessionEnd → Meso enqueue are one transaction.
 //! * **Turn-witness bumps ride the witness write transaction**: the facade
 //!   calls `bump_open_session_activity_in_txn` so a witnessed turn and its
 //!   activity bump commit atomically.
@@ -54,7 +55,9 @@ use crate::temporal::TimeRange;
 
 pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
+mod expiry;
 mod speakers;
+pub use expiry::SessionExpiryPolicy;
 pub(crate) use speakers::erase_session_speaker_actor_in_txn;
 pub use speakers::{SessionParticipant, SessionSpeakers};
 
@@ -199,49 +202,23 @@ pub struct EndedSession {
 }
 
 /// Close predicate for [`Vault::end_session_with_wake`], re-validated
-/// against the DURABLE record inside the end transaction. The floor and
-/// ceiling ride in as data: the engine stays free of cutoff constants
-/// (driver policy, RT-03) while the check itself is atomic with the close.
+/// against the DURABLE record inside the end transaction. An expiry carries
+/// only the host's explicit narrowing: the transaction re-reads the vault's
+/// own idle/lifetime rows (FIX 8600), so an owner's change governs the very
+/// close it races, and the engine holds no cutoff constant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionClosePredicate {
     /// The app's explicit end: unconditional.
     Explicit,
-    /// Idle-floor / lifetime-ceiling expiry: closes only when `now` has
-    /// reached the earlier of `last_activity + idle_floor` and
-    /// `started_at + ceiling` — computed from the record RE-READ in the
-    /// transaction, so an activity bump that raced the close wins and the
-    /// close no-ops. "First to fire" names the reason; a ceiling due at or
-    /// before the idle floor closes as the ceiling however fresh the
-    /// (possibly forged) activity clock looks (H-S4).
+    /// Idle-floor / lifetime-ceiling expiry ([`SessionExpiryPolicy::close_at`])
+    /// of the record RE-READ in the transaction, so an activity bump that
+    /// raced the close wins and the close no-ops, and the close is stamped
+    /// at the instant that policy makes it due. Each field is the host's
+    /// explicit narrowing of the vault's row; `None` leaves the row in force.
     Expiry {
-        idle_floor_secs: u64,
-        lifetime_ceiling_secs: u64,
+        idle_floor_secs: Option<u64>,
+        lifetime_ceiling_secs: Option<u64>,
     },
-}
-
-impl SessionClosePredicate {
-    /// The end reason this predicate yields against `record` at `now`, or
-    /// `None` when the close is not (or no longer) due.
-    fn close_reason(self, record: &SessionLifecycleRecord, now: u64) -> Option<SessionEndReason> {
-        match self {
-            Self::Explicit => Some(SessionEndReason::Explicit),
-            Self::Expiry {
-                idle_floor_secs,
-                lifetime_ceiling_secs,
-            } => {
-                let idle_due = record.last_activity.saturating_add(idle_floor_secs);
-                let ceiling_due = record.started_at.saturating_add(lifetime_ceiling_secs);
-                if now < idle_due.min(ceiling_due) {
-                    return None;
-                }
-                if ceiling_due <= idle_due {
-                    Some(SessionEndReason::LifetimeCeiling)
-                } else {
-                    Some(SessionEndReason::IdleFloor)
-                }
-            }
-        }
-    }
 }
 
 /// Preview of one sitting's SessionEnd → Meso work. Closing re-reads this
@@ -768,9 +745,11 @@ impl Vault {
         if id != *expected {
             return Ok(None);
         }
-        let Some(reason) = predicate.close_reason(&record, now) else {
+        let Some(due) = predicate.close_due_in(self, wtxn, &record, now)? else {
             return Ok(None);
         };
+        // Every stamp of the close is the instant it fell due.
+        let (reason, now) = (due.reason, due.at);
         let ended_at = now.max(record.last_activity).max(record.started_at);
         record.ended_at = Some(ended_at);
         record.end_reason = Some(reason);
@@ -901,8 +880,8 @@ impl Vault {
             return Ok(None);
         }
         Ok(predicate
-            .close_reason(&record, now)
-            .map(|reason| (key.actor, reason)))
+            .close_due_in(self, &rtxn, &record, now)?
+            .map(|due| (key.actor, due.reason)))
     }
 }
 

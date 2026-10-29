@@ -18,7 +18,7 @@ pub(super) fn system_now_secs() -> u64 {
 }
 
 /// Restart-backoff shape for failed/panicked passes: exponential from
-/// `initial`, doubling to `max`. Reset by every completed pass.
+/// `initial`, doubling to `max`, kept per owed tick (FIX 8601).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RestartBackoffConfig {
     pub initial: Duration,
@@ -52,10 +52,6 @@ impl RestartBackoff {
             .min(self.config.max);
         self.next = Some(delay.saturating_mul(2).min(self.config.max));
         delay
-    }
-
-    pub(super) fn reset(&mut self) {
-        self.next = None;
     }
 }
 
