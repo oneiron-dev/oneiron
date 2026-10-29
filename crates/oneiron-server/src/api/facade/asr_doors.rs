@@ -24,7 +24,8 @@ const ASR_UTTERANCE_IDLE_EXPIRY: Duration = Duration::from_secs(30 * 60);
 
 pub(crate) struct AsrSessions {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
-    tombstones: Mutex<HashMap<String, Instant>>,
+    /// Expired handles, each with when it expired and whose it was.
+    tombstones: Mutex<HashMap<String, (Instant, CoreAuth)>>,
     idle_expiry: Duration,
 }
 
@@ -98,7 +99,10 @@ impl AsrSessions {
         if self
             .tombstones
             .lock()
-            .map(|held| held.contains_key(handle))
+            .map(|held| {
+                held.get(handle)
+                    .is_some_and(|(_, owner)| owner.same_authority(auth))
+            })
             .unwrap_or(false)
         {
             return Err(expired());
@@ -139,9 +143,11 @@ impl AsrSessions {
             };
             let now = Instant::now();
             for handle in &idle {
-                tombstones.insert(handle.clone(), now);
+                if let Some(entry) = entries.get(handle) {
+                    tombstones.insert(handle.clone(), (now, entry.auth.clone()));
+                }
             }
-            tombstones.retain(|_, at| at.elapsed() < self.idle_expiry);
+            tombstones.retain(|_, (at, _)| at.elapsed() < self.idle_expiry);
             idle.into_iter()
                 .filter_map(|handle| entries.remove(&handle).map(|entry| (handle, entry)))
                 .collect::<Vec<_>>()
