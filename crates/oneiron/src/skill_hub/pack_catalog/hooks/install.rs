@@ -64,7 +64,8 @@ impl Vault {
 
     /// Each hook of `source` becomes a CODE entity, derived from the pack
     /// source, plus its owner-approved binding. A binding the source no
-    /// longer carries, or whose body moved, stops. The caller tells the verb
+    /// longer carries, or whose body moved, stops; a moved body's new binding
+    /// keeps its hook's dial and the owner's grant. The caller tells the verb
     /// hooks once its write commits, so no reader caches the list before it.
     pub(in crate::skill_hub::pack_catalog) fn bind_pack_hooks_in_txn(
         &self,
@@ -110,6 +111,7 @@ impl Vault {
         }
         let mut bound = Vec::new();
         let mut transitions = Vec::new();
+        let mut grants = Vec::new();
         for hook in source.hooks() {
             // A moved body keeps its hook's dial: on while any of its
             // bindings runs, off once the owner stopped every one.
@@ -134,6 +136,23 @@ impl Vault {
                 .iter()
                 .find(|(prior_id, _)| *prior_id == id)
                 .map(|(_, kept)| kept.clone());
+            if previous.is_none() {
+                // A moved body keeps the owner's grant on its hook too (FIX
+                // 10123): the same author's, a running binding's first.
+                let mut from: Vec<_> = prior
+                    .iter()
+                    .filter(|(prior_id, kept)| {
+                        *prior_id != id
+                            && kept.pack == pack
+                            && kept.hook == hook.name
+                            && kept.author_id() == row.author_id()
+                            && kept.author_class() == row.author_class()
+                    })
+                    .collect();
+                from.sort_by_key(|(_, kept)| !kept.enabled);
+                let from: Vec<EntityId> = from.into_iter().map(|(prior_id, _)| *prior_id).collect();
+                grants.push((id, from));
+            }
             transitions.push((id, previous, row.clone()));
             let code = row.code;
             if !crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &code)? {
@@ -176,6 +195,9 @@ impl Vault {
             }
         }
         batch.apply(txn)?;
+        for (id, from) in grants {
+            crate::runtime_hooks::carry_hook_grant_in_txn(self, txn, &from, id)?;
+        }
         for (id, previous, row) in transitions {
             crate::runtime_hooks::sync_binding_cursor_in_txn(
                 self,
