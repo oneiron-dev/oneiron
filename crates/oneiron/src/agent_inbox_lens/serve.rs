@@ -275,17 +275,31 @@ impl Memory<'_> {
     }
 
     /// The canon consent-group projection over real gate-held Dreamer
-    /// proposals, including its per-member receipts and exception classes.
+    /// proposals, including its per-member receipts and exception classes:
+    /// one page of complete groups, and where the next page resumes (FIX
+    /// 9873).
     pub fn inbox_run_groups(
         &self,
         owner: &AuthenticatedOwner,
         input: &InboxRunGroupsRequest,
-    ) -> MemoryResult<Vec<crate::inbox::InboxGroup>> {
+    ) -> MemoryResult<crate::inbox::InboxGroupPage> {
         self.inbox_owner(owner)?;
-        Ok(self.vault().inbox_groups(crate::inbox::InboxQuery::at(
-            self.vault().now_recorded_at(),
-            input.limit.unwrap_or(50).min(200),
-        ))?)
+        let after = input
+            .after
+            .as_deref()
+            .map(|token| {
+                crate::inbox::InboxGroupCursor::parse(token).ok_or_else(|| {
+                    MemoryError::bad_request("after is not the next cursor of a groups page")
+                })
+            })
+            .transpose()?;
+        Ok(self.vault().inbox_groups(
+            crate::inbox::InboxQuery::at(
+                self.vault().now_recorded_at(),
+                input.limit.unwrap_or(50).min(200),
+            )
+            .after(after),
+        )?)
     }
 }
 
@@ -294,4 +308,8 @@ impl Memory<'_> {
 pub struct InboxRunGroupsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
+    /// A previous page's `next`: this page resumes after the groups that
+    /// page served.
+    #[serde(default)]
+    pub after: Option<String>,
 }

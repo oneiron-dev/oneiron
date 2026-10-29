@@ -154,14 +154,14 @@ impl<'a> RunName<'a> {
 }
 
 /// The id of the run `run` names: the id itself, or the waiting run whose
-/// `run_ref` it is.
+/// `run_ref` it is, found among every run with a pending proposal, however
+/// many rows wait ahead of it (FIX 9523).
 fn run_named(vault: &Vault, run: RunName<'_>) -> OwnerResult<String> {
     match run {
         RunName::Id(run_id) => Ok(run_id.to_owned()),
         RunName::Ref(reference) => vault
-            .pending_gate_consent_groups(PENDING_SCAN_LIMIT)?
+            .pending_dreamer_run_ids()?
             .into_iter()
-            .filter_map(|group| group.dreamer_run_id)
             .find(|run_id| run_ref(run_id) == reference)
             .ok_or_else(|| oneiron::Error::EntityNotFound.into()),
     }

@@ -1,7 +1,5 @@
 //! Read-side inbox grouping projection, member classification, and dial surfacing.
 
-use std::collections::HashMap;
-
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
@@ -16,21 +14,23 @@ use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::gate::GateReasonCode;
-use crate::receipt::{ReceiptView, gate_decision_receipt, hex_lower};
 use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
 
 use super::model::{
-    INBOX_PENDING_SCAN_LIMIT, INBOX_REASON_CHECKER_PREFIX, INBOX_RUN_BRIEF_INTENT_KEY,
-    INBOX_SUBCLUSTER_MIN_MEMBERS, InboxCheckInException, InboxExceptionClass, InboxGroup,
-    InboxGroupMember, InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster,
-    VERB_CLASS_CONFLICT, VERB_CLASS_NEW_CLAIM, VERB_CLASS_UPDATE,
+    INBOX_REASON_CHECKER_PREFIX, INBOX_RUN_BRIEF_INTENT_KEY, INBOX_SUBCLUSTER_MIN_MEMBERS,
+    InboxCheckInException, InboxExceptionClass, InboxGroup, InboxGroupMember, InboxGroupPage,
+    InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster, VERB_CLASS_CONFLICT,
+    VERB_CLASS_NEW_CLAIM, VERB_CLASS_UPDATE,
 };
+use super::root_group::{RunGroups, root_group_card};
 
 impl Vault {
-    /// Projects open dreamer-run groups, surfaced under the persisted dial.
-    pub fn inbox_groups(&self, query: InboxQuery) -> Result<Vec<InboxGroup>> {
+    /// Projects one page of open dreamer-run groups, surfaced under the
+    /// persisted dial: complete root groups in the tray's order, at most
+    /// `query.limit` visible ones, resuming after `query.after` (FIX 9873).
+    pub fn inbox_groups(&self, query: InboxQuery) -> Result<InboxGroupPage> {
         let dial = self.inbox_review_dial()?;
-        inbox_groups_projection(self, query, dial, INBOX_PENDING_SCAN_LIMIT)
+        super::traversal::inbox_group_page(self, query, dial)
     }
 
     /// Projects the still-unanswered meeting-outcome check-ins for the wakes the
@@ -97,28 +97,14 @@ pub(crate) fn inbox_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
 }
 
 #[derive(Clone)]
-struct OpenMember {
-    pending: PendingGateConsentRecord,
-    decision: GateDecisionRecord,
-    body: ClaimBody,
-    run_id: String,
+pub(super) struct OpenMember {
+    pub(super) pending: PendingGateConsentRecord,
+    pub(super) decision: GateDecisionRecord,
+    pub(super) body: ClaimBody,
+    pub(super) run_id: String,
 }
 
-fn open_dreamer_members(vault: &Vault, scan_limit: usize) -> Result<Vec<OpenMember>> {
-    let pending = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault
-            .store
-            .pending_gate_consents_in_txn(&rtxn, scan_limit)?
-    };
-    open_dreamer_members_from_pending(vault, pending)
-}
-
-fn open_dreamer_members_for_run(vault: &Vault, run_id: &str) -> Result<Vec<OpenMember>> {
-    open_dreamer_members_from_pending(vault, vault.store.pending_gate_consents_for_run(run_id)?)
-}
-
-fn open_dreamer_members_from_pending(
+pub(super) fn open_dreamer_members_from_pending(
     vault: &Vault,
     pending_records: Vec<PendingGateConsentRecord>,
 ) -> Result<Vec<OpenMember>> {
@@ -163,7 +149,10 @@ fn open_dreamer_members_from_pending(
 /// are all branches (a child branch carrying its own run id), the parent
 /// links climb to the root; runs without any Dreamer rows keep the stamped
 /// run id as their key.
-fn resolve_run_identity(vault: &Vault, run_id: &str) -> Result<(String, Option<String>)> {
+pub(super) fn resolve_run_identity(
+    vault: &Vault,
+    run_id: &str,
+) -> Result<(String, Option<String>)> {
     let queue = AttemptQueue::new(vault);
     let Some(root_id) = queue.dreamer_run_root_id(run_id)? else {
         return Ok((run_id.to_owned(), None));
@@ -192,7 +181,7 @@ fn run_brief_intent(input: &rmpv::Value) -> Option<String> {
     })
 }
 
-fn classify_member(
+pub(super) fn classify_member(
     vault: &Vault,
     member: &OpenMember,
 ) -> Result<(Vec<InboxExceptionClass>, &'static str)> {
@@ -290,7 +279,7 @@ fn would_supersede_active_truth(vault: &Vault, member: &OpenMember) -> Result<Op
 /// rather than a single `contains`: manifest-critical and plugin-install rows
 /// both REQUIRE an owner decision, and listing them here is what stops a
 /// future class from being waived by accident.
-fn member_surfaces(dial: InboxReviewDial, classes: &[InboxExceptionClass]) -> bool {
+pub(super) fn member_surfaces(dial: InboxReviewDial, classes: &[InboxExceptionClass]) -> bool {
     match dial {
         InboxReviewDial::ReviewEverything => true,
         InboxReviewDial::ExceptionsOnly => !classes.is_empty(),
@@ -303,7 +292,7 @@ fn member_surfaces(dial: InboxReviewDial, classes: &[InboxExceptionClass]) -> bo
     }
 }
 
-fn sub_cluster_key(body: &ClaimBody) -> String {
+pub(super) fn sub_cluster_key(body: &ClaimBody) -> String {
     match body.subject {
         ClaimSubject::Entity(subject) => format!("entity:{}", subject.to_hex()),
         ClaimSubject::Edge { .. } => {
@@ -349,125 +338,22 @@ fn group_headline(
     }
 }
 
-struct GroupDraft {
-    group_key: String,
-    run_id: String,
-    intent: Option<String>,
-    created_at: u64,
-    members: Vec<MemberDraft>,
-    pointer_rows: Vec<InboxPointerRow>,
+pub(super) struct GroupDraft {
+    pub(super) group_key: String,
+    pub(super) run_id: String,
+    pub(super) intent: Option<String>,
+    pub(super) created_at: u64,
+    pub(super) members: Vec<MemberDraft>,
+    pub(super) pointer_rows: Vec<InboxPointerRow>,
 }
 
-struct MemberDraft {
-    member: InboxGroupMember,
-    surfaced: bool,
-    cluster_key: String,
+pub(super) struct MemberDraft {
+    pub(super) member: InboxGroupMember,
+    pub(super) surfaced: bool,
+    pub(super) cluster_key: String,
 }
 
-pub(super) fn inbox_groups_projection(
-    vault: &Vault,
-    query: InboxQuery,
-    dial: InboxReviewDial,
-    scan_limit: usize,
-) -> Result<Vec<InboxGroup>> {
-    if query.limit == 0 {
-        return Ok(Vec::new());
-    }
-
-    let open_members = open_dreamer_members(vault, scan_limit)?;
-    let mut drafts: Vec<GroupDraft> = Vec::new();
-    let mut group_index_by_run: HashMap<String, usize> = HashMap::new();
-    // Same-claim-hash collapse: earliest open row per content hash wins.
-    let mut owner_by_hash: HashMap<[u8; 32], (usize, usize)> = HashMap::new();
-
-    for member in open_members {
-        let group_index = match group_index_by_run.get(&member.run_id) {
-            Some(index) => *index,
-            None => {
-                let (group_key, intent) = resolve_run_identity(vault, &member.run_id)?;
-                drafts.push(GroupDraft {
-                    group_key,
-                    run_id: member.run_id.clone(),
-                    intent,
-                    created_at: member.pending.created_at,
-                    members: Vec::new(),
-                    pointer_rows: Vec::new(),
-                });
-                group_index_by_run.insert(member.run_id.clone(), drafts.len() - 1);
-                drafts.len() - 1
-            }
-        };
-
-        let claim_id_hex = hex_lower(&member.pending.claim_id);
-        let claim_hash = inbox_claim_hash(&member.body)?;
-        let duplicate_owner = owner_by_hash
-            .get(&claim_hash)
-            .copied()
-            .filter(|(owner_group, _)| *owner_group != group_index);
-        if let Some((owner_group, owner_member)) = duplicate_owner {
-            // The duplicate's own exception classes must survive the
-            // collapse: the dial can never hide a manifest-critical or
-            // checker-held row behind a pointer.
-            let (duplicate_classes, _) = classify_member(vault, &member)?;
-            let owner_key = drafts[owner_group].group_key.clone();
-            let owner_row = &mut drafts[owner_group].members[owner_member];
-            owner_row
-                .member
-                .duplicate_claim_ids
-                .push(claim_id_hex.clone());
-            if !duplicate_classes.is_empty() {
-                owner_row.member.exception_classes.extend(duplicate_classes);
-                owner_row.member.exception_classes.sort_unstable();
-                owner_row.member.exception_classes.dedup();
-                owner_row.surfaced = member_surfaces(dial, &owner_row.member.exception_classes);
-            }
-            let duplicate_of_claim_id = owner_row.member.claim_id.clone();
-            drafts[group_index].pointer_rows.push(InboxPointerRow {
-                claim_id: claim_id_hex,
-                duplicate_of_claim_id,
-                duplicate_of_group_key: owner_key,
-            });
-            continue;
-        }
-
-        let (classes, verb_class) = classify_member(vault, &member)?;
-        let surfaced = member_surfaces(dial, &classes);
-        let row = InboxGroupMember {
-            claim_id: claim_id_hex,
-            created_at: member.pending.created_at,
-            age_secs: query.now.saturating_sub(member.pending.created_at),
-            hold_reasons: member.pending.reason_codes.clone(),
-            exception_classes: classes,
-            verb_class: verb_class.to_owned(),
-            duplicate_claim_ids: Vec::new(),
-            receipt_view: ReceiptView::new(gate_decision_receipt(&member.decision)),
-        };
-        let member_index = drafts[group_index].members.len();
-        // Same-group repeats keep the earliest entry so later runs still
-        // collapse onto the first occurrence.
-        owner_by_hash
-            .entry(claim_hash)
-            .or_insert((group_index, member_index));
-        drafts[group_index].members.push(MemberDraft {
-            member: row,
-            surfaced,
-            cluster_key: sub_cluster_key(&member.body),
-        });
-    }
-
-    let mut groups = Vec::new();
-    for draft in drafts {
-        if let Some(group) = finish_group_draft(draft) {
-            groups.push(group);
-            if groups.len() == query.limit {
-                break;
-            }
-        }
-    }
-    Ok(groups)
-}
-
-fn finish_group_draft(draft: GroupDraft) -> Option<InboxGroup> {
+pub(super) fn finish_group_draft(draft: GroupDraft) -> Option<InboxGroup> {
     let new_claim_count = draft
         .members
         .iter()
@@ -535,109 +421,38 @@ fn finish_group_draft(draft: GroupDraft) -> Option<InboxGroup> {
     })
 }
 
-/// Resolves one named group through the RCPT-1 sidecars.  A canonical root
-/// door first selects its earliest raw stamped run (matching the former scan
-/// projection); a literal run id remains a supported alias.  Cross-run
-/// duplicate collapse is reconstructed only for the target group through the
-/// semantic-hash sidecar, never by reopening the full pending table.
+/// Resolves one named group through the RCPT-1 sidecars, complete (FIX
+/// 9871): a canonical root door hydrates every pending row the root-group
+/// index holds for that root, whichever run stamped it. A literal run id
+/// remains a supported alias: it names its run's root group, read the same
+/// way. Cross-run duplicate collapse is reconstructed only for the target
+/// group through the semantic-hash sidecar, never by reopening the full
+/// pending table.
 pub(super) fn explicit_inbox_group(
     vault: &Vault,
     group_ref: &str,
     now: u64,
 ) -> Result<Option<InboxGroup>> {
-    let group_pending = vault.store.pending_gate_consents_for_group_key(group_ref)?;
-    let run_id = if let Some(first) = group_pending.first() {
-        first
-            .dreamer_run_id
-            .clone()
-            .ok_or(Error::CorruptedIndex("pending gate consent group index"))?
-    } else {
+    let mut runs = RunGroups::new(vault);
+    let mut group_key = group_ref.to_owned();
+    let mut pending = vault.store.pending_gate_consents_for_group_key(group_ref)?;
+    if pending.is_empty() {
         let raw_run_pending = vault.store.pending_gate_consents_for_run(group_ref)?;
         if raw_run_pending.is_empty() {
             return Ok(None);
         }
-        group_ref.to_owned()
-    };
-    let members = open_dreamer_members_for_run(vault, &run_id)?;
-    let Some(first_member) = members.first() else {
-        return Ok(None);
-    };
-    let (group_key, intent) = resolve_run_identity(vault, &run_id)?;
-    let mut draft = GroupDraft {
-        group_key,
-        run_id: run_id.clone(),
-        intent,
-        created_at: first_member.pending.created_at,
-        members: Vec::new(),
-        pointer_rows: Vec::new(),
-    };
-    let mut duplicate_members_by_hash: HashMap<[u8; 32], Vec<OpenMember>> = HashMap::new();
-
-    for member in members {
-        let claim_hash = inbox_claim_hash(&member.body)?;
-        if let std::collections::hash_map::Entry::Vacant(entry) =
-            duplicate_members_by_hash.entry(claim_hash)
-        {
-            let pending = vault
-                .store
-                .pending_gate_consents_for_semantic_claim_hash(&claim_hash)?;
-            entry.insert(open_dreamer_members_from_pending(vault, pending)?);
+        group_key = runs.identity(group_ref)?.0.clone();
+        pending = vault.store.pending_gate_consents_for_group_key(&group_key)?;
+        if pending.is_empty() {
+            pending = raw_run_pending;
         }
-        let duplicate_members = duplicate_members_by_hash
-            .get(&claim_hash)
-            .expect("inserted above");
-        // A same-id proposal rewrite can leave its old semantic-hash sidecar
-        // behind. Browse already keeps the pending row visible; the indexed
-        // door treats this current member as its own singleton rather than
-        // calling the stale sidecar corruption.
-        let duplicate_members = if duplicate_members.is_empty() {
-            vec![member.clone()]
-        } else {
-            duplicate_members.clone()
-        };
-        let earliest = duplicate_members
-            .first()
-            .expect("the current member supplies the stale-sidecar fallback");
-        let claim_id_hex = hex_lower(&member.pending.claim_id);
-        if earliest.run_id != run_id {
-            let (duplicate_of_group_key, _) = resolve_run_identity(vault, &earliest.run_id)?;
-            draft.pointer_rows.push(InboxPointerRow {
-                claim_id: claim_id_hex,
-                duplicate_of_claim_id: hex_lower(&earliest.pending.claim_id),
-                duplicate_of_group_key,
-            });
-            continue;
-        }
-
-        let (mut classes, verb_class) = classify_member(vault, &member)?;
-        let mut duplicate_claim_ids = Vec::new();
-        if earliest.pending.claim_id == member.pending.claim_id {
-            for duplicate in duplicate_members
-                .iter()
-                .filter(|duplicate| duplicate.run_id != run_id)
-            {
-                let (duplicate_classes, _) = classify_member(vault, duplicate)?;
-                duplicate_claim_ids.push(hex_lower(&duplicate.pending.claim_id));
-                classes.extend(duplicate_classes);
-            }
-            classes.sort_unstable();
-            classes.dedup();
-        }
-        let surfaced = member_surfaces(InboxReviewDial::ReviewEverything, &classes);
-        draft.members.push(MemberDraft {
-            member: InboxGroupMember {
-                claim_id: claim_id_hex,
-                created_at: member.pending.created_at,
-                age_secs: now.saturating_sub(member.pending.created_at),
-                hold_reasons: member.pending.reason_codes.clone(),
-                exception_classes: classes,
-                verb_class: verb_class.to_owned(),
-                duplicate_claim_ids,
-                receipt_view: ReceiptView::new(gate_decision_receipt(&member.decision)),
-            },
-            surfaced,
-            cluster_key: sub_cluster_key(&member.body),
-        });
     }
-    Ok(finish_group_draft(draft))
+    root_group_card(
+        vault,
+        &mut runs,
+        &group_key,
+        pending,
+        now,
+        InboxReviewDial::ReviewEverything,
+    )
 }

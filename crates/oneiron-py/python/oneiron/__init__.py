@@ -1712,7 +1712,7 @@ class Oneiron:
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
             return json.loads(_translate(lambda: self._client.vault_inbox_lens(json.dumps(spec))))
         def groups(self, spec):
-            """Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."""
+            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
             return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
     class _VaultInboxConcernsVerbs:
         def __init__(self, client: _NativeClient) -> None:

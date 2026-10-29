@@ -3248,9 +3248,9 @@
     },
     {
       "name": "vault.inbox.groups",
-      "description": "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.",
+      "description": "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.",
       "input": "crate::agent_inbox_lens::InboxRunGroupsRequest",
-      "output": "Vec<crate::inbox::InboxGroup>",
+      "output": "crate::inbox::InboxGroupPage",
       "call": "memory.inbox_run_groups(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,

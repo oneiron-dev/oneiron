@@ -6012,7 +6012,6 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSettingChangesList
-                | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillsRestoredefaults
@@ -10984,7 +10983,7 @@ impl AgentVerb {
                 "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."
             }
             Self::VaultInboxGroups => {
-                "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."
+                "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."
             }
             Self::VaultWeaveDigestRender => {
                 "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due."
