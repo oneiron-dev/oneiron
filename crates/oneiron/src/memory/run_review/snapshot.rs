@@ -29,6 +29,33 @@ fn effect_verdict(outcome: &str) -> RunChangeVerdict {
     }
 }
 
+/// The outcome of the newest later decision on the same external effect as
+/// `pending` (FIX 11478): a pending consent's answer is a separate decision
+/// row, re-judged on the same effect binding while the pending row stays
+/// pending, so the newest row with its content kind and diff handle is the
+/// current answer. `None` when no later row answers it.
+fn answering_effect_outcome(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    pending: &crate::store::GateDecisionRecord,
+) -> MemoryResult<Option<String>> {
+    let mut answer = None;
+    vault.store.find_gate_decision_after_in_txn(
+        txn,
+        pending.decision_id,
+        |record: &crate::store::GateDecisionRecord| {
+            if record.content_kind == pending.content_kind
+                && record.redacted_at.is_none()
+                && record.diff_handle == pending.diff_handle
+            {
+                answer = Some(record.outcome.clone());
+            }
+            false
+        },
+    )?;
+    Ok(answer)
+}
+
 pub(super) fn binding(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -147,10 +174,20 @@ pub(super) fn binding(
                     record.content_kind == "external_effect" && record.redacted_at.is_none()
                 })
                 .ok_or_else(|| MemoryError::not_found("external-effect gate receipt is absent"))?;
+            // FIX 11478: a pending receipt whose consent a later decision
+            // row answered reads that answer's outcome, not Waiting.
+            let verdict = if record.outcome == "pending" {
+                match answering_effect_outcome(vault, txn, &record)? {
+                    Some(outcome) => effect_verdict(&outcome),
+                    None => RunChangeVerdict::Waiting,
+                }
+            } else {
+                effect_verdict(&record.outcome)
+            };
             Ok((
                 serde_json::to_vec(&record)
                     .map_err(|_| MemoryError::bad_request("effect receipt cannot be encoded"))?,
-                effect_verdict(&record.outcome),
+                verdict,
             ))
         }
         RunReviewChange::Delete { entity_ref } | RunReviewChange::Erase { entity_ref } => {

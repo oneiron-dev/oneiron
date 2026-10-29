@@ -88,6 +88,11 @@ pub struct BrowserAnswer<T> {
     /// 10423).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub press: Option<crate::PressAnswer>,
+    /// Why the call's solved-run capture kept nothing, when it failed
+    /// (FIX 10509): as the engine log names it. A call that solved no
+    /// span, and one whose capture landed, carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solved_capture: Option<String>,
 }
 
 impl<T> BrowserAnswer<T> {
@@ -103,6 +108,7 @@ impl<T> BrowserAnswer<T> {
             demonstration: None,
             session_manifest: None,
             press: None,
+            solved_capture: None,
         }
     }
 }

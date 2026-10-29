@@ -45,7 +45,7 @@ pub struct PackOrgan {
 }
 
 /// One platform's build of an organ, pinned by content.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackOrganBuild {
     /// A target triple, e.g. `aarch64-apple-darwin`.
