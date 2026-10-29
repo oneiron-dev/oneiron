@@ -422,8 +422,8 @@ side_tables! {
     /// sequence).
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence; one that
-    /// charges an erased skill goes, with the edit proposals naming it, and a lapse charging an
-    /// erased actor stays with its subject nil. Key: u64be.
+    /// charges an erased skill stays with its subject nil, the edit proposals naming it go, and a
+    /// lapse charging an erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
         => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's

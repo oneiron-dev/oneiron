@@ -153,6 +153,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.retrieval.policy.update", post(facade_route))
         .route("/vault.export", post(facade_route))
         .route("/self.credential.attenuate", post(facade_route))
+        .route("/self.actor", post(facade_route))
         .route("/vault.scope.position", post(facade_route))
         .route("/vault.scope.ceiling", post(facade_route))
         .route("/vault.export.scoped", post(facade_route))

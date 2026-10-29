@@ -1251,6 +1251,11 @@ fn copy_admitted_entities(
     let source_entities = source.get_map("entities");
     let target_entities = target.get_map("entities");
     let rtxn = vault.store.env.read_txn()?;
+    // Each authority row is judged beside the part's others (FIX 2535, 2989).
+    let authority = super::authority_beside::AuthorityBeside::gather(&source_entities, |key| {
+        routes.entity_part(key) == Some(part)
+    });
+    let beside = || authority.rows();
     let mut result = Ok(());
     map_for_each_value_bytes(&source_entities, |key, value| {
         if result.is_err() || routes.entity_part(key) != Some(part) {
@@ -1262,8 +1267,11 @@ fn copy_admitted_entities(
             &rtxn,
             key,
             value,
-            grading,
-            routes.guest_copy(),
+            ImportCopy {
+                grading,
+                guest: routes.guest_copy(),
+                beside: &beside,
+            },
         )
         .and_then(|(here, blob)| map_insert_bytes(&target_entities, &here.to_hex(), &blob));
     });
@@ -1284,19 +1292,34 @@ pub(crate) fn admit_federated_entity_blob(
         txn,
         key,
         value,
-        ImportGrading::Imported {
-            scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
+        ImportCopy {
+            grading: ImportGrading::Imported {
+                scale: super::DEFAULT_FEDERATED_CONFIDENCE_SCALE,
+            },
+            guest: None,
+            beside: &|| Ok(BTreeMap::new()),
         },
-        None,
     )
     .map(|(_, blob)| blob)
+}
+
+/// How one import's rows are copied: the sending peer's grading, a guest's
+/// copy, and the import's authority rows each one of them is judged beside
+/// (FIX 2535, 2989).
+#[cfg(feature = "sync")]
+#[derive(Clone, Copy)]
+struct ImportCopy<'a> {
+    grading: ImportGrading,
+    guest: Option<GuestCopy<'a>>,
+    beside: crate::authority::RowsBeside<'a>,
 }
 
 /// [`admit_federated_entity_blob`] with the sending peer's `grading` for a
 /// CLAIM, TURN or CONVERSATION, and the id the row lands under: the key it
 /// came under, but for a guest's WORLD. A guest's CLAIM lands in its foreign
 /// WORLD copy (FIX 3497), and a guest's WORLD row under that copy's id, its
-/// bytes as they came (FIX 3657).
+/// bytes as they came (FIX 3657). An AUTHORITY_LOG row is judged beside the
+/// import's other authority rows (`beside`, FIX 2535, 2989).
 #[cfg(feature = "sync")]
 fn admit_federated_entity_blob_graded(
     vault: &Vault,
@@ -1304,9 +1327,13 @@ fn admit_federated_entity_blob_graded(
     txn: &heed::RoTxn<'_>,
     key: &str,
     value: Option<&[u8]>,
-    grading: ImportGrading,
-    guest: Option<GuestCopy<'_>>,
+    copy: ImportCopy<'_>,
 ) -> Result<(EntityId, Vec<u8>)> {
+    let ImportCopy {
+        grading,
+        guest,
+        beside,
+    } = copy;
     let blob = value.ok_or(Error::InvalidKey)?;
     let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
     if key != id.to_hex() {
@@ -1321,7 +1348,13 @@ fn admit_federated_entity_blob_graded(
     }
     if header.entity_type != ENTITY_TYPE_CLAIM {
         if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
-            admit_federated_authority_log(vault, txn, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
+            admit_federated_authority_log(
+                vault,
+                txn,
+                &id,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+                beside,
+            )?;
             return Ok((id, blob.to_vec()));
         }
         // A guest's WORLD row lands under the foreign id its CLAIMs in that

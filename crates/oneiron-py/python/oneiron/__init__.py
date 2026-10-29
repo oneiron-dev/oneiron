@@ -5583,6 +5583,9 @@ class Oneiron:
         @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs":
             return Oneiron._SelfCredentialVerbs(self._client)
+        def actor(self, spec):
+            """The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else."""
+            return json.loads(_translate(lambda: self._client.self_actor(json.dumps(spec))))
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs":
             return Oneiron._SelfAdmissionVerbs(self._client)

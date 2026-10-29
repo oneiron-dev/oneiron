@@ -63,6 +63,7 @@ impl Vault {
                 .get(&self.store, &txn, row_key)?
                 .is_some_and(|stored| now >= stored.copy.expires_at);
             if lapsed && REMOVAL_EXPORT.delete(&self.store, &mut txn, row_key)? {
+                self.drop_removal_deliveries_for_export_in_txn(&mut txn, row_key)?;
                 dropped += 1;
             }
         }
