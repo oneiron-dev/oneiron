@@ -1,6 +1,7 @@
 //! The `expand_ppr` stage: seed selection, the expansion walk and its gate, and the run's single decay-applying blend.
 
 use super::admit::ChannelAccumulator;
+use super::ppr_visibility::pipeline_ppr_visibility;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::blend::{
@@ -78,19 +79,14 @@ impl PipelineBuilder<'_> {
                 seeds.push(*seed);
             }
         }
-        if seeds.len() < crate::ppr::MAX_PPR_SEEDS {
-            let implicit_seed_limit = if inputs.codebase_scope_active {
-                scores.len()
-            } else {
-                self.result_limit
-            };
-            for scored in scores.iter().take(implicit_seed_limit) {
-                if seen.insert(scored.id) {
-                    seeds.push(scored.id);
-                    if seeds.len() == crate::ppr::MAX_PPR_SEEDS {
-                        break;
-                    }
-                }
+        let implicit_seed_limit = if inputs.codebase_scope_active {
+            scores.len()
+        } else {
+            self.result_limit
+        };
+        for scored in scores.iter().take(implicit_seed_limit) {
+            if seen.insert(scored.id) {
+                seeds.push(scored.id);
             }
         }
 
@@ -98,55 +94,72 @@ impl PipelineBuilder<'_> {
             seeds.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
             // expand_ppr seeds stay UNIFORM — ARCH-0039 Layer-2
-            // specificity weighting is search_ppr-only.
-            // A room's run takes the plain walk over its union: communities
-            // are computed over base and cached by base graph versions, so the
-            // room's run keeps no community prior.
-            let ppr = if self.ppr_community.beta == 0.0 || self.read.is_union() {
-                // Exact legacy path: no evidence/cache reads or new key namespace.
-                crate::ppr::ppr_query_in_txn_with_diagnostics(
-                    &self.read,
-                    rtxn,
-                    &seeds,
-                    *depth,
-                    PPR_DAMPING,
-                    self.ppr_vad_alpha,
-                    crate::ppr::SeedWeighting::Uniform,
-                )?
-            } else {
-                // ID sorting for the base cache must not replace the fused
-                // evidence order. Explicit-only seeds get zero evidence.
-                let ordered_seeds = crate::ppr_community::ordered_seed_evidence(&seeds, scores)
-                    .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-                let empty_usage = HashMap::new();
-                let context = crate::ppr_community::CommunityBoostContext {
-                    ordered_seeds: &ordered_seeds,
-                    result_limit: self.result_limit,
-                    session_usage: self.community_session_usage.unwrap_or(&empty_usage),
-                };
-                let mut config = self.vault.config.clone();
-                config.ppr_vad_alpha = self.ppr_vad_alpha;
-                config.ppr_community = self.ppr_community.clone();
-                let (result, diversity) = crate::ppr::ppr_expand_in_txn_with_community_diagnostics(
-                    &self.vault.store,
-                    rtxn,
-                    crate::ppr::CommunityPprRequest {
-                        seeds: &seeds,
-                        depth: *depth,
-                        teleport_alpha: PPR_DAMPING,
-                        weighting: crate::ppr::SeedWeighting::Uniform,
-                        config: &config,
-                        context: &context,
-                    },
-                )?;
-                community_diversity = diversity;
-                if state.acc.capture {
-                    community_trace_identity = Some(self.community_trace_identity(
-                        &ordered_seeds,
-                        crate::ppr::read_graph_version(&self.vault.store, rtxn)?,
-                    ));
+            // specificity weighting is search_ppr-only. A narrowed walk is
+            // compute-only and takes no shared cache or community prior.
+            let ppr = match pipeline_ppr_visibility(self, inputs.filter_config, &*claim_gate) {
+                Some(visibility) => {
+                    crate::ppr::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
+                        &self.read,
+                        rtxn,
+                        &seeds,
+                        *depth,
+                        PPR_DAMPING,
+                        self.ppr_vad_alpha,
+                        crate::ppr::SeedWeighting::Uniform,
+                        &visibility,
+                        self.deadline,
+                    )?
                 }
-                result
+                None if self.ppr_community.beta == 0.0 || self.read.is_union() => {
+                    // Exact legacy path: no evidence/cache reads or new key namespace.
+                    crate::ppr::ppr_query_in_txn_with_diagnostics_and_deadline(
+                        &self.read,
+                        rtxn,
+                        &seeds,
+                        *depth,
+                        PPR_DAMPING,
+                        self.ppr_vad_alpha,
+                        crate::ppr::SeedWeighting::Uniform,
+                        self.deadline,
+                    )?
+                }
+                None => {
+                    // ID sorting for the base cache must not replace the fused
+                    // evidence order. Explicit-only seeds get zero evidence.
+                    let ordered_seeds = crate::ppr_community::ordered_seed_evidence(&seeds, scores)
+                        .map_err(|error| Error::InvalidConfig(error.to_string()))?;
+                    let empty_usage = HashMap::new();
+                    let context = crate::ppr_community::CommunityBoostContext {
+                        ordered_seeds: &ordered_seeds,
+                        result_limit: self.result_limit,
+                        session_usage: self.community_session_usage.unwrap_or(&empty_usage),
+                    };
+                    let mut config = self.vault.config.clone();
+                    config.ppr_vad_alpha = self.ppr_vad_alpha;
+                    config.ppr_community = self.ppr_community.clone();
+                    let (result, diversity) =
+                        crate::ppr::ppr_expand_in_txn_with_community_diagnostics(
+                            &self.vault.store,
+                            rtxn,
+                            crate::ppr::CommunityPprRequest {
+                                seeds: &seeds,
+                                depth: *depth,
+                                teleport_alpha: PPR_DAMPING,
+                                weighting: crate::ppr::SeedWeighting::Uniform,
+                                config: &config,
+                                context: &context,
+                            },
+                            self.deadline,
+                        )?;
+                    community_diversity = diversity;
+                    if state.acc.capture {
+                        community_trace_identity = Some(self.community_trace_identity(
+                            &ordered_seeds,
+                            crate::ppr::read_graph_version(&self.vault.store, rtxn)?,
+                        ));
+                    }
+                    result
+                }
             };
             if !state.diagnostics.succeeded.contains(&RetrievalSignal::Ppr) {
                 state.diagnostics.succeeded.push(RetrievalSignal::Ppr);

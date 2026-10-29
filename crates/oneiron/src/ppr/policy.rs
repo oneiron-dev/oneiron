@@ -140,18 +140,19 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
 pub(crate) fn canonical_vad_alpha(alpha: f32) -> f32 {
     if alpha == 0.0 { 0.0 } else { alpha }
 }
-/// Resolves the normalized per-seed mass vector for `weighting`. Always sums
-/// to 1.0 (up to f32 rounding) and every entry is strictly positive.
-pub(super) fn seed_weights(
+pub(super) fn seed_weights_with_deadline(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     weighting: SeedWeighting,
     visibility: Option<&dyn PprNodeVisibility>,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<Vec<f32>> {
     match weighting {
         SeedWeighting::Uniform => Ok(vec![1.0 / seeds.len() as f32; seeds.len()]),
-        SeedWeighting::Specificity => specificity_seed_weights(store, txn, seeds, visibility),
+        SeedWeighting::Specificity => {
+            specificity_seed_weights_with_deadline(store, txn, seeds, visibility, deadline)
+        }
     }
 }
 /// ARCH-0039 Layer 2 — "Seed specificity (search_ppr only) · Weight seeds by
@@ -164,23 +165,27 @@ pub(super) fn seed_weights(
 /// The `max(_, 1)` clamp pins the degenerate counts: 0 and 1 both weigh
 /// `1/ln(2)` (and `ln(1 + 0·max-clamped)` can never be `ln(1) = 0`, so no
 /// division by zero exists). Every raw weight lies in
-/// `(0, 1/ln(2)]` and seed counts are capped at [`MAX_PPR_SEEDS`], so the
-/// normalizer is finite and strictly positive — the division below cannot
+/// `(0, 1/ln(2)]` and the admitted seed vector is finite, so the normalizer
+/// is finite and strictly positive — the division below cannot
 /// produce NaN or infinity.
-pub(crate) fn specificity_seed_weights(
+fn specificity_seed_weights_with_deadline(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     seeds: &[EntityId],
     visibility: Option<&dyn PprNodeVisibility>,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<Vec<f32>> {
     // A seed named twice keeps its mass twice; its mentions are read once.
     let mut counted = std::collections::BTreeMap::new();
     let mut raw = Vec::with_capacity(seeds.len());
     for seed in seeds {
+        if let Some(deadline) = deadline {
+            deadline.checkpoint()?;
+        }
         let passage_count = match counted.get(seed) {
             Some(count) => *count,
             None => {
-                let count = inbound_mentions_count(store, txn, seed, visibility)?;
+                let count = inbound_mentions_count(store, txn, seed, visibility, deadline)?;
                 counted.insert(*seed, count);
                 count
             }
@@ -207,6 +212,7 @@ fn inbound_mentions_count(
     txn: &RoTxn<'_>,
     seed: &EntityId,
     visibility: Option<&dyn PprNodeVisibility>,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<u64> {
     let mut rows = ScanCount::start(store, txn, EngineScan::MentionRows, seed.as_bytes())?;
     let mut count = 0_u64;
@@ -218,6 +224,9 @@ fn inbound_mentions_count(
         Some(EdgeKind::Mentions),
         None,
     )? {
+        if let Some(deadline) = deadline {
+            deadline.checkpoint()?;
+        }
         let source = entry?.target;
         rows.row();
         if let Some(visibility) = visibility
