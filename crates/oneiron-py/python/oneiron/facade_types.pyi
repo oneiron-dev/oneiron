@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1201 facade rows, 4343 declarations.
+Census: 1201 facade rows, 4345 declarations.
 Inputs: 1129 of 1201 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1040 of 1201 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 120; unread shapes: 0.
+Results: 1035 of 1201 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2489,7 +2489,22 @@ class FanoutResumeRequest(TypedDict):
     remembered_cap: NotRequired[int | None]
 class DetailsOnDevice(TypedDict):
     details_on_device: bool
-ActAnswer = DetailsOnDevice | T
+class NarrowedQuestion(TypedDict):
+    key: str
+    message: NotRequired[str | None]
+    requested_schema: NotRequired[Any | None]
+    on_device: NotRequired[bool]
+class NarrowedQuestions(TypedDict):
+    outcome: str
+    questions_narrowed: bool
+    handle: str
+    call_ref: str
+    source: str
+    foreign: bool
+    questions: list[NarrowedQuestion]
+    live_until_ms: int
+    reasons: NotRequired[list[str]]
+ActAnswer = DetailsOnDevice | NarrowedQuestions | T
 FanoutCheckChoice = Literal["ack", "ack_and_remember"]
 class FanoutAckRequest(TypedDict):
     launch_ref: EntityId

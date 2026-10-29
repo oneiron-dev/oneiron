@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1252 code-mode rows (1212 host rows, 40 run rows), 4393 declarations.
-// Replies: 1069 fully typed, 182 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1252 code-mode rows (1212 host rows, 40 run rows), 4395 declarations.
+// Replies: 1064 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 116; unread shapes: none.
+// Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -479,7 +479,9 @@ declare namespace Sdk {
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type DetailsOnDevice = { details_on_device: boolean };
-  type ActAnswer<T> = DetailsOnDevice | T;
+  type NarrowedQuestion = { key: string; message?: string | null; requested_schema?: unknown | null; on_device?: boolean };
+  type NarrowedQuestions = { outcome: string; questions_narrowed: boolean; handle: string; call_ref: string; source: string; foreign: boolean; questions: NarrowedQuestion[]; live_until_ms: number; reasons?: string[] };
+  type ActAnswer<T> = DetailsOnDevice | NarrowedQuestions | T;
   type FanoutCheckChoice = "ack" | "ack_and_remember";
   type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null };
   type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } };

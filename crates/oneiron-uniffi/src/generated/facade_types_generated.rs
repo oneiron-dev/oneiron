@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1201 facade rows, 4335 generated types.
+// UniFFI census: 1201 facade rows, 4337 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1153.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -7882,11 +7882,54 @@ pub struct DetailsOnDevice {
     pub details_on_device: bool,
 }
 
+/// `oneiron::verbs::act_answer::NarrowedQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NarrowedQuestion {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "message", default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(
+        rename = "requested_schema",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requested_schema: Option<crate::WireJson>,
+    #[serde(rename = "on_device", default, skip_serializing_if = "Option::is_none")]
+    pub on_device: Option<bool>,
+}
+
+/// `oneiron::verbs::act_answer::NarrowedQuestions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NarrowedQuestions {
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(rename = "questions_narrowed")]
+    pub questions_narrowed: bool,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "call_ref")]
+    pub call_ref: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "foreign")]
+    pub foreign: bool,
+    #[serde(rename = "questions")]
+    pub questions: Vec<NarrowedQuestion>,
+    #[serde(rename = "live_until_ms")]
+    pub live_until_ms: u64,
+    #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
+    pub reasons: Option<Vec<String>>,
+}
+
 /// `oneiron::verbs::act_answer::ActAnswer` with `T` = `FanoutLaunchView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(untagged)]
 pub enum ActAnswerFanoutLaunchView {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(FanoutLaunchView),
 }
 
@@ -20631,6 +20674,7 @@ pub struct SharedActExecuted {
 #[serde(untagged)]
 pub enum ActAnswerSharedActExecuted {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(SharedActExecuted),
 }
 
@@ -24549,6 +24593,7 @@ pub struct RecordEraseOutcome {
 #[serde(untagged)]
 pub enum ActAnswerRecordEraseOutcome {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(RecordEraseOutcome),
 }
 
@@ -44335,6 +44380,7 @@ pub struct SlideReviewOutcome {
 #[serde(untagged)]
 pub enum ActAnswerSlideReviewOutcome {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(SlideReviewOutcome),
 }
 
@@ -44465,6 +44511,7 @@ pub struct ArtifactAskOutcome {
 #[serde(untagged)]
 pub enum ActAnswerArtifactAskOutcome {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(ArtifactAskOutcome),
 }
 
@@ -51557,6 +51604,7 @@ pub struct LiveVoiceToolReply {
 #[serde(untagged)]
 pub enum ActAnswerLiveVoiceToolReply {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(LiveVoiceToolReply),
 }
 
@@ -54230,6 +54278,7 @@ pub struct ConnectorView {
 #[serde(untagged)]
 pub enum ActAnswerConnectorCallReply {
     DetailsOnDevice(DetailsOnDevice),
+    QuestionsNarrowed(NarrowedQuestions),
     Done(ConnectorCallReply),
 }
 
