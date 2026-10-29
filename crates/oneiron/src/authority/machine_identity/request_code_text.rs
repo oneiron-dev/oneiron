@@ -32,7 +32,9 @@ impl RequestCode {
             }
             acc &= (1 << bits) - 1;
         }
-        text.push(char::from(ALPHABET[usize::from((acc << TRAILING_BITS) & 31)]));
+        text.push(char::from(
+            ALPHABET[usize::from((acc << TRAILING_BITS) & 31)],
+        ));
         text
     }
 
