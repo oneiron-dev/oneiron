@@ -615,9 +615,13 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         })
     }
 
+    /// An OpenAI-compatible video job names no idempotency key its
+    /// provider is known to honour (FIX 2248): it goes out without one, and
+    /// the wire says it does not dedupe.
     fn submit<'a>(
         &'a self,
         request: MediaRequest,
+        _key: Option<&'a str>,
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, String> {
         Box::pin(self.submit_job(request, lease))

@@ -33,14 +33,23 @@ pub(super) use custody::{erased_poll, submit_stamps};
 /// The rows' prefix: the declared `MODEL_MEDIA_JOB` family.
 const JOB: &str = "models:media-job:v1:";
 
+/// What a held write's ticket begins with (FIX 2963): the row a job's own
+/// key should keep, which the vault refused there. It is one row of the
+/// same family, so an erase scrubs it and a checkpoint carries it as it
+/// does a job's.
+const OUTBOX: &str = "outbox_";
+
 /// One submitted job, as a restart finds it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct JobRow {
     /// The rung that took the job (its engine id).
     pub(super) model: ModelId,
     pub(super) operation: AiOperation,
-    /// The provider's own id for the job; no caller sees it.
-    pub(super) provider_job: String,
+    /// The provider's own id for the job; no caller sees it. `None` while
+    /// its submit has not been answered (FIX 2248): the row is kept before
+    /// the provider hears of the job, so a restart that cut the submit short
+    /// finds it. A replayed call's kept answer has none either.
+    pub(super) provider_job: Option<String>,
     /// The call as its caller sent it. A job taken up again is admitted
     /// on it, bound to its rung afresh.
     pub(super) request: MediaRequest,
@@ -64,6 +73,16 @@ pub(super) struct JobRow {
     /// (KS-2B2).
     #[serde(default)]
     pub(super) erased: bool,
+    /// Until when (Unix seconds) a replayed call's kept answer answers its
+    /// repeats (FIX 2962): a call's own row, never a job's. `None` for a
+    /// job, kept until its caller deletes it.
+    #[serde(default)]
+    pub(super) replay_until_s: Option<u64>,
+    /// Its end was paid by an earlier permit whose end row the vault
+    /// refused (FIX 2963): a permit that takes it up polls its end again and
+    /// settles it with no charge.
+    #[serde(default)]
+    pub(super) paid: bool,
 }
 
 /// A kept job as its row reads (FIX 9390): the row, or the erased marker of
@@ -135,6 +154,12 @@ impl JobStore {
     /// marker of a retired job whose row never decoded reads as erased,
     /// before any decode (FIX 9390).
     pub(super) fn get(&self, ticket: &str) -> Option<KeptJob> {
+        self.read(ticket, true)
+    }
+
+    /// [`Self::get`], its clips' bytes read back only when `clips`: a read
+    /// of the row alone leaves them out.
+    pub(super) fn read(&self, ticket: &str, clips: bool) -> Option<KeptJob> {
         let key = row_key(ticket);
         let bytes = match self.vault.sync_state_get(&key) {
             Ok(bytes) => bytes?,
@@ -154,7 +179,8 @@ impl JobStore {
             }
         };
         // An erased job's clips went with its content.
-        if !row.erased
+        if clips
+            && !row.erased
             && let Some(MediaJobState::Done { response }) = &mut row.ended
         {
             for (index, part) in response.parts.iter_mut().enumerate() {
@@ -167,6 +193,56 @@ impl JobStore {
             }
         }
         Some(KeptJob::Row(row))
+    }
+
+    /// Holds `row`, which job `ticket`'s own row should keep and the vault
+    /// refused there (FIX 2963), as its held write, clips left out: a
+    /// smaller write than the one refused, kept until a flush writes it in
+    /// place.
+    pub(super) fn hold(&self, ticket: &str, mut row: JobRow) -> Result<(), String> {
+        if let Some(MediaJobState::Done { .. }) = &row.ended {
+            row.ended = None;
+            row.paid = true;
+        }
+        let (kept, _) = encoded(ticket, row)?;
+        self.vault
+            .media_job_put(&row_key(&held_ticket(ticket)), &kept, &[])
+            .map(drop)
+            .map_err(|error| error.to_string())
+    }
+
+    /// The row job `ticket`'s held write keeps, when the vault holds one.
+    pub(super) fn held_row(&self, ticket: &str) -> Option<JobRow> {
+        self.read(&held_ticket(ticket), false)?.live()
+    }
+
+    /// Writes job `ticket`'s held write in place and lets it go (FIX 2963),
+    /// unless the job's own row has ended meanwhile: then the held write is
+    /// stale, and only goes. A write the vault refuses again keeps it.
+    pub(super) fn flush(&self, ticket: &str) {
+        let held = held_ticket(ticket);
+        let Some(row) = self.read(&held, false) else {
+            return;
+        };
+        let current = self.read(ticket, false);
+        let ended = matches!(&current, Some(KeptJob::Row(kept)) if kept.ended.is_some());
+        let written = match (row, ended) {
+            (_, true) => Ok(()),
+            // An erase took the held write: its erased form fences the job.
+            (KeptJob::Erased, false) => Ok(()),
+            (KeptJob::Row(row), false) => self.put(ticket, row).map(drop),
+        };
+        if let Err(error) = written.and_then(|()| self.delete(&held)) {
+            tracing::error!(%error, ticket, "a media job's held write is kept, not written");
+        }
+    }
+
+    /// The ticket of every job with a held write.
+    pub(super) fn held_tickets(&self) -> Vec<String> {
+        self.tickets()
+            .into_iter()
+            .filter_map(|ticket| ticket.strip_prefix(OUTBOX).map(str::to_owned))
+            .collect()
     }
 
     /// The ticket of every kept job, ended or not.
@@ -226,6 +302,16 @@ fn encoded(ticket: &str, mut row: JobRow) -> Result<(Vec<u8>, Vec<(String, Vec<u
 
 fn row_key(ticket: &str) -> String {
     format!("{JOB}{ticket}")
+}
+
+/// The ticket job `ticket`'s held write is kept under.
+fn held_ticket(ticket: &str) -> String {
+    format!("{OUTBOX}{ticket}")
+}
+
+/// Whether `ticket` names a held write, not a job.
+pub(super) fn is_held_write(ticket: &str) -> bool {
+    ticket.starts_with(OUTBOX)
 }
 
 fn part_key(ticket: &str, index: usize) -> String {

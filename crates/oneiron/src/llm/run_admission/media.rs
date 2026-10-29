@@ -37,6 +37,8 @@ pub struct MediaGate {
     offer: DispatchBinding,
     /// The jobs this gate started or took up, each on its permit.
     jobs: MediaJobBindings,
+    /// The idempotency key its job's submit goes out with (FIX 2248).
+    submit_key: Option<String>,
 }
 
 impl MediaGate {
@@ -44,12 +46,14 @@ impl MediaGate {
         run: Arc<RunInner>,
         inner: Arc<dyn MediaBackend>,
         offer: DispatchBinding,
+        submit_key: Option<String>,
     ) -> Self {
         Self {
             run,
             inner,
             offer,
             jobs: MediaJobBindings::default(),
+            submit_key,
         }
     }
 
@@ -139,11 +143,13 @@ impl MediaGate {
 
     /// Starts one long call as a provider job; its permit stays open for
     /// the job's polls and is settled when the job ends. The job the
-    /// provider started is bound to this permit (FIX 9923).
+    /// provider started is bound to this permit (FIX 9923). It goes out
+    /// under the run's submit key, when the run has one (FIX 2248).
     pub async fn submit(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<String> {
         let mut opened = self.open(&request, lease)?;
         let model = request.model.clone();
-        let job = self.inner.submit(request, lease).await;
+        let key = self.submit_key.as_deref();
+        let job = self.inner.submit(request, key, lease).await;
         opened.finish(None, job.is_ok());
         if let Ok(job) = &job {
             self.jobs.bind_media_job(lease, &model, job);

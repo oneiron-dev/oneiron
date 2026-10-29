@@ -3,9 +3,9 @@
 //! Types and private call/job helpers stay in the parent; this module owns the listed impls.
 
 use super::{
-    Arc, FatalLlmError, Held, JobRow, JobStore, LlmResult, MediaAnswer, MediaJobState,
-    MediaRequest, MediaResponse, MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission,
-    RungVoices, Vault, job_ticket, submit_stamps,
+    Arc, FatalLlmError, Held, JobStore, LlmResult, MediaAnswer, MediaJobState, MediaRequest,
+    MediaResponse, MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission, RungVoices,
+    Vault,
 };
 
 /// A runtime that keeps its jobs hands each running job's permit off as it
@@ -113,45 +113,8 @@ impl MediaRuntime {
         actor: Option<oneiron::EntityId>,
         sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaTicket> {
-        if !request.operation.is_job() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let operation = request.operation;
-        let stamps = submit_stamps(actor, &request);
-        let sent = self
-            .store
-            .as_ref()
-            .map(|_| (request.clone(), payer.clone()));
-        let MediaAnswer::Job(job) = self.walk(request, None, payer, sources)?.await? else {
-            return Err(FatalLlmError::EmptyResponse.into());
-        };
-        let id = job_ticket(&job.provider_job);
-        let ticket = MediaTicket {
-            job: id.clone(),
-            model: job.model.to_string(),
-            operation,
-        };
-        if let (Some(store), Some((request, payer))) = (&self.store, sent)
-            && let Err(error) = store.put(
-                &id,
-                JobRow {
-                    model: job.model.clone(),
-                    operation,
-                    provider_job: job.provider_job.clone(),
-                    request,
-                    ended: None,
-                    receipt: job.receipt.clone(),
-                    payer,
-                    stamps,
-                    erased: false,
-                },
-            )
-        {
-            tracing::error!(%error, ticket = %id, "a media job was not kept: it runs held here");
-        }
-        self.lock_jobs()
-            .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
-        Ok(ticket)
+        self.submit_replayed(request, payer, actor, sources, None)
+            .await
     }
 
     /// Where job `id` stands. A job that ended keeps its end, and every poll
@@ -165,6 +128,9 @@ impl MediaRuntime {
     pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
+            // Its submit is still out (FIX 2248).
+            Held::Submitting(_) => return Ok(MediaJobState::Queued),
+            Held::Unsent(row) => return self.resubmit_kept(id, *row).await,
             Held::Unkept(state) => return self.complete_kept_job(id, &state),
             Held::Ended(state) => return Ok(state),
         };

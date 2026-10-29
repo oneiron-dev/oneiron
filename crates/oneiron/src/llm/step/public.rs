@@ -25,6 +25,7 @@ use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::InvocationEntry;
 use crate::{EdgeActorClass, Vault, WriteActor};
 
+pub use super::media_step::media_step_key;
 pub use super::settled::{SettledStepRequest, SettledStepView, settled_step_as_owner};
 
 pub(crate) const MODEL_STEP_ATTEMPT_KIND: &str = "model-step";

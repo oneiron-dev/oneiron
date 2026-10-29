@@ -345,9 +345,12 @@ impl<T: GeminiMediaTransport> MediaBackend for GeminiMediaBackend<T> {
         })
     }
 
+    /// A Veo job takes no idempotency key (FIX 2248): it goes out without
+    /// one, and the wire says it does not dedupe.
     fn submit<'a>(
         &'a self,
         request: MediaRequest,
+        _key: Option<&'a str>,
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, String> {
         Box::pin(self.submit_job(request, lease))

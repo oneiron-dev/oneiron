@@ -1466,6 +1466,7 @@ impl OfferLadder {
                     model: rung.model.clone(),
                     operation,
                     caps: media.caps.clone(),
+                    paid: false,
                 }))),
                 Err(error) => {
                     let sent = settle_failed(permit);

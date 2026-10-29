@@ -64,6 +64,9 @@ pub struct RunAdmission {
     /// Who acted to start the calls admitted through this handle
     /// ([`Self::initiated_by`], FIX 8970); `None` on the run itself.
     initiator: Option<crate::EntityId>,
+    /// The idempotency key a job submitted through this handle goes out
+    /// with ([`Self::submit_keyed`], FIX 2248); `None` on the run itself.
+    submit_key: Option<String>,
 }
 
 pub(super) struct RunInner {
@@ -209,6 +212,7 @@ impl RunAdmission {
             }),
             sources: None,
             initiator: None,
+            submit_key: None,
         }
     }
 
@@ -238,9 +242,8 @@ impl RunAdmission {
     #[must_use]
     pub fn sourced(&self, rows: Option<Vec<crate::EntityId>>) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
             sources: rows,
-            initiator: self.initiator,
+            ..self.clone()
         }
     }
 
@@ -262,6 +265,19 @@ impl RunAdmission {
     #[must_use]
     pub fn principal(&self) -> Option<crate::EntityId> {
         self.initiator.or_else(|| self.inner.guard.actor())
+    }
+
+    /// This run, for a job whose submit goes out under `key` (FIX 2248):
+    /// every media gate built through the handle sends it with the job's
+    /// submit, so a provider that dedupes by it starts the job once however
+    /// often the submit is sent. The run, its line and its permits are the
+    /// same run's.
+    #[must_use]
+    pub fn submit_keyed(&self, key: Option<String>) -> Self {
+        Self {
+            submit_key: key,
+            ..self.clone()
+        }
     }
 
     /// The run's budget line as its meter reads now.
@@ -458,7 +474,7 @@ impl RunAdmission {
     #[must_use]
     pub fn media_gate(&self, inner: Arc<dyn MediaBackend>, offer: &OfferBinding) -> MediaGate {
         let offer = self.inner.bound(offer).dispatch_binding();
-        MediaGate::new(Arc::clone(&self.inner), inner, offer)
+        MediaGate::new(Arc::clone(&self.inner), inner, offer, self.submit_key.clone())
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,
