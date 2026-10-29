@@ -9735,7 +9735,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 5,
       "fn": 6,
       "re-export": 4,
@@ -9759,9 +9759,9 @@
      "purpose": "The browser program admission job (CUA E8b; DESIGN-2 \"The Coach\", row E8): the Coach proposes a program it…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -9815,7 +9815,7 @@
      "purpose": "The solved-run index (CUA E8a; DESIGN-2 \"The Coach\", row E8): group, coverage, failure, dirty and seen rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7,
       "struct": 6
      }
@@ -53666,7 +53666,7 @@
      "purpose": "Per-store clock and id source",
      "surface": {
       "crate-vis": 13,
-      "fn": 6,
+      "fn": 8,
       "struct": 1,
       "trait": 2
      }
@@ -59095,7 +59095,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
