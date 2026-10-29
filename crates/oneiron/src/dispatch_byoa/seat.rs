@@ -49,7 +49,8 @@ const MIN_EPOCH_RESET: u64 = 1_000_000_000;
 
 /// Why a login may not run on a hosted node. Each bound names whose it is,
 /// and the same act works self-hosted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum HostedSeatBound {
     /// A provider's terms keep the login off a hosted node until the
@@ -59,6 +60,40 @@ pub enum HostedSeatBound {
         terms_ref: &'static str,
         approval_ref: &'static str,
     },
+}
+
+impl<'de> Deserialize<'de> for HostedSeatBound {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Wire {
+            ProviderTerms {
+                vendor: String,
+                terms_ref: String,
+                approval_ref: String,
+            },
+        }
+        let Wire::ProviderTerms {
+            vendor,
+            terms_ref,
+            approval_ref,
+        } = Wire::deserialize(deserializer)?;
+        for bound in [OPENAI_CODEX_APP_SERVER, OPENAI_SIGN_IN_WITH_CHATGPT] {
+            let Self::ProviderTerms {
+                vendor: known_vendor,
+                terms_ref: known_terms,
+                approval_ref: known_approval,
+            } = bound;
+            if vendor == known_vendor && terms_ref == known_terms && approval_ref == known_approval
+            {
+                return Ok(bound);
+            }
+        }
+        Err(serde::de::Error::custom("unknown hosted seat bound"))
+    }
 }
 
 impl HostedSeatBound {
@@ -208,7 +243,8 @@ pub fn hosted_seat_bound(
 }
 
 /// Why a route passed over a seat in the owner's order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum SeatPassedOver {
     /// A hosted-only bound keeps the seat's login off this runtime.
@@ -246,7 +282,7 @@ impl std::fmt::Display for SeatPassedOver {
 }
 
 /// A fallback seat a route passed over, and why.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkippedRunnerSeat {
     /// The seat's index in the owner's order.
     pub seat: usize,
@@ -472,9 +508,12 @@ pub fn spent_seat_in(exhaust: &ByoaExhaust) -> ByoaResult<Option<SeatSpent>> {
 
 /// Reads one exhaust stream from its start for a spent seat. Each line is
 /// one event, read whole however many buffer reads it spans; a line that
-/// does not open with `{` past its leading blanks is passed over without
-/// being held. The last event that reads as a limit wins. A buffer is a
-/// traversal unit only: no event is skipped for its length.
+/// does not open with `{` past its leading ASCII blanks is passed over
+/// without being held. A line led by a non-ASCII byte is read into the
+/// scratch buffer, lossy-decoded and Unicode-trimmed, and read only when
+/// the trimmed line opens with `{`. The last event that reads as a limit
+/// wins. A buffer is a traversal unit only: no event is skipped for its
+/// length.
 ///
 /// # Errors
 ///
@@ -500,8 +539,18 @@ pub(crate) fn spent_seat_from_reader(reader: impl Read) -> ByoaResult<Option<Sea
             if let Some(found) = spent_in_line(&String::from_utf8_lossy(&event)) {
                 spent = Some(found);
             }
-        } else {
+        } else if first.is_ascii() {
             skip_line(&mut reader)?;
+        } else {
+            event.clear();
+            reader.read_until(b'\n', &mut event).map_err(read_error)?;
+            let decoded = String::from_utf8_lossy(&event);
+            let trimmed = decoded.trim();
+            if trimmed.starts_with('{') {
+                if let Some(found) = spent_in_line(trimmed) {
+                    spent = Some(found);
+                }
+            }
         }
     }
 }
