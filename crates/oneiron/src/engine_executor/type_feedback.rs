@@ -12,18 +12,21 @@ use oneiron_code_check::ProgramLanguage;
 
 use super::code_check::{CheckJob, StepCell, StepCheck};
 use super::driver::EngineNativeExecutor;
+use super::host::executor_declarations;
 use super::store::{clean_for_context, script_output_path};
 use crate::code_run::{
-    CodeRunReplayRecord, DiagnosticCollection, ExecutorStorage, ProgramPreparationNote,
-    ProgramStepFeedback, ProgramStepIdentity, StepKey, TYPE_CHECK_NOT_ATTACHED, TYPE_CHECK_OFF,
-    TYPE_FEEDBACK_NOT_KEPT, TypeDiagnostic, TypeDiagnostics,
+    CodeRunReplayRecord, DiagnosticCollection, ProgramPreparationNote, ProgramStepFeedback,
+    ProgramStepIdentity, StepKey, TYPE_CHECK_NOT_ATTACHED, TYPE_CHECK_OFF, TYPE_FEEDBACK_NOT_KEPT,
+    TypeDiagnostic, TypeDiagnostics,
 };
 use crate::code_sandbox::source::{PreparedSource, SourceLanguage};
 use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole};
 
 impl EngineNativeExecutor<'_> {
     /// Starts the step's check beside its program: the program as its author
-    /// wrote it, in the language it was prepared from. Never waits.
+    /// wrote it, in the language it was prepared from, against the
+    /// declarations its prompt teaches. A check that lands after the step
+    /// keeps its result on the run's own route. Never waits.
     pub(super) fn start_step_check(
         &self,
         record: &CodeRunReplayRecord,
@@ -45,10 +48,8 @@ impl EngineNativeExecutor<'_> {
                 .iter()
                 .find(|output| output.path == source)
                 .cloned(),
-            vault: match &self.storage {
-                ExecutorStorage::Canonical(vault) => Some(vault.vault_id()),
-                ExecutorStorage::Session(_) => None,
-            },
+            declarations: executor_declarations().to_vec(),
+            route: self.storage.feedback_route(),
         };
         match self.code_check {
             Some(feedback) => feedback.start(job),
@@ -60,9 +61,9 @@ impl EngineNativeExecutor<'_> {
     }
 
     /// Keeps the step's feedback as the step ends, before any way out of it:
-    /// the run's rows on the vault's own storage get it, landed or pending,
-    /// and every later turn of this attempt reads it. A feedback write that
-    /// fails is traced, never the step's failure.
+    /// the run's rows on its own route get it, landed or pending, and every
+    /// later turn of this attempt reads it. A feedback write that fails is
+    /// traced, never the step's failure.
     pub(super) fn keep_step_feedback(&self, check: &StepCheck) {
         let cell = check.cell();
         self.keep_row(&cell);
@@ -75,16 +76,14 @@ impl EngineNativeExecutor<'_> {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Writes `cell`'s row once landed, or once pending, on the vault's own
-    /// storage; a session keeps its steps' feedback with the run alone. A
-    /// collection past one reply goes to a body of the run first.
+    /// Writes `cell`'s row once landed, or once pending, on the run's own
+    /// route: the vault's rows, or the route a session-bound run captured in
+    /// its stretch (FIX 10389). A collection past one reply goes to a body
+    /// of the run first.
     fn keep_row(&self, cell: &StepCell) {
         cell.finalize(&self.storage);
-        let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return;
-        };
         if let Some(row) = cell.claim_row()
-            && let Err(error) = vault.put_type_diagnostics(cell.key(), &row)
+            && let Err(error) = self.storage.put_type_diagnostics(cell.key(), &row)
         {
             tracing::warn!(target: "oneiron::code_check", %error, "type feedback not kept");
         }
@@ -103,10 +102,7 @@ impl EngineNativeExecutor<'_> {
             self.keep_row(&cell);
             return Some(cell.feedback());
         }
-        let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return None;
-        };
-        match vault.type_diagnostics_row(key) {
+        match self.storage.type_diagnostics_row(key) {
             Ok(row) => row.map(|row| row.feedback(key)),
             Err(error) => Some(not_kept(key, &error)),
         }
@@ -117,14 +113,12 @@ impl EngineNativeExecutor<'_> {
     /// on a check; a row that cannot be read leaves this attempt's own.
     pub(super) fn program_steps(&self, run: EntityId) -> Vec<ProgramStepFeedback> {
         let mut steps: BTreeMap<StepKey, ProgramStepFeedback> = BTreeMap::new();
-        if let ExecutorStorage::Canonical(vault) = &self.storage {
-            match vault.type_diagnostics_rows(run) {
-                Ok(rows) => {
-                    steps.extend(rows.into_iter().map(|(key, row)| (key, row.feedback(key))));
-                }
-                Err(error) => {
-                    tracing::warn!(target: "oneiron::code_check", %error, "type feedback not read");
-                }
+        match self.storage.type_diagnostics_rows(run) {
+            Ok(rows) => {
+                steps.extend(rows.into_iter().map(|(key, row)| (key, row.feedback(key))));
+            }
+            Err(error) => {
+                tracing::warn!(target: "oneiron::code_check", %error, "type feedback not read");
             }
         }
         for cell in self.held_checks().iter().filter(|cell| cell.key().0 == run) {

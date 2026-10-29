@@ -44,6 +44,7 @@
 use std::sync::Arc;
 
 use oneiron::authority::VerifiedSlip;
+use oneiron::code_run::ProgramStepFeedbackRelease;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
     CommitReceipt, Effort, EntityRefReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
@@ -542,10 +543,6 @@ pub(crate) async fn vault_off_record_claims_upsert(
 /// A session run's refusal as the row's.
 fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
     let (code, suggestion) = match error {
-        McpCodeExecutionError::RunBusy => (
-            MEMORY_CODE_INVALID_STATE,
-            "Call again once the run's current entry ends.",
-        ),
         McpCodeExecutionError::HostUnbound
         | McpCodeExecutionError::RunWaitedOut
         | McpCodeExecutionError::ProviderUnavailable { .. } => (
@@ -631,6 +628,13 @@ async fn off_record_execute(
         next_step_seq,
         steps_run: outcome.steps_run,
         bridge_calls: outcome.replay_record.bridge_calls.len(),
+        // Each step's feedback the run keeps on the session's route, whole:
+        // the reply's destination release judges each apart (FIX 10389).
+        program_steps: outcome
+            .program_steps
+            .into_iter()
+            .map(ProgramStepFeedbackRelease::Released)
+            .collect(),
     })
 }
 

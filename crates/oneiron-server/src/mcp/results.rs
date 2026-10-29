@@ -185,13 +185,9 @@ pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
             "page cursors are bound to one connector, tool, argument set, and board snapshot",
             "re-request page one with the same arguments and follow its fresh cursor",
         ],
-        "code_run_busy" => &[
-            "this run is still active; no second worker was started",
-            "retry later with the SAME run_ref and task",
-        ],
         "code_run_waited_out" => &[
-            "this run waited its whole deadline for a turn among the runs ahead of it; no run was started",
-            "retry with the same run_ref; the server's code_mode.max_runs row has asked whether everything is okay",
+            "this run waited its whole deadline for a turn, behind its own earlier entry or among the runs ahead of it; no run was started",
+            "retry with the same run_ref; when the runs ahead of it filled the server's code_mode.max_runs row, that row has asked whether everything is okay",
         ],
         "code_run_binding_failed" | "code_run_failed" => &[
             "retry with the SAME run_ref to re-enter the durable run",

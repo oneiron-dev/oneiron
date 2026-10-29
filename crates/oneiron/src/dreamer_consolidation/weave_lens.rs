@@ -9,7 +9,9 @@
 //! composes it into the reader's lens. A plan still refused after its repair
 //! lands as the period's refusal, which the opened digest names.
 
+use super::request_sources::{CallBackend, SourcedBackend};
 use super::step_charge::StepChargeTally;
+use crate::attempt_queue::{AttemptQueue, ReadSetProducer};
 use crate::claim::{
     WEAVE_LENS_PLAN_REPAIRS, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens,
     weave_lens_answer_plan, weave_lens_repair_text,
@@ -47,6 +49,9 @@ pub struct WeaveLensModel<'a> {
     pub role: ModelRole,
     /// The Dreamer, whose step it is.
     pub actor: WriteActor,
+    /// `backend` bound per call to the rows its input was read from, when
+    /// the host lends that (FIX 6998).
+    pub sourced: Option<&'a dyn SourcedBackend>,
 }
 
 fn invalid(reason: &str) -> Error {
@@ -67,10 +72,11 @@ enum LensStep {
     Exit(DreamerAttemptExecution),
 }
 
-/// Runs `request` as a durable step, tallying what it spent.
+/// Runs `request` as a durable step on `backend`, tallying what it spent.
 async fn lens_step(
     step_ctx: &DurableStepContext<'_>,
     model: &WeaveLensModel<'_>,
+    backend: &dyn LlmBackend,
     request: LlmRequest,
     charges: &mut StepChargeTally,
 ) -> Result<LensStep> {
@@ -78,7 +84,7 @@ async fn lens_step(
         .canonical_hash()
         .map_err(|_| invalid("the request did not hash"))?;
     Ok(
-        match call_as_step(step_ctx, model.backend, model.guard, request).await {
+        match call_as_step(step_ctx, backend, model.guard, request).await {
             Ok(StepOutcome::Finished { response, .. }) => {
                 charges.record_terminal(
                     step_ctx.vault,
@@ -242,6 +248,16 @@ pub async fn run_weave_lens(
         return owed_nothing();
     }
     let skill = crate::claim::weave_report_skill_id()?;
+    // The render reads the skill's pack and the period's report: both
+    // declared before either reads (FIX 7019, 7073).
+    super::declare_attempt_reads(
+        ctx.vault,
+        record.id,
+        &[
+            ReadSetProducer::SKILL_PACK,
+            ReadSetProducer::DREAMER_WEAVE_REPORT,
+        ],
+    );
     let loaded = match ctx.vault.load_attempt_skill_pack(
         record.id,
         &skill,
@@ -264,7 +280,21 @@ pub async fn run_weave_lens(
     else {
         return owed_nothing();
     };
+    super::record_attempt_reads(
+        ctx.vault,
+        record.id,
+        ReadSetProducer::DREAMER_WEAVE_REPORT,
+        Some(stored.report.value.source_rows()),
+    );
     let text = crate::claim::weave_lens_model_input(ctx.vault, &stored)?;
+    // The render's every call reads the skill and the period only: it sends
+    // under the attempt's read set, once that set is complete (FIX 6998).
+    let rows = AttemptQueue::new(ctx.vault)
+        .get(record.id)
+        .ok()
+        .flatten()
+        .and_then(|queued| queued.source_rows().map(<[_]>::to_vec));
+    let backend = CallBackend::new(model.backend, model.sourced, rows);
     let locality = model
         .inference
         .selected_locality()
@@ -287,7 +317,15 @@ pub async fn run_weave_lens(
     let mut charges = StepChargeTally::default();
     let mut reason = String::new();
     for _ in 0..=WEAVE_LENS_PLAN_REPAIRS {
-        let response = match lens_step(&step_ctx, &model, request.clone(), &mut charges).await? {
+        let response = match lens_step(
+            &step_ctx,
+            &model,
+            backend.get(),
+            request.clone(),
+            &mut charges,
+        )
+        .await?
+        {
             LensStep::Answer(response) => response,
             LensStep::Refused(refused) => {
                 reason = refused;
