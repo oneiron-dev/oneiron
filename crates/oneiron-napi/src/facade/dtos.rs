@@ -86,6 +86,21 @@ pub struct NapiWitnessReceipt {
     pub message_short_ids: Vec<String>,
     /// Facade write marker (`witness:<hex>`).
     pub receipt_ref: String,
+    /// What the wake this turn owes its actor's armed programs came to
+    /// (FIX 9970); absent when the turn owes none.
+    pub wake_outcome: Option<NapiTurnProgramWakeOutcome>,
+}
+
+/// What a landed turn's program wake came to (FIX 9970).
+#[napi(object)]
+pub struct NapiTurnProgramWakeOutcome {
+    /// `not_armed`, `evaluated` or `unpersisted`.
+    pub outcome: String,
+    /// Wakes this landing recorded, when `outcome` is `evaluated`. Zero means
+    /// none matched or each was already recorded, not a failure.
+    pub newly_recorded: Option<u32>,
+    /// `no_authority` or `storage_failure`, when `outcome` is `unpersisted`.
+    pub reason: Option<String>,
 }
 
 /// One claim to commit (`approval` is not settable by callers).

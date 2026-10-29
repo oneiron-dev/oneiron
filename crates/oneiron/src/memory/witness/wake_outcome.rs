@@ -27,6 +27,18 @@ pub enum TurnProgramWakeOutcome {
     },
 }
 
+impl TurnProgramWakeOutcome {
+    /// The outcome's wire name, as its `outcome` tag spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotArmed => "not_armed",
+            Self::Evaluated { .. } => "evaluated",
+            Self::Unpersisted { .. } => "unpersisted",
+        }
+    }
+}
+
 /// Why a turn's program wake was not recorded. It names the class of cause
 /// only; the storage error and the caller's authority stay out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -38,4 +50,15 @@ pub enum UnpersistedWakeReason {
     NoAuthority,
     /// Reading the armed programs or writing the wake failed in storage.
     StorageFailure,
+}
+
+impl UnpersistedWakeReason {
+    /// The reason's wire name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NoAuthority => "no_authority",
+            Self::StorageFailure => "storage_failure",
+        }
+    }
 }

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4180 declarations.
+Census: 1162 facade rows, 4182 declarations.
 Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -1181,12 +1181,23 @@ class MessagePersonRequest(TypedDict):
     mention: NotRequired[MentionProvenance | None]
     from_project: NotRequired[str | None]
     to_project: NotRequired[str | None]
+UnpersistedWakeReason = Literal["no_authority", "storage_failure"]
+class TurnProgramWakeOutcomeNotArmed(TypedDict):
+    outcome: Literal["not_armed"]
+class TurnProgramWakeOutcomeEvaluated(TypedDict):
+    outcome: Literal["evaluated"]
+    newly_recorded: int
+class TurnProgramWakeOutcomeUnpersisted(TypedDict):
+    outcome: Literal["unpersisted"]
+    reason: UnpersistedWakeReason
+TurnProgramWakeOutcome = TurnProgramWakeOutcomeNotArmed | TurnProgramWakeOutcomeEvaluated | TurnProgramWakeOutcomeUnpersisted
 class WitnessReceipt(TypedDict):
     turn_short_id: str
     message_short_ids: list[str]
     receipt_ref: str
     turn: NotRequired[RecordRef | None]
     messages: NotRequired[list[RecordRef]]
+    wake_outcome: NotRequired[TurnProgramWakeOutcome | None]
 class MessagePersonReceipt(TypedDict):
     room: str
     receipt: WitnessReceipt
