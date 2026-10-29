@@ -145,7 +145,7 @@ impl MediaDoor {
     ) -> oneiron::Result<Option<SonioxLive>> {
         let door: Arc<Self> = Arc::clone(self);
         self.runtime
-            .open_voice_asr(door, route, sample_rate, channels)
+            .open_voice_asr(door, Arc::clone(&self.vault), route, sample_rate, channels)
     }
 }
 
