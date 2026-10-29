@@ -17,6 +17,9 @@ use crate::memory::MemoryResult;
 /// and a request's own `deadline_ms` overrides that.
 pub const DEFAULT_CALL_MODE_DEADLINE: Duration = Duration::from_millis(100);
 
+/// Light recall's default deadline when the caller sets none (FIX 11572).
+pub const LIGHT_RECALL_DEFAULT_DEADLINE_MS: u64 = 5_000;
+
 /// Where a recall request sets the one effort dial: one of the five effort
 /// levels, or `call`, the call mode for live calls. Call mode is a position
 /// on the dial, not a sixth level: it runs [`Effort::Light`] under a hard
@@ -70,7 +73,8 @@ impl From<Effort> for RecallEffort {
 /// What a recall request's dial and raw deadline resolve to: the level it
 /// runs at, and the hard deadline it answers by, if it has one. Omitted, the
 /// dial is medium; call mode without its own `deadline_ms` takes
-/// `call_mode_deadline`, the vault's setting.
+/// `call_mode_deadline`, the vault's setting; light without its own
+/// `deadline_ms` takes [`LIGHT_RECALL_DEFAULT_DEADLINE_MS`].
 pub fn resolve_recall_dial(
     effort: Option<RecallEffort>,
     deadline_ms: Option<u64>,
@@ -80,7 +84,9 @@ pub fn resolve_recall_dial(
     let effort = effort.unwrap_or(RecallEffort::Medium);
     let deadline = deadline_ms
         .map(Duration::from_millis)
-        .or((effort == RecallEffort::Call).then_some(call_mode_deadline));
+        .or((effort == RecallEffort::Call).then_some(call_mode_deadline))
+        .or((effort == RecallEffort::Light)
+            .then_some(Duration::from_millis(LIGHT_RECALL_DEFAULT_DEADLINE_MS)));
     Ok((effort.level(), deadline))
 }
 
