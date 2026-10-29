@@ -48,6 +48,7 @@ use serde_json::{Value, json};
 
 use super::doors::{read_secret_custody_admission_in_txn, resolve_secret_ref_in_txn};
 use super::reveal::parse_secret_handle;
+use super::run_bound::{RunSecretHolder, run_secret_effector};
 use super::types::{SecretBinding, SecretCustodyStatus};
 use crate::connector_key::{
     GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK, PackConnectionCheck,
@@ -175,6 +176,12 @@ impl SecretUseTarget<'_> {
         &self.context
     }
 
+    /// The holder of the record, when the user's own run found it: its
+    /// send presents through that seat's binding (FIX 8334).
+    pub(crate) const fn run(&self) -> Option<&RunSecretHolder> {
+        self.context.run.as_ref()
+    }
+
     /// Keeps the refusal a redemption at the send gave.
     fn refuse(&self, refusal: Error) {
         *self.refusal.lock().unwrap_or_else(PoisonError::into_inner) = Some(refusal);
@@ -220,16 +227,35 @@ impl SecretUseConsumed {
     }
 }
 
-/// Who uses a secret: a verified actor of a recorded session.
+/// Who uses a secret: a verified actor of a recorded session, and the run
+/// of the leased try it runs as, when its host bound one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SecretUser {
     actor: EntityId,
     actor_class: EdgeActorClass,
+    /// The run whose browser or desktop found the records this user may
+    /// use through that seat's binding (FIX 8334).
+    run: Option<EntityId>,
 }
 
 impl SecretUser {
     pub(crate) const fn new(actor: EntityId, actor_class: EdgeActorClass) -> Self {
-        Self { actor, actor_class }
+        Self {
+            actor,
+            actor_class,
+            run: None,
+        }
+    }
+
+    /// This user acting in `run`, the leased try its host bound (FIX 8334).
+    pub(crate) const fn in_run(self, run: Option<EntityId>) -> Self {
+        Self { run, ..self }
+    }
+
+    /// The holder of run-bound `name`, when this user's own run found it.
+    fn run_holder(&self, name: &str) -> Option<RunSecretHolder> {
+        self.run
+            .and_then(|run| RunSecretHolder::of_found(name, run, self.actor, self.actor_class))
     }
 }
 
@@ -394,6 +420,10 @@ impl Vault {
         };
         let admitted = if !live || rec.status != SecretCustodyStatus::Active {
             Err(not_active(&used.handle))
+        } else if let Some(holder) = user.run_holder(&rec.name) {
+            // A secret the user's own run found goes through its seat's
+            // binding, under the effector's door policy (FIX 8334).
+            self.check_run_secret_at_door(&holder, &rec.name, effector)
         } else if !rec
             .binding_for(effector)
             .is_some_and(SecretBinding::grants_read)
@@ -447,6 +477,7 @@ impl Vault {
             )?
             .receipt;
         let (id, effector) = (used.secret, used.effector);
+        let run = used.user.run_holder(name);
         let target = SecretUseTarget {
             name,
             effector,
@@ -456,7 +487,7 @@ impl Vault {
             grant,
             refusal: Mutex::new(None),
             sent: Mutex::new(None),
-            context: used.context(intent, None),
+            context: used.context(intent, run),
         };
         let SecretUseConsumed {
             mut result,
@@ -487,10 +518,12 @@ impl Vault {
         // A send that said what it presented cleared what came back inside
         // its door, with the bytes it sent (FIX 7647). Otherwise nothing was
         // sent, or nothing said what was: the value is read once more,
-        // through the same door, only to find it there; if it cannot be,
-        // nothing comes back.
+        // through the same door (a run's record through its seat's), only to
+        // find it there; if it cannot be, nothing comes back.
+        let reread = run.and_then(|holder| run_secret_effector(name, &holder.run));
+        let reread = reread.as_deref().unwrap_or(effector);
         if sent.is_none()
-            && !self.clear_use_by_reread(&id, effector, &used.handle, &mut result, &mut failure)
+            && !self.clear_use_by_reread(&id, reread, &used.handle, &mut result, &mut failure)
         {
             send = SecretUseSend::Withheld;
         }
@@ -577,7 +610,8 @@ fn provider_check(
     let scrub = |string: &mut String, value: &[u8]| clear_text(string, value, &text);
     let evidence = match target.grant {
         None => {
-            let (answer, sent) = checks.verify_cleared(vault, &check, &target.custody, &scrub);
+            let (custody, run) = (&target.custody, target.run());
+            let (answer, sent) = checks.verify_cleared(vault, &check, custody, run, &scrub);
             target.note_sent(sent);
             answer?
         }

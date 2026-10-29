@@ -218,9 +218,14 @@ impl Vault {
             (Some(_), Some(secret_use)) if !pending.live_use => Some(secret_use.clone()),
             _ => None,
         };
-        // A call that names a custody record sends with it or not at all.
+        // A call that names a custody record sends with it or not at all;
+        // one its use's own run found, through that run's seat (FIX 8334).
         let mut scope_evidence = None;
-        let step = if host.present_credential(pending.credential, pending.grant) {
+        let run = pending
+            .secret_use
+            .as_ref()
+            .and_then(|secret_use| secret_use.run);
+        let step = if host.present_credential(pending.credential, pending.grant, run) {
             let intent = match &resumed_use {
                 Some(secret_use) => {
                     let _ = host.take_sent_presentation();

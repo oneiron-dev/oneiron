@@ -318,7 +318,9 @@ pub(super) fn grant_refusal(error: Error, operation: &str) -> MemoryError {
 }
 
 /// The caller as a secret's user: a verified actor of a session that keeps
-/// a record.
+/// a record, in the run of the leased try its host bound, read live
+/// (FIX 8334): a secret that run's browser or desktop found is the
+/// caller's to use. A lease that lapsed binds no run.
 fn secret_user(memory: &Memory<'_>) -> MemoryResult<SecretUser> {
     verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
     if memory.keeps_no_record() {
@@ -328,7 +330,16 @@ fn secret_user(memory: &Memory<'_>) -> MemoryResult<SecretUser> {
             &["Use the secret outside the anonymous session."],
         ));
     }
-    Ok(SecretUser::new(memory.actor(), memory.actor_class()))
+    // The leased try is the run a run-bound record's name holds (FIX 8028).
+    let leased = memory
+        .task_host()
+        .map(|binding| binding.leased_record(memory.vault()));
+    let run = match leased {
+        Some(Ok(record)) => EntityId::from_bytes(*record.id.as_bytes()).ok(),
+        Some(Err(Error::InvalidClaimBody(_))) | None => None,
+        Some(Err(error)) => return Err(error.into()),
+    };
+    Ok(SecretUser::new(memory.actor(), memory.actor_class()).in_run(run))
 }
 
 /// A connector call's reply as the use's answer: delivered is answered; a
