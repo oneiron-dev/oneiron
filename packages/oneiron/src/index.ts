@@ -2578,6 +2578,8 @@ export class Oneiron {
         approve: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsApprove(input) as Facade.ModelTrialView),
         /** Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome. */
         run: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsRun(input) as Facade.ModelTrialView),
+        /** Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown. */
+        resend_arm: (input: Facade.ModelTrialArmRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsResendArm(input) as Facade.ModelTrialView),
         /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
         complete: (input: Facade.ModelTrialComplete): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsComplete(input) as Facade.ModelTrialView),
       },

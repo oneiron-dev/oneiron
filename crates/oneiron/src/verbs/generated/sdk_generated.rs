@@ -4784,6 +4784,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.models.trials.resend_arm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelTrialArmRef,
+                >(),
+            ),
+            (
                 "vault.models.trials.complete",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::catalog_doors::ModelTrialComplete,
@@ -7296,6 +7302,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.models.trials.get",
     "vault.models.trials.approve",
     "vault.models.trials.run",
+    "vault.models.trials.resend_arm",
     "vault.models.trials.complete",
     "vault.models.bindings.propose",
     "vault.models.bindings.get",
@@ -9304,6 +9311,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::llm::catalog_doors::ModelTrialView,
         >(),
         "vault.models.trials.run" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelTrialView,
+        >(),
+        "vault.models.trials.resend_arm" => crate::code_run::vault_read::request_schema::<
             crate::llm::catalog_doors::ModelTrialView,
         >(),
         "vault.models.trials.complete" => crate::code_run::vault_read::request_schema::<
@@ -16051,6 +16061,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.models.trials.resend_arm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.models.trials.complete" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21029,6 +21046,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.models.trials.run" => {
             let _input: crate::llm::catalog_doors::ModelTrialRef = decode(value.clone())?;
         }
+        "vault.models.trials.resend_arm" => {
+            let _input: crate::llm::catalog_doors::ModelTrialArmRef = decode(value.clone())?;
+        }
         "vault.models.trials.complete" => {
             let _input: crate::llm::catalog_doors::ModelTrialComplete = decode(value.clone())?;
         }
@@ -23881,6 +23901,9 @@ pub fn invoke(
             encode(vault_models_trials_approve(memory, decode(value)?)?)
         }
         "vault.models.trials.run" => encode(vault_models_trials_run(memory, decode(value)?)?),
+        "vault.models.trials.resend_arm" => {
+            encode(vault_models_trials_resend_arm(memory, decode(value)?)?)
+        }
         "vault.models.trials.complete" => {
             encode(vault_models_trials_complete(memory, decode(value)?)?)
         }
@@ -31800,6 +31823,19 @@ pub fn vault_models_trials_run(
     input: crate::llm::catalog_doors::ModelTrialRef,
 ) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
     crate::task_verb::sdk::host_only(memory, "vault.models.trials.run", &input)
+}
+pub fn vault_models_trials_resend_arm(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelTrialArmRef,
+) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
+    memory
+        .vault()
+        .resend_model_trial_arm_as_owner(
+            &memory.embedded_owner("vault.models.trials.resend_arm")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_models_trials_complete(
     memory: &Memory<'_>,

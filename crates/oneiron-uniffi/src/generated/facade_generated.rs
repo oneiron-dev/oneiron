@@ -4321,6 +4321,11 @@ export_facade! {
     let output = client.vault_models_trials_run(&input)?;
     crate::codec::lift_record("vault.models.trials.run", &output)
 };
+"vault.models.trials.resend_arm" => fn vault_models_trials_resend_arm(&self, input: ModelTrialArmRef) -> ModelTrialView = |client| {
+    let input: oneiron::llm::catalog_doors::ModelTrialArmRef = crate::codec::lower_record("vault.models.trials.resend_arm", input)?;
+    let output = client.vault_models_trials_resend_arm(&input)?;
+    crate::codec::lift_record("vault.models.trials.resend_arm", &output)
+};
 "vault.models.trials.complete" => fn vault_models_trials_complete(&self, input: ModelTrialComplete) -> ModelTrialView = |client| {
     let input: oneiron::llm::catalog_doors::ModelTrialComplete = crate::codec::lower_record("vault.models.trials.complete", input)?;
     let output = client.vault_models_trials_complete(&input)?;

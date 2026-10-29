@@ -7625,6 +7625,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_models_trials_resend_arm(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.resend_arm", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_models_trials_complete(
         &self,
         input: serde_json::Value,

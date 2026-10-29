@@ -27249,6 +27249,40 @@ async fn vault_models_trials_run(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_models_trials_resend_arm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.trials.resend_arm")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.trials.resend_arm", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.trials.resend_arm", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_models_trials_resend_arm(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_models_trials_complete(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38188,6 +38222,9 @@ pub(crate) async fn call_verb(
         "vault.models.trials.get" => vault_models_trials_get(server, call, input).await,
         "vault.models.trials.approve" => vault_models_trials_approve(server, call, input).await,
         "vault.models.trials.run" => vault_models_trials_run(server, call, input).await,
+        "vault.models.trials.resend_arm" => {
+            vault_models_trials_resend_arm(server, call, input).await
+        }
         "vault.models.trials.complete" => vault_models_trials_complete(server, call, input).await,
         "vault.models.bindings.propose" => vault_models_bindings_propose(server, call, input).await,
         "vault.models.bindings.get" => vault_models_bindings_get(server, call, input).await,

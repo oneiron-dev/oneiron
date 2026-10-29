@@ -4588,6 +4588,9 @@ class Oneiron:
         def run(self, spec):
             """Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_run(json.dumps(spec))))
+        def resend_arm(self, spec):
+            """Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown."""
+            return json.loads(_translate(lambda: self._client.vault_models_trials_resend_arm(json.dumps(spec))))
         def complete(self, spec):
             """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_complete(json.dumps(spec))))

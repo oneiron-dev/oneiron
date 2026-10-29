@@ -868,6 +868,7 @@ pub enum AgentVerb {
     VaultModelsTrialsGet,
     VaultModelsTrialsApprove,
     VaultModelsTrialsRun,
+    VaultModelsTrialsResendArm,
     VaultModelsTrialsComplete,
     VaultModelsBindingsPropose,
     VaultModelsBindingsGet,
@@ -2057,6 +2058,7 @@ impl AgentVerb {
         Self::VaultModelsTrialsGet,
         Self::VaultModelsTrialsApprove,
         Self::VaultModelsTrialsRun,
+        Self::VaultModelsTrialsResendArm,
         Self::VaultModelsTrialsComplete,
         Self::VaultModelsBindingsPropose,
         Self::VaultModelsBindingsGet,
@@ -3273,6 +3275,7 @@ impl AgentVerb {
             Self::VaultModelsTrialsGet => "vault.models.trials.get",
             Self::VaultModelsTrialsApprove => "vault.models.trials.approve",
             Self::VaultModelsTrialsRun => "vault.models.trials.run",
+            Self::VaultModelsTrialsResendArm => "vault.models.trials.resend_arm",
             Self::VaultModelsTrialsComplete => "vault.models.trials.complete",
             Self::VaultModelsBindingsPropose => "vault.models.bindings.propose",
             Self::VaultModelsBindingsGet => "vault.models.bindings.get",
@@ -4468,6 +4471,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsGet
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsGet
@@ -5686,6 +5690,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsGet
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsGet
@@ -6998,6 +7003,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsGet
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsGet
@@ -7807,6 +7813,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsNominate
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsAccept
@@ -8904,6 +8911,7 @@ impl AgentVerb {
             Self::VaultModelsTrialsGet => &["spec"],
             Self::VaultModelsTrialsApprove => &["spec"],
             Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsResendArm => &["spec"],
             Self::VaultModelsTrialsComplete => &["spec"],
             Self::VaultModelsBindingsPropose => &["spec"],
             Self::VaultModelsBindingsGet => &["spec"],
@@ -10094,6 +10102,7 @@ impl AgentVerb {
             Self::VaultModelsTrialsGet => &["spec"],
             Self::VaultModelsTrialsApprove => &["spec"],
             Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsResendArm => &["spec"],
             Self::VaultModelsTrialsComplete => &["spec"],
             Self::VaultModelsBindingsPropose => &["spec"],
             Self::VaultModelsBindingsGet => &["spec"],
@@ -12962,6 +12971,9 @@ impl AgentVerb {
             }
             Self::VaultModelsTrialsRun => {
                 "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."
+            }
+            Self::VaultModelsTrialsResendArm => {
+                "Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown."
             }
             Self::VaultModelsTrialsComplete => {
                 "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."

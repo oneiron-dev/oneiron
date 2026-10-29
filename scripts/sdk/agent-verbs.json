@@ -13588,6 +13588,21 @@
       "openapi": true
     },
     {
+      "name": "vault.models.trials.resend_arm",
+      "description": "Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown.",
+      "input": "crate::llm::catalog_doors::ModelTrialArmRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().resend_model_trial_arm_as_owner(&memory.embedded_owner(\"vault.models.trials.resend_arm\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.models.trials.complete",
       "description": "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer.",
       "input": "crate::llm::catalog_doors::ModelTrialComplete",

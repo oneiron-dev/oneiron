@@ -2908,6 +2908,8 @@ class Oneiron:
             """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
         def run(self, spec: Facade.ModelTrialRef) -> Facade.ModelTrialView:
             """Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."""
+        def resend_arm(self, spec: Facade.ModelTrialArmRef) -> Facade.ModelTrialView:
+            """Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown."""
         def complete(self, spec: Facade.ModelTrialComplete) -> Facade.ModelTrialView:
             """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
     class _VaultModelsBindingsVerbs:

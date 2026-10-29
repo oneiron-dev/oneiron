@@ -898,6 +898,7 @@ vaultModelsTrialsNominate(input: unknown): unknown
 vaultModelsTrialsGet(input: unknown): unknown
 vaultModelsTrialsApprove(input: unknown): unknown
 vaultModelsTrialsRun(input: unknown): unknown
+vaultModelsTrialsResendArm(input: unknown): unknown
 vaultModelsTrialsComplete(input: unknown): unknown
 vaultModelsBindingsPropose(input: unknown): unknown
 vaultModelsBindingsGet(input: unknown): unknown

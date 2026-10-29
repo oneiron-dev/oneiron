@@ -955,6 +955,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.models.trials.get", post(facade_route))
         .route("/vault.models.trials.approve", post(facade_route))
         .route("/vault.models.trials.run", post(facade_route))
+        .route("/vault.models.trials.resend_arm", post(facade_route))
         .route("/vault.models.trials.complete", post(facade_route))
         .route("/vault.models.bindings.propose", post(facade_route))
         .route("/vault.models.bindings.get", post(facade_route))
