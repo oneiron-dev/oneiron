@@ -215,8 +215,8 @@ pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
     ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_run, ai_video_poll_as_owner,
-    ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
+    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
 pub(crate) use invocations::*;

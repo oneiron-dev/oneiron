@@ -6,9 +6,13 @@
 //! meter, so the job is reserved and paid for once. Its row names the run, so
 //! a restart takes it up again on that line once the code host binds it. A
 //! run that is not the owner's reaches only the jobs its own run submitted.
-//! A job a pumped run's entry funds from its attempt's spend scope runs on a
-//! guard of that scope's own, and what it used is booked on the scope once,
-//! at its end, as an entry's meter is (FIX 11496).
+//! A job a pumped run's entry funds from its attempt's spend scope is
+//! admitted on a guard of that scope's own from its submit, so its entry's
+//! meter never carries it, and what that guard used is booked on the scope
+//! as an entry's meter is (FIX 11496, L06-A 07:17): what its walk's settled
+//! rungs charged before its row is kept, and the rest when its permit is
+//! taken and settled with a charge, before its end is written. A permit
+//! handed off, a paid end or one already taken books nothing.
 //! Entry: `MediaRuntime::submit_run_admitted` (calls.rs), `submit_scoped`,
 //! `poll_on_line`.
 use std::collections::BTreeMap;
@@ -20,7 +24,10 @@ use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::{BudgetGuard, EntityId};
 use serde::{Deserialize, Serialize};
 
-use super::{FatalLlmError, JobRow, KeptJob, LlmResult, MediaRuntime, MediaTicket, funded_run};
+use super::{
+    FatalLlmError, HeldJob, JobRow, JobStore, KeptJob, LlmResult, MediaRuntime, MediaTicket,
+    funded_run,
+};
 
 /// The run line a program's job was submitted on: its run's name on the
 /// program line, and the spend scope that funds it when its run's entry
@@ -28,7 +35,6 @@ use super::{FatalLlmError, JobRow, KeptJob, LlmResult, MediaRuntime, MediaTicket
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct JobLine {
     pub(super) run: String,
-    #[serde(default)]
     pub(super) scope: Option<SpendScopeId>,
 }
 
@@ -42,15 +48,27 @@ pub(super) struct ProgramLine {
     /// the job still answers its run.
     submitted: Mutex<BTreeMap<String, JobLine>>,
     /// Each job held here that a spend scope funds, by ticket: the scope
-    /// and the run on its own guard, booked once at the job's end.
+    /// and the run on its own guard, booked when its permit settles.
     scoped: Mutex<BTreeMap<String, ScopedJob>>,
 }
 
-/// A job a spend scope funds (FIX 11496): the scope, and the run on a guard
-/// of the scope's own that holds the job's permit.
+/// A job a spend scope funds (FIX 11496): the scope, the run on a guard of
+/// the scope's own that holds the job's permit, and what of that guard's
+/// use the scope already holds.
 struct ScopedJob {
     scope: SpendScopeId,
     run: RunAdmission,
+    booked: u64,
+}
+
+impl HeldJob {
+    /// Whether the job's permit is still held and its end not paid yet:
+    /// the settle that takes it charges its line, and the scope that funds
+    /// the job books that charge (FIX 11496). A handed-off or paid end
+    /// charges nothing, and books nothing.
+    pub(super) fn charges(&self) -> bool {
+        self.permit.is_some() && !self.paid
+    }
 }
 
 impl MediaRuntime {
@@ -151,14 +169,14 @@ impl MediaRuntime {
     }
 
     /// [`Self::submit_run_admitted`] for a job a pumped run's entry funds
-    /// from `scope`, its attempt's spend scope (FIX 11496). The job runs on
-    /// a guard of the scope's own, not on `line`, the entry's meter, which
-    /// the entry books on the scope when it ends: a job that outlives its
-    /// entry still reaches the scope. What the job's guard used is booked on
-    /// the scope once, as an entry's meter is (`record_guard_spend`), when
-    /// the job ends, is stopped, or its submit fails. Its row keeps the
-    /// scope, so a restart takes it up on a fresh guard of it. A runtime
-    /// that keeps no jobs reads no scope: the job runs on `line`, as before.
+    /// from `scope`, its metered attempt's spend scope (FIX 11496, L06-A
+    /// 07:17). The job is admitted on a guard of the scope's own, under
+    /// `line`'s run name and payer, never on `line`, the entry's meter, which
+    /// the entry books on the scope when it ends: so a job that ends before
+    /// or after its entry is booked once, whole. Its row keeps the scope, so
+    /// a restart takes it up on a fresh guard of it. A runtime that keeps no
+    /// jobs has no scope to read: such a submit is its caller's bug, and an
+    /// error that names it.
     pub(crate) async fn submit_scoped(
         &self,
         line: &RunAdmission,
@@ -167,36 +185,41 @@ impl MediaRuntime {
         actor: Option<EntityId>,
         replay: Option<MediaReplayKey>,
     ) -> LlmResult<MediaTicket> {
-        if self.store.is_none() {
-            return self
-                .submit_run_admitted(line, None, request, actor, replay)
-                .await;
-        }
         let run = self.scope_run(line.run(), &scope, line.payer().cloned())?;
-        let submitted = self
-            .submit_run_admitted(&run, Some(scope.clone()), request, actor, replay)
-            .await;
-        match &submitted {
-            // A repeat under its step key answered the first's ticket and
-            // reserved nothing here: the first's guard holds the job.
-            Ok(ticket) => {
-                let read = run.read();
-                if read.reserved_units > 0 || read.used_units > 0 {
-                    self.hold_scoped(&ticket.job, scope, run);
-                }
-            }
-            Err(_) => self.book(&scope, &run),
-        }
-        submitted
+        self.submit_run_admitted(&run, Some(scope), request, actor, replay)
+            .await
     }
 
-    /// Books job `id`'s spend on the scope that funds it, once: the job
-    /// ended, was stopped, or this runtime lets it go (FIX 11496). A job no
-    /// scope funds books nothing.
-    pub(super) fn book_job_scope(&self, id: &str) {
+    /// The store a job a spend scope funds needs, for its scope's guard and
+    /// its booking (FIX 11496). A runtime that keeps no jobs answers its
+    /// caller's bug, by name, never a silent unscoped job.
+    pub(super) fn scoped_store(&self) -> LlmResult<&JobStore> {
+        self.store.as_ref().ok_or_else(|| {
+            tracing::error!("a scoped media job was submitted on a runtime that keeps no jobs");
+            FatalLlmError::InvalidRequestDetail {
+                message: "a scoped media job needs a runtime that keeps its jobs (FIX 11496)"
+                    .to_owned(),
+            }
+            .into()
+        })
+    }
+
+    /// Books job `id`'s spend on the scope that funds it, once, right after
+    /// its permit was taken and settled with a charge, and before its end
+    /// or its delete is written (FIX 11496): the guard's use past what its
+    /// submit booked. A job no scope funds books nothing.
+    pub(crate) fn book_job_scope(&self, id: &str) {
         let job = self.lock_scoped().remove(id);
         if let Some(job) = job {
-            self.book(&job.scope, &job.run);
+            self.book(&job.scope, &job.run, job.booked);
+        }
+    }
+
+    /// Books on `scope`, when one funds the job, what its failed submit's
+    /// settled rungs charged `run`, the job's own guard (FIX 11496).
+    pub(super) fn book_failed_submit(&self, scope: Option<&SpendScopeId>, run: &RunAdmission) {
+        if let Some(scope) = scope {
+            self.book(scope, run, 0);
         }
     }
 
@@ -208,10 +231,13 @@ impl MediaRuntime {
         scope: &SpendScopeId,
         payer: Option<PayerPerson>,
     ) -> LlmResult<RunAdmission> {
-        let store = self.store.as_ref().ok_or(FatalLlmError::InvalidRequest)?;
+        let store = self.scoped_store()?;
         let guard = AgentDispatcher::new(store.vault())
             .guard_for_scope(scope)
-            .map_err(|_| FatalLlmError::InvalidRequest)?;
+            .map_err(|error| {
+                tracing::error!(%error, %scope, "a media job's scope guard was not read");
+                FatalLlmError::InvalidRequest
+            })?;
         Ok(funded_run(
             run.to_owned(),
             guard,
@@ -221,27 +247,32 @@ impl MediaRuntime {
         ))
     }
 
-    /// Holds `run`, the scope run of job `ticket`, for its booking. A run
-    /// it replaces is booked first, so no guard's spend is lost.
-    fn hold_scoped(&self, ticket: &str, scope: SpendScopeId, run: RunAdmission) {
-        let replaced = self
-            .lock_scoped()
-            .insert(ticket.to_owned(), ScopedJob { scope, run });
-        if let Some(replaced) = replaced {
-            self.book(&replaced.scope, &replaced.run);
-        }
+    /// Holds `run`, job `ticket`'s run on a guard of `scope`'s own, for the
+    /// booking its permit's settle makes, and books now what its walk's
+    /// settled rungs already charged it, before its row is kept (FIX
+    /// 11496). A taken-up job's fresh guard has charged nothing yet.
+    pub(super) fn hold_scoped(&self, ticket: &str, scope: SpendScopeId, run: RunAdmission) {
+        let booked = self.book(&scope, &run, 0);
+        self.lock_scoped()
+            .insert(ticket.to_owned(), ScopedJob { scope, run, booked });
     }
 
-    /// Books on `scope` what `run`'s own guard used, once, as an entry's
-    /// meter is booked (FIX 11496). A booking the vault refuses is logged.
-    fn book(&self, scope: &SpendScopeId, run: &RunAdmission) {
-        let Some(store) = &self.store else {
-            return;
+    /// Books on `scope` what `run`'s own guard used past `booked`, what the
+    /// scope already holds of it, as an entry's meter is booked (FIX
+    /// 11496), and answers what the scope holds now. A booking the vault
+    /// refuses is logged, never a refusal.
+    fn book(&self, scope: &SpendScopeId, run: &RunAdmission, booked: u64) -> u64 {
+        let used = run.read().used_units;
+        let part = used.saturating_sub(booked);
+        let Some(store) = self.store.as_ref().filter(|_| part > 0) else {
+            return booked;
         };
-        if let Err(error) =
-            AgentDispatcher::new(store.vault()).record_guard_spend(scope, run.read().used_units)
-        {
-            tracing::error!(%error, "a media job's spend was not booked on its scope");
+        match AgentDispatcher::new(store.vault()).record_guard_spend(scope, part) {
+            Ok(_) => used,
+            Err(error) => {
+                tracing::error!(%error, %scope, "a media job's spend did not reach its scope");
+                booked
+            }
         }
     }
 

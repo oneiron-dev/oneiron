@@ -30,19 +30,22 @@ impl Drop for MediaRuntime {
                 continue;
             };
             if self.unkept_program_job(ticket) {
+                let charges = job.charges();
                 job.settle_failed();
-                // What it paid reaches the scope that funds it (FIX 11496).
-                self.book_job_scope(ticket);
+                // What its settle charged reaches the scope that funds it
+                // (FIX 11496).
+                if charges {
+                    self.book_job_scope(ticket);
+                }
                 continue;
             }
+            // A hand-off charges nothing, so no scope books it: the runtime
+            // that takes the job up books its end (FIX 11496).
             if let Some(permit) = job.permit.take()
                 && let Err(denied) = permit.hand_off_media()
             {
                 tracing::error!(%denied, "a kept media job's permit was not handed off");
             }
-            // What its guard used so far reaches its scope; the runtime that
-            // takes it up books its end (FIX 11496).
-            self.book_job_scope(ticket);
         }
     }
 }
@@ -163,6 +166,10 @@ impl MediaRuntime {
         if !request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        // A scope funds a job only on a runtime that keeps it (FIX 11496).
+        if scope.is_some() {
+            self.scoped_store()?;
+        }
         let operation = request.operation;
         let stamps = submit_stamps(actor, &request);
         let sent = self.store.as_ref().map(|_| request.clone());
@@ -191,6 +198,8 @@ impl MediaRuntime {
                 if claimed {
                     self.unclaim(&id, false);
                 }
+                // What its settled rungs charged reaches its scope (FIX 11496).
+                self.book_failed_submit(scope.as_ref(), run);
                 return Err(error);
             }
         };
@@ -198,8 +207,15 @@ impl MediaRuntime {
             if claimed {
                 self.unclaim(&id, false);
             }
+            self.book_failed_submit(scope.as_ref(), run);
             return Err(FatalLlmError::EmptyResponse.into());
         };
+        // A scoped job is booked from its own guard: its walk's settled
+        // rungs now, before its row is kept, and its end when its permit
+        // settles (FIX 11496).
+        if let Some(scope) = &scope {
+            self.hold_scoped(&id, scope.clone(), run.clone());
+        }
         let line = JobLine {
             run: run.run().to_owned(),
             scope,
@@ -264,14 +280,17 @@ impl MediaRuntime {
             drop(held);
             return self.ended(id);
         }
+        let charges = held.charges();
         let state = held.poll().await;
         if let Ok(ended) = &state
             && ended.ended()
         {
-            let answer = self.complete_kept_job(id, ended);
-            // Its spend reaches the scope that funds it (FIX 11496).
-            self.book_job_scope(id);
-            return answer;
+            // Its end settled its permit: what that charged reaches the
+            // scope that funds it before its end is written (FIX 11496).
+            if charges {
+                self.book_job_scope(id);
+            }
+            return self.complete_kept_job(id, ended);
         }
         state
     }
@@ -281,10 +300,7 @@ impl MediaRuntime {
     /// keeps the job, to poll or stop again (FIX 9513). A job that ended is
     /// only dropped. A drop the vault refuses is an error, never a success.
     pub async fn cancel(&self, id: &str) -> LlmResult<()> {
-        self.cancel_kept_job(id).await?;
-        // A stopped job's spend reaches the scope that funds it (FIX 11496).
-        self.book_job_scope(id);
-        Ok(())
+        self.cancel_kept_job(id).await
     }
 }
 
