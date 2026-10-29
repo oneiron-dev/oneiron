@@ -24,7 +24,8 @@ fn mcp_tasks_section(
     rows: oneiron::context_board::TasksSectionRows,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
-    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, &[], served)?;
+    let (section, scope_omitted) =
+        mcp_scoped_tasks_section(server, actor, rows, &[], served, &Default::default())?;
     // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
     // whose module is private and which `context_board` does not
     // re-export, so the method item cannot be named from this crate.
@@ -375,6 +376,16 @@ pub(crate) fn mcp_text_content(text: impl Into<String>) -> Value {
 }
 
 pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
+    // The typed 403 refusals answer as the facade's copy of each does: one
+    // MCP code and stable kind, whichever door reported it (FIX 11434).
+    let typed = match error.code() {
+        ErrorCode::HostActionRequiresSupportGrant => Some(MCP_HOST_ACTION_REFUSED),
+        ErrorCode::OwnerBindingRequired => Some(MCP_OWNER_BINDING_REQUIRED),
+        _ => None,
+    };
+    if let Some(kind) = typed {
+        return McpGatewayError::new(-32020, kind, error.message());
+    }
     let code = match error.code() {
         ErrorCode::BadRequest => -32602,
         ErrorCode::NotFound => -32004,
@@ -394,6 +405,10 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
 /// The stable MCP kind of the typed refusal a host credential gets where no
 /// host acts as a person (FIX 2222); its code is -32020, as every refusal's.
 pub(super) const MCP_HOST_ACTION_REFUSED: &str = "host_action_requires_support_grant";
+
+/// The stable MCP kind of the typed refusal an owner act gets without the
+/// owner binding it needs (FIX 11434); its code is -32020 too.
+pub(super) const MCP_OWNER_BINDING_REQUIRED: &str = "owner_binding_required";
 
 pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> McpGatewayError {
     // ONE-1936: a stale write-verb target gets its own stable kind, not the

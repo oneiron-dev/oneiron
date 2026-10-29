@@ -228,15 +228,13 @@ pub(super) fn mcp_board_sections(
     let rows = memory.describe_rows().map_err(mcp_facade_error)?;
     // PEOPLE (ARCH-0067): every person by handle, name inline (a connector
     // holds no cached roster), and the actor's own live children on the task
-    // they realize. Children are actor-wide, bound to no world or facet, so a
-    // narrowed connector reads none of them.
+    // they realize. A child rides its TASK row, which the connector's scope
+    // admits or withholds below; any other child is judged by its own
+    // evidence ([`mcp_child_admitted`], FIX 1052).
     let mut rows = rows;
-    let children = if actor.scope.is_narrow() || !actor.has_unrestricted_record_scope() {
-        Vec::new()
-    } else {
+    let children =
         oneiron::context_board::child_states_for_actor(&server.vault, actor.actor_ref)
-            .map_err(|error| mcp_engine_error("board children failed", error))?
-    };
+            .map_err(|error| mcp_engine_error("board children failed", error))?;
     let read = mcp_scoped_read(&server.vault, actor)?;
     let people = {
         let now = std::time::SystemTime::now()
@@ -254,20 +252,27 @@ pub(super) fn mcp_board_sections(
         people
     };
     let resident = std::collections::BTreeSet::new();
-    // A child whose TASK the destination or the read withheld stays off the
-    // board, never a bare row (FIX 9755).
+    // A child whose TASK the destination, the read or the scope withheld
+    // stays off the board, never a bare row (FIX 9755). On a narrowed
+    // connector the bare rows its children make were judged here by their
+    // evidence, so the scope's row check below, which reads a row id as an
+    // entity, leaves them be; a wide connector's keep that check.
+    let narrowed = super::children::mcp_children_narrowed(actor);
+    let mut bare_children = std::collections::BTreeSet::new();
     rows.attach_people_admitted(
         &oneiron::context_board::PeopleView::new(&people, &resident),
         &children,
-        |child| match child.task_ref.as_deref().map(oneiron::EntityId::from_hex) {
-            Some(Ok(task)) => {
-                oneiron::context_board::TasksSectionRows::task_admitted(&memory, &read, task)
+        |child| {
+            let admitted =
+                super::children::mcp_child_admitted(server, actor, &memory, &read, child)?;
+            if admitted && narrowed {
+                bare_children.insert(child.attempt.clone());
             }
-            _ => Ok(true),
+            Ok::<_, McpGatewayError>(admitted)
         },
-    )
-    .map_err(|error| mcp_engine_error("board children failed", error))?;
-    let (mut tasks, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, pins, served)?;
+    )?;
+    let (mut tasks, scope_omitted) =
+        mcp_scoped_tasks_section(server, actor, rows, pins, served, &bare_children)?;
     let mut hooks = McpBoardHooks {
         blocks: tasks.tag_hook_pins(pins),
         receipt: None,
