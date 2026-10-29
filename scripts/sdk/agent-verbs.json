@@ -6087,7 +6087,7 @@
     },
     {
       "name": "self.off_record.execute",
-      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer.",
       "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
       "output": "crate::task_verb::sdk::OffRecordExecuted",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
@@ -9503,7 +9503,7 @@
     },
     {
       "name": "execute_code",
-      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.",
+      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
       "output": "crate::memory::foreign_code::ForeignCodeRunResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
@@ -9535,7 +9535,7 @@
     },
     {
       "name": "vault.code.type_diagnostics",
-      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.",
+      "description": "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref.",
       "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
       "output": "Option<crate::code_run::ProgramStepFeedbackRelease>",
       "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
