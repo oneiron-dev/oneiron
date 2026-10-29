@@ -175,8 +175,13 @@ impl RunHostDoor {
         goal: &oneiron::task_verb::DoneMeans,
     ) {
         let memory = agent_memory(&self.server, self.actor, origin, InvocationId::mint());
-        self.guests
-            .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
+        // FIX 10723: the capture writes for the run whose lease the origin
+        // seals, as the run's own rows do (FIX 3103).
+        let run_writes = RunWriteToken::of_origin(origin);
+        with_run_write_token(run_writes.as_ref(), || {
+            self.guests
+                .capture_task_run(&self.server, &memory, origin, task, type_ref, goal);
+        });
     }
 }
 
