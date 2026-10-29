@@ -404,11 +404,13 @@ pub(in crate::dreamer_consolidation) fn read_candidate<'s>(
         .ok_or_else(|| invalid_consolidation("extracted candidate names no value"))?
         .clone();
     let subject = resolve_subject(item, ctx.call.labels, ctx.people)?;
-    // The contract's predicate rule is the claim grammar's.
+    // The contract's predicate rule is the claim grammar's. A `placeholder`
+    // segment is a worked example's leak, never a fact's predicate.
     let predicate = item
         .get("predicate")
         .and_then(|value| value.as_str())
         .filter(|predicate| crate::claim::validate_predicate(predicate, false).is_ok())
+        .filter(|predicate| !predicate.split('.').any(|segment| segment == "placeholder"))
         .map(str::to_owned);
     let confidence = item
         .get("confidence")
