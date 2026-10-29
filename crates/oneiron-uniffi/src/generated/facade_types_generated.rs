@@ -2378,7 +2378,7 @@ pub struct WireReadScope {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub entity_types: Option<Vec<u8>>,
+    pub entity_types: Option<Vec<String>>,
     #[serde(rename = "max_sensitivity_band")]
     pub max_sensitivity_band: u8,
     #[serde(rename = "include_stale")]

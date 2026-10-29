@@ -499,6 +499,9 @@ impl<'a> EngineNativeExecutor<'a> {
         }
         record.bridge_calls.extend(host.bridge_calls);
         record.outputs.extend(host.captured);
+        // The rows the run's callables stood on, kept for its later steps
+        // and its readers (FIX 5763).
+        record.callable_rows = host.callable_rows;
         let bindings: Vec<(String, String)> = host
             .bound
             .iter()
