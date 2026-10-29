@@ -124,7 +124,10 @@ pub struct PersonaSnapshotMemoryPack {
     pub rows: Vec<PersonaSnapshotMemoryPackRow>,
 }
 
-/// Relationship rows carry only coarse text; the other rows retain sources.
+/// A memory-pack row. Relationship rows carry only coarse text; the other
+/// rows retain their sources — except in an Omit copy (FIX 1199), whose rows
+/// carry `row-N` labels with no mapping to the envelope's native
+/// `included_row_ids` and `struck_row_ids`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PersonaSnapshotMemoryPackRow {
     pub row_id: String,
