@@ -668,6 +668,7 @@ pub enum AgentVerb {
     VaultCodeIngressGet,
     VaultCodeOriginRegister,
     VaultCodeOriginMirrorGet,
+    VaultCodeOriginMirrorPlan,
     VaultCodeOriginMirrorSet,
     VaultCodeOriginMirrorStrategy,
     VaultCodeOriginMirrorClear,
@@ -1897,6 +1898,7 @@ impl AgentVerb {
         Self::VaultCodeIngressGet,
         Self::VaultCodeOriginRegister,
         Self::VaultCodeOriginMirrorGet,
+        Self::VaultCodeOriginMirrorPlan,
         Self::VaultCodeOriginMirrorSet,
         Self::VaultCodeOriginMirrorStrategy,
         Self::VaultCodeOriginMirrorClear,
@@ -3147,6 +3149,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => "vault.code.ingress.get",
             Self::VaultCodeOriginRegister => "vault.code.origin.register",
             Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
+            Self::VaultCodeOriginMirrorPlan => "vault.code.origin.mirror.plan",
             Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
             Self::VaultCodeOriginMirrorStrategy => "vault.code.origin.mirror.strategy",
             Self::VaultCodeOriginMirrorClear => "vault.code.origin.mirror.clear",
@@ -4388,6 +4391,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -5646,6 +5650,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -7021,6 +7026,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -8969,6 +8975,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorPlan => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
             Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
@@ -10199,6 +10206,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorPlan => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
             Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
@@ -12725,6 +12733,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginMirrorGet => {
                 "Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."
+            }
+            Self::VaultCodeOriginMirrorPlan => {
+                "Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review."
             }
             Self::VaultCodeOriginMirrorSet => {
                 "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."

@@ -2065,6 +2065,9 @@ impl OneironClient {
                 "vault.code.origin.mirror.get" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginMirrorView,
                 >(client, verb, &input),
+                "vault.code.origin.mirror.plan" => remote_agent_verb_output::<
+                    oneiron::origin::publish::OriginMirrorPlanView,
+                >(client, verb, &input),
                 "vault.code.origin.mirror.set" => remote_agent_verb_output::<
                     oneiron::origin::mirror::OriginMirrorTarget,
                 >(client, verb, &input),
@@ -11897,6 +11900,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.origin.mirror.get", value)
+    }
+    pub fn vault_code_origin_mirror_plan(
+        &self,
+        input: &oneiron::origin::publish::OriginMirrorPlanRequest,
+    ) -> Result<oneiron::origin::publish::OriginMirrorPlanView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.plan", value)
     }
     pub fn vault_code_origin_mirror_set(
         &self,

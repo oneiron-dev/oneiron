@@ -2216,6 +2216,8 @@ export class Oneiron {
         mirror: {
           /** Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner. */
           get: (input: Facade.OriginRepoRequest): Facade.OriginMirrorView => this.#call(() => this.#client.vaultCodeOriginMirrorGet(input) as Facade.OriginMirrorView),
+          /** Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review. */
+          plan: (input: Facade.OriginMirrorPlanRequest): Facade.OriginMirrorPlanView => this.#call(() => this.#client.vaultCodeOriginMirrorPlan(input) as Facade.OriginMirrorPlanView),
           /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked. */
           set: (input: Facade.OriginMirrorSetRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorSet(input) as Facade.OriginMirrorTarget),
           /** Set one served origin mirror's sync strategy: ask_me sends nothing until an exact request is approved, schedule pushes every published ref on its cadence, full_auto each new green head at once; unsent automatic work pauses. */

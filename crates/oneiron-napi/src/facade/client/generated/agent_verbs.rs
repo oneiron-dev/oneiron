@@ -5787,6 +5787,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_origin_mirror_plan(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.plan", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_origin_mirror_set(
         &self,
         input: serde_json::Value,

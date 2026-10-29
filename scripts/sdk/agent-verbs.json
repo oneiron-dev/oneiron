@@ -10277,6 +10277,21 @@
       "openapi": true
     },
     {
+      "name": "vault.code.origin.mirror.plan",
+      "description": "Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review.",
+      "input": "crate::origin::publish::OriginMirrorPlanRequest",
+      "output": "crate::origin::publish::OriginMirrorPlanView",
+      "call": "memory.origin_mirror_plan_as(&memory.embedded_owner(\"vault.code.origin.mirror.plan\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.origin.mirror.set",
       "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked.",
       "input": "crate::memory::origin_doors::OriginMirrorSetRequest",
