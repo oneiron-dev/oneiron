@@ -4722,6 +4722,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_secrets_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_secrets_custody_get(
         &self,
         input: serde_json::Value,

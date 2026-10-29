@@ -78,9 +78,9 @@ use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-mod pad_access;
-mod root_doors;
-mod secret_anchor;
+pub(crate) mod pad_access;
+pub(crate) mod root_doors;
+pub(crate) mod secret_anchor;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -92,7 +92,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 /// The material for one pending root request, as the target's caller
 /// supplies it. No `Debug`: it carries the kit.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 enum Material {
     /// An activation's first step: a kit for a fresh root, over the homes
@@ -130,7 +130,7 @@ enum Material {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RunRootRequest {
     /// The install this call's material is for, 32 hex: this one.
@@ -485,7 +485,7 @@ fn run_material(
 }
 
 /// One world key, by its world and generation.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct KeyView {
     world: String,
     generation: u64,
@@ -501,7 +501,7 @@ impl From<&WorldKeyId> for KeyView {
 }
 
 /// A key a door gave no new wrap, and why.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct WithheldView {
     #[serde(flatten)]
     key: KeyView,
@@ -527,7 +527,7 @@ fn withheld(list: &[(WorldKeyId, Withheld)]) -> Vec<WithheldView> {
 }
 
 /// What a re-pin did with each key.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct RepinView {
     rewrapped: Vec<KeyView>,
     withheld: Vec<WithheldView>,
@@ -554,7 +554,7 @@ impl From<&RepinReport> for RepinView {
 }
 
 /// What a restore did with each key wrapped to the bound root.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RestoreView {
     /// Opened and readable on this machine.
     usable: Vec<KeyView>,
@@ -581,14 +581,14 @@ impl From<&RootRestore> for RestoreView {
 
 /// One stored piece of an issued kit: its point and its recovery code, for
 /// this caller to place. A passphrase home has none.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct PieceCode {
     x: u8,
     recovery_code: String,
 }
 
 /// An issued kit: its public facts and its stored pieces.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct IssuedView {
     vault_id: String,
     kit_id: String,
@@ -600,7 +600,7 @@ struct IssuedView {
 }
 
 /// A confirmed kit: its root is live here.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct ConfirmedView {
     kit_id: String,
     root: String,
@@ -616,7 +616,7 @@ struct ConfirmedView {
 }
 
 /// What the target did, by `done`.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "done")]
 enum RootWorkReport {
     /// Answered refused: the request is closed.
@@ -646,7 +646,7 @@ enum RootWorkReport {
 }
 
 /// The target's answer: its report, and the engine's words for it.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct RootWorkAnswer {
     #[serde(flatten)]
     report: RootWorkReport,
@@ -704,4 +704,15 @@ impl RootWorkAnswer {
         };
         Self { report, text }
     }
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/requests/run`'s body
+/// (FIX 11611): [`RunRootRequest`].
+pub(crate) fn run_root_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RunRootRequest>()
+}
+
+/// The OpenAPI schema of the roots answers (FIX 11611): [`RootWorkAnswer`].
+pub(crate) fn root_work_answer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RootWorkAnswer>()
 }

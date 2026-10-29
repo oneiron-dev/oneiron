@@ -43,9 +43,63 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/weave/link/wrong", post(wrong_link))
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ScheduleCleared {
     cleared: bool,
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/weave/schedules`'s body (FIX 11611):
+/// [`WeaveScheduleView`].
+pub(crate) fn set_weave_schedule_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveScheduleView>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/weave/schedules`'s answer
+/// (FIX 11611): [`WeaveScheduleView`].
+pub(crate) fn weave_schedule_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveScheduleView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/schedules/clear`'s body
+/// (FIX 11611): [`WeaveReaderRef`].
+pub(crate) fn clear_weave_schedule_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReaderRef>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/schedules/clear`'s answer
+/// (FIX 11611): [`ScheduleCleared`].
+pub(crate) fn weave_schedule_cleared_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ScheduleCleared>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/link/wrong`'s body
+/// (FIX 11611): [`WeaveWrongLinkRequest`].
+pub(crate) fn weave_wrong_link_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveWrongLinkRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/link/wrong`'s answer
+/// (FIX 11611): [`WeaveLinkCorrectionView`].
+pub(crate) fn weave_link_correction_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveLinkCorrectionView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/report`'s body (FIX 11655):
+/// [`WeaveReportRequest`]. `POST /v1/owner/weave/lens` takes the same body.
+pub(crate) fn weave_report_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReportRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/report`'s answer (FIX 11655):
+/// [`WeaveReportView`].
+pub(crate) fn weave_report_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReportView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/lens`'s answer (FIX 11655):
+/// [`LensFrameCard`].
+pub(crate) fn weave_lens_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LensFrameCard>()
 }
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {

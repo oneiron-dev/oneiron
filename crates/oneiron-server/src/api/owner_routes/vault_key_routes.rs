@@ -97,6 +97,17 @@ impl<'de> Deserialize<'de> for SecretText {
     }
 }
 
+/// The wire form is the secret's text.
+impl schemars::JsonSchema for SecretText {
+    fn schema_name() -> String {
+        "SecretText".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 /// A secret the vault key unlocks or seals with.
 enum KeySecret {
     /// The vault password.
@@ -112,6 +123,29 @@ enum KeySecret {
 impl<'de> Deserialize<'de> for KeySecret {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_map(KeySecretVisitor)
+    }
+}
+
+/// [`KeySecret`]'s wire shape (FIX 11653 route (b)): the tag `method` with
+/// the `password` and `passkey` variants the map visitor reads, unknown
+/// fields refused. Never used at runtime.
+#[derive(schemars::JsonSchema)]
+#[schemars(rename = "KeySecret")]
+#[serde(tag = "method", rename_all = "snake_case", deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of KeySecret's wire shape")]
+enum KeySecretSchema {
+    Password { password: String },
+    Passkey { credential: String, prf: String },
+}
+
+/// The wire form is the internally tagged enum [`KeySecretSchema`] states.
+impl schemars::JsonSchema for KeySecret {
+    fn schema_name() -> String {
+        "KeySecret".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <KeySecretSchema as schemars::JsonSchema>::json_schema(generator)
     }
 }
 
@@ -229,7 +263,7 @@ async fn unlock(
     Ok(Json(report))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PasswordRequest {
     // Read straight into its guard, as KeySecret's password is (FIX 6670).
@@ -260,7 +294,7 @@ async fn set_password(
     Ok(Json(info))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PasskeyRequest {
     credential: String,
@@ -308,7 +342,7 @@ async fn add_device(
     Ok(Json(info))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RemoveRequest {
     /// The wrap's id: `password`, `passkey:<name>`, `escrow:<label>` or
@@ -316,7 +350,7 @@ struct RemoveRequest {
     id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Removed {
     removed: String,
 }
@@ -341,7 +375,7 @@ async fn remove(
     Ok(Json(removed))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RetireEscrowRequest {
     /// The released escrow recipient's label.
@@ -365,6 +399,73 @@ async fn retire_escrow(
     })
     .await?;
     Ok(Json(retired))
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/remove`'s body (FIX 11611):
+/// [`RemoveRequest`].
+pub(crate) fn remove_wrap_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RemoveRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/remove`'s answer
+/// (FIX 11611): [`Removed`].
+pub(crate) fn wrap_removed_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Removed>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/retire-escrow`'s body
+/// (FIX 11611): [`RetireEscrowRequest`].
+pub(crate) fn retire_escrow_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RetireEscrowRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/retire-escrow`'s answer
+/// (FIX 11611): [`EscrowRetirement`].
+pub(crate) fn escrow_retirement_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<EscrowRetirement>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/unlock`'s body
+/// (FIX 11611): [`KeySecret`].
+pub(crate) fn unlock_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<KeySecret>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/unlock`'s answer
+/// (FIX 11611): [`VaultKeyReport`].
+pub(crate) fn vault_key_report_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<VaultKeyReport>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/password`'s body
+/// (FIX 11611): [`PasswordRequest`].
+pub(crate) fn set_password_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PasswordRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/passkeys`'s body
+/// (FIX 11611): [`PasskeyRequest`].
+pub(crate) fn add_passkey_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PasskeyRequest>()
+}
+
+/// The OpenAPI schema of the vault-key wrap answers (FIX 11611): one wrap's
+/// public facts as [`VaultKeyWrapInfo`] reads on the wire: its id, its kind
+/// and when it was added. Hand-built: `oneiron-crypto` has no schemars
+/// dependency, so the kind is [`view::VaultKeyWrapKindSchema`]'s schema
+/// (FIX 11653 route (b)).
+pub(crate) fn vault_key_wrap_info_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["created_at", "id", "kind"],
+        "properties": {
+            "created_at": {"type": "integer", "format": "uint64", "minimum": 0.0},
+            "id": {"type": "string"},
+            "kind": oneiron_contracts::code_run::vault_read::request_schema::<
+                view::VaultKeyWrapKindSchema,
+            >(),
+        },
+    })
 }
 
 /// The vault, holding its data key: already held, unlocked with this

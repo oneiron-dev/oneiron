@@ -128,7 +128,7 @@ struct DigestQuery {
     id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct DigestView {
     /// The digest's stable locator (FIX 2332), as 64 hex: what its inbox
     /// NOTIFICATION names. Not a hash of what this reply shows.
@@ -210,7 +210,7 @@ async fn action_mode(
     Ok(Json(policy))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetActionMode {
     /// None clears the policy, and no night refreshes an index for it.
@@ -244,7 +244,7 @@ async fn stewardship(
     Ok(Json(rules))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetStewardship {
     rules: Vec<StewardshipRule>,
@@ -311,7 +311,7 @@ async fn review_representation(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ApproveRepresentation {
     /// A proposal id from `GET /v1/owner/representation`. The id is the
@@ -324,7 +324,7 @@ struct ApproveRepresentation {
     iana_timezone: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ApprovedView {
     proposal: String,
     intent_ref: String,
@@ -369,7 +369,7 @@ async fn approve_representation(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DeclineRepresentation {
     proposal: String,
@@ -842,7 +842,7 @@ async fn self_heal_minted(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct LabelFinding {
     family: String,

@@ -108,7 +108,7 @@ pub struct PackSetupCheckRecord {
 
 /// What the owner sees: the declaration, the instructions, the whole
 /// permission card and every connection's state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackSetupView {
     pub session_id: String,
     pub pack_name: String,
@@ -127,7 +127,7 @@ pub struct PackSetupView {
     pub ready: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackSetupConnectionState {
     pub id: String,
     pub secrets: Vec<PackSetupSecretState>,
@@ -139,7 +139,7 @@ pub struct PackSetupConnectionState {
     pub ready: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackSetupSecretState {
     pub name: String,
     /// A live custody record holds the name.
@@ -151,7 +151,7 @@ pub struct PackSetupSecretState {
     pub custody_id: Option<EntityId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackSetupPermissionState {
     pub id: String,
     pub granted: bool,
@@ -159,7 +159,7 @@ pub struct PackSetupPermissionState {
     pub decision_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PackSetupCheck {
     Unchecked,
@@ -180,7 +180,7 @@ pub enum PackSetupCheck {
 
 /// One owner answer. A credential's value never passes here: it goes to the
 /// owner secrets door, and this answer pins the custody record it made.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "answer", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PackSetupAnswer {
     SecretStored {

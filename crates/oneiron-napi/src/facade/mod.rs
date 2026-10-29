@@ -15,6 +15,7 @@ mod boundary;
 mod bridge;
 mod client;
 mod convert;
+mod custody_seal;
 mod dtos;
 mod input_error;
 mod js_json;
@@ -34,6 +35,7 @@ pub(crate) fn before_vault_open() {
     oneiron::panic_report::install_panic_hook();
 }
 pub use self::bridge::{ActorScopedVault, VaultBridge};
+pub use self::custody_seal::seal_custody_submit;
 // `numeric.rs` names this DTO through `super::`, as it did when both lived in
 // the flat file; it is the only DTO the rest of the crate reaches via `facade::`.
 pub(crate) use self::dtos::NapiClaimInput;

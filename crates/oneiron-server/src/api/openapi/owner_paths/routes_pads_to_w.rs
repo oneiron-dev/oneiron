@@ -372,6 +372,18 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/settings/room-threads",
+        summary: "The owner's two room-thread switches, as they read now.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/settings/room-threads",
+        summary: "Sets either switch, or both, and answers the two as they now read.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/skills/judge/decisions",
         summary: "The newest journal rows.",
         row: None,

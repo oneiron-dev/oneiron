@@ -34,8 +34,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/settings/backup", get(read).put(put))
 }
 
+/// The OpenAPI schema of `PUT /v1/owner/settings/backup`'s body (FIX 11611): [`BackupPolicy`].
+pub(crate) fn backup_policy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<BackupPolicy>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/settings/backup`'s answer (FIX 11611): [`BackupSetting`].
+pub(crate) fn backup_setting_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<BackupSetting>()
+}
+
 /// The owner's backup setting and the policy in force.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct BackupSetting {
     /// The owner's stored choice; `null` while he has made none.
     stored: Option<BackupPolicy>,

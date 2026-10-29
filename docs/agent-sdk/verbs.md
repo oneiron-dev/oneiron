@@ -548,6 +548,7 @@ both bindings and their export-census tests in one change.
 - `vault.secrets.register`
 - `vault.secrets.rotate`
 - `vault.secrets.rewrap`
+- `vault.secrets.revoke`
 - `vault.secrets.custody.get`
 - `vault.secrets.custody.submit`
 - `vault.widen_proposals`

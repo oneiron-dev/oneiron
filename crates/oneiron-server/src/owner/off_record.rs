@@ -41,7 +41,7 @@ pub(crate) struct Enter {
     pub(crate) backend: OffRecordBackendClass,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Flip {
     pub(crate) session_ref: String,
@@ -62,7 +62,7 @@ pub(crate) struct Witness {
     pub(crate) summary: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Promote {
     pub(crate) session_ref: String,
@@ -70,14 +70,14 @@ pub(crate) struct Promote {
     pub(crate) turn: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SessionName {
     pub(crate) session_ref: String,
 }
 
 /// One live session as the owner sees it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Session {
     pub(crate) session_ref: String,
     /// `off_record`, `on_record` or `anonymous`.
@@ -107,7 +107,7 @@ impl From<OffRecordSessionRecord> for Session {
 }
 
 /// What a promote wrote to the vault.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Promoted {
     /// Every row that entered the vault, by id.
     pub(crate) replayed: Vec<String>,
@@ -115,19 +115,19 @@ pub(crate) struct Promoted {
     pub(crate) short_ids: Vec<ShortIdPair>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct ShortIdPair {
     pub(crate) room: String,
     pub(crate) vault: String,
 }
 
 /// What a save of the whole talk wrote to the vault.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Saved {
     pub(crate) saved: Vec<SavedTurn>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct SavedTurn {
     pub(crate) turn: String,
     #[serde(flatten)]
