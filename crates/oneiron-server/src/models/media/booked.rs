@@ -59,9 +59,15 @@ impl MediaBackend for BookedReplies {
     fn submit<'a>(
         &'a self,
         request: MediaRequest,
+        key: Option<&'a str>,
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, String> {
-        Box::pin(holding_replies(&self.1, self.0.submit(request, lease)))
+        Box::pin(holding_replies(&self.1, self.0.submit(request, key, lease)))
+    }
+
+    /// FIX 2248: the wire it books for dedupes, or not.
+    fn submit_dedupes(&self) -> bool {
+        self.0.submit_dedupes()
     }
 
     fn poll<'a>(
