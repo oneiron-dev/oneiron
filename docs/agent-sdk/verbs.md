@@ -334,6 +334,7 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.propose`
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
+- `vault.shared.policy.changes`
 - `vault.federation.coreference.link`
 - `vault.federation.coreference.confirm`
 - `vault.federation.coreference.share_consent`
@@ -393,6 +394,10 @@ both bindings and their export-census tests in one change.
 - `vault.off_record.notes.create`
 - `vault.off_record.claims.upsert`
 - `self.off_record.execute`
+- `self.off_record.results.list`
+- `self.off_record.results.read`
+- `self.off_record.waits.get`
+- `self.off_record.waits.answer`
 - `vault.off_record.rooms.status`
 - `vault.off_record.rooms.start`
 - `vault.off_record.rooms.witness`
@@ -459,6 +464,9 @@ both bindings and their export-census tests in one change.
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.roots.requests.cancel`
+- `vault.roots.requests.create`
+- `vault.roots.requests.list`
+- `vault.owner_work.get`
 - `vault.cleanup.run`
 - `vault.cleanup.review`
 - `vault.cleanup.decide`
@@ -466,6 +474,7 @@ both bindings and their export-census tests in one change.
 - `vault.archive.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
+- `vault.usage.repair.receipts`
 - `vault.entities.mention`
 - `vault.legal_holds.place`
 - `vault.legal_holds.widen`
@@ -552,6 +561,7 @@ both bindings and their export-census tests in one change.
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`
+- `vault.lenses.export_pack`
 - `vault.lenses.select`
 - `vault.lenses.resolve`
 - `vault.lenses.result_set.action`
@@ -739,6 +749,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.spawn.get`
 - `vault.agents.spawn`
 - `vault.tasks.cancel.force`
+- `vault.tasks.comm_widen.revoke`
 - `vault.runs.branches.get`
 - `vault.runs.pause`
 - `vault.runs.resume`

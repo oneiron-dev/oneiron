@@ -38526,7 +38526,7 @@ pub(crate) async fn call_verb(
         "vault.task_types.get" => vault_task_types_get(server, call, input).await,
         "vault.agents.spawn.get" => vault_agents_spawn_get(server, call, input).await,
         "vault.agents.spawn" => vault_agents_spawn(server, call, input).await,
-        "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
+        "vault.tasks.cancel.force" => vault_tasks_cancel_force(server, call, input).await,
         "vault.tasks.comm_widen.revoke" => vault_tasks_comm_widen_revoke(server, call, input).await,
         "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
         "vault.runs.pause" => vault_runs_pause(server, call, input).await,

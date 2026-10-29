@@ -880,7 +880,7 @@ fn mcp_agent_verb_input(
         "vault.task_types.get" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.spawn.get" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.spawn" => a.spec.clone().ok_or_else(invalid),
-        "vault.tasks.cancel_force" => a.spec.clone().ok_or_else(invalid),
+        "vault.tasks.cancel.force" => a.spec.clone().ok_or_else(invalid),
         "vault.tasks.comm_widen.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.branches.get" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.pause" => a.spec.clone().ok_or_else(invalid),

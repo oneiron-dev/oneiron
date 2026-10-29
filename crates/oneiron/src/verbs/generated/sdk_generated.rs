@@ -7332,7 +7332,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.task_types.get",
     "vault.agents.spawn.get",
     "vault.agents.spawn",
-    "vault.tasks.cancel_force",
+    "vault.tasks.cancel.force",
     "vault.tasks.comm_widen.revoke",
     "vault.runs.branches.get",
     "vault.consults.get",
@@ -23957,7 +23957,7 @@ pub fn invoke(
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
         "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
         "vault.agents.spawn" => encode(vault_agents_spawn(memory, decode(value)?)?),
-        "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
+        "vault.tasks.cancel.force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
         "vault.tasks.comm_widen.revoke" => {
             encode(vault_tasks_comm_widen_revoke(memory, decode(value)?)?)
         }

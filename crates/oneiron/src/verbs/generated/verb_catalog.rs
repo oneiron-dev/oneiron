@@ -3175,7 +3175,7 @@ impl AgentVerb {
             Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
             Self::VaultAgentsSpawn => "vault.agents.spawn",
-            Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
+            Self::VaultTasksCancelForce => "vault.tasks.cancel.force",
             Self::VaultTasksCommWidenRevoke => "vault.tasks.comm_widen.revoke",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultRunsPause => "vault.runs.pause",

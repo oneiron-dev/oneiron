@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1214 code-mode rows (1174 host rows, 40 run rows), 4243 declarations.
-// Replies: 1088 fully typed, 125 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1230 code-mode rows (1190 host rows, 40 run rows), 4295 declarations.
+// Replies: 1098 fully typed, 131 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 110; unread shapes: none.
+// Opaque serde_json::Value leaves: 112; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -7226,8 +7226,10 @@ declare const vault: Sdk.VaultHost & {
     pin(input: Sdk.TaskTypeTreePin): Promise<Sdk.TaskTypeTreePinReceipt | StoredResult>;
   };
   tasks: {
-    /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
-    cancel_force(input: Sdk.CancelForceRequest): Promise<Sdk.CancelForceReceipt | StoredResult>;
+    cancel: {
+      /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+      force(input: Sdk.CancelForceRequest): Promise<Sdk.CancelForceReceipt | StoredResult>;
+    };
     comm_widen: {
       /** The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended. */
       revoke(input: Sdk.CommWidenRevokeRequest): Promise<Sdk.CommWidenRevokeReceipt | StoredResult>;
