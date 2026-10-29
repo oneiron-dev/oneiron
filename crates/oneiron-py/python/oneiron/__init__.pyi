@@ -265,16 +265,25 @@ class TaskAskPersonEvidence(TypedDict):
 # OF-181: a host-rendered lens card's event and close. These keep the wire's
 # camelCase keys: they are the server route's bodies, not snake_case DTOs.
 # `selectedContext` (FIX 3268): the clicker's selectionRefs on this card,
-# context for a model round trip only; empty when absent.
+# context for a model round trip only; empty when absent. `stream`
+# (FIX 11399): the profile the answer is framed in; a patch-profile caller
+# takes the card's refinement beside a local action's `$state`.
 LensFrameEventRequest = TypedDict(
     "LensFrameEventRequest",
     {
         "event": Facade.GeneratedUiActionEvent,
         "idempotencyKey": str,
         "selectedContext": NotRequired[list[str]],
+        "stream": NotRequired[Facade.GeneratedUiStreamProfile],
     },
 )
-LensFrameLocalReply = TypedDict("LensFrameLocalReply", {"$state": Facade.GeneratedUiStateSnapshot})
+LensFrameLocalReply = TypedDict(
+    "LensFrameLocalReply",
+    {
+        "$state": Facade.GeneratedUiStateSnapshot,
+        "refinement": NotRequired[Facade.GeneratedUiSegment | None],
+    },
+)
 LensFrameToolReply = TypedDict(
     "LensFrameToolReply",
     {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
@@ -3743,7 +3752,7 @@ class Oneiron:
             """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
         def usage(self, spec: Facade.LiveVoiceUsageRequest) -> Facade.LiveVoiceUsage:
             """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
-        def tool(self, spec: Facade.LiveVoiceToolRequest) -> Facade.LiveVoiceToolReply:
+        def tool(self, spec: Facade.LiveVoiceToolRequest) -> Facade.ActAnswer[Facade.LiveVoiceToolReply]:
             """Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards."""
         def end(self, spec: Facade.LiveVoiceSessionRequest) -> Facade.LiveVoiceProcessed:
             """Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."""

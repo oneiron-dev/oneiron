@@ -4441,7 +4441,7 @@ declare const ai: {
     /** Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates. */
     start(input: Sdk.LiveVoiceStartRequest): Promise<Sdk.LiveVoiceSession | StoredResult>;
     /** Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards. */
-    tool(input: Sdk.LiveVoiceToolRequest): Promise<Sdk.LiveVoiceToolReply | StoredResult>;
+    tool(input: Sdk.LiveVoiceToolRequest): Promise<Sdk.ActAnswer<Sdk.LiveVoiceToolReply> | StoredResult>;
     /** Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment. */
     usage(input: Sdk.LiveVoiceUsageRequest): Promise<Sdk.LiveVoiceUsage | StoredResult>;
   };

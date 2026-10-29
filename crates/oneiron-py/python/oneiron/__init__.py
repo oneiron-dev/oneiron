@@ -347,8 +347,10 @@ class Oneiron:
 
         ``request`` is the route's body, ``{"event": ..., "idempotencyKey":
         ...}``, with the event as the rendered card names it; its keys keep
-        the wire's camelCase (``cardId``, ``occurredAt``). The reply is the
-        wire JSON: ``{"$state": ...}`` for a local action, or ``{"outcome":
+        the wire's camelCase (``cardId``, ``occurredAt``). A patch-profile
+        caller also names ``"stream": "patch"`` (FIX 11399). The reply is
+        the wire JSON: ``{"$state": ...}`` for a local action (beside the
+        card's refinement for a patch-profile caller), or ``{"outcome":
         ..., "readReceipt": ...}`` for a deterministic tool. A card the server
         no longer holds raises ``NOT_FOUND``: render the lens again. An
         embedded handle raises ``BAD_REQUEST``: lens frames live on the

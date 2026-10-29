@@ -7,7 +7,7 @@ are `Any`, and the census below counts them.
 Census: 1187 facade rows, 4299 declarations.
 Inputs: 1116 of 1187 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1032 of 1187 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 118; unread shapes: 0.
+Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -22234,7 +22234,8 @@ class LensFrameEventRequest(TypedDict):
     event: GeneratedUiActionEvent
     idempotencyKey: str
     selectedContext: NotRequired[list[str]]
-LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot})
+    stream: NotRequired[GeneratedUiStreamProfile]
+LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot, "refinement": NotRequired[Any | None]})
 class LensFrameEventReplyTool(TypedDict):
     outcome: Any
     readReceipt: ScopedReadReceipt

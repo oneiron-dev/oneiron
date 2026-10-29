@@ -2701,7 +2701,7 @@ impl OneironClient {
                     oneiron::task_verb::sdk::LiveVoiceUsage,
                 >(client, verb, &input),
                 "ai.voice.tool" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::LiveVoiceToolReply,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::LiveVoiceToolReply>,
                 >(client, verb, &input),
                 "ai.voice.end" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::LiveVoiceProcessed,
@@ -14386,7 +14386,10 @@ impl OneironClient {
     pub fn ai_voice_tool(
         &self,
         input: &oneiron::task_verb::sdk::LiveVoiceToolRequest,
-    ) -> Result<oneiron::task_verb::sdk::LiveVoiceToolReply, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::LiveVoiceToolReply>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

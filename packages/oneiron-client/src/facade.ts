@@ -2068,7 +2068,7 @@ export interface FacadeResults {
   "ai.voice.events": Facade.LiveVoiceEvents;
   "ai.voice.ack": Facade.LiveVoiceProcessed;
   "ai.voice.usage": Facade.LiveVoiceUsage;
-  "ai.voice.tool": Facade.LiveVoiceToolReply;
+  "ai.voice.tool": Facade.ActAnswer<Facade.LiveVoiceToolReply>;
   "ai.voice.end": Facade.LiveVoiceProcessed;
   "ai.voice.close": Facade.LiveVoiceProcessed;
   "ai.anonymous_chat": Facade.AnonymousChatResponse;
