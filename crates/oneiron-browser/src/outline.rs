@@ -218,8 +218,16 @@ pub(crate) fn lines(nodes: &[Value], masks: &Masks) -> Vec<Line> {
             .map(|(secret, _)| (secret.as_str(), SECRET_MARK))
             .collect(),
     };
-    walk.visit(root, false, None);
+    walk.visit(root);
     walk.out
+}
+
+/// One step of an outline walk: a node to read, whether it is inside a
+/// control and the frame of the nearest node above that named one; or the
+/// end of a scope a node opened, once every node under it was read.
+enum Step<'a> {
+    Enter(&'a Value, bool, Option<&'a str>),
+    Leave,
 }
 
 struct Walk<'a> {
@@ -236,9 +244,35 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    /// Visits `raw` and the rows under it. `frame` is the frame of the
-    /// nearest node above that named one: a document's nodes are its frame's.
-    fn visit(&mut self, raw: &'a Value, in_control: bool, frame: Option<&'a str>) {
+    /// Visits `root` and the rows under it, in page order, with an explicit
+    /// stack (FIX 10330), so a deep tree reads as a shallow one does: each
+    /// node before its children, its children in order, and a scope it
+    /// opens closed once they were read. A node's frame is its own, else
+    /// the nearest one above that named one: a document's nodes are its
+    /// frame's.
+    fn visit(&mut self, root: &'a Value) {
+        let mut stack = vec![Step::Enter(root, false, None)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Enter(raw, in_control, frame) => {
+                    self.enter(raw, in_control, frame, &mut stack);
+                }
+                Step::Leave => {
+                    self.scope.pop();
+                }
+            }
+        }
+    }
+
+    /// Reads `raw`, then puts its children on `stack`, the first on top,
+    /// under the end of the scope it opens.
+    fn enter(
+        &mut self,
+        raw: &'a Value,
+        in_control: bool,
+        frame: Option<&'a str>,
+        stack: &mut Vec<Step<'a>>,
+    ) {
         if let Some(id) = raw.get("nodeId").and_then(Value::as_str)
             && !self.visited.insert(id)
         {
@@ -254,7 +288,6 @@ impl<'a> Walk<'a> {
             label,
         };
         let control = CONTROLS.contains(&node.role);
-        let mut scoped = false;
         if !ignored {
             // A control's own text is already its name.
             let read = READS.contains(&node.role)
@@ -265,24 +298,26 @@ impl<'a> Walk<'a> {
             }
             if SCOPES.contains(&node.role) && !node.name.is_empty() {
                 self.scope.push(format!("{} \"{}\"", node.role, node.key()));
-                scoped = true;
+                stack.push(Step::Leave);
             }
         }
         // A closed menu, list or tree shows its own row and none of its items.
         if state(raw, "expanded").as_deref() != Some("false") {
-            for child in raw
+            let by_id = self.by_id;
+            let children: Vec<&'a Value> = raw
                 .get("childIds")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-            {
-                if let Some(child) = child.as_str().and_then(|id| self.by_id.get(id)) {
-                    self.visit(child, in_control || control, frame);
-                }
-            }
-        }
-        if scoped {
-            self.scope.pop();
+                .filter_map(|child| child.as_str().and_then(|id| by_id.get(id).copied()))
+                .collect();
+            let inside = in_control || control;
+            stack.extend(
+                children
+                    .into_iter()
+                    .rev()
+                    .map(|child| Step::Enter(child, inside, frame)),
+            );
         }
     }
 
