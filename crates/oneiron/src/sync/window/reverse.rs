@@ -492,6 +492,7 @@ fn reverse_rematerialize_scan(
                 && crate::sync::room_facts::mirror_room_facts(
                     vault,
                     doc,
+                    window_key,
                     id,
                     header.entity_type,
                     &[],
