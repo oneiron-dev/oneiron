@@ -1741,7 +1741,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InboxConcernGroup",
@@ -37386,7 +37386,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {
@@ -37440,7 +37440,9 @@
       "InboxCheckInException",
       "InboxExceptionClass",
       "InboxGroup",
+      "InboxGroupCursor",
       "InboxGroupMember",
+      "InboxGroupPage",
       "InboxGroupReopen",
       "InboxPointerRow",
       "InboxQuery",
@@ -37450,11 +37452,11 @@
      "path": "src/inbox/model.rs",
      "purpose": "Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants",
      "surface": {
-      "const": 4,
-      "crate-vis": 12,
+      "const": 3,
+      "crate-vis": 13,
       "enum": 3,
-      "fn": 5,
-      "struct": 9
+      "fn": 8,
+      "struct": 11
      }
     },
     {
@@ -37483,7 +37485,7 @@
      "path": "src/inbox/projection.rs",
      "purpose": "Read-side inbox grouping projection, member classification, and dial surfacing",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -37496,6 +37498,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inbox/root_group.rs",
+     "purpose": "Complete root group cards (FIX 9871): every open Dreamer proposal in the tray, read in one pass with its…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -37515,6 +37527,17 @@
      "path": "src/inbox/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inbox/traversal.rs",
+     "purpose": "The complete pending traversal (FIX 9523, 9873): every stamped Dreamer run holding a pending consent, in the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
     },
     {
      "bucket": "m",
@@ -44335,6 +44358,7 @@
      "purpose": "PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 7
@@ -44960,6 +44984,16 @@
      "purpose": "The run review snapshot: the claim author, the member binding and the in-transaction review",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/topology.rs",
+     "purpose": "A reviewed topology event's effective state (FIX 9966): its verdict from the effective ledger's resolution…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -45757,6 +45791,16 @@
      "purpose": "Turn-speaker and message-envelope codec plus session alias formatting",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/linked.rs",
+     "purpose": "A base witness that commits its caller's own record with the turn (FIX 8533): the record runs in the turn's…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -57067,7 +57111,7 @@
      "path": "src/run_tree/signal.rs",
      "purpose": "Durable, branch-addressed Signal inbox",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 7,
       "struct": 5
@@ -74118,7 +74162,7 @@
      "purpose": "The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host…",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 12
      }
     },
@@ -75131,7 +75175,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DiaryEntryReceipt",
@@ -75142,6 +75186,7 @@
      "path": "src/verbs/self.rs",
      "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 4
      }
@@ -80352,7 +80397,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 9,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80478,7 +80523,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 287,
+     "files": 289,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81166,7 +81211,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5403,
+   "source_files": 5407,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86344,15 +86389,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ErasedHoldTarget",
       "RecordError",
       "RoomLiveSpeakersHold"
      ],
      "path": "src/error/record.rs",
      "purpose": "Record-domain errors: body validation and identity-collision refusals for the stored record families —…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
-      "enum": 1,
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -101388,6 +101435,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openapi/owner_rest_paths.rs",
+     "purpose": "The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289): each body and answer is read…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openapi/security.rs",
      "purpose": "Security-scheme wiring and schema property-description helper",
      "surface": {
@@ -101461,7 +101518,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -101871,7 +101928,7 @@
      "path": "src/api/owner_routes/owner_work_routes.rs",
      "purpose": "`/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -104616,7 +104673,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 15,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -104938,6 +104995,20 @@
      "purpose": "A sealed vault's page seal from this device's keystore (moved out of `server_config` whole)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyConfig"
+     ],
+     "path": "src/config/policy.rs",
+     "purpose": "The `[policy]` section: the host's wording and settings for the owner plane's policy notices (FIX 5042)…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -111682,7 +111753,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "re-export": 5,
       "struct": 5
      }
@@ -112276,7 +112347,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 592,
+     "files": 593,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112360,7 +112431,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 62,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -112768,7 +112839,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1353,
+   "source_files": 1355,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -113136,6 +113207,7 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactLinkToken",
+      "ArtifactPin",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPointerRequest",
@@ -113238,6 +113310,10 @@
       "BatchStep",
       "BatchStopCause",
       "BeginMessageStreamRequest",
+      "BindingMoveLink",
+      "BindingMoveState",
+      "BindingNotApplied",
+      "BindingSource",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -113378,6 +113454,7 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
+      "CalibrationResult",
       "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
@@ -113518,6 +113595,8 @@
       "CheckoutTakeoverInput",
       "CheckoutTeardownInput",
       "CheckoutTornDown",
+      "CheckpointFileKind",
+      "CheckpointFilePin",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
@@ -114374,6 +114453,7 @@
       "ExplainScoreEvidence",
       "ExportAnswer",
       "ExportChannel",
+      "ExportCheck",
       "ExportDiaryRead",
       "ExportTransfer",
       "ExternalImportDoor",
@@ -114650,6 +114730,7 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
+      "HeldOutResult",
       "HeldOutSelection",
       "HolderKind",
       "HookActorClass",
@@ -114792,6 +114873,7 @@
       "InboxExceptionClass",
       "InboxGroup",
       "InboxGroupMember",
+      "InboxGroupPage",
       "InboxLensConcern",
       "InboxLensDiaryReview",
       "InboxLensKind",
@@ -115541,6 +115623,7 @@
       "PendingActMatured",
       "PendingActStarted",
       "PendingAuthorityAct",
+      "PendingEmbedderBinding",
       "PendingProposalKind",
       "PendingProposalView",
       "PeopleListRequest",
@@ -115559,6 +115642,7 @@
       "PersonaSnapshotPreviewRequest",
       "PersonaSnapshotPreviewRow",
       "PersonaSnapshotTextEdit",
+      "PinnedCheckpoint",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -115765,6 +115849,7 @@
       "QuestionDefinitionDecisionQuestion",
       "QuestionDefinitionDecisionQuestionInput",
       "QuestionEditRequest",
+      "QuestionExportCheck",
       "QuestionMedia",
       "QuestionOutcomes",
       "QuestionOutcomesProjectRequest",
@@ -116085,6 +116170,7 @@
       "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
+      "RoleSwapReceipt",
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomClaimRequest",
@@ -116597,6 +116683,7 @@
       "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
+      "SourcePin",
       "SourceSpan",
       "SourceTrust",
       "SourceTrustRow",
@@ -116715,6 +116802,7 @@
       "SupportGrantView",
       "SupportHolderClass",
       "SurfaceBand",
+      "SwapChoice",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -117134,8 +117222,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1027,
-      "struct": 3137
+      "enum": 1032,
+      "struct": 3149
      }
     },
     {

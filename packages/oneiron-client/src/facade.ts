@@ -1367,7 +1367,7 @@ export interface FacadeResults {
   "vault.weave.owner.digest.render": Facade.WeaveDigestRendered | null;
   "vault.inbox.concerns.review": Facade.DreamerAttemptRef;
   "vault.inbox.lens": Facade.InboxLensPage;
-  "vault.inbox.groups": Facade.InboxGroup[];
+  "vault.inbox.groups": Facade.InboxGroupPage;
   "vault.weave.digest.render": Facade.WeaveDigestRendered | null;
   "vault.weave.link.corrections": Facade.WeaveLinkCorrectionView[];
   "self.inbox.lens": Facade.InboxLensPage;
@@ -2548,7 +2548,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.weave.owner.digest.render": { description: "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.inbox.concerns.review": { description: "Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.inbox.lens": { description: "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.inbox.groups": { description: "Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.inbox.groups": { description: "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.digest.render": { description: "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.weave.link.corrections": { description: "Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "self.inbox.lens": { description: "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -2823,7 +2823,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.courtesy_delete.sent": { description: "Every courtesy delete ask this vault sent, with its delivery status, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.incoming": { description: "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.answer": { description: "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.embedding_spaces.list": { description: "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.list": { description: "Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.declare": { description: "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.bind": { description: "Binds one kind slot to a declared space, or returns it to its default when no space is named.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.one_space": { description: "Binds every kind slot the space accepts, text included, to that one space.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4102,7 +4102,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
         /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
         lens: (input: Facade.InboxLensRequest, options?: O): FacadeReturns<"vault.inbox.lens">[K] => invoke("vault.inbox.lens", input, options, newInvocation()),
-        /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
+        /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
         groups: (input: Facade.InboxRunGroupsRequest, options?: O): FacadeReturns<"vault.inbox.groups">[K] => invoke("vault.inbox.groups", input, options, newInvocation()),
       },
       skills: {
@@ -4828,7 +4828,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         answer: (input: Facade.CourtesyDeleteAnswerRequest, options?: O): FacadeReturns<"vault.courtesy_delete.answer">[K] => invoke("vault.courtesy_delete.answer", input, options, newInvocation()),
       },
       embedding_spaces: {
-        /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+        /** Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move. */
         list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.list">[K] => invoke("vault.embedding_spaces.list", input, options, newInvocation()),
         /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
         declare: (input: Facade.EmbeddingSpaceDeclareRequest, options?: O): FacadeReturns<"vault.embedding_spaces.declare">[K] => invoke("vault.embedding_spaces.declare", input, options, newInvocation()),

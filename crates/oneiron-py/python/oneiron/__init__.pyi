@@ -1222,8 +1222,8 @@ class Oneiron:
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
         def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
-        def groups(self, spec: Facade.InboxRunGroupsRequest) -> list[Facade.InboxGroup]:
-            """Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."""
+        def groups(self, spec: Facade.InboxRunGroupsRequest) -> Facade.InboxGroupPage:
+            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
     class _VaultInboxConcernsVerbs:
         def review(self, spec: Facade.EmptyRequest | None = None) -> Facade.DreamerAttemptRef:
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
@@ -1989,7 +1989,7 @@ class Oneiron:
             """The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where."""
     class _VaultEmbeddingSpacesVerbs:
         def list(self, spec: Facade.EmptyRequest | None = None) -> Facade.EmbeddingSpacesView:
-            """Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."""
+            """Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move."""
         def declare(self, spec: Facade.EmbeddingSpaceDeclareRequest) -> Facade.EmbeddingSpacesView:
             """Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."""
         def bind(self, spec: Facade.EmbeddingSpaceBindRequest) -> Facade.EmbeddingSpacesView:
