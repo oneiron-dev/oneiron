@@ -15133,7 +15133,7 @@
      "path": "src/code_run/blocked.rs",
      "purpose": "Witnessed, reference-addressed self-reports",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -15390,7 +15390,7 @@
      "path": "src/code_run/dispatcher/admission.rs",
      "purpose": "The admission of the run door and its answered dispatch bracket",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -15820,7 +15820,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "mod": 7,
       "re-export": 25
      }
@@ -16362,7 +16362,7 @@
      "path": "src/code_run/spawn_replay.rs",
      "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -17070,7 +17070,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -18929,7 +18929,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -31975,6 +31975,16 @@
      "notable": [],
      "path": "src/engine_executor/compaction_host/check_evidence.rs",
      "purpose": "The retained evidence of a self-written summary's span, as its Dreamer check reads it (FIX 4465 B): the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction_host/pending.rs",
+     "purpose": "Sealing one compaction window and returning its typed hook Pending",
      "surface": {
       "crate-vis": 1
      }
@@ -58331,15 +58341,16 @@
      "kind": "src",
      "notable": [
       "HookBlock",
-      "HookBlockLifetime"
+      "HookBlockLifetime",
+      "HookTurnTarget"
      ],
      "path": "src/runtime_hooks/block.rs",
      "purpose": "Hook blocks (ARCH-0080 §11): the timed pins an AddBlock outcome leaves for a recipient's next board deliveries",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 2,
-      "struct": 1
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -58505,7 +58516,7 @@
      "path": "src/runtime_hooks/read.rs",
      "purpose": "The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through the reader's `ScopedRead` lane…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -58563,7 +58574,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/runtime_hooks/replay/body.rs",
@@ -58657,7 +58668,7 @@
      "purpose": "Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 15,
       "enum": 5,
       "fn": 7,
       "struct": 4
@@ -58670,7 +58681,17 @@
      "path": "src/runtime_hooks/store.rs",
      "purpose": "The runner's durable rows: cursors, the run memo, saved intents, the Hook receipts and the run index…",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 33
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/store/erase.rs",
+     "purpose": "Source-erasure teardown for retained hook payloads",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -58721,7 +58742,7 @@
      "path": "src/runtime_hooks/verb/chain/run.rs",
      "purpose": "One verb-hook run (ARCH-0080 §3): its body run under the hook's grant, the verdict, the engine's own checks…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -58868,7 +58889,7 @@
      "path": "src/runtime_hooks/verb/storage.rs",
      "purpose": "Where one verb hook chain reads content and keeps its records (WILL L11-01 S01-2c): the vault, or a…",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 34
      }
     },
     {
@@ -58889,6 +58910,16 @@
      "purpose": "A room's hook pause (FIX 5524; Engine 10-20, a widening of the 2c-3 call): a hook in an off-record room asks…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/storage/session_ask.rs",
+     "purpose": "Session-owned typed asks in the keep: open, read, answer and rollback",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -71341,7 +71372,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -71959,6 +71990,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/create_facade/hook_effect.rs",
+     "purpose": "Transaction-composable, brief-less task creation for engine effects",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72414,7 +72455,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 56,
+      "crate-vis": 57,
       "fn": 1,
       "mod": 5,
       "re-export": 30
@@ -72773,6 +72814,16 @@
      "purpose": "Live TASK dependency and symbol readiness at every attempt-claim door",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/session_ask.rs",
+     "purpose": "Session-owned typed asks for off-record hook pauses (FIX 10087)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -74218,7 +74269,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 2
      }
     },
@@ -74940,6 +74991,16 @@
      "surface": {
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault_shape/item_refs.rs",
+     "purpose": "The entities a journal item's landing names, kept on the item where its door lands or refuses it (FIX 11151…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81946,7 +82007,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82506,7 +82567,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 42,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82744,7 +82805,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 154,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82842,7 +82903,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)"
     },
     "vault_shape": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82928,7 +82989,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5542,
+   "source_files": 5548,
    "test_files": 902
   },
   "oneiron-android": {

@@ -58,14 +58,18 @@ use crate::session_overlay::{SessionOverlay, TxnSegmentGuard};
 use crate::side_table::{RoutedDbs, SideTableDbs};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::store::SessionStoreView;
+use crate::task_verb::{
+    SessionAskParts, SessionAskRecord, TaskAskAnswer, TaskAskStatus, TaskAskWord,
+};
 use crate::work_line::TaskWorkTurn;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, MemoryError, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
 
 mod named_pause;
 mod room_pause;
+mod session_ask;
 
 pub(super) use room_pause::PausedRoute;
 pub(crate) use room_pause::RoomHookCall;
@@ -227,6 +231,8 @@ struct Kept {
     overlay: Arc<SessionOverlay>,
     /// The calls its hooks' asks paused, by invocation.
     asks: HashMap<[u8; 16], KeptAsk>,
+    /// Their typed questions, answers and settlements, by group (FIX 10087).
+    ask_records: HashMap<EntityId, SessionAskRecord>,
 }
 
 /// A paused call as the keep holds it, with when its ask paused it and when
@@ -328,30 +334,6 @@ impl SessionHookKeep {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(key);
-    }
-
-    /// Saves the call `invocation`'s hook ask paused under `key`, over any
-    /// earlier one: false, saving nothing, once its session is closing or
-    /// gone.
-    pub(super) fn save_ask(
-        &self,
-        vault: &Vault,
-        key: &SessionHookKey,
-        invocation: [u8; 16],
-        ask: SessionVerbAsk,
-    ) -> bool {
-        let paused_at = vault.store.clock.now_recorded_at();
-        self.with_live(vault, key, |kept| {
-            kept.asks.insert(
-                invocation,
-                KeptAsk {
-                    ask,
-                    paused_at,
-                    used_at: None,
-                },
-            );
-        })
-        .is_some()
     }
 
     /// The call `invocation`'s hook ask paused under `key`, if this process
@@ -479,6 +461,7 @@ impl SessionHookKeep {
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
             overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
             asks: HashMap::new(),
+            ask_records: HashMap::new(),
         })))
     }
 }
