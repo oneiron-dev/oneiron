@@ -223,6 +223,7 @@ pub fn seal_conversation_flight(
     );
     if let Some(stop) = hooks.pending() {
         driver.backend().end_flight();
+        driver.abandon();
         return Err(Why::Pending(stop.clone()));
     }
     let Ok(request) = driver.seal_request(

@@ -159,7 +159,7 @@ impl EngineNativeExecutor<'_> {
                 // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
                 let (live, room) = super::compaction::live_fork::capture(driver, request);
                 let (epoch, hooks) = match watermark {
-                    Some(at) => match pending::seal_compaction_window(
+                    Some(at) => match self.seal_compaction_window(
                         driver,
                         config,
                         record,

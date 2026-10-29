@@ -6,7 +6,7 @@ use super::*;
 impl SessionHookKeep {
     /// Opens one session-owned typed ask and its paused call atomically in
     /// the keep. An existing group replays; no base row or fanout exists.
-    pub(super) fn open_ask(
+    pub(in super::super) fn open_ask(
         &self,
         vault: &Vault,
         key: &SessionHookKey,
@@ -34,7 +34,7 @@ impl SessionHookKeep {
     }
 
     /// Rolls back a newly opened ask if the chain's own write fails.
-    pub(super) fn discard_ask(
+    pub(in super::super) fn discard_ask(
         &self,
         key: &SessionHookKey,
         group: EntityId,
