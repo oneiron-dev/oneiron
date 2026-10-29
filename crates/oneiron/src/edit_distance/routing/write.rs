@@ -3,10 +3,13 @@
 use super::keys::{
     AGGREGATE, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, aggregate_key, invalid,
 };
-use super::outcomes::run_outcome_in_txn;
+use super::outcomes::{run_outcome_in_txn, task_of_run_in_txn};
 use super::scope::RoutingScopeKey;
 use crate::Vault;
-use crate::edit_distance::attribution::{AmendmentClass, AmendmentJudgment, amendment_judgments};
+use crate::edit_distance::attribution::{
+    AmendmentClass, AmendmentJudgment, amendment_judgment_in_txn, amendment_judgments,
+};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 // ---------------------------------------------------------------------------
@@ -29,8 +32,9 @@ use crate::error::{Error, Result};
 ///
 /// **Paired with how the work ended.** The fold counts the anchored outcome of
 /// the TASK the run worked, joined through the run's own receipts, beside the
-/// edit mass (FIX 7828). A TASK not settled yet adds no count; a later
-/// rebuild reads it once it settles.
+/// edit mass (FIX 7828). A TASK not settled yet adds no count; the
+/// settle-time refold counts it in the settling write (FIX 11618), and a
+/// rebuild reads it too.
 ///
 /// **One fold per receipt.** A receipt already folded is never re-folded, so
 /// two calls never count the same amendment twice. Re-judging a receipt is
@@ -48,9 +52,10 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
     };
     let member_key = delta_receipt.to_owned();
     let scope_row_key = aggregate_key(&head_of(&judgment))?;
-    let member = StoredExecutor {
+    let mut member = StoredExecutor {
         v: ROW_VERSION,
         executor: judgment.executor_key().to_owned(),
+        outcome: None,
     };
 
     vault.with_write_txn_grouped(|wtxn| {
@@ -67,6 +72,7 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         // folded, so a later re-judgment reaches its head on rebuild, but
         // weighs nothing until then.
         if let Some(fold) = fold_of(&judgment, outcome)? {
+            member.outcome.clone_from(&fold.outcome);
             let mut aggregate = AGGREGATE
                 .get(&vault.store, &*wtxn, &scope_row_key)?
                 .unwrap_or_default();
@@ -169,4 +175,79 @@ fn judgment_for(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentJudgm
     Ok(amendment_judgments(vault)?
         .into_iter()
         .find(|judgment| judgment.receipt_id == receipt_id))
+}
+
+/// Counts `task`'s anchored outcome on every already-folded receipt whose
+/// run worked that TASK, in a savepoint of the settling write (FIX 11618):
+/// a fold that landed before the settle counted no outcome, and without
+/// this the counts would wait for the next rebuild. Each member row keeps
+/// the outcome its fold counted, so the refold moves the head's counts from
+/// that outcome to the one that stands now instead of recounting — a
+/// re-settled or re-anchored TASK converges, and a receipt whose judgment
+/// holds counts nothing either way. A refold that fails lands nothing and
+/// never fails the settlement it rides.
+pub(crate) fn refold_task_outcomes_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+) {
+    let landed = vault
+        .store
+        .env
+        .nested_write_txn(txn)
+        .map_err(Error::from)
+        .and_then(|mut savepoint| {
+            refold_task_in_txn(vault, &mut savepoint, task)?;
+            Ok(savepoint.commit()?)
+        });
+    if let Err(error) = landed {
+        tracing::warn!(
+            kind = ?error.kind(),
+            task = %task.to_hex(),
+            "a settle-time routing refold did not land; the settlement stands"
+        );
+    }
+}
+
+/// [`refold_task_outcomes_in_txn`]'s write, in the caller's savepoint.
+fn refold_task_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, task: EntityId) -> Result<()> {
+    for receipt_id in MEMBER.scan_keys(&vault.store, &*txn, &[])? {
+        let Some(judgment) = amendment_judgment_in_txn(vault, &*txn, &receipt_id)? else {
+            continue;
+        };
+        if task_of_run_in_txn(vault, &*txn, &judgment)? != Some(task) {
+            continue;
+        }
+        let Some(mut member) = MEMBER.get(&vault.store, &*txn, &receipt_id)? else {
+            continue;
+        };
+        let outcome = run_outcome_in_txn(vault, &*txn, &judgment)?;
+        let counted = if fold_of(&judgment, None)?.is_some() {
+            outcome
+        } else {
+            None
+        };
+        if counted == member.outcome {
+            continue;
+        }
+        let key = aggregate_key(&head_of(&judgment))?;
+        let Some(mut aggregate) = AGGREGATE.get(&vault.store, &*txn, &key)? else {
+            continue;
+        };
+        if let Some(old) = &member.outcome
+            && let Some(count) = aggregate.outcomes.get_mut(old)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                aggregate.outcomes.remove(old);
+            }
+        }
+        if let Some(new) = &counted {
+            *aggregate.outcomes.entry(new.clone()).or_insert(0) += 1;
+        }
+        AGGREGATE.put(&vault.store, txn, &key, &aggregate)?;
+        member.outcome = counted;
+        MEMBER.put(&vault.store, txn, &receipt_id, &member)?;
+    }
+    Ok(())
 }
