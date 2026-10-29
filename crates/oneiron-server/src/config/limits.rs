@@ -387,6 +387,7 @@ impl LimitsConfig {
             connector_charter_caps,
             connector_catalog_verbs,
             connector_dispatch_batch,
+            community_cache_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -618,6 +619,7 @@ impl LimitsConfig {
                 EngineLimit::ConnectorDispatchBatch,
                 connector_dispatch_batch,
             ),
+            (EngineLimit::CommunityCacheBytes, community_cache_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -859,4 +861,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) connector_charter_caps: Option<u64>,
     pub(super) connector_catalog_verbs: Option<u64>,
     pub(super) connector_dispatch_batch: Option<u64>,
+    pub(super) community_cache_bytes: Option<u64>,
 }

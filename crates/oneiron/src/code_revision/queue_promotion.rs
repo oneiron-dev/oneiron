@@ -11,15 +11,16 @@
 //! reviewed import manifest (FIX 6869, G4 PR1). The root's receipt is
 //! exactly its typed import approval, judged again on every read, and
 //! without one it is a named gap, never an approval.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::CodeRevision;
 use super::promotion::{promotion_receipt_in_txn, put_promotion_receipt_in_txn};
 use super::storage::{get_code_revision_in_txn, read_code_revision_record_in_txn};
 use super::tree_inventory::document_mode;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::merge_queue::{GreenQueueRevision, QueueTestedTarget};
 use crate::repo_mutation::proposal::RepoProposalStatus;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Vault};
 
 /// Why a tested queue revision cannot be promoted yet.
@@ -142,18 +143,30 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let mut root = read_code_revision_record_in_txn(&self.store, &txn, &revision_id)?
                 .ok_or(Error::EntityNotFound)?;
-            for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
+            let mut count = ScanCount::start(
+                &self.store,
+                &txn,
+                EngineScan::DagWalkRecords,
+                revision_id.as_bytes(),
+            )?;
+            let mut visited = HashSet::new();
+            loop {
+                if !visited.insert(root.revision_id) {
+                    count.defer(&self.store);
+                    return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                        "code revision parent chain contains a cycle",
+                    )));
+                }
+                count.row();
                 let Some(parent) = root.parent_revision_id else {
                     break;
                 };
                 root = read_code_revision_record_in_txn(&self.store, &txn, &parent)?
                     .ok_or(Error::EntityNotFound)?;
             }
+            count.defer(&self.store);
             root
         };
-        if root.parent_revision_id.is_some() {
-            return Err(Error::IndexOverflow("tested queue revision chain"));
-        }
         Ok(self.baseline_promotion_receipt(&root)?.err())
     }
 
@@ -193,13 +206,29 @@ impl Vault {
     /// promoted one: newest first.
     fn unpromoted_queue_chain(&self, revision_id: EntityId) -> Result<Vec<CodeRevision>> {
         let txn = self.store.env.read_txn()?;
+        let mut count = ScanCount::start(
+            &self.store,
+            &txn,
+            EngineScan::DagWalkRecords,
+            revision_id.as_bytes(),
+        )?;
+        let mut visited = HashSet::new();
         let mut chain = Vec::new();
         let mut next = Some(revision_id);
-        for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
+        loop {
             let Some(id) = next else {
+                count.defer(&self.store);
                 return Ok(chain);
             };
+            if !visited.insert(id) {
+                count.defer(&self.store);
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                    "code revision parent chain contains a cycle",
+                )));
+            }
+            count.row();
             if promotion_receipt_in_txn(&self.store, &txn, &id)?.is_some() {
+                count.defer(&self.store);
                 return Ok(chain);
             }
             let revision = if chain.is_empty() {
@@ -211,7 +240,6 @@ impl Vault {
             next = revision.parent_revision_id;
             chain.push(revision);
         }
-        Err(Error::IndexOverflow("tested queue revision chain"))
     }
 
     /// The receipt ids that promote `revision` once its parent is promoted:
