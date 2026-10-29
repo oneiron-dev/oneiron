@@ -23,15 +23,22 @@ impl PipelineBuilder<'_> {
             return Ok(Vec::new());
         }
 
+        let txn = self.vault.store.env.read_txn()?;
+        let world_scope = self.neighbor_world_scope(&txn)?;
+        let claim_ids = self
+            .vault
+            .claims_for_subject_in_txn(&txn, affected_person)?;
         let mut records = Vec::new();
-        for claim_id in self.vault.claims_for_subject(affected_person)? {
-            let Some(body) = self.vault.get_claim(&claim_id)? else {
+        for claim_id in claim_ids {
+            let Some(body) = self.vault.get_claim_in_txn(&txn, &claim_id)? else {
                 continue;
             };
             if body.predicate != COPING_OUTCOME_PREDICATE || !claim_surfaceable(&body) {
                 continue;
             }
-            if !claim_matches_corpus(&corpus_scope, &body) {
+            if !claim_matches_corpus(&corpus_scope, &body)
+                || !world_scope.admits(&self.read, &txn, &claim_id)?
+            {
                 continue;
             }
             validate_coping_outcome_claim_structure(&body)?;
@@ -41,9 +48,13 @@ impl PipelineBuilder<'_> {
             if !value.successful() {
                 continue;
             }
+            let learned_at =
+                crate::pipeline::support::read_entity_metadata(&self.read, &txn, &claim_id)?
+                    .ok_or(Error::EntityNotFound)?
+                    .learned_at;
             records.push(CopingOutcomeRecord {
                 claim_id,
-                learned_at: self.vault.get_learned_at(&claim_id)?,
+                learned_at,
                 valid_from: body.valid_from.ok_or(Error::InvalidClaimBody(
                     "coping.outcome valid_from is required",
                 ))?,
