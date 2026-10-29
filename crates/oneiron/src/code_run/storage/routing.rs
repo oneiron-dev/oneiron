@@ -15,8 +15,8 @@ use super::super::replay::{
 };
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output,
-    finish_output_sourced, load_whole_body, read_body_row_range, replay_generation_matches,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
+    load_whole_body, read_body_row_range, replay_generation_matches,
 };
 use super::response_erase::fence_replay_in_txn;
 use super::response_owners::stamp_response_owner_in_txn;

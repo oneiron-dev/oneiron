@@ -33,8 +33,8 @@ pub(crate) use self::bodies::{
     code_run_row_inline, lift_code_run_file_hold_in_txn,
 };
 pub(super) use self::bodies::{
-    body_drifted, finish_output, load_whole_body, open_body_file, owned_body,
-    raw_put_publishes_descriptor, read_body_row_range,
+    body_drifted, finish_output, finish_output_sourced, load_whole_body, open_body_file,
+    owned_body, raw_put_publishes_descriptor, read_body_row_range,
 };
 
 /// The replay record of one run, keyed by run id.
