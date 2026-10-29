@@ -876,6 +876,11 @@ export_facade! {
     let output = client.vault_turn_programs_disarm(&input)?;
     crate::codec::lift_record("vault.turn_programs.disarm", &output)
 };
+"vault.turn_programs.rebind" => fn vault_turn_programs_rebind(&self, input: TurnProgramRebindRequest) -> TurnProgramRebindReceipt = |client| {
+    let input: oneiron::dreamer_runner::TurnProgramRebindRequest = crate::codec::lower_record("vault.turn_programs.rebind", input)?;
+    let output = client.vault_turn_programs_rebind(&input)?;
+    crate::codec::lift_record("vault.turn_programs.rebind", &output)
+};
 "self.saved_query.create" => fn self_saved_query_create(&self, input: SavedQueryCreateRequest) -> SavedQueryRecordView = |client| {
     let input: oneiron::campaign::surface::SavedQueryCreateRequest = crate::codec::lower_record("self.saved_query.create", input)?;
     let output = client.self_saved_query_create(&input)?;

@@ -574,6 +574,9 @@ impl OneironClient {
                 "vault.turn_programs.disarm" => {
                     remote_agent_verb_output::<bool>(client, verb, &input)
                 }
+                "vault.turn_programs.rebind" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::TurnProgramRebindReceipt,
+                >(client, verb, &input),
                 "self.saved_query.create" => remote_agent_verb_output::<
                     oneiron::campaign::surface::SavedQueryRecordView,
                 >(client, verb, &input),
@@ -5966,6 +5969,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.turn_programs.disarm", value)
+    }
+    pub fn vault_turn_programs_rebind(
+        &self,
+        input: &oneiron::dreamer_runner::TurnProgramRebindRequest,
+    ) -> Result<oneiron::dreamer_runner::TurnProgramRebindReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.turn_programs.rebind", value)
     }
     pub fn self_saved_query_create(
         &self,

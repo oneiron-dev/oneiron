@@ -323,6 +323,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.campaign.program.archive" => a.spec.clone().ok_or_else(invalid),
         "vault.turn_programs.arm" => a.spec.clone().ok_or_else(invalid),
         "vault.turn_programs.disarm" => a.spec.clone().ok_or_else(invalid),
+        "vault.turn_programs.rebind" => a.spec.clone().ok_or_else(invalid),
         "self.saved_query.create" => a.spec.clone().ok_or_else(invalid),
         "self.saved_query.read" => a.spec.clone().ok_or_else(invalid),
         "self.saved_query.update" => a.spec.clone().ok_or_else(invalid),
@@ -2059,6 +2060,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.turn_programs.disarm" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.turn_programs.rebind" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.saved_query.create" => {
@@ -7728,6 +7732,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::dreamer_runner::DisarmTurnProgram =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_turn_programs_disarm(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.turn_programs.rebind" => {
+            let input: oneiron::dreamer_runner::TurnProgramRebindRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_turn_programs_rebind(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

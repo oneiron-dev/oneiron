@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1192 facade rows, 4309 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1144.
+// UniFFI census: 1193 facade rows, 4311 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1145.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -12932,6 +12932,29 @@ pub struct TurnProgramRegistration {
 pub struct DisarmTurnProgram {
     #[serde(rename = "registration")]
     pub registration: String,
+}
+
+/// `oneiron::dreamer_runner::program::rebind::TurnProgramRebindRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TurnProgramRebindRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+}
+
+/// `oneiron::dreamer_runner::program::rebind::TurnProgramRebindReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TurnProgramRebindReceipt {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "admission")]
+    pub admission: String,
+    #[serde(rename = "predecessor_slip")]
+    pub predecessor_slip: String,
+    #[serde(rename = "successor_slip")]
+    pub successor_slip: String,
+    #[serde(rename = "owner_work")]
+    pub owner_work: bool,
 }
 
 /// `oneiron::campaign::surface::saved_query::SavedQueryScopeSpec`.

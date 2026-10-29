@@ -230,8 +230,8 @@ pub use oneiron_contracts::memory::{
 };
 pub use people_verbs::{
     GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
-    GrantAskedRow, MessagePersonReceipt, MessagePersonRequest, PEOPLE_PAGE_SIZE,
-    PeopleListRequest, PeoplePage, PersonRequest,
+    GrantAskedRow, MessagePersonReceipt, MessagePersonRequest, PEOPLE_PAGE_SIZE, PeopleListRequest,
+    PeoplePage, PersonRequest,
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,

@@ -1653,6 +1653,9 @@ class Oneiron:
         def disarm(self, spec):
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_disarm(json.dumps(spec))))
+        def rebind(self, spec):
+            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_rebind(json.dumps(spec))))
         def admission(self, spec):
             """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_admission(json.dumps(spec))))

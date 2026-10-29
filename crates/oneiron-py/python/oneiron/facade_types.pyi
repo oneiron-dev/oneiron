@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1192 facade rows, 4317 declarations.
-Inputs: 1121 of 1192 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1037 of 1192 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1193 facade rows, 4319 declarations.
+Inputs: 1122 of 1193 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1038 of 1193 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -4133,6 +4133,14 @@ class TurnProgramRegistration(TypedDict):
     newly_armed: bool
 class DisarmTurnProgram(TypedDict):
     registration: EntityId
+class TurnProgramRebindRequest(TypedDict):
+    attempt: str
+class TurnProgramRebindReceipt(TypedDict):
+    attempt: str
+    admission: str
+    predecessor_slip: str
+    successor_slip: str
+    owner_work: bool
 class SavedQueryScopeSpec(TypedDict):
     worlds: NotRequired[list[EntityId]]
     facets: NotRequired[list[str]]

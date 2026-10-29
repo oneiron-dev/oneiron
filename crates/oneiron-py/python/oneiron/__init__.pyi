@@ -1195,6 +1195,8 @@ class Oneiron:
             """Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration."""
         def disarm(self, spec: Facade.DisarmTurnProgram) -> bool:
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
+        def rebind(self, spec: Facade.TurnProgramRebindRequest) -> Facade.TurnProgramRebindReceipt:
+            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
         def admission(self, spec: Facade.TurnProgramAdmissionRequest) -> Facade.TurnProgramAdmissionView | None:
             """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
     class _VaultWeaveVerbs:

@@ -179,6 +179,7 @@ pub enum AgentVerb {
     VaultCampaignProgramArchive,
     VaultTurnProgramsArm,
     VaultTurnProgramsDisarm,
+    VaultTurnProgramsRebind,
     SelfSavedQueryCreate,
     SelfSavedQueryRead,
     SelfSavedQueryUpdate,
@@ -1396,6 +1397,7 @@ impl AgentVerb {
         Self::VaultCampaignProgramArchive,
         Self::VaultTurnProgramsArm,
         Self::VaultTurnProgramsDisarm,
+        Self::VaultTurnProgramsRebind,
         Self::SelfSavedQueryCreate,
         Self::SelfSavedQueryRead,
         Self::SelfSavedQueryUpdate,
@@ -2616,6 +2618,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
             Self::VaultTurnProgramsArm => "vault.turn_programs.arm",
             Self::VaultTurnProgramsDisarm => "vault.turn_programs.disarm",
+            Self::VaultTurnProgramsRebind => "vault.turn_programs.rebind",
             Self::SelfSavedQueryCreate => "self.saved_query.create",
             Self::SelfSavedQueryRead => "self.saved_query.read",
             Self::SelfSavedQueryUpdate => "self.saved_query.update",
@@ -3863,6 +3866,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -5109,6 +5113,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -6486,6 +6491,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -7555,6 +7561,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryUpdate
                 | Self::SelfSavedQueryArchive
@@ -8400,6 +8407,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultTurnProgramsArm => &["spec"],
             Self::VaultTurnProgramsDisarm => &["spec"],
+            Self::VaultTurnProgramsRebind => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -9618,6 +9626,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultTurnProgramsArm => &["spec"],
             Self::VaultTurnProgramsDisarm => &["spec"],
+            Self::VaultTurnProgramsRebind => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -11180,6 +11189,9 @@ impl AgentVerb {
             }
             Self::VaultTurnProgramsDisarm => {
                 "Disarms one of the caller's own armed turn programs; true when it was armed."
+            }
+            Self::VaultTurnProgramsRebind => {
+                "Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."
             }
             Self::SelfSavedQueryCreate => {
                 "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."

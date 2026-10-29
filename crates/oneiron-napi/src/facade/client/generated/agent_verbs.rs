@@ -1536,6 +1536,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_turn_programs_rebind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.turn_programs.rebind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_saved_query_create(
         &self,
         input: serde_json::Value,

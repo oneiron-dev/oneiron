@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1243 code-mode rows (1203 host rows, 40 run rows), 4367 declarations.
-// Replies: 1066 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1244 code-mode rows (1204 host rows, 40 run rows), 4369 declarations.
+// Replies: 1067 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -826,6 +826,8 @@ declare namespace Sdk {
   type ProgramRecipePin = { skill: EntityId; version: string; content_hash: string; entry: string; contract_digest: string; executor: string; args: string };
   type TurnProgramRegistration = { registration: EntityId; actor: EntityId; conversation?: EntityId | null; definition: ProgramRecipePin; revision: string; armed_at: number; newly_armed: boolean };
   type DisarmTurnProgram = { registration: EntityId };
+  type TurnProgramRebindRequest = { attempt: string };
+  type TurnProgramRebindReceipt = { attempt: string; admission: string; predecessor_slip: string; successor_slip: string; owner_work: boolean };
   type SavedQueryScopeSpec = { worlds?: EntityId[]; facets?: string[] };
   type ClaimComparison = "exists" | "eq" | "not_eq" | "lt" | "lte" | "gt" | "gte" | "contains";
   type SavedQueryFilterSpec = { op: "task_owner"; owner: EntityId } | { op: "all"; terms: SavedQueryFilterSpec[] } | { op: "any"; terms: SavedQueryFilterSpec[] } | { op: "not"; term: SavedQueryFilterSpec } | { op: "claim"; predicate: string; cmp: ClaimComparison; value?: unknown } | { op: "edge_exists"; edge_kind: string; target?: EntityId | null };
@@ -7384,6 +7386,8 @@ declare const vault: Sdk.VaultHost & {
     arm(input: Sdk.ArmTurnProgram): Promise<Sdk.TurnProgramRegistration | StoredResult>;
     /** Disarms one of the caller's own armed turn programs; true when it was armed. */
     disarm(input: Sdk.DisarmTurnProgram): Promise<boolean | StoredResult>;
+    /** Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes. */
+    rebind(input: Sdk.TurnProgramRebindRequest): Promise<Sdk.TurnProgramRebindReceipt | StoredResult>;
   };
   usage: {
     events: {

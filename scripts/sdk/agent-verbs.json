@@ -2951,6 +2951,19 @@
       "section": false
     },
     {
+      "name": "vault.turn_programs.rebind",
+      "description": "Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes.",
+      "input": "crate::dreamer_runner::TurnProgramRebindRequest",
+      "output": "crate::dreamer_runner::TurnProgramRebindReceipt",
+      "call": "crate::dreamer_runner::rebind_turn_program(memory, &input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "self.saved_query.create",
       "description": "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller.",
       "input": "crate::campaign::surface::SavedQueryCreateRequest",

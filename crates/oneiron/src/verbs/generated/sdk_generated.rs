@@ -952,6 +952,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.turn_programs.rebind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::TurnProgramRebindRequest,
+                >(),
+            ),
+            (
                 "self.saved_query.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::campaign::surface::SavedQueryCreateRequest,
@@ -11596,6 +11602,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.turn_programs.rebind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.saved_query.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19277,6 +19290,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.turn_programs.disarm" => {
             let _input: crate::dreamer_runner::DisarmTurnProgram = decode(value.clone())?;
         }
+        "vault.turn_programs.rebind" => {
+            let _input: crate::dreamer_runner::TurnProgramRebindRequest = decode(value.clone())?;
+        }
         "self.saved_query.create" => {
             let _input: crate::campaign::surface::SavedQueryCreateRequest = decode(value.clone())?;
         }
@@ -23144,6 +23160,7 @@ pub fn invoke(
         }
         "vault.turn_programs.arm" => encode(vault_turn_programs_arm(memory, decode(value)?)?),
         "vault.turn_programs.disarm" => encode(vault_turn_programs_disarm(memory, decode(value)?)?),
+        "vault.turn_programs.rebind" => encode(vault_turn_programs_rebind(memory, decode(value)?)?),
         "self.saved_query.create" => encode(self_saved_query_create(memory, decode(value)?)?),
         "self.saved_query.read" => encode(self_saved_query_read(memory, decode(value)?)?),
         "self.saved_query.update" => encode(self_saved_query_update(memory, decode(value)?)?),
@@ -26838,6 +26855,12 @@ pub fn vault_turn_programs_disarm(
     input: crate::dreamer_runner::DisarmTurnProgram,
 ) -> MemoryResult<bool> {
     memory.disarm_turn_program(input.registration)
+}
+pub fn vault_turn_programs_rebind(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::TurnProgramRebindRequest,
+) -> MemoryResult<crate::dreamer_runner::TurnProgramRebindReceipt> {
+    crate::dreamer_runner::rebind_turn_program(memory, &input)
 }
 pub fn self_saved_query_create(
     memory: &Memory<'_>,
