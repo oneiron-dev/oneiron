@@ -113,7 +113,8 @@ pub(crate) struct CoreRunTreeInterventionResponse {
     /// the caller does not stand to stop the branch.
     #[serde(skip_serializing_if = "Option::is_none")]
     proposal_ref: Option<String>,
-    /// Fresh snapshot for the affected run, when the attempt row has a run id.
+    /// Fresh snapshot for the affected run, when the attempt row has a run id,
+    /// and null without run-tree read authority (FIX 8220).
     tree: Option<CoreRunTreeResponse>,
 }
 
@@ -365,16 +366,20 @@ pub(crate) async fn core_run_tree_observe(
 }
 
 /// Intervene on a runtime attempt and return a fresh run-tree snapshot.
+/// With an `Idempotency-Key` the intervention runs once and a retry replays
+/// the kept effect (FIX 6056); `tree` is null without run-tree read
+/// authority, on a fresh answer and on a replay alike (FIX 8220).
 #[utoipa::path(
     post,
     path = "/v1/core/run-tree/intervene",
     request_body(content = CoreRunTreeInterventionRequest, content_type = "application/json"),
     responses(
-        (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row; a cancel by a caller that neither is the vault owner nor owns the TASK, run or spawn answers `proposed` with its `proposal_ref` and changes nothing (FIX 8219).", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
+        (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row; a cancel by a caller that neither is the vault owner nor owns the TASK, run or spawn answers `proposed` with its `proposal_ref` and changes nothing (FIX 8219). With an `Idempotency-Key` the intervention runs once and a retry replays the kept effect, its tree projected again under the caller's read authority as it stands then (FIX 6056, FIX 8220).", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
         (status = 400, description = "Malformed intervention or invalid lifecycle transition.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write; or, for pause and resume, the caller is neither the vault owner, the host root, nor the owner of the TASK the job realizes.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "For pause and resume, no job names this id, or the job realizes a TASK the caller is no party to (`job`).", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Run-tree intervention failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
