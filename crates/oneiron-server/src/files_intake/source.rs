@@ -310,8 +310,8 @@ fn keep_originals(
             .map(|file| (file.path.clone(), file))
             .collect::<HashMap<_, _>>(),
         Err(error) => {
-            let read = notes.iter().filter(|note| note.original.is_some()).count()
-                + name_only.len();
+            let read =
+                notes.iter().filter(|note| note.original.is_some()).count() + name_only.len();
             return Some(unkept(read, &error));
         }
     };

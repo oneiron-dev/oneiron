@@ -513,6 +513,7 @@ impl BrowserSession {
             rebound: observation.rebound.clone(),
             fact: observation.fact.clone(),
             unread: None,
+            outcome: None,
         };
         observation.receipt = Some(self.land(effect, left));
     }
@@ -521,18 +522,21 @@ impl BrowserSession {
     /// stands even when settling or reading the page after it failed. Its
     /// receipt lands then, before the failure answers, naming the page as
     /// it reads now (else where the act began) and the failure's code; the
-    /// input is never sent again. A failure before the send lands none.
+    /// input is never sent again. An input whose own call failed after the
+    /// browser was sent one of its calls lands the same receipt, its
+    /// outcome `unknown` (FIX 10426). A failure before the send lands none.
     pub(super) fn sent(
         &mut self,
         effect: &Effect<'_>,
         answer: Result<Observation, BrowserError>,
     ) -> Result<Observation, BrowserError> {
         let sent = self.driver.take_sent();
+        let unknown = self.driver.take_unknown();
         let error = match self.crossed(answer) {
             Ok(observation) => return Ok(observation),
             Err(error) => error,
         };
-        if sent {
+        if sent || unknown {
             let began = self
                 .acted
                 .as_ref()
@@ -545,6 +549,7 @@ impl BrowserSession {
                 rebound: None,
                 fact: None,
                 unread: Some(error.code().to_owned()),
+                outcome: unknown.then_some(ReceiptOutcome::Unknown),
             };
             self.unread = Some(self.land(effect, left));
         } else {
@@ -563,10 +568,11 @@ impl BrowserSession {
             .acted
             .take()
             .map_or((None, None), |acted| (acted.action, Some(acted.source)));
+        // Its page as an observation shows it (FIX 10331).
         let (source_url, source_origin, source_title, tab) =
             source.map_or((None, None, None, None), |source| {
-                let title = source.shown.map(|(_, title)| title);
-                (source.url, source.origin, title, Some(source.tab))
+                let (url, title) = source.shown.unzip();
+                (url, source.origin, title, Some(source.tab))
             });
         // Never compared: each receipt's screenshot is a capture of its own.
         let (screenshot, capture_id) = self
@@ -605,6 +611,7 @@ impl BrowserSession {
             tab,
             result_tab: Some(self.driver.front_target().to_owned()),
             result_unread: left.unread,
+            outcome: left.outcome,
             // Stamped before the host keeps the screenshot.
             duration_ms: elapsed_ms(effect.started),
         };

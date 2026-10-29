@@ -37,6 +37,7 @@ import type {
   EngineOptions,
   EngineReply,
   EngineRequest,
+  ExportReceipt,
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
@@ -412,6 +413,17 @@ export class Oneiron {
    */
   closeLensFrame(cardId: string): CloseLensFrameReply {
     return this.#call(() => this.#client.closeLensFrame(cardId) as CloseLensFrameReply)
+  }
+
+  /**
+   * Exports the whole vault into the file at `path`, owner only, as
+   * `vault.export` does: `format` is `archive` (the default) or `okf`. The
+   * file is created or truncated; the answer is the archive's format,
+   * length and BLAKE3. Over a server the archive streams through a kept
+   * transfer, so no ceiling on a reply applies to it.
+   */
+  exportTo(path: string, format?: string): ExportReceipt {
+    return this.#call(() => this.#client.exportTo(path, format) as ExportReceipt)
   }
 
   // BEGIN GENERATED FACADE VERBS
@@ -3253,7 +3265,7 @@ export class Oneiron {
       },
       /** Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft. */
       handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.BrowserHandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.BrowserHandoverOutput),
-      /** Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself. */
+      /** Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds. */
       switch_engine: (input: Facade.LiveRunRequest<Facade.SwitchEngineInput>): Facade.BrowserSwitchEngineOutput => this.#call(() => this.#client.selfBrowserSwitchEngine(input) as Facade.BrowserSwitchEngineOutput),
     },
     /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */

@@ -71,7 +71,14 @@ pub(super) fn released_reply(
         released_feedback(server.vault(), &destination, rows, value.clone(), feedback)
     });
     let (sent, withheld) = match released {
-        _ if held => (details_on_device(), Some(value)),
+        _ if held => {
+            // A transfer-delivered export no caller learns of leaves no
+            // spool behind (FIX 11178).
+            if verb == "vault.export" {
+                server.export_transfers.drop_withheld(&value);
+            }
+            (details_on_device(), Some(value))
+        }
         Some(sent) => (sent, Some(value)),
         None => (value, None),
     };
