@@ -1042,7 +1042,7 @@ export class Oneiron {
         get: (input: Facade.SkillPackCreditRequest): Facade.LateCreditReceipt | null => this.#call(() => this.#client.vaultSkillsOutcomesGet(input) as Facade.LateCreditReceipt | null),
       },
       attribution: {
-        /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+        /** The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer. */
         settle: (input: Facade.ProposalDeltaSettleRequest): Facade.ProposalDeltaSettlement => this.#call(() => this.#client.vaultSkillsAttributionSettle(input) as Facade.ProposalDeltaSettlement),
         /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
         read: (input: Facade.ProposalDeltaReadRequest): Facade.ProposalDeltaRead => this.#call(() => this.#client.vaultSkillsAttributionRead(input) as Facade.ProposalDeltaRead),
@@ -1684,7 +1684,7 @@ export class Oneiron {
       answer: (input: Facade.CourtesyDeleteAnswerRequest): Facade.CourtesyDeleteIncoming => this.#call(() => this.#client.vaultCourtesyDeleteAnswer(input) as Facade.CourtesyDeleteIncoming),
     },
     embedding_spaces: {
-      /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+      /** Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move. */
       list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesList(input) as Facade.EmbeddingSpacesView),
       /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
       declare: (input: Facade.EmbeddingSpaceDeclareRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesDeclare(input) as Facade.EmbeddingSpacesView),

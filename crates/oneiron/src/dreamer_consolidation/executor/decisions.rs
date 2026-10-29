@@ -279,6 +279,10 @@ impl ConsolidationExecutor<'_> {
                     evidence,
                     state,
                     ceiling: VERDICT_CEILING,
+                    // Every branch pack renders extracted candidates, whose
+                    // predicates and values are the extraction's reply, not a
+                    // stored row (a conflict candidate's claim id is not
+                    // written yet): the set is not known complete (FIX 11420).
                     sources: None,
                 },
                 questions,

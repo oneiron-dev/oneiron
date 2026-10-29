@@ -7291,7 +7291,7 @@
     },
     {
       "name": "vault.embedding_spaces.list",
-      "description": "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.",
+      "description": "Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move.",
       "input": "EmptyRequest",
       "output": "crate::task_verb::sdk::EmbeddingSpacesView",
       "call": "crate::task_verb::sdk::read_embedding_spaces(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.list\")?)?",
@@ -13025,7 +13025,7 @@
     },
     {
       "name": "vault.skills.attribution.settle",
-      "description": "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.",
+      "description": "The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer.",
       "input": "ProposalDeltaSettleRequest",
       "output": "crate::task_verb::sdk::ProposalDeltaSettlement",
       "call": "crate::task_verb::sdk::skill_attribution_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.settle\")?, &input)?",

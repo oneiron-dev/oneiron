@@ -331,6 +331,9 @@ pub struct ServeConfig {
     pub self_heal: SelfHealConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
+    /// The `[policy]` section: the owner plane's notice wording and settings,
+    /// each absent key the engine's default (FIX 5042).
+    pub policy: super::PolicyConfig,
     /// The `[skills]` section: the skill-edit gate's live pull budget.
     pub skills: SkillsConfig,
     /// The `[keystore]` section: this install's this-device-only key slots.
@@ -477,6 +480,7 @@ impl Default for ServeConfig {
             failure_signals: FailureSignalsConfig::default(),
             self_heal: SelfHealConfig::default(),
             recall: RecallConfig::default(),
+            policy: super::PolicyConfig::default(),
             skills: SkillsConfig::default(),
             keystore: KeystoreConfig::default(),
             limits: LimitsConfig::default(),

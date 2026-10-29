@@ -135,6 +135,9 @@ pub(crate) async fn catch_up_authority(
     let mut wanted = None;
     // Entries refused this round: named as held, so the home pages past them.
     let mut skipped = BTreeSet::new();
+    // Parents of those refused entries: asked for as required history, so a
+    // row refused for missing parents can land once they arrive.
+    let mut required = BTreeSet::new();
     for _ in 0..MAX_PAGES {
         let mut held = held_authority_entries(vault).map_err(storage)?;
         held.extend(skipped.iter().copied());
@@ -163,6 +166,7 @@ pub(crate) async fn catch_up_authority(
         taken += page.written;
         if !page.refused.is_empty() {
             tracing::debug!(refused = page.refused.len(), "authority entries refused");
+            required.extend(refused_parent_hashes(&entries, &page.refused));
             skipped.extend(page.refused);
         }
         if count < AUTHORITY_TAIL_PAGE_MAX {
@@ -176,7 +180,8 @@ pub(crate) async fn catch_up_authority(
             tracing::debug!(appended, "authority entries appended to the home");
         }
     }
-    let (repaired, missing) = repair_authority_history(vault, &mut rpc, &skipped).await?;
+    let (repaired, missing) =
+        repair_authority_history(vault, &mut rpc, &skipped, &required).await?;
     taken += repaired;
     if !missing.is_complete() {
         tracing::warn!(
@@ -375,13 +380,36 @@ fn packed_count(packed: &str) -> Result<usize, TransportError> {
     Ok(raw.len() / 32)
 }
 
+/// The parents of the entries in `entries` that `refused` names, decoded
+/// here: an entry that does not decode contributes nothing.
+fn refused_parent_hashes(
+    entries: &[Vec<u8>],
+    refused: &BTreeSet<AuthorityEntryHash>,
+) -> BTreeSet<AuthorityEntryHash> {
+    let mut parents = BTreeSet::new();
+    for entry in entries {
+        let Ok(body) = decode_authority_log_entry_body(entry) else {
+            continue;
+        };
+        let Ok(hash) = authority_entry_hash(&body) else {
+            continue;
+        };
+        if refused.contains(&hash) {
+            parents.extend(body.parent_hashes.iter().copied());
+        }
+    }
+    parents
+}
+
 /// Fetches the history this machine's rows name and it lacks, by exact hash,
 /// each missing entry with its ancestors down to what this machine holds or
 /// staged, parents first, and imports each page through the repair door. It
 /// asks again after each page, since a fetched entry may name further
 /// ancestors, and stops once nothing is missing, the home serves none of it,
 /// or the door refuses a page. `refused` are entries refused this round:
-/// named as held, so no page carries them again. Once a round, a request for
+/// named as held, so no page carries them again. `required` are the parents
+/// of those refused entries: asked for with the history, so a row refused
+/// for missing parents lands once they arrive. Once a round, a request for
 /// the whole adopted coverage pages it by the image instead, under one fixed
 /// selection and held set, the cursor walking it; its end is no proof of
 /// completeness, so the round asks again after it and fetches what remains
@@ -390,12 +418,14 @@ async fn repair_authority_history(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
     refused: &BTreeSet<AuthorityEntryHash>,
+    required: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<(usize, AuthorityHistoryRequest), TransportError> {
     let mut refused = refused.clone();
+    let mut required = required.clone();
     let mut written = 0;
     let mut cursor = None;
     let mut request = vault
-        .authority_history_request(&BTreeSet::new())
+        .authority_history_request(&required)
         .map_err(storage)?;
     // The covered pass in flight, and whether this round has run one.
     let mut pass: Option<AuthorityHistoryFetch> = None;
@@ -458,9 +488,10 @@ async fn repair_authority_history(
                 refused: dropped,
             } => {
                 written += landed.len();
+                required.extend(refused_parent_hashes(&rows, &dropped));
                 refused.extend(dropped);
                 vault
-                    .authority_history_request(&BTreeSet::new())
+                    .authority_history_request(&required)
                     .map_err(storage)?
             }
             AuthorityRepairOutcome::Staged {

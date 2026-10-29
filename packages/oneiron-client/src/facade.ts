@@ -2825,7 +2825,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.courtesy_delete.sent": { description: "Every courtesy delete ask this vault sent, with its delivery status, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.incoming": { description: "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.answer": { description: "The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.embedding_spaces.list": { description: "Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.list": { description: "Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.declare": { description: "Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.bind": { description: "Binds one kind slot to a declared space, or returns it to its default when no space is named.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.one_space": { description: "Binds every kind slot the space accepts, text included, to that one space.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -3180,7 +3180,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.models.routes.replace": { description: "Replaces one model slot route within its manifest pin without changing any other slot or role binding.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.roles.read": { description: "Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.roles.invoke": { description: "Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.skills.attribution.settle": { description: "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.skills.attribution.settle": { description: "The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.read": { description: "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.evidence.record": { description: "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.project": { description: "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4189,7 +4189,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           get: (input: Facade.SkillPackCreditRequest, options?: O): FacadeReturns<"vault.skills.outcomes.get">[K] => invoke("vault.skills.outcomes.get", input, options, newInvocation()),
         },
         attribution: {
-          /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+          /** The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer. */
           settle: (input: Facade.ProposalDeltaSettleRequest, options?: O): FacadeReturns<"vault.skills.attribution.settle">[K] => invoke("vault.skills.attribution.settle", input, options, newInvocation()),
           /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
           read: (input: Facade.ProposalDeltaReadRequest, options?: O): FacadeReturns<"vault.skills.attribution.read">[K] => invoke("vault.skills.attribution.read", input, options, newInvocation()),
@@ -4831,7 +4831,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         answer: (input: Facade.CourtesyDeleteAnswerRequest, options?: O): FacadeReturns<"vault.courtesy_delete.answer">[K] => invoke("vault.courtesy_delete.answer", input, options, newInvocation()),
       },
       embedding_spaces: {
-        /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+        /** Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move. */
         list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.list">[K] => invoke("vault.embedding_spaces.list", input, options, newInvocation()),
         /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
         declare: (input: Facade.EmbeddingSpaceDeclareRequest, options?: O): FacadeReturns<"vault.embedding_spaces.declare">[K] => invoke("vault.embedding_spaces.declare", input, options, newInvocation()),

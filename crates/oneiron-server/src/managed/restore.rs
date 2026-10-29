@@ -40,6 +40,7 @@ use zeroize::Zeroizing;
 // A vault VM host proves and takes over its own restore pipes the same way.
 #[cfg(target_os = "linux")]
 pub(super) use self::input::adopt;
+use self::host_holds::AdmittedHostOrderHolds;
 use self::receipt::ReceiptContext;
 pub(super) use self::receipt::RestoreOutcome;
 use self::result::ResultSink;
@@ -72,9 +73,9 @@ pub(super) struct ManagedRestore {
     sink: Arc<ResultSink>,
     identity: ManagedRestoreIdentity,
     plan: ManagedRestorePlan,
-    /// The source's host-order family the input pipe carried, admitted;
-    /// `None` without one. Its job takes it.
-    host_holds: Option<HostOrderHolds>,
+    /// The host-order family the input pipe carried, admitted by where it
+    /// came from; none without one. Its job takes it.
+    host_holds: AdmittedHostOrderHolds,
     destination: Arc<RestoreDestination>,
     stage: Stage,
     kept: Option<Kept>,
@@ -188,7 +189,7 @@ impl ManagedRestore {
             sink: Arc::clone(&self.sink),
             identity: self.identity.clone(),
             plan: self.plan.clone(),
-            host_holds: self.host_holds.take(),
+            host_holds: std::mem::take(&mut self.host_holds),
             destination: Arc::clone(&self.destination),
             data_dir: managed.data_dir.clone(),
             owner: managed.derivation_owner,
@@ -342,7 +343,7 @@ struct Job {
     sink: Arc<ResultSink>,
     identity: ManagedRestoreIdentity,
     plan: ManagedRestorePlan,
-    host_holds: Option<HostOrderHolds>,
+    host_holds: AdmittedHostOrderHolds,
     destination: Arc<RestoreDestination>,
     data_dir: std::path::PathBuf,
     owner: DerivationOwner,
@@ -434,6 +435,34 @@ impl Job {
             Some(floor) => key.with_wake_sequence_floor(floor),
             None => key,
         };
+        // So does the vault's mode-root policy, beside the plan's pins (FIX
+        // 968); one that does not read delegates no signer.
+        let key = match plan
+            .backup_mode_roots
+            .as_ref()
+            .map(|bytes| oneiron::authority::BackupModeRoots::from_bytes(&bytes.0))
+        {
+            Some(Ok(roots)) => key.trusting_mode_roots(&roots.policy, &roots.delegations),
+            Some(Err(_)) => {
+                tracing::warn!(
+                    reason = "backup_mode_roots_invalid",
+                    "the plan's backup mode roots did not read; they delegate no signer"
+                );
+                key
+            }
+            None => key,
+        };
+        // The family the artifact's member held rides the key with its tag:
+        // the restore passes it on only when the tag names that member (FIX
+        // 6817). The pipe's live family stays here and wins.
+        let AdmittedHostOrderHolds {
+            pipe: host_holds,
+            artifact,
+        } = host_holds;
+        let key = match artifact {
+            Some(artifact) => key.with_artifact_host_holds(artifact),
+            None => key,
+        };
         let seal = if plan.maximum_tier {
             key.restored_page_seal()
         } else {
@@ -456,7 +485,9 @@ impl Job {
         vault_config.page_seal = seal;
         let recovery = crate::owner::backup::custody_recovery(&plan.artifact, &backup, anchor);
         let observed = Observed::default();
-        let finish = |vault: &oneiron::Vault| -> Result<(), RestoreAdmissionError> {
+        let finish = |vault: &oneiron::Vault,
+                      artifact: Option<&HostOrderHolds>|
+         -> Result<(), RestoreAdmissionError> {
             managed_checks(
                 vault,
                 &destination,
@@ -465,9 +496,9 @@ impl Job {
                 &dek,
                 &observed,
             )?;
-            // The image carries no host-order family until L04's member
-            // lands (FIX 6598): only the pipe's, or none.
-            let installed = host_holds::install(vault, host_holds.as_ref(), None)?;
+            // The pipe's, else the one the artifact's member held, else none
+            // (FIX 6598, FIX 6817).
+            let installed = host_holds::install(vault, host_holds.as_ref(), artifact)?;
             observed.host_holds.set(Some(installed));
             Ok(())
         };

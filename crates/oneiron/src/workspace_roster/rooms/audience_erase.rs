@@ -112,6 +112,7 @@ fn erase_edit_as(
                 existed: true,
                 receipt_id: None,
                 sweep_key: None,
+                turn_program_details: Vec::new(),
             }
         };
         Ok(Some(ConfirmedEraseOutcome::Completed(outcome)))

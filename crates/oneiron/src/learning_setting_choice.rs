@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::agent_dispatch::{CoordinationPattern, LivePlanRequest, SpawnNeed, SpawnOverride};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::learning_setting::{
-    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, read_scopes_in_txn,
-    scoped_row_key,
+    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
+    read_scopes_in_txn, scoped_row_key,
 };
 use crate::llm::ModelId;
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -232,6 +232,29 @@ pub(crate) fn erase_choice_actor_in_txn(
     Ok(())
 }
 
+/// Erasing `project` from the owner's choice rows (FIX 6038): every seed and
+/// pin laid over that project goes, whoever set it; rows over the vault, a
+/// goal, a type or another project stay. A key that does not parse is passed
+/// over with a WARN, never an abort.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_choice_scope_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    project: &EntityId,
+) -> Result<()> {
+    let rows = CHOICE
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .map(|row| row.map(|(key, _)| key))
+        .collect::<Result<Vec<_>>>()?;
+    for key in project_row_keys(rows, project, "choice") {
+        CHOICE.delete(&vault.store, wtxn, &key)?;
+    }
+    Ok(())
+}
+
 /// Every owner choice row as stored, in key order: its scope, the row, and
 /// the owner who set it (32 hex, or "erased" once that owner was erased).
 ///
@@ -240,8 +263,21 @@ pub(crate) fn erase_choice_actor_in_txn(
 /// A row that does not decode; storage errors.
 pub fn list_choice_rows(vault: &Vault) -> Result<Vec<(SettingScope, ChoiceRow, String)>> {
     let rtxn = vault.store.env.read_txn()?;
+    list_choice_rows_in_txn(vault, &rtxn)
+}
+
+/// [`list_choice_rows`] in the caller's snapshot, for a reader that reads
+/// what was learned under each row beside it (FIX 3159).
+///
+/// # Errors
+///
+/// As [`list_choice_rows`].
+pub(crate) fn list_choice_rows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(SettingScope, ChoiceRow, String)>> {
     let mut out = Vec::new();
-    for (stored_key, stored) in CHOICE.scan(&vault.store, &rtxn)? {
+    for (stored_key, stored) in CHOICE.scan(&vault.store, rtxn)? {
         let Some((key, mode, scope)) = parse_row_key(&stored_key) else {
             continue;
         };
@@ -298,14 +334,17 @@ fn rows_in_order(
 /// Lays the owner's choices under one spawn's need: each field takes the
 /// first row in [`rows_in_order`] it admits. A field the call pinned keeps
 /// the call's pin; a field the call seeded keeps its seed unless an owner
-/// pin stands, since any pin outranks any seed. A model row counts only when
-/// a seat serves that model, and a pinned pattern and a pinned width must
-/// agree, so a row never turns a valid need into an invalid one. The pattern
-/// is laid before the width.
+/// pin stands, since any pin outranks any seed. A model seed counts only
+/// when a seat serves that model; a model pin stands whatever the seats
+/// (FIX 10011). A pinned pattern and a pinned width must agree, so a row
+/// never turns a valid need into an invalid one. The pattern is laid before
+/// the width.
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// [`ArtifactError::ModelPinUnavailable`] when the owner's model pin
+/// stands and no offered seat serves it; storage errors;
+/// [`Error::CorruptedIndex`] on an undecodable row.
 pub(crate) fn lay_owner_choices_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -333,11 +372,23 @@ pub(crate) fn lay_owner_choices_in_txn(
         },
         |width| pattern.is_none_or(|pattern| pattern.admits_width(*width)),
     );
+    let call_pinned_model = need.pinned_model().is_some();
+    // Only a seed waits on a seat: a pin is the owner's fixed value.
+    let models = rows_in_order(store, txn, scopes, SpawnChoice::Model)?
+        .into_iter()
+        .filter(|row| match row {
+            SpawnOverride::Seed {
+                value: ChoiceValue::Model(model),
+                ..
+            } => seats.contains(model),
+            _ => true,
+        })
+        .collect();
     lay(
         &mut need.model,
-        rows_in_order(store, txn, scopes, SpawnChoice::Model)?,
+        models,
         |value| match value {
-            ChoiceValue::Model(model) if seats.contains(&model) => Some(model),
+            ChoiceValue::Model(model) => Some(model),
             _ => None,
         },
         |_| true,
@@ -351,7 +402,25 @@ pub(crate) fn lay_owner_choices_in_txn(
         },
         |_| true,
     );
-    Ok(())
+    if call_pinned_model {
+        return Ok(());
+    }
+    require_pinned_model(need, seats)
+}
+
+/// The owner's model pin, once laid, needs an offered seat (FIX 10011): a
+/// pinned field is never overridden, so a pinned model no seat serves is
+/// unavailable, before any evidence or cost is read, and no other model
+/// stands in for it.
+fn require_pinned_model(need: &SpawnNeed, seats: &[ModelId]) -> Result<()> {
+    match need.pinned_model() {
+        Some(model) if !seats.contains(model) => {
+            Err(Error::Artifact(ArtifactError::ModelPinUnavailable {
+                model: model.as_str().to_owned(),
+            }))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Lays over `field` the first of `rows` whose value `take` reads, a pin

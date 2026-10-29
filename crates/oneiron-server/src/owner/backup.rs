@@ -171,6 +171,11 @@ pub(crate) struct BackupOutcome {
     pub(crate) checkpoint_id: String,
     /// Older backups deleted to honour `keep`; none while a legal hold stands.
     pub(crate) pruned: Vec<String>,
+    /// Why a hosted vault's backup carries none of its host-order legal
+    /// holds, for its host to alert on (FIX 6598); absent where it carries
+    /// them or the vault is self-hosted. Nothing of any hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) host_holds_unavailable: Option<oneiron::recovery::checkpoint::HostHoldsUnavailable>,
 }
 
 /// Takes one backup of `vault` and prunes older ones beyond `plan.keep`. The

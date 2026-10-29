@@ -1321,7 +1321,7 @@ class Oneiron:
             """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
     class _VaultSkillsAttributionVerbs:
         def settle(self, spec: Facade.ProposalDeltaSettleRequest) -> Facade.ProposalDeltaSettlement:
-            """The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."""
+            """The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer."""
         def read(self, spec: Facade.ProposalDeltaReadRequest) -> Facade.ProposalDeltaRead:
             """The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."""
         @property
@@ -1989,7 +1989,7 @@ class Oneiron:
             """The owner answers one incoming courtesy delete ask from the menu, and sends the answer back when reply_to names where."""
     class _VaultEmbeddingSpacesVerbs:
         def list(self, spec: Facade.EmptyRequest | None = None) -> Facade.EmbeddingSpacesView:
-            """Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."""
+            """Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move."""
         def declare(self, spec: Facade.EmbeddingSpaceDeclareRequest) -> Facade.EmbeddingSpacesView:
             """Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."""
         def bind(self, spec: Facade.EmbeddingSpaceBindRequest) -> Facade.EmbeddingSpacesView:
