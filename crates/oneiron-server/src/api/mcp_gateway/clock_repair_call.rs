@@ -50,7 +50,11 @@ pub(super) fn deferred_caller(
     // The repair's writer judges it; nothing here re-verifies on the
     // damaged clock, which would refuse before it.
     if let Some(carried) = connection.get::<clock_ingress::McpSocketSlip>() {
-        if server.vault().authority_clock_refuses_readings().unwrap_or(false) {
+        if server
+            .vault()
+            .authority_clock_refuses_readings()
+            .unwrap_or(false)
+        {
             return Some(ClockRepairCaller::verified(carried.slip().clone()));
         }
     }

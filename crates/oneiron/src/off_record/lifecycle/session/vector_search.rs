@@ -28,7 +28,8 @@ impl OffRecordSession<'_> {
     ) -> Result<Vec<ScoredEntity>> {
         route.revalidate()?;
         let config = &self.vault.config;
-        if query.len() != config.dimensions && config.fast_dims.map(usize::from) != Some(query.len())
+        if query.len() != config.dimensions
+            && config.fast_dims.map(usize::from) != Some(query.len())
         {
             return Err(Error::DimensionMismatch {
                 expected: config.dimensions,

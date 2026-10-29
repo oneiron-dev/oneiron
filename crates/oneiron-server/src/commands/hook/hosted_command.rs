@@ -111,7 +111,9 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
         );
     }
     vault.verified_at_ms = now_ms();
-    selection.vaults.retain(|kept| kept.vault_id != vault.vault_id);
+    selection
+        .vaults
+        .retain(|kept| kept.vault_id != vault.vault_id);
     selection.selected = Some(vault.vault_id.clone());
     selection.vaults.push(vault);
     hosted_selection::publish(&selection)

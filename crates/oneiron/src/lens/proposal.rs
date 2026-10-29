@@ -19,8 +19,7 @@ use serde::{Deserialize, Serialize};
 use super::artifact::{LensArtifacts, lens_tree_in};
 use super::intent::{INTENTS, LensIntentIndex};
 use super::scope::{
-    LensAdmission, LensScope, declared_position, placed_in, proposal_admission_in,
-    tree_admitted_in,
+    LensAdmission, LensScope, declared_position, placed_in, proposal_admission_in, tree_admitted_in,
 };
 use super::{GeneratedLens, LensIntentRecord, LensLoadAction, LensVersionStamp, lens_load_action};
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
@@ -416,9 +415,8 @@ impl Vault {
                     .is_some_and(|install| active_at(&install, &record.pack_content_hash));
             let compiled = record.compiled_in(self, txn, &lens_ref)?;
             let stamp = compiled.version_stamp();
-            let carried = with_compiled
-                && admission == LensAdmission::Whole
-                && tree_admits(txn, &compiled)?;
+            let carried =
+                with_compiled && admission == LensAdmission::Whole && tree_admits(txn, &compiled)?;
             rows.push(LensListRow {
                 lens_ref: lens_ref.to_hex(),
                 pack_name: record.pack_name,

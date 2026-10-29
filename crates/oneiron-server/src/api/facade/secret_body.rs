@@ -352,7 +352,10 @@ fn submit_redacted(fields: SubmitFields<'_>) -> Option<Value> {
     let mut redacted = serde_json::Map::new();
     redacted.insert("change".to_owned(), Value::String(fields.change));
     redacted.insert("secret_id".to_owned(), Value::String(fields.secret_id));
-    redacted.insert("generation".to_owned(), Value::Number(fields.generation.into()));
+    redacted.insert(
+        "generation".to_owned(),
+        Value::Number(fields.generation.into()),
+    );
     redacted.insert("seen".to_owned(), Value::String(fields.seen));
     redacted.insert("holder".to_owned(), Value::String(fields.holder));
     redacted.insert(
