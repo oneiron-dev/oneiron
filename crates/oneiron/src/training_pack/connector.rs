@@ -266,11 +266,24 @@ impl Vault {
                 return Err(error);
             }
         };
-        let settlement = permit.settle(CallOutcome::Used(output.service_units));
-        // Keep completed work even when the meter reports a settlement error.
-        let result = self.complete_training_pack(admission, output)?;
-        settlement.map_err(|e| invalid(&e.to_string()))?;
-        Ok(result)
+        let service_units = output.service_units;
+        match self.complete_training_pack(admission, output) {
+            Ok(result) => {
+                // Keep completed work even when the meter reports a settlement error.
+                let settlement = permit.settle(CallOutcome::Used(service_units));
+                settlement.map_err(|e| invalid(&e.to_string()))?;
+                Ok(result)
+            }
+            Err(error) => {
+                // A refused completion fails the run as a failed train does:
+                // the permit drops unsettled, settling Failed and never
+                // Used, and the run is marked ConnectorFailed, so no run is
+                // stranded Running.
+                drop(permit);
+                self.mark_training_connector_failed(id)?;
+                Err(error)
+            }
+        }
     }
 
     fn mark_training_connector_failed(&self, id: &EntityId) -> Result<()> {
