@@ -49,6 +49,7 @@ mod secret;
 mod secret_fields;
 #[cfg(feature = "driver")]
 mod session;
+pub mod site;
 mod stop;
 mod switch;
 mod verbs;
@@ -103,6 +104,10 @@ pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 pub use session::{
     BrowserGuest, BrowserGuestStarter, BrowserSession, CapturedSolvedSpan, FreshGuest, PressGrants,
     SOLVED_PAST_PRESS, SolvedSnapshotGap, StartedGuest,
+};
+pub use site::{
+    OriginError, SeedBody, SeedCandidate, SiteOrigin, SiteSkillError, SiteSkillErrorCode,
+    SiteSkillLoader, SiteSkillMatch, SiteSkillQuery,
 };
 pub use stop::{
     AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, STRICT_DENIED,
@@ -213,6 +218,10 @@ pub enum BrowserError {
     /// take it; its batch names the cause.
     #[error("the fill step's text: {0}")]
     FieldText(String),
+    /// CUA E10: a site skill's seed a proposal named did not resolve, or
+    /// its bytes changed since its candidate was listed.
+    #[error("the site skill: {0}")]
+    SiteSkill(SiteSkillError),
 }
 
 /// Candidates one routine Choice offers: the contract's 64 options less
@@ -582,6 +591,7 @@ impl BrowserError {
             Self::DestinationRefused(_) => "browser_destination_refused",
             Self::SecretRefused(_) => "browser_secret_refused",
             Self::FieldText(_) => "browser_field_text",
+            Self::SiteSkill(_) => "browser_site_skill",
         }
     }
 }

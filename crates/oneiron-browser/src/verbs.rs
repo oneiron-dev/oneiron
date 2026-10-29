@@ -66,6 +66,16 @@ pub struct Observation {
     /// the browser refused (FIX 6768), on the first page only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dialogs: Vec<DialogAnswerFailure>,
+    /// The loadable skills whose site matches the page an `open` landed on
+    /// exactly, after its redirects (CUA E10), each with its knowledge
+    /// whole: on the answer of the call that opened it, on every page of
+    /// that answer, and on no later call's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub site_skills: Vec<SiteSkillMatch>,
+    /// Why that open's site skills did not load, by name; the page opened
+    /// all the same.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub site_skill_notes: Vec<SiteSkillError>,
 }
 
 /// Where a desktop window's tree walk stopped short of its end (Rule 5):

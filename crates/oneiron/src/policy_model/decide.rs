@@ -364,14 +364,7 @@ pub(super) async fn safeguard_verdict(
     let asked = ask(prompt, plane, &wording)?;
     let checked = CheckedReplies::new(safeguard.backend());
     let outcome = read(
-        safeguard,
-        &checked,
-        request,
-        prompt,
-        &asked,
-        principal,
-        config,
-        clock,
+        safeguard, &checked, request, prompt, &asked, principal, config, clock,
     )
     .await;
     // A reply that did not finish with Stop, or that calls a tool, decides

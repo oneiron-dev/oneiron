@@ -204,8 +204,7 @@ async fn decisions(
         .clamp(1, MAX_JOURNAL_ROWS);
     let journal = blocking(move || -> OwnerResult<Journal> {
         Ok(Journal {
-            revision: replay_judge::registered()
-                .map(|judge| judge.judge_revision().to_owned()),
+            revision: replay_judge::registered().map(|judge| judge.judge_revision().to_owned()),
             decisions: replay_judge::journal(server.vault(), limit)?,
         })
     })
