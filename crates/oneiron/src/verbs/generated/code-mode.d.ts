@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4236 declarations.
+// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4240 declarations.
 // Replies: 1088 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
@@ -3323,7 +3323,11 @@ declare namespace Sdk {
   type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; secret_params?: SecretParam[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type DialogAnswerFailure = { tab?: string | null; kind: string; accept: boolean; error: string };
-  type VerbsObservation = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] };
+  type SeedCandidate = { candidate: string; path: string; digest: string; license: string };
+  type SiteSkillMatch = { skill_id: string; revision: string; knowledge: string; seeds?: SeedCandidate[] };
+  type SiteSkillErrorCode = "no_lease" | "origin" | "loader" | "unresolved" | "digest_mismatch" | "no_loader";
+  type SiteSkillError = { code: SiteSkillErrorCode; detail: string };
+  type VerbsObservation = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[]; site_skills?: SiteSkillMatch[]; site_skill_notes?: SiteSkillError[] };
   type ObservationPage = VerbsObservation & { next?: string | null };
   type ObservationBase = { scope: string; seq: number };
   type ObserveInput = { base?: ObservationBase | null; full?: boolean; cursor?: string | null };
@@ -4115,7 +4119,7 @@ declare namespace Sdk {
   type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" } | { why: "not_started"; refusal: string };
   type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind };
   type DemonstrationStopCause = "stopped" | "handed_over" | "handed_back" | "abandoned" | "guest_lost" | "engine_switched" | "session_closed";
-  type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null };
+  type ProposeInput = { subgoal?: string; params?: string[]; steps?: BatchStep[]; postcondition?: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null; candidate?: string | null };
   type SlotField = "text" | "option";
   type SlotCandidate = { step: number; seq: number; field: SlotField; literal: string; suggested_param: string };
   type DraftGapKind = { why: "pre_press"; effect_class: string } | { why: "unknown_press" } | { why: "no_action" } | { why: "secret_withheld"; kind?: SecretKind | null; cause: OperandGap } | { why: "failed"; cause: BatchStopCause } | { why: "no_effect" } | { why: "missing_opening" } | { why: "empty_span" } | { why: "no_live_origin" } | { why: "foreign_origin"; origin?: string | null } | { why: "tab_change" } | { why: "generated_fill" } | { why: "unrecorded_navigation" } | { why: "missing_context" } | { why: "check_unknown_ref"; check: number } | { why: "check_secret_withheld"; check: number; cause: OperandGap } | { why: "no_postcondition" } | { why: "no_subgoal" };
@@ -4131,8 +4135,8 @@ declare namespace Sdk {
   type BrowserScreenshotOutput = BrowserAnswer<ScreenshotOutput>;
   type BrowserImageOutput = BrowserAnswer<ImageOutput>;
   type BrowserBatchOutput = BrowserAnswer<BatchOutput>;
-  type LibraryFindInput = { site?: string | null; subgoal?: string | null; type_ref?: string | null };
-  type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
+  type LibraryFindInput = { site?: string | null; url?: string | null; subgoal?: string | null; type_ref?: string | null };
+  type LibraryFindOutput = { site: string; workflows: LibraryCard[]; candidates?: SeedCandidate[]; site_skill_notes?: SiteSkillError[] };
   type BrowserLibraryFindOutput = BrowserAnswer<LibraryFindOutput>;
   type DraftInput = { subgoal: string; postcondition?: ExpectInput[]; after_seq?: number | null; through_seq?: number | null; past_press?: boolean };
   type BrowserLibraryDraftOutput = BrowserAnswer<DraftOutput>;
@@ -4476,9 +4480,9 @@ declare namespace self {
     library: {
       /** Drafts a proposal from this session's receipts and stops on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
       draft(input: Sdk.DraftInput): Promise<Sdk.BrowserLibraryDraftOutput | StoredResult>;
-      /** The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
+      /** The replay library's programs for a site, url or the open page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed. */
       find(input: Sdk.LibraryFindInput): Promise<Sdk.BrowserLibraryFindOutput | StoredResult>;
-      /** Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
+      /** Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the replay library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires. */
       propose(input: Sdk.ProposeInput): Promise<Sdk.BrowserLibraryProposeOutput | StoredResult>;
       /** Takes a program out of the replay library for every later run, and returns the card it had. */
       retire(input: Sdk.LibraryRetireInput): Promise<Sdk.BrowserLibraryRetireOutput | StoredResult>;
@@ -4487,9 +4491,9 @@ declare namespace self {
       /** Runs a replay library program live, strict (rules only; model steps and fill generation ask up at zero tokens) or assisted; secret slots take handles; receipts name fill text_source; misses return a failed_receipt; 3 strict misses: drift. */
       run(input: Sdk.LibraryRunInput): Promise<Sdk.BrowserLibraryRunOutput | StoredResult>;
     };
-    /** Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its run-bound handle. */
+    /** Observes the run's browser page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles. */
     observe(input: Sdk.ObserveInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
-    /** Opens a URL in the run's browser and observes the page whole, each row with its live ref and locator, in pages read on with observe and its next cursor; a blocked, empty or interstitial page is the cue to switch_engine to chromium and retry. */
+    /** Opens a URL in the run's browser and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, notes why none loaded; a blocked page is the cue to switch_engine. */
     open(input: Sdk.OpenInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
     /** Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.BrowserScreenshotOutput | StoredResult>;

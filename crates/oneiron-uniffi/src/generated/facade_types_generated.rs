@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1162 facade rows, 4160 generated types.
+// UniFFI census: 1162 facade rows, 4164 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1114.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -64409,14 +64409,18 @@ pub struct WorkflowSeed {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProposeInput {
-    #[serde(rename = "subgoal")]
-    pub subgoal: String,
+    #[serde(rename = "subgoal", default, skip_serializing_if = "Option::is_none")]
+    pub subgoal: Option<String>,
     #[serde(rename = "params", default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Vec<String>>,
-    #[serde(rename = "steps")]
-    pub steps: Vec<BatchStep>,
-    #[serde(rename = "postcondition")]
-    pub postcondition: Vec<ExpectInput>,
+    #[serde(rename = "steps", default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<Vec<BatchStep>>,
+    #[serde(
+        rename = "postcondition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub postcondition: Option<Vec<ExpectInput>>,
     #[serde(rename = "args", default, skip_serializing_if = "Option::is_none")]
     pub args: Option<std::collections::HashMap<String, String>>,
     #[serde(
@@ -64433,6 +64437,8 @@ pub struct ProposeInput {
     pub supersedes: Option<String>,
     #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<WorkflowSeed>,
+    #[serde(rename = "candidate", default, skip_serializing_if = "Option::is_none")]
+    pub candidate: Option<String>,
 }
 
 /// `oneiron_browser::library::draft::SlotField`.
@@ -65251,6 +65257,58 @@ pub struct DialogAnswerFailure {
     pub error: String,
 }
 
+/// `oneiron_browser::site::SeedCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SeedCandidate {
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "license")]
+    pub license: String,
+}
+
+/// `oneiron_browser::site::SiteSkillMatch`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SiteSkillMatch {
+    #[serde(rename = "skill_id")]
+    pub skill_id: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "knowledge")]
+    pub knowledge: String,
+    #[serde(rename = "seeds", default, skip_serializing_if = "Option::is_none")]
+    pub seeds: Option<Vec<SeedCandidate>>,
+}
+
+/// `oneiron_browser::site::SiteSkillErrorCode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SiteSkillErrorCode {
+    #[serde(rename = "no_lease")]
+    NoLease,
+    #[serde(rename = "origin")]
+    Origin,
+    #[serde(rename = "loader")]
+    Loader,
+    #[serde(rename = "unresolved")]
+    Unresolved,
+    #[serde(rename = "digest_mismatch")]
+    DigestMismatch,
+    #[serde(rename = "no_loader")]
+    NoLoader,
+}
+
+/// `oneiron_browser::site::SiteSkillError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SiteSkillError {
+    #[serde(rename = "code")]
+    pub code: SiteSkillErrorCode,
+    #[serde(rename = "detail")]
+    pub detail: String,
+}
+
 /// `oneiron_browser::verbs::Observation`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct VerbsObservation {
@@ -65288,6 +65346,18 @@ pub struct VerbsObservation {
     pub fact: Option<ActionFact>,
     #[serde(rename = "dialogs", default, skip_serializing_if = "Option::is_none")]
     pub dialogs: Option<Vec<DialogAnswerFailure>>,
+    #[serde(
+        rename = "site_skills",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub site_skills: Option<Vec<SiteSkillMatch>>,
+    #[serde(
+        rename = "site_skill_notes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub site_skill_notes: Option<Vec<SiteSkillError>>,
 }
 
 /// `oneiron_browser::verbs::ObservationPage`.
@@ -65990,6 +66060,8 @@ pub struct BrowserAnswerBatchOutput {
 pub struct LibraryFindInput {
     #[serde(rename = "site", default, skip_serializing_if = "Option::is_none")]
     pub site: Option<String>,
+    #[serde(rename = "url", default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     #[serde(rename = "subgoal", default, skip_serializing_if = "Option::is_none")]
     pub subgoal: Option<String>,
     #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
@@ -66013,6 +66085,18 @@ pub struct LibraryFindOutput {
     pub site: String,
     #[serde(rename = "workflows")]
     pub workflows: Vec<LibraryCard>,
+    #[serde(
+        rename = "candidates",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candidates: Option<Vec<SeedCandidate>>,
+    #[serde(
+        rename = "site_skill_notes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub site_skill_notes: Option<Vec<SiteSkillError>>,
 }
 
 /// `oneiron_browser::answer::BrowserAnswer` with `T` = `LibraryFindOutput`.

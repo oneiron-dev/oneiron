@@ -131,6 +131,15 @@ impl MadeDestination {
             copy.adopt_writer_lease(lease);
         }
     }
+
+    /// Arms the copy, and its page-seal mirror, to stay where they are
+    /// whatever follows (`true`), while the restore's last publication may
+    /// have happened, or disarms it once that publication is known not to
+    /// have (FIX 6782). Its lease still goes with it, after the copy's vault
+    /// has closed.
+    pub(crate) fn preserve(&mut self, preserved: bool) {
+        self.kept = preserved;
+    }
 }
 
 /// A restore's copy is no longer where the restore made it.

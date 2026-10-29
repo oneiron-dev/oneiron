@@ -9,6 +9,7 @@ use crate::temporal::TimeRange;
 use ed25519_dalek::Signer;
 use std::collections::BTreeSet;
 
+mod backup_signer;
 mod connect;
 mod connect_lifecycle;
 pub use connect_lifecycle::ConnectRescopeOffer;
