@@ -55,7 +55,9 @@ pub(crate) fn compact(vault: &Vault, id: EntityId, erased: bool) -> Result<()> {
         if erased {
             return crate::note::delete_document_in_txn(&vault.store, txn, &id);
         }
+        // Ordinary compaction folds the updates into a full snapshot and keeps
+        // the history; only an authorized purge drops it (FIX 8874).
         let doc = load(vault, txn, id)?;
-        snapshot(vault, txn, id, &doc, true)
+        snapshot(vault, txn, id, &doc, false)
     })
 }
