@@ -324,28 +324,32 @@ pub(crate) fn document_copy_in_txn(
     }))
 }
 
-/// A peer's update `bytes` of the copy lineage of `source`'s document
-/// (`resident`), landed in one writer: `admit` judges it first, the lineage
-/// takes the peer's operations, and its changed text lands on the source
-/// text through the visible diff. The source document to keep resident, or
-/// `None` for a ruled hold (nothing persists).
+/// A peer's update `bytes` of the copy lineage of `source`'s document,
+/// landed in one writer: `admit` judges it first, the lineage takes the
+/// peer's operations, and its changed text lands on the source's durable
+/// text through the visible diff and the canonical writer. A ruled hold
+/// persists nothing.
 ///
 /// # Errors
 /// `admit`'s refusal, an update that does not import whole on the lineage,
-/// a store failure, or the visible diff's own failure.
+/// a store failure, the visible diff's own failure, or the canonical
+/// writer's.
 pub(crate) fn import_document_copy<F>(
     vault: &Vault,
     source: EntityId,
-    resident: &LoroDoc,
     bytes: &[u8],
     admit: F,
-) -> Result<Option<LoroDoc>>
+) -> Result<()>
 where
     F: FnOnce(&mut RwTxn<'_>) -> Result<()>,
 {
     vault.with_write_txn_grouped(|txn| {
         admit(txn)?;
         let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
+        // The source's text as this writer reads it, never an older copy
+        // (FIX 8871).
+        let resident = crate::entity_doc::sync_text_in(vault, txn, &source)?
+            .map_or_else(LoroDoc::new, |text| text.doc);
         let text = resident.get_text(BODY).to_string();
         let copy = text_copy_in_txn(vault, txn, &marks, &source, &text)?.ok_or(
             Error::InvariantViolation("copy edit of an unmarked document"),
@@ -366,7 +370,7 @@ where
             RepoProjectionDiffResult::Unchanged
         } else if copy.copy.is_empty() && text.is_empty() {
             // An empty text holds nothing to mask: the peer's text is the text.
-            RepoProjectionDiffResult::Applied(submitted.into_bytes())
+            RepoProjectionDiffResult::Applied(submitted.as_bytes().to_vec())
         } else {
             let projected = match &copy.places {
                 Some(places) => RepoProjectedFileCopy::Masked {
@@ -386,36 +390,43 @@ where
             cause @ (RepoProjectionDiffResult::SealedFileEdited
             | RepoProjectionDiffResult::ProjectionEditConflict) => return held(source, &cause),
         };
-        let staged = LoroDoc::from_snapshot(
-            &resident
-                .export(ExportMode::Snapshot)
-                .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportSnapshot, e))?,
-        )
-        .map_err(|_| Error::InvariantViolation("document copy source clone"))?;
         if let Some(text) = landed {
-            let before = staged.oplog_vv();
-            staged
+            // A fresh peer: the landing's operations are no one's but the
+            // diff's, as before.
+            resident
+                .set_peer_id(LoroDoc::new().peer_id())
+                .map_err(|_| Error::InvariantViolation("document copy landing peer"))?;
+            let before = resident.oplog_vv();
+            resident
                 .get_text(BODY)
                 .update(&text, UpdateOptions::default())
                 .map_err(|_| Error::InvariantViolation("document copy landing diff"))?;
-            staged.commit();
-            let update = staged
+            resident.commit();
+            let update = resident
                 .export(ExportMode::updates(&before))
                 .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?;
-            storage::append(vault, txn, source, &update)?;
+            // The canonical writer lands them beside the lineage, reading only
+            // the copy the peer edited, never the source's text (Engine 06:57).
+            crate::entity_doc::join_sync_update_in_txn(
+                vault,
+                txn,
+                &source,
+                &update,
+                Some(&submitted),
+            )?;
         }
         save_lineage(vault, txn, id, &lineage)?;
-        Ok(Some(staged))
+        Ok(())
     })
 }
 
-fn held(source: EntityId, cause: &RepoProjectionDiffResult) -> Result<Option<LoroDoc>> {
+fn held(source: EntityId, cause: &RepoProjectionDiffResult) -> Result<()> {
     tracing::warn!(
         source = %source.to_hex(),
         ?cause,
         "sync: a document copy edit is held on its ruled cause; the peer keeps it queued"
     );
-    Ok(None)
+    Ok(())
 }
 
 /// The version vector of `source`'s copy lineage: what a peer's update
