@@ -1,7 +1,8 @@
 //! The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611),
 //! `POST /v1/owner/proactivity/action-mode`, the two
 //! `POST /v1/owner/representation/*` writes, `POST /v1/owner/stewardship`
-//! and `POST /v1/owner/self-heal/findings/label` (FIX 11611 part D).
+//! and `POST /v1/owner/self-heal/findings/label` (FIX 11611 part D),
+//! `POST /v1/owner/proactivity/digest/assemble` (FIX 11654).
 //! [`super`] is already past the file-size bar, so their schema fns live
 //! here, beside the route files' own.
 
@@ -11,8 +12,8 @@ use oneiron::dreamer_runner::maintenance::stewardship::StewardshipRules;
 use oneiron::self_heal::distillation::ReviewedFinding;
 
 use super::{
-    AnswerIdentityAsk, ApproveRepresentation, ApprovedView, DeclineRepresentation, LabelFinding,
-    SetActionMode, SetStewardship,
+    AnswerIdentityAsk, ApproveRepresentation, ApprovedView, DeclineRepresentation, DigestView,
+    LabelFinding, SetActionMode, SetStewardship,
 };
 
 /// The OpenAPI schema of `POST /v1/owner/identity/asks/answer`'s body
@@ -85,4 +86,10 @@ pub(crate) fn label_finding_body_schema() -> serde_json::Value {
 /// [`ReviewedFinding`].
 pub(crate) fn reviewed_finding_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<ReviewedFinding>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/proactivity/digest/assemble`'s
+/// answer (FIX 11611): the digest, or `null` when nothing is due.
+pub(crate) fn digest_assembled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Option<DigestView>>()
 }
