@@ -21502,7 +21502,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/context_pack/builder/assembly.rs",
@@ -21600,7 +21600,7 @@
      "path": "src/context_pack/edge_walk.rs",
      "purpose": "Edge loading and multi-hop neighbor expansion during pack assembly",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 6
      }
     },
     {
@@ -52609,7 +52609,7 @@
      "path": "src/pipeline/builder_effort.rs",
      "purpose": "Shared five-level stage selection for the raw pipeline and memory facade",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -57992,7 +57992,7 @@
      "path": "src/retrieval_depth/controls.rs",
      "purpose": "Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 11,
       "struct": 5
      }
@@ -81614,7 +81614,7 @@
     "context_pack": {
      "files": 25,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out"
     },
@@ -82781,7 +82781,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 114,
+   "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 5529,
    "test_files": 902
