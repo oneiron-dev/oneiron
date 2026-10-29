@@ -3,8 +3,7 @@
 //! The code_mode_verbs root defines `RunGuests`, `RunBrowser` and `RunDesktop`.
 
 use super::*;
-use oneiron::code_run::CodeConsentBrowserAction;
-use oneiron_browser::{HeldPress, PressGrants, PressNeed};
+use oneiron_browser::PressGrants;
 
 /// Starts one run's guest from a pinned image through the engine's tier
 /// selector, behind the run's egress proxy, on `command`, and receipts its
@@ -187,51 +186,6 @@ fn logged_receipt(receipt: &Value) -> Value {
         action.retain(|key, _| matches!(key.as_str(), "action" | "locator"));
     }
     logged
-}
-
-/// Binds the act a press held on a code run's browser `verb` call to the
-/// code consent wait at the call's own site, and asks the owner (FIX
-/// 10423): the act and its own input, the row it resolved to, its page and
-/// guest, and for a batch its answer at the stop (`stopped`). Returns the
-/// wait the run parks on. None, and the call answers as before, for a call
-/// no code run's site carries (a host door's), a payment, which stays a
-/// person's own press in the browser, or a wait that was not minted or
-/// asked.
-fn hold_press(
-    verb: AgentVerb,
-    origin: &HostWriteOrigin,
-    memory: &Memory<'_>,
-    held: HeldPress,
-    stopped: Option<&Value>,
-) -> Option<oneiron::EntityId> {
-    if held.need == PressNeed::PersonOnly {
-        return None;
-    }
-    let action = CodeConsentBrowserAction {
-        act: format!("self.browser.{}", held.act),
-        operands: held.operands.to_string(),
-        class: held.class,
-        role: held.role,
-        name: held.name,
-        locator: held.locator,
-        page: held.page,
-        session: held.generation,
-        need: held.need.as_str().to_owned(),
-        stopped: stopped.map(Value::to_string),
-    };
-    memory
-        .clone()
-        .with_host_origin(origin.clone())
-        .hold_browser_press(verb, action)
-        .inspect_err(|error| {
-            tracing::warn!(
-                code = %error.code,
-                message = %error.message,
-                "a held browser press bound no wait; the call answers as before"
-            );
-        })
-        .ok()
-        .flatten()
 }
 
 /// The vault's grants, read again at each classified browser send (FIX
@@ -434,32 +388,6 @@ impl RunBrowser {
     }
 }
 
-impl RunBrowser {
-    /// The act the run's browser's last refused press held, once (FIX
-    /// 10423); none where its guest never started.
-    pub(super) fn take_held_press(&self) -> Option<HeldPress> {
-        self.session
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_mut()?
-            .take_held_press()
-    }
-
-    /// Records whether the run's browser holds an act whose bound wait its
-    /// owner has not answered: its parked seat then idles as an open ask
-    /// does (FIX 10423).
-    pub(super) fn await_press_answer(&self, awaiting: bool) {
-        if let Some(session) = self
-            .session
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .as_mut()
-        {
-            session.await_press_answer(awaiting);
-        }
-    }
-}
-
 impl RunDesktop {
     /// The desktop the host gives run `run_id`, as [`RunBrowser::new`] gives
     /// its browser, when it has a `[desktop]` guest.
@@ -621,21 +549,12 @@ impl RunGuests {
             verb: call.verb,
             input: hooks.args.clone(),
         };
-        // Only this call's held press binds a wait, and a run that calls
-        // again waits on no earlier one (FIX 10423).
-        drop(self.take_held_press());
-        self.await_press_answer(false);
+        self.begin_press_call();
         let answer =
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
-                Err(mut refused) => {
-                    if let Some(held) = self.take_held_press()
-                        && refused.code == BrowserError::NeedsPress(String::new()).code()
-                        && let Some(wait) = hold_press(call.verb, origin, memory, held, None)
-                    {
-                        self.await_press_answer(true);
-                        refused = browser_guest::bound_words(refused, wait);
-                    }
+                Err(refused) => {
+                    let refused = self.bound_refusal(call.verb, origin, memory, refused);
                     self.refused.keep(Some(&refused));
                     return Ok(Err(AgentVerbRefusal { code: refused.code }));
                 }
@@ -648,33 +567,13 @@ impl RunGuests {
         match post {
             Ok(mut output) => {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
-                // A batch a press stopped keeps its answer at the stop on
-                // the wait its held step binds; the run parks on it.
-                if let Some(held) = held
-                    && hold_press(call.verb, origin, memory, held, Some(&output)).is_some()
-                {
-                    self.await_press_answer(true);
-                }
+                self.hold_stopped_batch(call.verb, origin, memory, held, &output);
                 Ok(Ok(AgentVerbAnswer {
                     output,
                     rows: answer.rows,
                 }))
             }
             Err(error) => refused(super::mcp_facade_error(error)),
-        }
-    }
-
-    /// The act the run's browser's last refused press held, once (FIX
-    /// 10423).
-    fn take_held_press(&self) -> Option<HeldPress> {
-        self.browser.as_ref()?.take_held_press()
-    }
-
-    /// Records whether the run's browser waits on its owner's answer to a
-    /// held act (FIX 10423).
-    fn await_press_answer(&self, awaiting: bool) {
-        if let Some(browser) = &self.browser {
-            browser.await_press_answer(awaiting);
         }
     }
 
