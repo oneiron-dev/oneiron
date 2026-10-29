@@ -121,11 +121,10 @@ impl HostSelfDispatcher<'_> {
                         "the door's caller no longer holds this write",
                     ));
                 }
-                Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
-                    output: stage(wtxn, apply)?,
-                    rows: Some(Vec::new()),
-                    observations: Vec::new(),
-                }))
+                Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
+                    stage(wtxn, apply)?,
+                    Some(Vec::new()),
+                )))
             },
         )?;
         Ok(match written {

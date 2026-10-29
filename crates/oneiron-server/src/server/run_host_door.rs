@@ -286,11 +286,7 @@ impl AgentVerbDoor for RunHostDoor {
             }));
         };
         self.observed(match answered {
-            Ok((output, rows)) => Ok(Ok(AgentVerbAnswer {
-                output,
-                rows,
-                observations: Vec::new(),
-            })),
+            Ok((output, rows)) => Ok(Ok(AgentVerbAnswer::new(output, rows))),
             // A verb hook's stop goes back to the run as the typed stop, and
             // a model call no provider answered as the typed outage, which
             // the run parks on (FIX 3194).
@@ -373,11 +369,7 @@ impl AgentVerbDoor for RunHostDoor {
         self.observed(Ok(match receiver.recv() {
             // An answer serves no vault rows: the connector's reply is
             // foreign data.
-            Ok(Ok(output)) => Ok(AgentVerbAnswer {
-                output,
-                rows: Some(Vec::new()),
-                observations: Vec::new(),
-            }),
+            Ok(Ok(output)) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
             Ok(Err(error)) => Err(AgentVerbRefusal { code: error.code }),
             Err(_) => Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),

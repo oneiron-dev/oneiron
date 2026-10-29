@@ -108,11 +108,10 @@ impl HostSelfDispatcher<'_> {
         let context = binding.session.read_context(&binding.route, key.clone())?;
         let refused = match self.hooked_session_read(&context, read, call, key, site)? {
             Ok(SessionAnswer::Answered { output, rows }) => {
-                return Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+                return Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
                     output,
-                    rows: Some(rows),
-                    observations: Vec::new(),
-                }));
+                    Some(rows),
+                )));
             }
             Err(refused) => SessionReadRefusal::Read(refused.code),
         };
