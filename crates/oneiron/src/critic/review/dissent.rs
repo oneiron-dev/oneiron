@@ -145,6 +145,7 @@ pub fn preserve_review_dissent(
             evidence: Vec::new(),
             providers,
             paired: Vec::new(),
+            rule: None,
             source_frontier: frontier,
         },
         artifact.created_at,
