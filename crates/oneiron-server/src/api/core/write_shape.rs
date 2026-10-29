@@ -13,8 +13,9 @@ use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
-/// The most refs one short-id hydrate names.
-pub(crate) const CORE_MAX_HYDRATE_REFS: usize = 256;
+/// The refs one frame of a short-id batch hydrate reads (FIX 11125): a batch
+/// past it is read frame by frame, every ref served.
+pub(crate) const CORE_HYDRATE_FRAME_REFS: usize = 256;
 
 #[cfg(test)]
 pub(crate) use oneiron::core_write::shape::{
