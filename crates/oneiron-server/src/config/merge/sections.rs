@@ -288,6 +288,9 @@ impl PartialServeConfig {
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
         }
+        if let Some(value) = self.policy {
+            resolved.policy.apply_override(value);
+        }
         if let Some(value) = self.skills {
             resolved.skills.apply_override(value);
         }
