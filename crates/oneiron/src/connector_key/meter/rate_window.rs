@@ -1,11 +1,12 @@
-//! Whether a key's exhausted rows only pace its next effect (FIX 8788).
+//! Whether a key's exhausted rows only pace its next effect (FIX 8788,
+//! FIX 8686).
 //!
-//! A Rate row that refuses on exhaustion (the default) paces: the effect
-//! waits for the row's window to open again, and its key is never charged
-//! while it waits. Every other exhausted row (Sends, Spend, a Rate row the
-//! owner set to suspend) denies as it always did. The first exhausted row is
-//! not enough: every matched row of the key and of its catalog's shared pool
-//! is read, so a hard cap is never mistaken for a wait.
+//! A count-bound row, Rate or Sends, that refuses on exhaustion (the
+//! default) paces: the effect waits for the row's window to open again, and
+//! its key is never charged while it waits. A Spend row (money, FIX 8689)
+//! and a row the owner set to suspend deny as they always did. The first
+//! exhausted row is not enough: every matched row of the key and of its
+//! catalog's shared pool is read, so a hard cap is never mistaken for a wait.
 
 use super::{
     BudgetRowState, SECONDS_PER_DAY, calendar_window_start, catalog_budget_pool_in_txn,
@@ -117,8 +118,7 @@ fn key_block(
         if !exhausted {
             continue;
         }
-        let paces = state.budget.dimension == EffectorBudgetDimension::Rate
-            && state.budget.on_exhaust == EffectorBudgetOnExhaust::Refuse;
+        let paces = row_paces(state.budget.dimension, state.budget.on_exhaust);
         block = block.and(
             paces
                 .then(|| next_eligible(state, now))
@@ -129,6 +129,19 @@ fn key_block(
         );
     }
     Ok(block)
+}
+
+/// Whether an exhausted row of `dimension` that does `on_exhaust` waits for
+/// its window rather than denying (FIX 8686): a count-bound row that
+/// refuses. Money and an owner's suspend stay hard.
+pub(crate) const fn row_paces(
+    dimension: EffectorBudgetDimension,
+    on_exhaust: EffectorBudgetOnExhaust,
+) -> bool {
+    matches!(
+        dimension,
+        EffectorBudgetDimension::Rate | EffectorBudgetDimension::Sends
+    ) && matches!(on_exhaust, EffectorBudgetOnExhaust::Refuse)
 }
 
 /// When `state`'s window next has room for its amount: once enough of its

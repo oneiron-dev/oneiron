@@ -32,6 +32,23 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/settings/learning/clear", post(clear))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/settings/learning`'s body (FIX 11611):
+/// [`LearningSettingPut`].
+pub(crate) fn put_learning_setting_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningSettingPut>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/learning/clear`'s body (FIX 11611):
+/// [`LearningSettingClear`].
+pub(crate) fn clear_learning_setting_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningSettingClear>()
+}
+
+/// The OpenAPI schema of the two learning writes' answer (FIX 11611): [`LearningSettingsView`].
+pub(crate) fn learning_settings_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningSettingsView>()
+}
+
 /// `GET /v1/owner/settings/learning[?key=<key>]`: the catalog, each knob
 /// with the value the vault reads now, and the owner's rows.
 async fn list(

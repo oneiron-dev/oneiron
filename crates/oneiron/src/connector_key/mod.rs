@@ -63,8 +63,9 @@ pub use self::meter::{
 pub use self::record::{
     CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
     ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeySpec, ConnectorKeyStatus,
-    EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
-    EffectorBudgetWindow, PendingConnectorCharter, PendingConnectorManifest,
+    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudget, EffectorBudgetDimension,
+    EffectorBudgetOnExhaust, EffectorBudgetReservePolicy, EffectorBudgetWindow,
+    PendingConnectorCharter, PendingConnectorManifest,
 };
 pub use self::setup::{
     BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,
@@ -81,9 +82,10 @@ pub(crate) use self::charter::{
 pub(crate) use self::credential_binding::connector_issuer_hold_in_txn;
 pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
-    BudgetBlock, EffectorBudgetChargeOutcome, budget_block_pooled, budget_exhausted_reason,
-    charge_effector_budgets, charge_effector_budgets_pooled, preflight_effector_budgets_pooled,
-    release_effector_debits_in_txn, shares_budget_pool,
+    BudgetBlock, EffectorBudgetChargeOutcome, SpendReserve, budget_block_pooled,
+    budget_exhausted_reason, charge_effector_budgets, charge_effector_budgets_pooled,
+    preflight_effector_budgets_pooled, release_effector_debits_in_txn,
+    reserve_connector_spend_in_txn, shares_budget_pool,
 };
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
