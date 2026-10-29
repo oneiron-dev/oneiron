@@ -43,6 +43,7 @@ pub struct InProcessVaultReadAdapter<'v> {
     scoped_read: ScopedRead<'v>,
     producers: Option<&'v crate::memory::ProducerRows>,
     media: Option<&'v [EmbeddedMediaSeed]>,
+    image_pick: Option<crate::memory::ImagePick<'v>>,
 }
 
 /// The engine code a context pack or query naming `media` is refused with
@@ -82,6 +83,7 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             scoped_read: vault.scoped_read(actor_key),
             producers: None,
             media: None,
+            image_pick: None,
         }
     }
 
@@ -94,6 +96,16 @@ impl<'v> InProcessVaultReadAdapter<'v> {
     #[must_use]
     pub fn with_media_seeds(mut self, seeds: &'v [EmbeddedMediaSeed]) -> Self {
         self.media = Some(seeds);
+        self
+    }
+
+    /// The host's fast per-image pick (OF-329) hydrate serves generated
+    /// images down their ladder with: without one an image goes in full to
+    /// a reader whose model takes images in. The host installs it; this
+    /// adapter picks nothing itself.
+    #[must_use]
+    pub fn with_image_pick(mut self, pick: Option<crate::memory::ImagePick<'v>>) -> Self {
+        self.image_pick = pick;
         self
     }
 
@@ -474,8 +486,15 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         let mut served = None;
         if entity_type == ENTITY_TYPE_ASSET {
             let lane = &self.scoped_read;
-            let asset = crate::memory::hydrated_asset(lane, id, reader, None, &mut |_| true, None)
-                .map_err(|error| engine_failure(method, &error))?;
+            let asset = crate::memory::hydrated_asset(
+                lane,
+                id,
+                reader,
+                self.image_pick.as_ref(),
+                &mut |_| true,
+                None,
+            )
+            .map_err(|error| engine_failure(method, &error))?;
             narrowing.restrict_with(&asset.receipt);
             served = match asset.value {
                 crate::memory::HydratedAsset::Served { body, text, form } => {
@@ -744,6 +763,7 @@ impl sealed::Backend for InProcessVaultReadAdapter<'_> {
         );
         reader.producers = self.producers;
         reader.media = self.media;
+        reader.image_pick = self.image_pick.clone();
         match request.into_inner() {
             VaultReadRequest::Query(request) => {
                 reader.query_op(&request).map(VaultReadResponse::Query)
