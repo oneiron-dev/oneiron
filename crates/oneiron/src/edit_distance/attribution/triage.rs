@@ -8,9 +8,9 @@
 //! [`TriagePacket`] is its stable JSON shape, so it can be handed as it is to
 //! any debugging agent; the fix rides the normal propose lane.
 //!
-//! One escalation per subject, scope and signal: an Ask NOTIFICATION in each
-//! live owner's inbox, keyed by all four, so the row is its own
-//! open-escalation record. A re-trigger rewrites that row's packet and puts
+//! One escalation per subject, project, scope and signal: an Ask
+//! NOTIFICATION in each live owner's inbox, keyed by all five, so the row
+//! is its own open-escalation record. A re-trigger rewrites that row's packet and puts
 //! it back in front of an owner who had cleared it; the same trigger again
 //! writes nothing, and a row its owner deleted stays deleted.
 //!
@@ -41,7 +41,7 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_NOTIFICATION};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// Producer name of a worsening escalation.
-const NOTIFICATION_PRODUCER_WORSENING: &str = "edit_distance.worsening";
+pub(super) const NOTIFICATION_PRODUCER_WORSENING: &str = "edit_distance.worsening";
 
 /// Newest failing receipts a packet cites. Canon pins no bound; sixteen
 /// keeps one packet one inbox row.
@@ -209,6 +209,11 @@ pub struct TriagePacket {
     pub subject_kind: TriageSubject,
     /// The consent scope the failing receipts share.
     pub scope: String,
+    /// The project the failing runs counted in, as an entity id; `None` is
+    /// the vault's (FIX 11627). A packet written before packets carried a
+    /// project decodes as the vault's.
+    #[serde(default)]
+    pub project: Option<String>,
     pub publisher: ArtifactPublisher,
     /// The newest failing receipts, oldest first: the judged receipts in this
     /// scope that charge the subject or left an amended or rejected outcome
@@ -224,8 +229,10 @@ pub struct TriagePacket {
     pub at: u64,
 }
 
-/// The packet `signal` mints for `subject` in `scope` at `at`, read from the
-/// judgment ledger, the subject's cells and the records they name in `txn`.
+/// The packet `signal` mints for `subject` in `scope` and `project` (`None`,
+/// the vault's) at `at`, read from the judgment ledger, the subject's cells
+/// and the records they name in `txn`. Only outcomes and judgments that
+/// counted in `project` enter it (FIX 11627).
 ///
 /// # Errors
 ///
@@ -236,13 +243,14 @@ pub(super) fn packet_in_txn(
     subject: EntityId,
     subject_kind: TriageSubject,
     scope: &str,
+    project: Option<EntityId>,
     at: u64,
     signal: WorseningSignal,
 ) -> Result<TriagePacket> {
     // A count-only outcome charges nobody, yet it is the subject's failure.
     let marked: BTreeSet<String> = outcomes_in_txn(vault, txn, &subject, scope)?
         .into_iter()
-        .filter(|outcome| outcome.failed())
+        .filter(|outcome| outcome.failed() && outcome.project == project)
         .map(|outcome| outcome.receipt)
         .collect();
     let mut failing: Vec<AmendmentJudgment> = amendment_judgments_in_txn(vault, txn)?
@@ -250,6 +258,7 @@ pub(super) fn packet_in_txn(
         .map(|(row, _)| row)
         .filter(|row| {
             row.scope == scope
+                && row.project == project
                 && (charges_subject(row, &subject) || marked.contains(&row.receipt_id))
         })
         .collect();
@@ -319,6 +328,7 @@ pub(super) fn packet_in_txn(
         subject: subject.to_hex(),
         subject_kind,
         scope: scope.to_owned(),
+        project: project.map(|project| project.to_hex()),
         publisher,
         receipts,
         agent_definitions,
@@ -366,11 +376,12 @@ pub(super) fn escalate_in_txn(
             source: NotificationSource {
                 producer: NOTIFICATION_PRODUCER_WORSENING.to_owned(),
                 // The scope goes last: it is the one part that may hold a
-                // separator.
+                // separator. The project segment is empty for the vault's.
                 event: format!(
-                    "{}:{}:{owner_ref}:{}",
+                    "{}:{}:{owner_ref}:{}:{}",
                     packet.signal.token(),
                     packet.subject,
+                    packet.project.as_deref().unwrap_or_default(),
                     packet.scope
                 ),
                 result: Some(packet.subject.clone()),
