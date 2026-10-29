@@ -205,10 +205,10 @@ pub(in crate::pipeline) fn capture_replay_inputs(
             .collect::<Vec<_>>()
     );
     inputs.config["model_revisions"] = json!({
-        "text_embedding_space": builder.vault.config.embedding_model.as_str(),
+        "text_embedding_space": builder.vault.config.embedding_model.as_deref(),
         "text_embedding_transform": builder.vault.config.embedding_transform.as_deref(),
-        "analyzer_manifest_hash": replay_identity.analyzer_manifest_hash.as_ref().map(hex::encode),
-        "bm25_field_schema_hash": replay_identity.bm25_field_schema_hash.as_ref().map(hex::encode),
+        "analyzer_manifest_hash": replay_identity.analyzer_manifest_hash.as_deref().map(crate::entity_id::bytes_to_hex_lower),
+        "bm25_field_schema_hash": replay_identity.bm25_field_schema_hash.as_deref().map(crate::entity_id::bytes_to_hex_lower),
     });
     inputs.config["context_pack_world_share"] = json!(builder.context_pack_world_share);
     inputs.config["fusion"] = json!({
