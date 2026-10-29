@@ -162,6 +162,7 @@ mod retrieval_telemetry;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
+mod served_vaults;
 mod short_id_alias;
 mod structural_kind_registry;
 mod sync_responses;
@@ -177,6 +178,7 @@ pub(crate) mod test_hooks;
 mod tests;
 
 pub(crate) use archive_scratch::ScratchEnv;
+pub(crate) use served_vaults::served_vault_at;
 #[cfg(unix)]
 pub(crate) use asset_body::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
