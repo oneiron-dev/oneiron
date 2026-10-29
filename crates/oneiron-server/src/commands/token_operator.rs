@@ -16,7 +16,7 @@ use crate::config::{ServeArgs, resolve_serve_config};
 /// How long an operator credential lasts when the operator names no
 /// lifetime: 30 days, as `token read` and `token agent` mint (CALLS `FIX
 /// 1814 operator credential class`). The host's root's own expiry caps it.
-pub const OPERATOR_CREDENTIAL_LIFETIME_SECS: u64 = 30 * 24 * 60 * 60;
+const OPERATOR_CREDENTIAL_LIFETIME_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// The operator's own credential, minted on the stopped self-hosted vault.
 /// The issuer key comes from the config or `ONEIRON_AUTH_SECRET`, never
