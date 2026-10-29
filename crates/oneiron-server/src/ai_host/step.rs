@@ -85,6 +85,9 @@ pub(super) struct ModelStep<'a> {
     /// A wave plan's planner, whose craft it is shown beside the step
     /// resident's own (FIX 5777); `None` for every other step.
     pub(super) planner: Option<EntityId>,
+    /// The vault rows the caller built the step's prompt from; `None`
+    /// when one cannot be named (FIX 11313).
+    pub(super) sources: Option<Vec<EntityId>>,
     pub(super) response_format: ResponseFormat,
 }
 
@@ -306,6 +309,24 @@ impl StepRunner {
                 confession_ask(&objectives, &self.confession),
             ));
         }
+        // The step's inputs as the caller's part of one read set (FIX
+        // 6934): its definition row and its rendered memory and chat rows,
+        // or unknown when it carried earlier outputs, which are hashes, not
+        // rows, or when a saved workflow's composition names no definition
+        // row. The call carries it as its sources (FIX 11313); the record
+        // below reuses it.
+        let sources = if has_earlier {
+            None
+        } else {
+            union_source_rows([
+                step.input
+                    .target
+                    .agent_definition_ref()
+                    .ok()
+                    .map(|id| vec![id]),
+                Some(selected.source_rows().to_vec()),
+            ])
+        };
         // A room-bound step, or a step of a member's bound run, must read
         // its payer (OF-531, FIX 5316).
         let payer_required = requires_payer(vault, step.attempt.id, step.input.room.is_some())?;
@@ -319,25 +340,20 @@ impl StepRunner {
                 purpose: STEP_PURPOSE,
                 messages,
                 planner: None,
+                sources: sources.clone(),
                 response_format: ResponseFormat::Text,
             },
             payer_required,
             true,
         )?;
-        // The step's inputs as one read set (FIX 6934): its definition row,
-        // its rendered memory and chat rows and its planner craft, or unknown
-        // when it carried earlier outputs or ran tool rounds, which are not
-        // rows, or when a saved workflow's composition names no definition
-        // row. A step that ends early before its call records nothing.
-        let definition_row = step.input.target.agent_definition_ref().ok();
-        let rows = if has_earlier || generated.tool_rounds {
+        // The step's inputs as one read set (FIX 6934): the caller's part
+        // above with its planner craft, or unknown when it ran tool rounds,
+        // which are not rows. A step that ends early before its call records
+        // nothing.
+        let rows = if generated.tool_rounds {
             None
         } else {
-            union_source_rows([
-                definition_row.map(|id| vec![id]),
-                Some(selected.source_rows().to_vec()),
-                generated.planner_craft_rows,
-            ])
+            union_source_rows([sources, generated.planner_craft_rows])
         };
         record_step_read(vault, step.attempt.id, rows, &mut read_set_lost);
         let bytes = generated.bytes;
@@ -382,6 +398,7 @@ impl StepRunner {
             purpose,
             mut messages,
             planner,
+            sources,
             response_format,
         } = input;
         // FIX 5777: a wave plan speaks with its planner's instructions for
@@ -421,10 +438,15 @@ impl StepRunner {
         // OF-490: the step speaks as its resident, so it is shown that
         // resident's craft after its instructions, each note loaded on its
         // own attempt. A replayed wave plan never calls here.
-        if let Some(craft) =
+        // The requester craft rows the call shows (FIX 11313): kept beside
+        // the joined text for the run's sources. A step with no craft shows
+        // none.
+        let mut requester_craft_rows: Option<Vec<EntityId>> = Some(Vec::new());
+        if let Some((craft, rows)) =
             super::resident_craft::queue_craft(vault, attempt.id, &actor.entity_ref(), now)
         {
             super::resident_craft::join_craft(&mut messages, craft);
+            requester_craft_rows = Some(rows);
         }
         // The requester craft door self-reports each CLAIM it loads (FIX
         // 7017); this empty report makes it report on every path, even when
@@ -580,7 +602,19 @@ impl StepRunner {
         // settled. An answer pays its tokens, or the reservation when it
         // reports none; a rung that went out and failed pays its reservation.
         // A round `self.use` asks again is the same call on the same run.
-        let run = self.models.funded_run(run_id, guard, payer);
+        // The run's sources (FIX 11313): the caller's rows with the craft
+        // rows this call shows beside them, or unknown when the caller
+        // names none, or when the call may answer tools, whose answers are
+        // not rows.
+        let sources = if offers_use {
+            None
+        } else {
+            union_source_rows([sources, planner_craft_rows.clone(), requester_craft_rows])
+        };
+        let run = self
+            .models
+            .funded_run(run_id, guard, payer)
+            .sourced(sources);
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
         // leaves none and never fails the step.

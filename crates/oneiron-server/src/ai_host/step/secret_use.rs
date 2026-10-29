@@ -25,6 +25,7 @@
 //! their results: a rung without them refuses a request that carries tools,
 //! and a step that ran before must still run.
 
+use oneiron::actor_claims::craft_message_entries;
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError};
@@ -146,6 +147,10 @@ impl<'a> StepSecretUse<'a> {
         let mut uses = 0_u64;
         let mut rounds = false;
         loop {
+            // The step's requester craft is read again before each round
+            // (FIX 11395): a note erased between rounds is not sent again.
+            // The planner craft stays as built at the start.
+            self.refresh_requester_craft(&mut request);
             let (response, served) = runtime.block_on(ladder.generate_served_while(
                 run,
                 request.clone(),
@@ -201,6 +206,36 @@ impl<'a> StepSecretUse<'a> {
                     }],
                 });
             }
+        }
+    }
+
+    /// Re-reads the step's requester craft for the round going out (FIX
+    /// 11395): the fresh message takes the old requester craft's slot, a
+    /// round that now has craft the start did not gains it after the
+    /// instructions, and one that now has none loses it. The planner craft
+    /// is the start's, untouched.
+    fn refresh_requester_craft(&self, request: &mut LlmRequest) {
+        let at = super::super::unix_now();
+        let fresh = super::super::resident_craft::queue_craft(
+            self.vault,
+            self.attempt.id,
+            &self.actor.entity_ref(),
+            at,
+        );
+        let slot = request.messages.iter().position(|message| {
+            message.role == LlmMessageRole::System
+                && craft_message_entries(&super::super::resident_craft::message_text(message), at)
+                    .is_some()
+        });
+        match (fresh, slot) {
+            (Some((craft, _)), Some(slot)) => request.messages[slot] = craft,
+            (Some((craft, _)), None) => {
+                super::super::resident_craft::join_craft(&mut request.messages, craft);
+            }
+            (None, Some(slot)) => {
+                request.messages.remove(slot);
+            }
+            (None, None) => {}
         }
     }
 
