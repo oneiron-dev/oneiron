@@ -92,12 +92,9 @@ impl Vault {
     /// write paths that already own it, which is why this can run inside a
     /// caller's read transaction at all.
     pub(crate) fn instant_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<VaultInstant> {
-        crate::authority::authority_clock_reading_in_txn(
-            &self.store,
-            txn,
-            self.store.clock.now_recorded_at(),
-        )
-        .map(VaultInstant)
+        // FIX 7660/7672: one copy of the clock reading, kept in first_seen_clock.rs.
+        crate::authority::authority_instant_secs_for_store_in_txn(&self.store, txn)
+            .map(VaultInstant)
     }
 
     /// [`Self::instant_in_txn`] for a write that stamps the reading into a

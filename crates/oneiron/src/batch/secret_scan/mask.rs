@@ -57,6 +57,7 @@ use crate::secret_custody::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::write_envelope::ClaimCandidate;
 use wipe::{PlanOps, PlanTree, PlanValues, replace_wiped};
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
@@ -98,7 +99,10 @@ pub(crate) fn mask_origin_in_txn(
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
-/// before. `at` stamps each custody record the batch mints.
+/// before. `at` stamps each custody record the batch mints. It also returns
+/// each MACHINE claim candidate the minted pass rewrote with its pre-mask
+/// body, in op order, so the candidate apply can renew its proof over what
+/// is stored (FIX 11356); a replayed batch reports none.
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's own apply parts, its origin and its time"
@@ -112,7 +116,7 @@ pub(in crate::batch) fn mask_batch_ops(
     text_index_trusted: bool,
     masks: bool,
     at: u64,
-) -> Result<MaskedFiles> {
+) -> Result<(MaskedFiles, Vec<(EntityId, ClaimCandidate)>)> {
     // A value custody already holds keeps its own handle wherever it comes
     // back, shape or none (OF-560 C). A replayed batch reads only what it
     // wrote before.
@@ -122,14 +126,14 @@ pub(in crate::batch) fn mask_batch_ops(
         None
     };
     let refusal = match scan_batch_ops(store, &*wtxn, ops) {
-        Ok(()) if known.is_none() => return Ok(MaskedFiles::default()),
+        Ok(()) if known.is_none() => return Ok((MaskedFiles::default(), Vec::new())),
         Ok(()) => None,
         Err(refusal) => Some(refusal),
     };
     // A value the owner ruled no secret in a record is no hit there.
     let kept = KeptValues::for_records_in_txn(store, &*wtxn, ops.iter().filter_map(op_record))?;
     if known.is_none() && !kept.is_empty() && scan_screened(store, wtxn, &kept, ops).is_ok() {
-        return Ok(MaskedFiles::default());
+        return Ok((MaskedFiles::default(), Vec::new()));
     }
     // The plan's copy, and every value it finds, are wiped however the
     // plan ends (FIX 1101).
@@ -143,7 +147,7 @@ pub(in crate::batch) fn mask_batch_ops(
     };
     plan.mask_ops(&mut planned)?;
     if plan.found.is_empty() && plan.file_ids.is_empty() && !plan.placed_known {
-        return refusal.map_or_else(|| Ok(MaskedFiles::default()), Err);
+        return refusal.map_or_else(|| Ok((MaskedFiles::default(), Vec::new())), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
     scan_screened(store, wtxn, &plan.kept, &planned)?;
@@ -152,7 +156,7 @@ pub(in crate::batch) fn mask_batch_ops(
     let files = std::mem::take(&mut plan.files);
     let masked = MaskedFiles(std::mem::take(&mut plan.file_ids));
     if !masks {
-        return Ok(masked);
+        return Ok((masked, Vec::new()));
     }
     let write = CustodyWrite {
         store,
@@ -162,15 +166,16 @@ pub(in crate::batch) fn mask_batch_ops(
     };
     let minted = plan.mint(&write, wtxn, at)?;
     put_file_marks_in_txn(store, wtxn, files, &minted, at)?;
-    Masker {
+    let mut minted_pass = Masker {
         handles: minted.map(|(handle, _)| handle),
         minted: true,
         kept,
         known,
         ..Masker::default()
-    }
-    .mask_ops(ops)?;
-    Ok(masked)
+    };
+    minted_pass.mask_ops(ops)?;
+    let masked_claims = std::mem::take(&mut minted_pass.masked_claims);
+    Ok((masked, masked_claims))
 }
 
 /// Records each file `files` marks: each key's span, in the file's bytes or
@@ -377,6 +382,10 @@ struct Masker {
     placed_known: bool,
     /// Where a tracked pass put each handle, by the text it masked (FIX 6144).
     traced: Option<text::TextReplacements>,
+    /// Each MACHINE claim candidate the minted pass rewrote, with its
+    /// pre-mask body, in op order: the candidate apply renews its proof
+    /// over what is stored (FIX 11356). A plan pass never fills it.
+    masked_claims: Vec<(EntityId, ClaimCandidate)>,
 }
 
 impl Masker {
@@ -416,10 +425,24 @@ impl Masker {
                         replace_wiped(data, masked);
                     }
                 }
-                BatchOp::ClaimCandidate { id, candidate, .. } => {
+                BatchOp::ClaimCandidate {
+                    id,
+                    candidate,
+                    envelope,
+                    ..
+                } => {
                     self.at = Some((*id, "claim".to_owned()));
+                    // The minted pass only: a plan rewrites a copy. Only a
+                    // MACHINE candidate can need its proof renewed.
+                    let before = (self.minted && envelope.machine_signature().is_some())
+                        .then(|| (**candidate).clone());
                     for value in candidate.values_mut() {
                         self.mask_value(value)?;
+                    }
+                    if let Some(before) = before
+                        && **candidate != before
+                    {
+                        self.masked_claims.push((*id, before));
                     }
                 }
                 BatchOp::Text { id, fields } => {

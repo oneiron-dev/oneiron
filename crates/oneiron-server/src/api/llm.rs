@@ -2,6 +2,7 @@
 use crate::models::{CallDeadline, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
+mod defaults_submit;
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -32,6 +33,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             get(read_defaults)
                 .put(replace_defaults)
                 .layer(DefaultBodyLimit::max(16 * 1024)),
+        )
+        // FIX 8211: the kept proposals, and a holder's answer to one.
+        .route("/defaults/proposals", get(defaults_submit::list_proposals))
+        .route(
+            "/defaults/proposals/{proposal}",
+            post(defaults_submit::rule_proposal),
         )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
@@ -126,6 +133,7 @@ async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) ->
 async fn replace_defaults(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: axum::http::HeaderMap,
     Json(table): Json<oneiron::llm::PurposeDefaultTable>,
 ) -> Response {
     if !auth.is_owner_grade() {
@@ -148,13 +156,9 @@ async fn replace_defaults(
     {
         return refusal(StatusCode::BAD_REQUEST, "extraction_egress_unavailable");
     }
-    match server.vault.set_purpose_default_table(table.table()) {
-        Ok(()) => Json(table.table()).into_response(),
-        Err(oneiron::Error::InvalidConfig(_)) => {
-            refusal(StatusCode::BAD_REQUEST, "invalid_defaults")
-        }
-        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
-    }
+    // FIX 8211: a live policy-power holder's table lands; anyone else's is
+    // kept as an inert proposal.
+    defaults_submit::submit(&server, &auth, &headers, table.table())
 }
 
 /// Admits a raw call: the owner, then the vault's inference policy for the

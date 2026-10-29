@@ -507,8 +507,10 @@ impl RunGuests {
         self
     }
 
-    /// The words the run's newest browser call was refused with, for
-    /// `browser_unsupported` alone (FIX 6887).
+    /// The words the run's newest browser call was refused with, kept where
+    /// they say more than their code (FIX 6887): `browser_unsupported`
+    /// naming the verb that serves it, a destination refusal in the host's
+    /// own words (FIX 7122), and a press's control or a stale ref (FIX 249).
     pub(crate) fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
         self.refused.words()
     }
@@ -568,10 +570,7 @@ impl RunGuests {
             Ok(mut output) => {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
                 self.hold_stopped_batch(call.verb, origin, memory, held, &output);
-                Ok(Ok(AgentVerbAnswer {
-                    output,
-                    rows: answer.rows,
-                }))
+                Ok(Ok(AgentVerbAnswer::new(output, answer.rows)))
             }
             Err(error) => refused(super::mcp_facade_error(error)),
         }
@@ -698,10 +697,7 @@ impl RunGuests {
                 Some(filed.program.subgoal)
             });
         }
-        Ok(Ok(AgentVerbAnswer {
-            output,
-            rows: Some(Vec::new()),
-        }))
+        Ok(Ok(AgentVerbAnswer::new(output, Some(Vec::new()))))
     }
 
     pub(super) fn admits(

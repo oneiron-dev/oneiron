@@ -27,7 +27,7 @@ use oneiron::task_verb::sdk::{
     self, VoiceBankInspectRequest, VoiceBankInspection, VoiceBankPackPutRequest,
     VoiceBankPackReceipt, VoiceRenderConsentReceipt, VoiceRenderConsentRequest,
     VoiceRenderEventView, VoiceRenderLineageRequest, VoiceTargetEvictReceipt,
-    VoiceTargetEvictRequest, VoiceTargetProvisionRequest, VoiceTargetReceipt,
+    VoiceTargetEvictRequest, VoiceTargetProvisionRequest, VoiceTargetReceipt, VoiceTargetRender,
 };
 use oneiron::voice_identity::ref_bank::VoiceBankActor;
 
@@ -237,9 +237,12 @@ pub(crate) async fn vault_voices_targets_evict(
 }
 
 /// `vault.voices.inspect`: the actor's own voice as the bank holds it, for
-/// one configured hosted target at the locality its clone wire states:
-/// identity, pack metadata without audio or transcripts, the current render
-/// decision and the target's current clone. No provider call.
+/// one target as this host renders it (FIX 4394): identity, pack metadata
+/// without audio or transcripts, the current render decision, and a hosted
+/// target's current clone at the locality its clone wire states, or a
+/// reference target's fence at the locality its provider states. A target
+/// this host does not render reads the same metadata and says so. No
+/// provider call.
 pub(crate) async fn vault_voices_inspect(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -250,27 +253,32 @@ pub(crate) async fn vault_voices_inspect(
         Ok(actor) => actor,
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
-    let Some(cloner) = server
-        .ai
-        .model_runtime()
-        .media()
-        .voice_cloner(&input.target)
-    else {
-        return (
-            Err(memory_refusal(VoiceBankRefusal::NoCloneTarget)),
-            Some(Vec::new()),
-        );
-    };
-    let locality = cloner.locality();
+    let render = target_render(server, &input.target);
     let named = acting(server, &actor);
     as_person_naming(
         server,
         VERB,
         Ok(actor),
-        move |server, actor| sdk::inspect_voice_bank_as(server.vault(), &actor, &input, locality),
+        move |server, actor| sdk::inspect_voice_bank_as(server.vault(), &actor, &input, render),
         move |_| named.map(|named| vec![named]),
     )
     .await
+}
+
+/// How this host renders `target`: a hosted clone wire's, a reference
+/// target's seated provider's, or neither.
+fn target_render(server: &SyncServer, target: &str) -> VoiceTargetRender {
+    let media = server.ai.model_runtime().media();
+    if let Some(cloner) = media.voice_cloner(target) {
+        return VoiceTargetRender::HostedClone {
+            locality: cloner.locality(),
+        };
+    }
+    media
+        .reference_target_locality(target)
+        .map_or(VoiceTargetRender::Unconfigured, |locality| {
+            VoiceTargetRender::Reference { locality }
+        })
 }
 
 /// `vault.voices.lineage`: the actor's own voice's render history (FIX

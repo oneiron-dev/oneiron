@@ -8,6 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ppr;
 use crate::store::Store;
+use crate::write_envelope::ClaimCandidate;
 
 pub(super) struct AppliedClaimCandidate {
     pub(super) had_graph_mutation: bool,
@@ -22,6 +23,7 @@ pub(super) fn apply_claim_candidate(
     birth_context: (&crate::analyzer::MultilingualAnalyzer, bool),
     wtxn: &mut RwTxn<'_>,
     request: ClaimCandidateRequest<'_>,
+    pre_mask: Option<ClaimCandidate>,
 ) -> Result<AppliedClaimCandidate> {
     let ClaimCandidateRequest {
         id,
@@ -74,6 +76,23 @@ pub(super) fn apply_claim_candidate(
     // the facet that claim was born with.
     let default_facet = claim_candidate_birth_facet(store, wtxn, &id)?;
     let had_prior = crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &id)?;
+    // Only an id the mask rewrote in this transaction carries its pre-mask
+    // body: its MACHINE proof is renewed over what is stored, and only after
+    // the old proof verifies over the pre-mask bytes. Every other envelope
+    // reaches admission byte for byte.
+    let mut resigned = envelope.clone();
+    if let Some(pre) = &pre_mask {
+        crate::authority::resign_machine_claim_after_mask_in_txn(
+            store,
+            wtxn,
+            &id,
+            pre,
+            &candidate,
+            &mut resigned,
+            default_facet,
+        )?;
+    }
+    let envelope = &resigned;
     let body = candidate.into_claim_body(envelope, default_facet)?;
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed

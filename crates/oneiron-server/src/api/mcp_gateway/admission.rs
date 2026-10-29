@@ -187,7 +187,31 @@ fn mcp_admit_verb_scope(
     if tool.requires_unscoped() {
         mcp_admit_unscoped_execution(actor, tool.name, "arguments.spec")?;
     }
+    if actor.scope.is_narrow()
+        && let Some(asset) = ask_image_asset(tool, arguments)
+    {
+        // `ai.ask_image` pulls its image through the credential's own lane,
+        // which can be wider than the connector's registration: a narrowed
+        // connector asks only about an image inside its own ceiling.
+        mcp_admit_scoped_entity(server, actor, &asset, "arguments.spec.handle")?;
+    }
     Ok(())
+}
+
+/// The ASSET an `ai.ask_image` call's view handle names (FIX 679); `None`
+/// for any other tool, and for a handle that does not parse, which the
+/// door refuses before it reads anything.
+fn ask_image_asset(
+    tool: crate::mcp::McpGeneratedVerbTool,
+    arguments: &crate::mcp::McpVerbArguments,
+) -> Option<oneiron::EntityId> {
+    if tool.name != "ai.ask_image" {
+        return None;
+    }
+    let handle = arguments.spec.as_ref()?.get("handle")?.as_str()?;
+    oneiron::memory::ImageHandle::parse(handle)
+        .ok()
+        .map(|handle| handle.asset)
 }
 
 /// Refuses one call whose EXECUTION cannot carry this credential's scope.
