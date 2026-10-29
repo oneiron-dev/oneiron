@@ -4766,7 +4766,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/vault_document.rs` | src | m | 12 crate-vis | — | Whole-vault export (OF-222), written row by row (FIX 2766, rule 5): each snapshot row becomes its typed… |
 | `src/serialize/yaml_format.rs` | src | s | 2 crate-vis | — | YAML section writer and YAML scalar/key quoting rules |
 | `src/session_lifecycle.rs` | src | L | 7 struct · 3 enum · 13 fn · 2 re-export · 7 crate-vis | EndedSession, OpenSession, SessionActivityPeriod, SessionClosePredicate, SessionEndReason, SessionEndWake, SessionHintTimestamp, SessionKey +2 | RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy… |
-| `src/session_lifecycle/expiry.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | SessionExpiryPolicy | A sitting's expiry policy (FIX 8600): the vault's own idle-floor and lifetime-ceiling rows, narrowed by… |
+| `src/session_lifecycle/expiry.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | SessionExpiryPolicy | A sitting's expiry policy (FIX 8600): the vault's own idle-floor and lifetime-ceiling rows, narrowed by… |
 | `src/session_lifecycle/speakers.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | SessionParticipant, SessionSpeakers | Who spoke in a sitting (FIX 2015), kept on its lifecycle record so an ended sitting still names them after… |
 | `src/session_lifecycle/tests.rs` | test | m | — | — | — |
 | `src/session_overlay/hygiene_tests.rs` | test | s | 8 crate-vis | — | Allocation-boundary teardown observer for session-owned buffers |
