@@ -48297,6 +48297,11 @@ pub enum WebCallOutcome {
         #[serde(rename = "reason")]
         reason: String,
     },
+    #[serde(rename = "waiting")]
+    Waiting {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
 }
 
 /// `oneiron::web_connector::usage::WebConnectorUsage`.

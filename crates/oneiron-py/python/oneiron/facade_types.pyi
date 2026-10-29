@@ -15420,7 +15420,10 @@ class WebCallOutcomeOk(TypedDict):
 class WebCallOutcomeFailed(TypedDict):
     kind: Literal["failed"]
     reason: str
-WebCallOutcome = WebCallOutcomeOk | WebCallOutcomeFailed
+class WebCallOutcomeWaiting(TypedDict):
+    kind: Literal["waiting"]
+    reason: str
+WebCallOutcome = WebCallOutcomeOk | WebCallOutcomeFailed | WebCallOutcomeWaiting
 class WebConnectorUsage(TypedDict):
     at_ms: int
     tool: WebTool

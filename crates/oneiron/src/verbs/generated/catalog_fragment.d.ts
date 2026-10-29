@@ -3085,7 +3085,7 @@ declare namespace Sdk {
   type WebTool = "search" | "fetch";
   type WebKeySource = "backend" | "user" | "hub";
   type WebCostBasis = "actual" | "estimated" | "unpriced";
-  type WebCallOutcome = { kind: "ok"; results: number } | { kind: "failed"; reason: string };
+  type WebCallOutcome = { kind: "ok"; results: number } | { kind: "failed"; reason: string } | { kind: "waiting"; reason: string };
   type WebConnectorUsage = { at_ms: number; tool: WebTool; provider: WebProvider; key: WebKeySource; hub_connector?: string | null; latency_ms: number; cost_micro_usd?: number | null; cost_basis: WebCostBasis; provider_request_id?: string | null; outcome: WebCallOutcome };
   type WebConnectorUsagePage = { rows: WebConnectorUsage[]; total_cost_micro_usd: number; unpriced: number };
   type OneironerBind = { expected_checkpoint_sha16?: string | null; expected_stack_sha16?: string | null };

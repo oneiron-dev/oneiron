@@ -6135,7 +6135,7 @@ export type WebKeySource = "backend" | "user" | "hub"
 /** `oneiron::web_connector::usage::WebCostBasis` */
 export type WebCostBasis = "actual" | "estimated" | "unpriced"
 /** `oneiron::web_connector::usage::WebCallOutcome` */
-export type WebCallOutcome = { kind: "ok"; results: number } | { kind: "failed"; reason: string }
+export type WebCallOutcome = { kind: "ok"; results: number } | { kind: "failed"; reason: string } | { kind: "waiting"; reason: string }
 /** `oneiron::web_connector::usage::WebConnectorUsage` */
 export type WebConnectorUsage = { at_ms: number; tool: WebTool; provider: WebProvider; key: WebKeySource; hub_connector?: string | null; latency_ms: number; cost_micro_usd?: number | null; cost_basis: WebCostBasis; provider_request_id?: string | null; outcome: WebCallOutcome }
 /** `oneiron::web_connector::usage::WebConnectorUsagePage` */
