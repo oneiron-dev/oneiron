@@ -329,11 +329,7 @@ fn answer_verdict(
                 ],
             )
         })?;
-    let views = if request.evidence.is_empty() {
-        Vec::new()
-    } else {
-        reader.hydrate(&request.evidence)?.value
-    };
+    let views = hook::evidence_views(reader, &request.evidence)?;
     let mut evidence = views
         .iter()
         .map(|view| EntityId::from_hex(&view.id_hex))
