@@ -406,3 +406,37 @@ pub(crate) fn resume_payer_parks(
     }
     waiting
 }
+
+/// Puts each reader child parked on its payer (FIX 3740) back in its claim
+/// queue once its funding reads yes, read as its run first read it, or once
+/// its cutoff came, which its claim then settles. Returns how many still wait.
+/// It runs on each reader runner tick: an answer's write signals no reader
+/// wake, so the tick is its clock.
+pub(crate) fn resume_reader_payer_parks(
+    vault: &Vault,
+    jobs: &oneiron::code_run::ReaderJobs<'_>,
+    now_ms: u64,
+) -> usize {
+    let parked = match jobs.payer_parked() {
+        Ok(parked) => parked,
+        Err(error) => {
+            tracing::warn!(%error, "reader children parked on their payer could not be listed");
+            return 0;
+        }
+    };
+    let mut waiting = 0;
+    for job in parked {
+        let resume = now_ms >= job.binding.child_cutoff_unix_ms
+            || job.binding.spend.scope().is_none()
+            || scope_funding(vault, Some(&SpendScopeId::for_attempt(&job.attempt)), false).is_ok();
+        if !resume {
+            waiting += 1;
+            continue;
+        }
+        if let Err(error) = jobs.unpark(job.task, job.generation) {
+            tracing::warn!(%error, task = %job.task.to_hex(), "a reader child parked on its payer was not resumed");
+            waiting += 1;
+        }
+    }
+    waiting
+}

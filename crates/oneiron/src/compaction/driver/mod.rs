@@ -71,6 +71,18 @@ pub trait CompactionBackend: Send + Sync {
     fn input_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
         None
     }
+    /// How many times the model seats behind this backend have come back
+    /// from an outage (FIX 1112). A run whose pass was held for the turn
+    /// tries again at its next breakpoint once this moves. A backend with no
+    /// such signal reads 0, and its holds last the turn as before.
+    fn recoveries(&self) -> u64 {
+        0
+    }
+    /// Whether a pass held on its payer (FIX 3740) may try again: the
+    /// owners said yes. A backend that bills no room payer reads `true`.
+    fn funded(&self) -> bool {
+        true
+    }
     /// Called once per flight, off the step loop, before its passes. A
     /// backend that writes as its agent (FIX 4465) freezes what the flight's
     /// calls wear, or says, typed, why this flight cannot be written as its

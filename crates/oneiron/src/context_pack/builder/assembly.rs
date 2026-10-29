@@ -36,6 +36,8 @@ use super::{
     SerializedContextPack, UnfinalizedContextPack,
 };
 
+const DEFAULT_CONTEXT_PACK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// What a scoped pack run reports beside its pack.
 pub(crate) struct PackRunStatus {
     pub(crate) embedding_matches:
@@ -273,6 +275,13 @@ impl<'a> ContextPackBuilder<'a> {
                 .is_none_or(|ctx| ctx.mode() == DisclosureMode::OwnerAlone))
         .then(|| self.pack_replay_config());
         let mut pipeline = self.pipeline;
+        let default_deadline =
+            crate::retrieval_depth::RetrievalDeadline::after(DEFAULT_CONTEXT_PACK_DEADLINE);
+        if pipeline.retrieval_deadline().is_none() {
+            pipeline = pipeline.deadline(&default_deadline);
+        }
+        let pack_deadline = pipeline.retrieval_deadline();
+        let mut deadline_exceeded = false;
         if self
             .disclosure
             .as_ref()
@@ -309,7 +318,10 @@ impl<'a> ContextPackBuilder<'a> {
             // fail-closed; the normal retrieval still runs its own gates.
             Err(Error::IndexOverflow(
                 "L2 subject adjacency" | "L2 evidence bytes" | "L2 evidence claims",
-            )) if implicit_l2 => None,
+            )) if implicit_l2 || pack_deadline.is_some_and(|deadline| deadline.answer_due()) => {
+                deadline_exceeded |= pack_deadline.is_some_and(|deadline| deadline.answer_due());
+                None
+            }
             other => other?,
         };
         let l2_pipeline = l2_base.as_ref().map(|_| pipeline.clone());
@@ -413,6 +425,7 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache: None,
                 claim_bodies: Some(&claim_bodies),
                 clamp,
+                deadline: pack_deadline,
             };
             let mut results = Vec::with_capacity(scored.len());
             for entry in scored.iter().copied() {
@@ -426,7 +439,7 @@ impl<'a> ContextPackBuilder<'a> {
                     };
                     options.read_mode = crate::vault::ReadMode::Pinned(*revision);
                 }
-                let Some(entity) = hydrate_entity(
+                let hydrated = match hydrate_entity(
                     self.vault,
                     &self.read,
                     &rtxn,
@@ -434,8 +447,17 @@ impl<'a> ContextPackBuilder<'a> {
                     entry.score,
                     options,
                     &mut claims_suppressed,
-                )?
-                else {
+                ) {
+                    Ok(entity) => entity,
+                    Err(Error::IndexOverflow(
+                        "context pack hydration" | "context pack edge scan",
+                    )) if pack_deadline.is_some_and(|deadline| deadline.answer_due()) => {
+                        deadline_exceeded = true;
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
+                let Some(entity) = hydrated else {
                     continue;
                 };
                 results.push(entity);
@@ -508,7 +530,7 @@ impl<'a> ContextPackBuilder<'a> {
                 let (neighbor_filter, named_types) =
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
                 let world_scope = neighbor_pipeline.neighbor_world_scope(&rtxn)?;
-                walk_edges(
+                match walk_edges(
                     &self.read,
                     &rtxn,
                     &seed_ids,
@@ -523,8 +545,18 @@ impl<'a> ContextPackBuilder<'a> {
                         named_types,
                         world_scope: &world_scope,
                         critical_policy: (self.criticality != Some(false)).then_some(&policy),
+                        deadline: pack_deadline,
                     },
-                )?
+                ) {
+                    Ok(walk) => walk,
+                    Err(Error::IndexOverflow("context pack edge scan"))
+                        if pack_deadline.is_some_and(|deadline| deadline.answer_due()) =>
+                    {
+                        deadline_exceeded = true;
+                        EdgeWalkResult::default()
+                    }
+                    Err(error) => return Err(error),
+                }
             } else {
                 EdgeWalkResult::default()
             };
@@ -549,19 +581,34 @@ impl<'a> ContextPackBuilder<'a> {
                 edge_cache,
                 claim_bodies: Some(&claim_bodies),
                 clamp,
+                deadline: pack_deadline,
             };
 
             if self.include_edges && self.edge_hop > 0 {
                 for entity in &mut results {
-                    entity.edges = Some(load_entity_edges(
-                        &self.read, &rtxn, &entity.id, edge_cache, clamp,
-                    )?);
+                    entity.edges = match load_entity_edges(
+                        &self.read,
+                        &rtxn,
+                        &entity.id,
+                        edge_cache,
+                        clamp,
+                        pack_deadline,
+                    ) {
+                        Ok(edges) => Some(edges),
+                        Err(Error::IndexOverflow("context pack edge scan"))
+                            if pack_deadline.is_some_and(|deadline| deadline.answer_due()) =>
+                        {
+                            deadline_exceeded = true;
+                            break;
+                        }
+                        Err(error) => return Err(error),
+                    };
                 }
             }
 
             let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
             for id in edge_walk.neighbor_ids {
-                let Some(entity) = hydrate_entity(
+                let hydrated = match hydrate_entity(
                     self.vault,
                     &self.read,
                     &rtxn,
@@ -569,8 +616,17 @@ impl<'a> ContextPackBuilder<'a> {
                     0.0,
                     neighbor_options,
                     &mut claims_suppressed,
-                )?
-                else {
+                ) {
+                    Ok(entity) => entity,
+                    Err(Error::IndexOverflow(
+                        "context pack hydration" | "context pack edge scan",
+                    )) if pack_deadline.is_some_and(|deadline| deadline.answer_due()) => {
+                        deadline_exceeded = true;
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                };
+                let Some(entity) = hydrated else {
                     continue;
                 };
                 neighbors.push(entity);
@@ -642,7 +698,13 @@ impl<'a> ContextPackBuilder<'a> {
                     Ok(valid) => valid,
                     Err(Error::IndexOverflow(
                         "L2 subject adjacency" | "L2 evidence bytes" | "L2 evidence claims",
-                    )) if implicit_l2 => false,
+                    )) if implicit_l2
+                        || pack_deadline.is_some_and(|deadline| deadline.answer_due()) =>
+                    {
+                        deadline_exceeded |=
+                            pack_deadline.is_some_and(|deadline| deadline.answer_due());
+                        false
+                    }
                     Err(error) => return Err(error),
                 };
                 if !valid {
@@ -685,6 +747,9 @@ impl<'a> ContextPackBuilder<'a> {
                 tokens: crate::context_pack::PackTokenStats::default(),
                 items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
                 items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+                deadline_exceeded: deadline_exceeded
+                    || pack_deadline.is_some_and(|deadline| deadline.answer_due())
+                    || pack_deadline.is_some_and(|deadline| deadline.was_cut_short()),
             };
             critical.report(&mut stats);
             let empty = empty_context(

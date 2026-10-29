@@ -339,6 +339,16 @@ impl CompactionBackend for SelfCompactionBackend {
         &self.key
     }
 
+    /// Its house route's recovery count (FIX 1112).
+    fn recoveries(&self) -> u64 {
+        self.route.recoveries()
+    }
+
+    /// Its house route's payer read (FIX 3740).
+    fn funded(&self) -> bool {
+        self.route.funded()
+    }
+
     /// The cheap compaction route, wearing the agent's home.
     fn tier_class(&self) -> CompactionTierClass {
         CompactionTierClass::Cheap

@@ -33,12 +33,12 @@ pub fn refresh_standing_question_with<A: GraphAnswerer>(
         question,
         RefreshTrigger::Manual,
         now,
-        &mut |record, unit, kind, body| {
+        &mut |record, unit, kind, body, evidence| {
             if answerer.is_none() {
                 answerer = Some(answerer_for(record, writer.for_record(record))?);
             }
             let answerer = answerer.as_mut().expect("made above");
-            graph_proposal(vault, record, answerer, unit, kind, body)
+            graph_proposal(vault, record, answerer, unit, kind, body, evidence)
         },
     )
 }

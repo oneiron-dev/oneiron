@@ -137,9 +137,14 @@ impl Child {
         // A child under a room-paid scope bills its root's payer, bound
         // before its first call (OF-531). One with no payer it can bill ends
         // with that typed reason before any call, never on the vault owner's
-        // account.
+        // account. One whose payer the owners must first approve waits, parked,
+        // until they say yes (FIX 3740).
         let payer = match scope_funding(vault, recorded.as_ref(), false) {
             Ok(payer) => payer,
+            Err(fault @ crate::ai_host::payer_funding::PayerFault::Needed { .. }) => {
+                tracing::info!(%fault, task = %job.task.to_hex(), "a reader child waits on its payer's yes");
+                return ReaderRunEnd::PayerParked;
+            }
             Err(fault) => {
                 tracing::info!(%fault, task = %job.task.to_hex(), "a reader child has no payer to bill");
                 return ReaderRunEnd::Failed(fault.reason().to_owned());
