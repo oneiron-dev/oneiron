@@ -662,6 +662,7 @@ fn render_document_pack(
             tokens: PackTokenStats::default(),
             items_truncated: PackItemAccounting::item_budget(),
             items_dropped: PackItemAccounting::token_budget(),
+            deadline_exceeded: false,
         },
         empty: None,
     };
