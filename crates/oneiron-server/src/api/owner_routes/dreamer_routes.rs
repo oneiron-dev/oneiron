@@ -16,7 +16,7 @@ use oneiron::EdgeActorClass;
 use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -202,7 +202,7 @@ async fn pause_dreamer(
 ) -> OwnerReply<DreamerPaused> {
     owner(&auth, &server)?;
     payload.read(&server).await?;
-    let control = dreamer_control(&server)?;
+    let control = dreamer_control(&server).map_err(owner_error)?;
     control.set_owner_paused(true);
     Ok(Json(DreamerPaused {
         paused: control.paused(),
@@ -220,7 +220,7 @@ async fn resume_dreamer(
 ) -> OwnerReply<DreamerPaused> {
     owner(&auth, &server)?;
     payload.read(&server).await?;
-    let control = dreamer_control(&server)?;
+    let control = dreamer_control(&server).map_err(owner_error)?;
     control.resume();
     Ok(Json(DreamerPaused {
         paused: control.paused(),

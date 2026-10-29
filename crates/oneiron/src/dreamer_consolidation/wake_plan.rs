@@ -167,6 +167,7 @@ impl PreparedWake {
         Self::capture_with_grants(vault, scope, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn capture_with_grants(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
