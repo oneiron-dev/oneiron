@@ -260,11 +260,7 @@ impl Vault {
                     break;
                 }
                 walked += 1;
-                last_walked = Some(ReceiptScanPosition {
-                    occurred_at: receipt.occurred_at,
-                    receipt_kind: receipt.receipt_kind,
-                    receipt_id: receipt.receipt_id.clone(),
-                });
+                last_walked = Some(ReceiptScanPosition::of(&receipt));
                 if off_device_admits(self, &receipt, destination)? {
                     page.push(receipt);
                 }
