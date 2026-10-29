@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1238 code-mode rows (1198 host rows, 40 run rows), 4349 declarations.
-// Replies: 1061 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1241 code-mode rows (1201 host rows, 40 run rows), 4360 declarations.
+// Replies: 1064 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -1449,9 +1449,10 @@ declare namespace Sdk {
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key?: string | null; expires_at: number; comm?: CommReach | null };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
   type SupportHolderClass = "human" | "agent";
-  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null; comm?: CommReach | null };
+  type SupportRepair = "critical_confirm_expiry" | "symbol_lease_expiry" | "esign_expiry" | "esign_seal_backstop" | "commitment_lapse" | "ppr_cache_eviction" | "shared_act_maturity";
+  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null; comm?: CommReach | null; repairs?: SupportRepair[] };
   type SupportGrantStatus = "active" | "expired" | "revoked" | "ended";
-  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach; revoke_command: string };
+  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach; revoke_command: string; repairs?: SupportRepair[] };
   type SupportGrantMintAnswer = { slip: string; grant: SupportGrantView; decision_ref: string };
   type SupportGrantListRequest = { include_inactive?: boolean; limit?: number | null };
   type SupportGrantList = { grants: SupportGrantView[] };
@@ -3083,6 +3084,16 @@ declare namespace Sdk {
   type ModelManifest = { version: number; roles: Record<string, ModelBinding>; routes: Record<string, ModelLocality>; verdict?: VerdictBinding | null; seat_policy?: SeatPolicy | null };
   type TeacherProbeApproval = { probe_id: string; model: ModelId; binding_hash: string; f1_millionths: number; policy_hash: string; holder_ref?: string | null };
   type ModelManifestReplace = { manifest: ModelManifest; teacher_approval?: TeacherProbeApproval | null };
+  type WebProvider = "tavily" | "exa" | "brave" | "tinyfish" | "context_dev" | "octen";
+  type WebProviderKey = { kind: "backend" } | { kind: "secret"; name: string } | { kind: "hub"; connector: string };
+  type WebConnectorSetting = { provider: WebProvider; key: WebProviderKey };
+  type WebConnectorUsageRead = { since_ms?: number | null; limit?: number | null };
+  type WebTool = "search" | "fetch";
+  type WebKeySource = "backend" | "user" | "hub";
+  type WebCostBasis = "actual" | "estimated" | "unpriced";
+  type WebCallOutcome = { kind: "ok"; results: number } | { kind: "failed"; reason: string } | { kind: "waiting"; reason: string };
+  type WebConnectorUsage = { at_ms: number; tool: WebTool; provider: WebProvider; key: WebKeySource; hub_connector?: string | null; latency_ms: number; cost_micro_usd?: number | null; cost_basis: WebCostBasis; provider_request_id?: string | null; outcome: WebCallOutcome };
+  type WebConnectorUsagePage = { rows: WebConnectorUsage[]; total_cost_micro_usd: number; unpriced: number };
   type OneironerBind = { expected_checkpoint_sha16?: string | null; expected_stack_sha16?: string | null };
   type ModelRouteRead = { slot: ModelSlot };
   type ModelRouteView = { slot: ModelSlot; pin?: ModelLocality | null; route?: ModelLocality | null };
@@ -5650,6 +5661,10 @@ declare const vault: Sdk.VaultHost & {
       /** The owner stops one connector event subscription; the agent's key for the channel stays. */
       revoke(input: Sdk.ChannelSubscriptionRevokeRequest): Promise<Sdk.ChannelSubscriptionRevoked | StoredResult>;
     };
+    web: {
+      /** Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text. */
+      usage(input: Sdk.WebConnectorUsageRead): Promise<Sdk.WebConnectorUsagePage | StoredResult>;
+    };
   };
   consent: {
     /** The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant. */
@@ -7007,6 +7022,11 @@ declare const vault: Sdk.VaultHost & {
     wake_policy: {
       /** The owner sets the dreamer's wake policy: the app's dreamer.wake_policy.set action, run as the caller under the owner's proof. */
       set(input: Sdk.WakePolicySetRequest): Promise<Sdk.PolicyActionOutcome | StoredResult>;
+    };
+    /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
+    web_connector: ((input: Sdk.EmptyRequest) => Promise<Sdk.WebConnectorSetting | StoredResult>) & {
+      /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
+      replace(input: Sdk.WebConnectorSetting): Promise<Sdk.WebConnectorSetting | StoredResult>;
     };
   };
   shape: {
