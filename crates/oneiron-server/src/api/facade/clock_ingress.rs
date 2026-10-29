@@ -32,10 +32,11 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::{IntoResponse, Response};
-use oneiron::authority::{CapabilitySlip, ClockRepairCaller};
+use oneiron::authority::{CapabilitySlip, ClockRepairCaller, VerifiedSlip};
 use oneiron::code_run::actions::{ActionArgument, ActionRegistry};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::AuthorityClockRepair;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::FacadeApiError;
@@ -97,6 +98,24 @@ pub(crate) enum ClockIngress {
     RestrictionOnly,
 }
 
+/// The slip a held MCP socket's upgrade verified (FIX 11525). Rides the
+/// request's extensions from the socket's caller to the deferred clock
+/// repair, which runs as it without re-verifying on the damaged clock.
+#[derive(Clone, Debug)]
+pub(crate) struct McpSocketSlip(VerifiedSlip);
+
+impl McpSocketSlip {
+    /// One from the slip its socket's upgrade verified.
+    pub(crate) fn of(slip: VerifiedSlip) -> Self {
+        Self(slip)
+    }
+
+    /// The upgrade's verified slip, for the deferred repair's caller.
+    pub(crate) fn slip(&self) -> &VerifiedSlip {
+        &self.0
+    }
+}
+
 /// The binding door's decision on `request`: `None` for every request that
 /// is not a facade, action, owner-table or MCP call, and for every call
 /// while this handle's authority readings hold. Otherwise the call's verb
@@ -109,6 +128,9 @@ pub(crate) enum ClockIngress {
 /// neither, takes today's path as it arrived. A body this door cannot read
 /// back (past the facade's request bound), and a call whose classification
 /// faults, gets the clock's own typed refusal, `AUTHORITY_CLOCK_CORRUPT`.
+/// A register/rotate call is never restriction-only (FIX 11666): its verb
+/// alone decides, so a path-known verb returns before its body is read and
+/// an MCP call on a borrowed peek of its tool name, with no decoded copy.
 pub(crate) async fn classify_request(
     server: &SyncServer,
     request: Request,
@@ -133,11 +155,33 @@ pub(crate) async fn classify_request(
     if verb.as_deref() == Some(REPAIR_VERB) {
         return Ok((request, Some(ClockIngress::Repair)));
     }
+    // A register/rotate call is never restriction-only (FIX 11666): the
+    // table lists only revoke/erase rows, so its verb alone decides and
+    // its body, with the secret's plaintext, is never read here.
+    if verb.as_deref().is_some_and(never_restrictive_verb) {
+        return Ok((request, None));
+    }
+    // An action's row is path-known too: the row the app's table resolves
+    // its name to, with no input read.
+    if let Some(action) = action.as_deref()
+        && let Ok(app) = ActionRegistry::app()
+        && let Some(row) = app.row_verb(action)
+        && never_restrictive_verb(row)
+    {
+        return Ok((request, None));
+    }
     let (parts, body) = request.into_parts();
     let limit = oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES;
     let bytes = axum::body::to_bytes(body, limit)
         .await
         .map_err(|_| clock_corrupt_refusal())?;
+    // An MCP call naming a verb that is never restriction-only (FIX
+    // 11666): its tool name alone decides, peeked borrowed from the
+    // arrival, with no decoded copy and no owned parse, so a
+    // register/rotate call's secret copies nowhere for classification.
+    if mcp && mcp_tool_never_restrictive(&bytes) {
+        return Ok((Request::from_parts(parts, Body::from(bytes)), None));
+    }
     // This door runs outside the body codec, so a content-encoded body is
     // classified on a decoded copy (FIX 11520) and handed back raw.
     let decoded = crate::api::body_codec::decode_copy(&parts.headers, parts.uri.path(), &bytes);
@@ -172,6 +216,71 @@ pub(crate) async fn classify_request(
 fn clock_corrupt_refusal() -> Response {
     let corrupt = oneiron::Error::Record(oneiron::error::RecordError::AuthorityClockCorrupt);
     FacadeApiError::from(MemoryError::from(corrupt)).into_response()
+}
+
+/// Whether `verb` is never restriction-only (FIX 11666): the table lists
+/// only revoke/erase rows, so a call of either needs no input to classify
+/// and its secret's plaintext copies nowhere here.
+fn never_restrictive_verb(verb: &str) -> bool {
+    matches!(verb, "vault.secrets.register" | "vault.secrets.rotate")
+}
+
+/// Whether an MCP call's body names a verb that is never restriction-only
+/// (FIX 11666): its tool name alone decides, peeked borrowed from the
+/// arrival, with no decoded copy and no owned parse, so a register/rotate
+/// call's secret copies nowhere for classification. An `invoke_action`
+/// call peeks its verb-table row the same way. `false` for any other call,
+/// and for a body that does not peek (encoded, escaped or malformed),
+/// which classifies as today.
+fn mcp_tool_never_restrictive(raw: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Call<'a> {
+        #[serde(default, borrow)]
+        method: Option<&'a str>,
+        #[serde(default, borrow)]
+        params: Option<Params<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct Params<'a> {
+        #[serde(default, borrow)]
+        name: Option<&'a str>,
+        #[serde(default, borrow)]
+        arguments: Option<Arguments<'a>>,
+    }
+    #[derive(Deserialize)]
+    struct Arguments<'a> {
+        #[serde(default, borrow)]
+        verb: Option<&'a str>,
+    }
+    let call: Call<'_> = match serde_json::from_slice(raw) {
+        Ok(call) => call,
+        Err(_) => return false,
+    };
+    if call.method != Some("tools/call") {
+        return false;
+    }
+    let params = match call.params {
+        Some(params) => params,
+        None => return false,
+    };
+    let tool = match params.name {
+        Some(tool) => tool,
+        None => return false,
+    };
+    if never_restrictive_verb(tool) {
+        return true;
+    }
+    if tool != crate::mcp::MCP_INVOKE_ACTION_TOOL {
+        return false;
+    }
+    let verb = match params.arguments.and_then(|arguments| arguments.verb) {
+        Some(verb) => verb,
+        None => return false,
+    };
+    ActionRegistry::app()
+        .ok()
+        .and_then(|app| app.row_verb(verb))
+        .is_some_and(never_restrictive_verb)
 }
 
 /// The verb an MCP `tools/call` names and the input its arguments assemble,
