@@ -1,10 +1,12 @@
 //! The content reads a bound [`OneironVault`] makes inside the off-record
-//! session it names (FIX 8603): the room's overlay over base while the room
-//! is live and its caller is in it, through the engine's one raw adapter
-//! (`Memory::raw_*`), as its writes go. A handle that names no session reads
-//! base through the bare vault, as before.
+//! session it names (FIX 8603, 10759): the room's overlay over base while
+//! the room is live and its caller is in it, through the engine's one raw
+//! adapter (`Memory::raw_*`), as its writes go: rows, edges and peers, text
+//! and vector search, a context pack, a type's ids and the ChildOf walks. A
+//! handle that names no session reads base through the bare vault, as
+//! before.
 
-use oneiron::{EdgeInfo, EdgeKind, EntityId, Memory};
+use oneiron::{ContextPackBuilder, EdgeInfo, EdgeKind, EntityId, Memory, ScoredEntity};
 
 use super::parse::{engine, memory_result};
 use super::types::{OneironStatus, OneironVault};
@@ -71,6 +73,81 @@ impl OneironVault {
             (Some(memory), false) => memory_result(memory.raw_sources(id, kind, peer)),
             (None, true) => engine(self.vault.targets(id, kind, peer)),
             (None, false) => engine(self.vault.sources(id, kind, peer)),
+        }
+    }
+
+    /// `query`'s BM25 hits.
+    pub(super) fn text_hits(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>, OneironStatus> {
+        match self.session_memory() {
+            Some(memory) => memory_result(memory.raw_search_text(query, limit)),
+            None => engine(self.vault.search_text(query, limit)),
+        }
+    }
+
+    /// `query`'s nearest neighbours.
+    pub(super) fn vector_hits(
+        &self,
+        query: &[f32],
+        limit: usize,
+    ) -> Result<Vec<ScoredEntity>, OneironStatus> {
+        match self.session_memory() {
+            Some(memory) => memory_result(memory.raw_search_vector(query, limit)),
+            None => engine(self.vault.search_vector(query, limit)),
+        }
+    }
+
+    /// The serialized context pack `configure` builds.
+    pub(super) fn pack_bytes(
+        &self,
+        configure: impl for<'b> Fn(ContextPackBuilder<'b>) -> ContextPackBuilder<'b>,
+    ) -> Result<Vec<u8>, OneironStatus> {
+        match self.session_memory() {
+            Some(memory) => memory_result(memory.raw_context_pack(configure)),
+            None => engine(configure(self.vault.context_pack()).run_serialized()),
+        }
+    }
+
+    /// The ids stored with type byte `entity_type`.
+    pub(super) fn ids_of_type(&self, entity_type: u8) -> Result<Vec<EntityId>, OneironStatus> {
+        match self.session_memory() {
+            Some(memory) => memory_result(memory.raw_entities_by_type(entity_type)),
+            None => engine(self.vault.entities_by_type(entity_type)),
+        }
+    }
+
+    /// `root`'s ChildOf descendants to `max_depth`, with their depths.
+    pub(super) fn subtree_of(
+        &self,
+        root: &EntityId,
+        max_depth: u32,
+    ) -> Result<Vec<(EntityId, u32)>, OneironStatus> {
+        match self.session_memory() {
+            Some(memory) => memory_result(memory.raw_subtree(root, max_depth)),
+            None => engine(self.vault.subtree(root, max_depth)),
+        }
+    }
+
+    /// `node`'s ChildOf ancestors, nearest first.
+    pub(super) fn ancestors_of(&self, node: &EntityId) -> Result<Vec<EntityId>, OneironStatus> {
+        match self.session_memory() {
+            Some(memory) => memory_result(memory.raw_ancestors(node)),
+            None => engine(self.vault.ancestors(node)),
+        }
+    }
+
+    /// Whether making `target` a parent of `node` would close a cycle.
+    pub(super) fn cycle_through(
+        &self,
+        node: &EntityId,
+        target: &EntityId,
+    ) -> Result<bool, OneironStatus> {
+        match self.session_memory() {
+            Some(memory) => memory_result(memory.raw_would_create_cycle(node, target)),
+            None => engine(self.vault.would_create_cycle(node, target)),
         }
     }
 }

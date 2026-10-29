@@ -78,6 +78,11 @@ impl ShapeSources {
         self.rows = None;
     }
 
+    /// The rows listed so far, or `None` when they are unknown.
+    pub(super) const fn listed(&self) -> Option<&BTreeSet<EntityId>> {
+        self.rows.as_ref()
+    }
+
     /// The rows, or `None` when they are unknown.
     pub(super) fn into_rows(self) -> Option<Vec<EntityId>> {
         self.rows.map(|rows| rows.into_iter().collect())

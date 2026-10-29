@@ -169,6 +169,8 @@ impl Memory<'_> {
             intent_prompt: intent.prompt().to_owned(),
             // An upgrade, not a task, ask, run or skill, caused it.
             trigger: None,
+            // It is read where the lens it follows is read (FIX 2136).
+            scope: self.vault().carried_lens_scope(&decided_against)?,
         })?;
         if !auto_adopt {
             return Ok(LensRegenEnactment::ProposedForStamp {
