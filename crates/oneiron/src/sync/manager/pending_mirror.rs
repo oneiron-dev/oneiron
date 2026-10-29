@@ -1,11 +1,11 @@
 //! Durable pending-mirror markers (FIX 7957, FIX 9599).
 //!
 //! A local write that changes a row leaves a marker in its own transaction:
-//! the window that holds the row owes it the row's carrier. A write that
-//! removes an edge leaves one for the edge's key: the window that holds the
-//! edge owes its removal, which no upsert of the source's remaining edges
-//! makes. A marker stays until its window's change is durable, so a crash
-//! between the commit and the live mirror loses neither.
+//! the window that holds the row owes it the row's carrier. A marker on an
+//! edge's key owes the window the edge's removal, which no upsert of the
+//! source's remaining edges makes. A marker stays until its window's change
+//! is durable, so a crash between the commit and the live mirror loses
+//! neither.
 //!
 //! A loaded window takes what its markers owe in the live mirror's next pass,
 //! beside the rows the commit handed over; Observer A persists each bridge
@@ -19,7 +19,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
-use heed::{RoTxn, RwTxn};
+use heed::RwTxn;
 use loro::{CommitOptions, LoroDoc};
 
 use crate::Vault;
@@ -29,7 +29,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::side_table::{self, Raw, SideKey, SideTable};
-use crate::sync::bridge::{BRIDGE_ORIGIN, format_edge_key, parse_edge_key};
+use crate::sync::bridge::{BRIDGE_ORIGIN, parse_edge_key};
 use crate::sync::loro_support::{map_contains_binary, map_delete};
 use crate::sync::residence::residence_window_for_blob;
 use crate::sync::types::WindowKey;
@@ -106,32 +106,6 @@ impl Vault {
         self.put_pending_mirrors(wtxn, &owed)
     }
 
-    /// Leaves, in `wtxn`, a pending-mirror marker for each edge in `removed`
-    /// the transaction's local write deleted (FIX 9599): the window that held
-    /// the edge owes the removal of its key. A `blocks` edge never rode one.
-    pub(crate) fn mark_pending_edge_removals_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        removed: &[(EntityId, EdgeKind, EntityId)],
-    ) -> Result<()> {
-        if removed.is_empty() || super::live_mirror::importing() {
-            return Ok(());
-        }
-        let mut owed = Vec::new();
-        for (src, kind, tgt) in removed {
-            if *kind == EdgeKind::Blocks {
-                continue;
-            }
-            if let Some(window) = self.edge_window_in(wtxn, src, tgt)? {
-                owed.push(OwedKey {
-                    window: window.as_str().to_owned(),
-                    carrier: format_edge_key(src, *kind, tgt),
-                });
-            }
-        }
-        self.put_pending_mirrors(wtxn, &owed)
-    }
-
     /// Writes the markers `owed` under one stamp for this write.
     fn put_pending_mirrors(&self, wtxn: &mut RwTxn<'_>, owed: &[OwedKey]) -> Result<()> {
         if owed.is_empty() {
@@ -142,32 +116,6 @@ impl Vault {
             PENDING_MIRROR.put(&self.store, wtxn, key, &stamp)?;
         }
         Ok(())
-    }
-
-    /// The window that carries the edge `src`→`tgt`: a base row's edge to a
-    /// world's row rides that world's window of the target's month, every
-    /// other edge its source's window (as `edge_belongs_to_window` places
-    /// them). `None` when the source is gone: its delete takes its edges.
-    fn edge_window_in(
-        &self,
-        txn: &RoTxn<'_>,
-        src: &EntityId,
-        tgt: &EntityId,
-    ) -> Result<Option<WindowKey>> {
-        let Some(src_raw) = self.get_raw_in(txn, src)? else {
-            return Ok(None);
-        };
-        let Ok(window) = residence_window_for_blob(&src_raw) else {
-            return Ok(None);
-        };
-        if window.world().is_none()
-            && let Some(tgt_raw) = self.get_raw_in(txn, tgt)?
-            && let Ok(target) = residence_window_for_blob(&tgt_raw)
-            && target.world().is_some()
-        {
-            return Ok(Some(target));
-        }
-        Ok(Some(window))
     }
 }
 
