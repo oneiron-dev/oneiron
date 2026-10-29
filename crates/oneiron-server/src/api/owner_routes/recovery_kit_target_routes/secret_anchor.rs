@@ -53,8 +53,19 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/secrets/anchor-sign", post(anchor_sign))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/secrets/anchor-sign`'s body (FIX 11611): [`AnchorSign`].
+pub(crate) fn anchor_sign_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnchorSign>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/anchor-sign`'s answer (FIX 11611):
+/// [`AnchorSigned`].
+pub(crate) fn anchor_signed_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnchorSigned>()
+}
+
 /// One kit push. No `Debug`: it carries the kit, wiped on drop.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnchorSign {
     /// The install this call's kit is for, 32 hex: this one.

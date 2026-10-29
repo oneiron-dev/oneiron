@@ -80,7 +80,7 @@ use crate::server::SyncServer;
 
 pub(crate) mod pad_access;
 mod root_doors;
-mod secret_anchor;
+pub(crate) mod secret_anchor;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()

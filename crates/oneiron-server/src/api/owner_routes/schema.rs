@@ -1,13 +1,15 @@
 //! The OpenAPI schemas of the owner routes handled in [`super`] itself (FIX 11611):
 //! `POST /v1/owner/backups/rehearse`, the five `POST /v1/owner/cleanup*`
-//! writes, the three `POST /v1/owner/imports/*` writes and the two
-//! `POST /v1/owner/runs/*` writes (FIX 11611 part D). [`super`] is
-//! already past the file-size bar, so their schema fns live here, beside
-//! the route files' own.
+//! writes, the three `POST /v1/owner/imports/*` writes, the two
+//! `POST /v1/owner/runs/*` writes and `POST /v1/owner/secret-scan`
+//! (FIX 11611 part D). [`super`] is already past the file-size bar, so
+//! their schema fns live here, beside the route files' own.
+
+use oneiron::policy_model::SecretScanReceipt;
 
 use super::{
     DecideCleanup, DecideImport, DecideRun, ModelCatalogSynced, RehearseRequest, RestoreArchived,
-    RevertCleanupRun, SetModelCatalog,
+    RevertCleanupRun, SetModelCatalog, SetSecretScan,
 };
 use crate::owner::{backup, cleanup, imports, note_tombstones, off_record, runs};
 
@@ -168,4 +170,12 @@ pub(crate) fn decide_run_body_schema() -> serde_json::Value {
 /// shared with `POST /v1/owner/runs/decline`: [`runs::RunResolved`].
 pub(crate) fn run_resolved_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<runs::RunResolved>()
+/// The OpenAPI schema of `POST /v1/owner/secret-scan`'s body (FIX 11611): [`SetSecretScan`].
+pub(crate) fn set_secret_scan_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetSecretScan>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secret-scan`'s answer (FIX 11611): [`SecretScanReceipt`].
+pub(crate) fn secret_scan_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SecretScanReceipt>()
 }

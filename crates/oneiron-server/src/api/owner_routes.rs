@@ -42,7 +42,7 @@ use crate::server::SyncServer;
 mod account_routes;
 mod agent_grant_routes;
 mod authority_clock_routes;
-mod backup_setting_routes;
+pub(super) mod backup_setting_routes;
 pub(super) mod browser_takeover_routes;
 pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
@@ -74,7 +74,7 @@ pub(super) mod history_routes;
 pub(super) mod house_routes;
 mod inbox_routes;
 pub(super) mod intent_routes;
-mod learning_setting_routes;
+pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 pub(super) mod model_setting_routes;
@@ -87,16 +87,16 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
-mod room_thread_setting_routes;
+pub(super) mod room_thread_setting_routes;
 pub(super) mod root_routes;
 pub(super) mod schema;
-mod secret_control_routes;
-mod secret_found_routes;
-mod secret_lift_routes;
-mod secret_reveal_routes;
-mod secret_use_routes;
+pub(super) mod secret_control_routes;
+pub(super) mod secret_found_routes;
+pub(super) mod secret_lift_routes;
+pub(super) mod secret_reveal_routes;
+pub(super) mod secret_use_routes;
 pub(super) mod shared_training_setup_routes;
-mod skill_judge_routes;
+pub(super) mod skill_judge_routes;
 pub(super) mod space_posting_routes;
 pub(super) mod steer_routes;
 mod support_grant_routes;
@@ -590,7 +590,7 @@ async fn secret_scan(
     Ok(Json(state))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetSecretScan {
     mode: oneiron::policy_model::SecretScanMode,
