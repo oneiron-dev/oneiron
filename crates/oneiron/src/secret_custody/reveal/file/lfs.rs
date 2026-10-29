@@ -17,8 +17,7 @@
 
 use super::{
     FILE_REASK_DOMAIN, KeyRead, REVEALS, ReadGroup, RevealAsker, SEALED_FILE_CLASS,
-    SecretRevealState, checked_text, covering_grant, file_ask_id, load_active_standing_grants,
-    reveal_bound,
+    SecretRevealState, checked_text, file_ask_id, load_active_standing_grants, reveal_class,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -100,13 +99,14 @@ impl Vault {
             return Ok(false);
         }
         let txn = self.store.env.read_txn()?;
-        let bound = reveal_bound(
-            &asker.connection(),
-            SEALED_FILE_CLASS,
-            asker.project.as_ref(),
-        )?;
         let grants = load_active_standing_grants(&self.store, &txn)?;
-        if covering_grant(&bound, asker.project, &grants)?.is_some() {
+        let class = reveal_class(SEALED_FILE_CLASS);
+        // A grant of any reach covers it (FIX 2354).
+        if asker
+            .reach()
+            .covering_grant(&asker.connection(), &class, &grants)?
+            .is_some()
+        {
             return Ok(true);
         }
         // An approval once is delivered on its ask's own row, in the read's

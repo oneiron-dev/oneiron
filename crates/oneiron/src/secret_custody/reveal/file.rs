@@ -44,7 +44,7 @@
 use super::agent::{file_ask_in_txn, standing};
 use super::{
     FileSight, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAsker,
-    RevealAuthority, RevealRow, SecretRevealState, checked_text, covering_grant, reveal_bound,
+    RevealAuthority, RevealGrantScope, RevealRow, SecretRevealState, checked_text, reveal_class,
 };
 use crate::consent::{
     ApproveOnceAuthorization, StandingConsentGrant, approve_once_authorization_in_txn,
@@ -122,8 +122,9 @@ enum GroupPlan {
 
 /// How a ready group's read goes out.
 enum Ready {
-    /// A standing grant covers it: the grant's registry ref.
-    Covered(String),
+    /// A standing grant covers it: the grant's reach (none for a repo file
+    /// read's own scopes) and its registry ref.
+    Covered(Option<RevealGrantScope>, String),
     /// The owner approved its ask once: the ask, and its marker, not spent.
     Once(Box<RevealRow>, ApproveOnceAuthorization),
 }
@@ -333,7 +334,7 @@ impl Vault {
         for group in &read.groups {
             let ask = read.ask_in_txn(self, txn, group, now)?;
             let plan = match read.covering_grant(group, &grants)? {
-                Some(grant_ref) => GroupPlan::Ready(Ready::Covered(grant_ref)),
+                Some((scope, grant_ref)) => GroupPlan::Ready(Ready::Covered(scope, grant_ref)),
                 None => asked_plan_in_txn(self, txn, &ask, now)?,
             };
             match plan {
@@ -353,7 +354,7 @@ impl Vault {
         let mut delivered = Vec::with_capacity(ready.len());
         for (group, ask, plan) in ready {
             match plan {
-                Ready::Covered(grant_ref) => {
+                Ready::Covered(scope, grant_ref) => {
                     // Each read under a grant is its own receipt.
                     let reveal = self.store.clock.entity_id()?;
                     let mut row = read.row(group, now, SecretRevealState::Covered);
@@ -361,6 +362,7 @@ impl Vault {
                     row.once_digest = Some(*digest.as_bytes());
                     let used = self.record_standing_grant_use_in_txn(txn, &grant_ref, digest)?;
                     row.answered_by = Some(standing(&grant_ref));
+                    row.scope = scope;
                     row.decision = Some(used.decision_id());
                     deliver_file_in_txn(self, txn, &reveal, row)?;
                     delivered.push(reveal);
@@ -400,25 +402,29 @@ impl KeyRead<'_> {
         open_ask_id_in_txn(vault, txn, base, &current, now)
     }
 
-    /// The registry ref of the standing grant covering `group` of this read
-    /// now: the reveal's own bound, or a repo read's under any scope the
-    /// owner granted it ([`RepoFileRevealTarget::covering_grant`]).
+    /// The standing grant covering `group` of this read now, with its reach:
+    /// the reveal's own under any reach (FIX 2354), or a repo read's under
+    /// any scope the owner granted it
+    /// ([`RepoFileRevealTarget::covering_grant`]), which names no reach.
     fn covering_grant(
         &self,
         group: &ReadGroup,
         grants: &[StandingConsentGrant],
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<(Option<RevealGrantScope>, String)>> {
         let connection = self.asker.connection();
-        let project = self.asker.project;
         match self.repo {
             Some(target) => {
                 let run = self.asker.run.as_deref();
-                target.covering_grant(&connection, group.class, project, run, grants)
+                let project = self.asker.project;
+                Ok(target
+                    .covering_grant(&connection, group.class, project, run, grants)?
+                    .map(|grant_ref| (None, grant_ref)))
             }
-            None => {
-                let bound = reveal_bound(&connection, group.class, project.as_ref())?;
-                covering_grant(&bound, project, grants)
-            }
+            None => Ok(self
+                .asker
+                .reach()
+                .covering_grant(&connection, &reveal_class(group.class), grants)?
+                .map(|(scope, grant_ref)| (Some(scope), grant_ref))),
         }
     }
 
@@ -455,6 +461,9 @@ impl KeyRead<'_> {
             }),
             notices: Vec::new(),
             closed: None,
+            task: self.asker.task.clone(),
+            attempt: self.asker.attempt,
+            scope: None,
         }
     }
 

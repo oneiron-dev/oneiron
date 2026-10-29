@@ -125,6 +125,9 @@ pub struct RevealReceipt {
     pub delivered_at: Option<u64>,
     /// Why the reveal closed with no value, `None` otherwise (FIX 8350).
     pub cause: Option<String>,
+    /// The reach of the standing grant that answered it: `project`,
+    /// `every_project`, `task` or `run` (FIX 2354).
+    pub scope: Option<String>,
 }
 
 /// `reveal.describe`'s input: one handle.
@@ -482,10 +485,17 @@ impl Memory<'_> {
         }
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         let origin = task_create_origin_in_txn(self, &txn, self.task_host())?;
-        drop(txn);
         // The leased try is the run a run-bound secret's record names
-        // (FIX 8028).
+        // (FIX 8028); its task ref is the task a task's grant names
+        // (FIX 2354).
         let attempt = origin.as_ref().and_then(|origin| origin.parent_attempt());
+        let task = match attempt {
+            Some(attempt) => crate::AttemptQueue::new(self.vault())
+                .get_in_txn(&txn, attempt)?
+                .and_then(|record| record.task_ref),
+            None => None,
+        };
+        drop(txn);
         // The provider is the host's: the one its ladder served this
         // program's turn from, never a field the agent sends.
         Ok(RevealAsker::new(
@@ -495,7 +505,8 @@ impl Memory<'_> {
         )
         .with_provider(self.model_provider())
         .with_reader(self.read_key()?)
-        .with_attempt(attempt))
+        .with_attempt(attempt)
+        .with_task(task))
     }
 }
 
@@ -517,5 +528,6 @@ pub(crate) fn reveal_receipt(receipt: SecretRevealReceipt) -> RevealReceipt {
         asked_at: receipt.asked_at,
         delivered_at: receipt.delivered_at,
         cause: receipt.cause.map(|cause| cause.as_str().to_owned()),
+        scope: receipt.scope.map(|scope| scope.as_str().to_owned()),
     }
 }

@@ -141,6 +141,10 @@ pub struct SecretRevealReceipt {
     pub file: Option<EntityId>,
     /// Why the reveal closed with no value, `None` otherwise (FIX 8350).
     pub cause: Option<SecretRevealCause>,
+    /// The reach of the standing grant that answered it (FIX 2354); `None`
+    /// for an answer once, a denial, a repo file read's grant and the
+    /// owner's read.
+    pub scope: Option<RevealGrantScope>,
 }
 
 /// One reveal as the owner reads it, with the in-moment card while it waits
@@ -157,9 +161,14 @@ pub struct SecretRevealAsk {
     pub disclosure: Option<String>,
     /// The digest an answer sends back as `expected_digest`.
     pub once_digest: Option<EffectDigest>,
-    /// The registry row a `standing` answer writes: this connection × this
-    /// class × this project.
+    /// The registry row a `standing` answer writes at its default reach:
+    /// this connection × this class × this project.
     pub grant_ref: Option<String>,
+    /// The reaches a `standing` answer may pick here, the narrowest first
+    /// (FIX 2354): a task or a run only when the reveal names one; none for
+    /// a repo file read, which picks its own `RepoFileRevealScope`, and for
+    /// the owner's read.
+    pub scopes: Vec<RevealGrantScope>,
     /// The DEC-0006 ask card, while the reveal waits on the owner.
     pub card: Option<ConsentAskCard>,
 }
@@ -188,6 +197,36 @@ impl SecretRevealAnswer {
     }
 }
 
+/// The reach of the owner's standing answer to one reveal (FIX 2354): the
+/// grant "approve and stop asking" writes covers this connection × this
+/// class × this reach. Each reach is its own grant; none is a wildcard.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RevealGrantScope {
+    /// The project the reveal was asked in, until revoked: the default.
+    #[default]
+    Project,
+    /// Every project, until revoked.
+    EveryProject,
+    /// The task the asking run works, until revoked.
+    Task,
+    /// The one run (the leased try) that asked; another run asks again.
+    Run,
+}
+
+impl RevealGrantScope {
+    /// The pinned scope word.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::EveryProject => "every_project",
+            Self::Task => "task",
+            Self::Run => "run",
+        }
+    }
+}
+
 /// What an owner's answer wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretRevealAnswered {
@@ -199,6 +238,8 @@ pub struct SecretRevealAnswered {
     pub decision: GateDecisionId,
     /// The standing grant a `standing` answer wrote.
     pub grant_ref: Option<String>,
+    /// That grant's reach (FIX 2354); `None` for a repo file read's grant.
+    pub scope: Option<RevealGrantScope>,
 }
 
 /// The secret an owner's read names: its handle, or its custody name.

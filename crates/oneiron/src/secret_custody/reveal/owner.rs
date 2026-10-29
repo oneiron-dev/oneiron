@@ -3,7 +3,8 @@
 
 use super::{
     FileSight, OwnerSecretReveal, READER_AGENT, READER_OWNER, REVEALS, RevealAct, RevealRow,
-    RevealTarget, SECRET_REVEAL_OPERATION, SecretRevealAnswer, SecretRevealAnswered,
+    RevealGrantScope, RevealTarget, SECRET_REVEAL_OPERATION, SecretRevealAnswer,
+    SecretRevealAnswered,
     SecretRevealAsk, SecretRevealState, append_reveal_decision_in_txn, checked_text, not_active,
     resolve_handle_in_txn, unknown, value_in_txn,
 };
@@ -69,18 +70,26 @@ impl Vault {
         expected_digest: &[u8; 32],
         answer: SecretRevealAnswer,
     ) -> Result<SecretRevealAnswered> {
-        self.answer_secret_reveal_scoped(owner, reveal, expected_digest, answer, None)
+        self.answer_secret_reveal_scoped(
+            owner,
+            reveal,
+            expected_digest,
+            answer,
+            None,
+            RevealGrantScope::Project,
+        )
     }
 
     /// [`Self::answer_secret_reveal`] with the owner's chosen reach for a
-    /// standing answer to a repo file reveal (FIX 9236): this file or every
-    /// marked file of the repo, for this task or until revoked. `None`, and
-    /// any answer that is not standing or not to a repo file read, is the
-    /// plain answer: a standing one mints this file, until revoked.
+    /// standing answer. A repo file reveal takes `repo_scope` (FIX 9236):
+    /// this file or every marked file of the repo, for this task or until
+    /// revoked; `None` mints this file, until revoked. Every other reveal
+    /// takes `scope` (FIX 2354): this project, every project, this task or
+    /// this run. An answer that is not standing ignores both.
     ///
     /// # Errors
     /// As [`Self::answer_secret_reveal`]; [`GateError::InvalidConsentBound`]
-    /// for a task scope on a read that named no task.
+    /// for a task or run scope on a reveal that named no task or run.
     pub fn answer_secret_reveal_scoped(
         &self,
         owner: &AuthenticatedOwner,
@@ -88,6 +97,7 @@ impl Vault {
         expected_digest: &[u8; 32],
         answer: SecretRevealAnswer,
         repo_scope: Option<RepoFileRevealScope>,
+        scope: RevealGrantScope,
     ) -> Result<SecretRevealAnswered> {
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
@@ -119,7 +129,8 @@ impl Vault {
                 }
                 SecretRevealAnswer::Standing => {
                     row.state = SecretRevealState::ApprovedStanding;
-                    let bound = standing_answer_bound(&row, repo_scope)?;
+                    let (bound, reach) = standing_answer_bound(&row, repo_scope, scope)?;
+                    row.scope = reach;
                     self.create_standing_grant_in_txn(txn, owner, bound)?
                 }
                 SecretRevealAnswer::Deny => {
@@ -137,6 +148,7 @@ impl Vault {
                 answer,
                 decision: receipt.decision_id(),
                 grant_ref: receipt.grant_ref(),
+                scope: row.scope,
             })
         })
     }
@@ -221,6 +233,9 @@ impl Vault {
                 file: None,
                 notices: Vec::new(),
                 closed: None,
+                task: None,
+                attempt: None,
+                scope: None,
             };
             row.decision = Some(append_reveal_decision_in_txn(
                 self,
@@ -269,6 +284,7 @@ fn ask_view(
         row.state
     };
     let agents = row.reader == READER_AGENT;
+    let repo = row.file.as_ref().is_some_and(|file| file.repo.is_some());
     let card = if open {
         let connection = row.connection.as_deref().unwrap_or_default();
         let prompt = match &row.file {
@@ -321,33 +337,49 @@ fn ask_view(
         } else {
             None
         },
+        scopes: if open && agents && !repo {
+            row.reach().scopes()
+        } else {
+            Vec::new()
+        },
         card,
     })
 }
 
-/// The bound a standing answer to `row` mints: the owner's chosen
-/// `repo_scope` for a repo file read (FIX 9236), else the row's own.
+/// The bound a standing answer to `row` mints, and its reach: the owner's
+/// chosen `repo_scope` for a repo file read (FIX 9236), which names no
+/// reach, else the row's own at the owner's `scope` (FIX 2354).
 fn standing_answer_bound(
     row: &RevealRow,
     repo_scope: Option<RepoFileRevealScope>,
-) -> Result<GrantBound> {
+    scope: RevealGrantScope,
+) -> Result<(GrantBound, Option<RevealGrantScope>)> {
     let repo = row.file.as_ref().and_then(|file| file.repo.as_ref());
-    let (Some(scope), Some(target), None) = (repo_scope, repo, row.person.as_ref()) else {
-        return row.bound();
-    };
-    let connection = row
-        .connection
-        .as_deref()
-        .ok_or(Error::CorruptedIndex("secret reveal connection"))?;
-    target
-        .bound(
-            scope,
-            connection,
-            row.class()?,
-            row.project.as_ref(),
-            row.run.as_deref(),
-        )?
+    if let (Some(target), None) = (repo, row.person.as_ref()) {
+        let Some(repo_scope) = repo_scope else {
+            return Ok((row.bound()?, None));
+        };
+        let connection = row
+            .connection
+            .as_deref()
+            .ok_or(Error::CorruptedIndex("secret reveal connection"))?;
+        let bound = target
+            .bound(
+                repo_scope,
+                connection,
+                row.class()?,
+                row.project.as_ref(),
+                row.run.as_deref(),
+            )?
+            .ok_or(Error::Gate(GateError::InvalidConsentBound(
+                "a task-scoped repo reveal needs the read's task",
+            )))?;
+        return Ok((bound, None));
+    }
+    let bound = row
+        .standing_bound(scope)?
         .ok_or(Error::Gate(GateError::InvalidConsentBound(
-            "a task-scoped repo reveal needs the read's task",
-        )))
+            "a task or run reach needs the reveal's task or run",
+        )))?;
+    Ok((bound, Some(scope)))
 }
