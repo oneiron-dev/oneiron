@@ -13,8 +13,6 @@ use super::outcome::BlockRequest;
 /// Block rows by block id. Consumed and expired rows stay as the record.
 const BLOCKS: SideTable<EntityId, HookBlock, Named> = SideTable::new(&side_table::HOOKS_BLOCK);
 pub(super) const DEFAULT_TOKEN_CAP: u32 = 512;
-/// Rows one block scan reads.
-const MAX_BLOCK_SCAN: usize = 10_000;
 
 /// How long a block lasts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,10 +116,7 @@ pub(super) fn put_block_in_txn(
 /// Whether any live block waits on a predicate.
 pub(super) fn any_until_predicate(vault: &Vault) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    for row in BLOCKS
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(MAX_BLOCK_SCAN)
-    {
+    for row in BLOCKS.iter_from(&vault.store, &rtxn, &[])? {
         let (_, block) = row?;
         if block.expired_at.is_none()
             && matches!(block.lifetime, HookBlockLifetime::UntilPredicate(_))
@@ -137,7 +132,6 @@ pub(super) fn expire_for_predicate(vault: &Vault, predicate: &str, at: u64) -> R
     vault.with_write_txn_grouped(|txn| {
         let matched: Vec<(EntityId, HookBlock)> = BLOCKS
             .iter_from(&vault.store, txn, &[])?
-            .take(MAX_BLOCK_SCAN)
             .filter_map(|row| match row {
                 Ok((id, block)) => match &block.lifetime {
                     HookBlockLifetime::UntilPredicate(glob)
@@ -167,10 +161,7 @@ impl Vault {
     ) -> Result<Vec<(EntityId, HookBlock)>> {
         let rtxn = self.store.env.read_txn()?;
         let mut blocks = Vec::new();
-        for row in BLOCKS
-            .iter_from(&self.store, &rtxn, &[])?
-            .take(MAX_BLOCK_SCAN)
-        {
+        for row in BLOCKS.iter_from(&self.store, &rtxn, &[])? {
             let (id, block) = row?;
             if block.reaches(session, branch) {
                 blocks.push((id, block));
