@@ -1073,6 +1073,8 @@ class Oneiron:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
         def context(self, spec: Facade.CallReceiptRequest) -> Facade.ContextEmitReceipt | None:
             """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
+        def craft_reply_manifest(self, spec: Facade.CallReceiptRequest) -> list[Facade.ManifestEntry] | None:
+            """Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack."""
     class _VaultAssetsVerbs:
         def ingest(self, spec: Facade.AssetIngestRequest) -> Facade.AssetIngestReceipt:
             """Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate."""
@@ -2677,10 +2679,13 @@ class Oneiron:
         def get(self, spec: Facade.TaskTypeTreeRead) -> Facade.TaskTypeTreeReadReply:
             """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
     class _VaultTasksVerbs:
-        def cancel_force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
-            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+        @property
+        def cancel(self) -> "Oneiron._VaultTasksCancelVerbs": ...
         @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
+    class _VaultTasksCancelVerbs:
+        def force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
     class _VaultTasksLinearVerbs:
         @property
         def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...
@@ -3437,7 +3442,7 @@ class Oneiron:
         def move(self, spec: Facade.ConcernMoveRequest) -> Facade.ConcernMoveOutcome: ...
     class _SelfGrantsVerbs:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
-            """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
+            """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
         def answer(self, spec: Facade.GrantAnswerRequest) -> Facade.GrantAnswered:
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
     class _SelfBudgetVerbs:
@@ -3505,9 +3510,9 @@ class Oneiron:
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
     class _SelfBrowserVerbs:
         def open(self, spec: Facade.LiveRunRequest[Facade.OpenInput]) -> Facade.BrowserObservationPage:
-            """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded."""
         def observe(self, spec: Facade.LiveRunRequest[Facade.ObserveInput]) -> Facade.BrowserObservationPage:
-            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle."""
+            """Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles."""
         def find(self, spec: Facade.LiveRunRequest[Facade.FindInput]) -> Facade.BrowserFindOutput:
             """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
         def click(self, spec: Facade.LiveRunRequest[Facade.ClickInput]) -> Facade.BrowserObservationPage:
@@ -3542,11 +3547,11 @@ class Oneiron:
             """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
     class _SelfBrowserLibraryVerbs:
         def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.BrowserLibraryFindOutput:
-            """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
+            """The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed."""
         def draft(self, spec: Facade.LiveRunRequest[Facade.DraftInput]) -> Facade.BrowserLibraryDraftOutput:
             """Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."""
         def propose(self, spec: Facade.LiveRunRequest[Facade.ProposeInput]) -> Facade.BrowserLibraryProposeOutput:
-            """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
+            """Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires."""
         def retire(self, spec: Facade.LiveRunRequest[Facade.LibraryRetireInput]) -> Facade.BrowserLibraryRetireOutput:
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
         def retired(self, spec: Facade.LiveRunRequest[Facade.LibraryRetiredInput]) -> Facade.BrowserLibraryRetiredOutput:

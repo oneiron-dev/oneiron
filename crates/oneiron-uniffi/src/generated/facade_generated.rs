@@ -3636,10 +3636,10 @@ export_facade! {
     let output = client.vault_agents_spawn(&input)?;
     crate::codec::lift_record("vault.agents.spawn", &output)
 };
-"vault.tasks.cancel_force" => fn vault_tasks_cancel_force(&self, input: CancelForceRequest) -> CancelForceReceipt = |client| {
-    let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel_force", input)?;
+"vault.tasks.cancel.force" => fn vault_tasks_cancel_force(&self, input: CancelForceRequest) -> CancelForceReceipt = |client| {
+    let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel.force", input)?;
     let output = client.vault_tasks_cancel_force(&input)?;
-    crate::codec::lift_record("vault.tasks.cancel_force", &output)
+    crate::codec::lift_record("vault.tasks.cancel.force", &output)
 };
 "vault.runs.branches.get" => fn vault_runs_branches_get(&self, input: RunBranchesRequest) -> RunBranchesView = |client| {
     let input: oneiron::task_verb::run_doors::RunBranchesRequest = crate::codec::lower_record("vault.runs.branches.get", input)?;
@@ -4205,6 +4205,11 @@ export_facade! {
     let input: oneiron::receipt::CallReceiptRequest = crate::codec::lower_record("vault.receipts.context", input)?;
     let output = client.vault_receipts_context(&input)?;
     crate::codec::lift_record("vault.receipts.context", &output)
+};
+"vault.receipts.craft_reply_manifest" => fn vault_receipts_craft_reply_manifest(&self, input: CallReceiptRequest) -> Option<Vec<ManifestEntry>> = |client| {
+    let input: oneiron::receipt::CallReceiptRequest = crate::codec::lower_record("vault.receipts.craft_reply_manifest", input)?;
+    let output = client.vault_receipts_craft_reply_manifest(&input)?;
+    crate::codec::lift_record("vault.receipts.craft_reply_manifest", &output)
 };
 "ai.voice.asr.open" => fn ai_voice_asr_open(&self, input: AsrOpenRequest) -> AsrSession = |client| {
     let input: oneiron::task_verb::sdk::AsrOpenRequest = crate::codec::lower_record("ai.voice.asr.open", input)?;

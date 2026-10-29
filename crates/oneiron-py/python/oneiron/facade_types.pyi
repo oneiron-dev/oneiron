@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4171 declarations.
-Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1161 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 105; unread shapes: 0.
+Census: 1162 facade rows, 4180 declarations.
+Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -9387,6 +9387,20 @@ class ImagePin(TypedDict):
 class HostRuleRef(TypedDict):
     id: str
     revision: int
+RoleRank = Literal["responsible", "board", "owner"]
+AskAct = Literal["judgment", "e_signature", "payment"]
+HolderKind = Literal["person", "agent"]
+class ReceiptAnswerer(TypedDict):
+    role: RoleRank
+    project: NotRequired[str | None]
+    kind: HolderKind
+class ReceiptAsk(TypedDict):
+    seq: NotRequired[int | None]
+    role: RoleRank
+    project: NotRequired[str | None]
+    ceiling: RoleRank
+    act: AskAct
+    answered: NotRequired[ReceiptAnswerer | None]
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -9403,6 +9417,7 @@ class DecisionReceipt(TypedDict):
     think_row: NotRequired[int | None]
     person_row: NotRequired[int | None]
     rule: NotRequired[HostRuleRef | None]
+    asked: NotRequired[ReceiptAsk | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
@@ -10367,6 +10382,8 @@ SecretUseStatus = Literal["answered", "failed", "withheld"]
 class SecretUseRecord(TypedDict):
     handle: str
     generation: int
+    presented_custody: NotRequired[EntityId | None]
+    presented_generation: NotRequired[int | None]
     effector: str
     operation: str
     decision: str
@@ -11349,6 +11366,7 @@ class ResultCard(TypedDict):
     name: NotRequired[str | None]
     taint: ResultTaint
     more: list[ResultFacet]
+    shape: NotRequired[Any | None]
 class ResultReadRefusal(TypedDict):
     denied: str
     reasonCodes: list[str]
@@ -12763,6 +12781,7 @@ class WorkflowRunView(TypedDict):
     steps: list[WorkflowStepCapture]
     results: list[WorkflowStepRun]
     task_ref: NotRequired[EntityId | None]
+    release_refusal: NotRequired[str | None]
 class WorkflowPersonDispatchRequest(TypedDict):
     workflow_ref: EntityId
     intent_key: str
@@ -15549,6 +15568,14 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+RevisionRef = list[int]
+class ManifestEntry(TypedDict):
+    kind: ManifestKind
+    reference: str
+    version: str
+    at: int
+    revision: NotRequired[tuple[EntityId, RevisionRef] | None]
 class AsrOpenRequest(TypedDict):
     utterance_id: str
     scope: NotRequired[RecallScope]
@@ -16436,13 +16463,10 @@ class AskRoleBoard(TypedDict):
 class AskRoleOwner(TypedDict):
     role: Literal["owner"]
 AskRole = AskRoleResponsible | AskRoleBoard | AskRoleOwner
-RoleRank = Literal["responsible", "board", "owner"]
-AskAct = Literal["judgment", "e_signature", "payment"]
 class AskTo(TypedDict):
     role: AskRole
     ceiling: RoleRank
     act: AskAct
-HolderKind = Literal["person", "agent"]
 class RoleHolder(TypedDict):
     actor: str
     kind: HolderKind
@@ -16473,6 +16497,7 @@ class DecisionAsk(TypedDict):
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
     withdrawn_at: NotRequired[int | None]
+    pack_state: NotRequired[Any | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
 class ConnectorListRequest(TypedDict):
@@ -18463,7 +18488,6 @@ class OfficeBodyEdit(TypedDict):
     effects: list[str]
 class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
-    run_root_ref: NotRequired[str | None]
     proposal_ref: NotRequired[str | None]
 BodyActor = str
 class ForkStateOpen(TypedDict):
@@ -20931,14 +20955,15 @@ class WorkflowSeed(TypedDict):
     digest: str
     license: str
 class ProposeInput(TypedDict):
-    subgoal: str
+    subgoal: NotRequired[str]
     params: NotRequired[list[str]]
-    steps: list[BatchStep]
-    postcondition: list[ExpectInput]
+    steps: NotRequired[list[BatchStep]]
+    postcondition: NotRequired[list[ExpectInput]]
     args: NotRequired[dict[str, str]]
     replay_args: NotRequired[dict[str, str]]
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
+    candidate: NotRequired[str | None]
 SlotField = Literal["text", "option"]
 class SlotCandidate(TypedDict):
     step: int
@@ -21197,6 +21222,20 @@ class DialogAnswerFailure(TypedDict):
     kind: str
     accept: bool
     error: str
+class SeedCandidate(TypedDict):
+    candidate: str
+    path: str
+    digest: str
+    license: str
+class SiteSkillMatch(TypedDict):
+    skill_id: str
+    revision: str
+    knowledge: str
+    seeds: NotRequired[list[SeedCandidate]]
+SiteSkillErrorCode = Literal["no_lease", "origin", "loader", "unresolved", "digest_mismatch", "no_loader"]
+class SiteSkillError(TypedDict):
+    code: SiteSkillErrorCode
+    detail: str
 class VerbsObservation(TypedDict):
     seq: int
     scope: str
@@ -21215,6 +21254,8 @@ class VerbsObservation(TypedDict):
     rebound: NotRequired[Rebound | None]
     fact: NotRequired[ActionFact | None]
     dialogs: NotRequired[list[DialogAnswerFailure]]
+    site_skills: NotRequired[list[SiteSkillMatch]]
+    site_skill_notes: NotRequired[list[SiteSkillError]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
 BrowserObservationPage = BrowserAnswer
@@ -21350,11 +21391,14 @@ class BatchOutput(TypedDict):
 BrowserBatchOutput = BrowserAnswer
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
+    url: NotRequired[str | None]
     subgoal: NotRequired[str | None]
     type_ref: NotRequired[str | None]
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
+    candidates: NotRequired[list[SeedCandidate]]
+    site_skill_notes: NotRequired[list[SiteSkillError]]
 BrowserLibraryFindOutput = BrowserAnswer
 class DraftInput(TypedDict):
     subgoal: str
