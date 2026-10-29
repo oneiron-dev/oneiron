@@ -1009,15 +1009,20 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // claims the MACRO home. A startup error below drops `ai`, which tells
     // its workers to stop.
     let device = crate::device_sync::dials_home_managed(&config, &vault);
-    let (sync_server, ai) =
-        crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     // The Dreamer's passes are admitted like a served write, and refused
-    // until the managed state below exists.
+    // until the managed state below exists. Its control is installed before
+    // it starts, on the same reap freeze that state takes, so each pass also
+    // reads the freeze as its pause (FIX 6909).
+    let write_admission = Arc::new(admission::Admission::default());
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
-    ai.bind_pass_admission({
-        let gate = Arc::clone(&reap_gate);
-        Arc::new(move || gate.get()?.admit_background(WriteKind::Dreamer))
-    });
+    let control = admission::dreamer_control(&write_admission, &reap_gate);
+    let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
+        sync_server,
+        config.models.as_ref(),
+        device,
+        Some(control),
+    )
+    .await;
     let sync_server = Arc::new(sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
@@ -1063,6 +1068,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .transpose()?;
     let state = Arc::new(
         ManagedState::new(managed.vault_name.clone(), Arc::clone(&sync_server), ledger)
+            .with_admission(write_admission)
             .with_readiness(readiness.clone())
             .with_backup_facts(backup_facts)
             .with_vm_outbox_revision(host.vm_outbox_revision())

@@ -16,7 +16,7 @@ use oneiron::EdgeActorClass;
 use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, owner, owner_error};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -29,6 +29,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/dreamer/changes", get(changes))
         .route("/dreamer/revert", post(revert))
+        .route("/dreamer/pause", post(pause_dreamer))
+        .route("/dreamer/resume", post(resume_dreamer))
 }
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +71,19 @@ struct PersonAboutView {
 struct RevertChange {
     /// The change, as 32 hex: a claim, a summary, a NOTE or a PERSON.
     change: String,
+}
+
+/// `POST /v1/owner/dreamer/pause` and `/resume` carry no fields: `{}`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DreamerPauseRequest {}
+
+/// The Dreamer's pause after the call, and the owner's own cause of it:
+/// a managed freeze can still hold the pause past a resume.
+#[derive(Debug, Serialize)]
+struct DreamerPaused {
+    paused: bool,
+    owner_paused: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -167,6 +182,49 @@ async fn changes(
     })
     .await?;
     Ok(Json(listed))
+}
+
+fn dreamer_control(server: &SyncServer) -> OwnerResult<crate::ai_host::DreamerControl> {
+    server
+        .ai
+        .dreamer_control()
+        .ok_or_else(|| OwnerError::Refused("this server holds no dreamer pause control".to_owned()))
+}
+
+/// `POST /v1/owner/dreamer/pause` with `{}`: sets the owner's own Dreamer
+/// pause — no new pass starts, and the running attempt parks at its next
+/// boundary — and answers whether the Dreamer reads paused now.
+async fn pause_dreamer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<DreamerPauseRequest>, JsonRejection>,
+) -> OwnerReply<DreamerPaused> {
+    owner(&auth, &server)?;
+    let _request = json_payload(payload)?;
+    let control = dreamer_control(&server).map_err(owner_error)?;
+    control.set_owner_paused(true);
+    Ok(Json(DreamerPaused {
+        paused: control.paused(),
+        owner_paused: control.owner_paused(),
+    }))
+}
+
+/// `POST /v1/owner/dreamer/resume` with `{}`: clears the owner's own Dreamer
+/// pause — a managed freeze still holds it — and answers whether the
+/// Dreamer reads paused now.
+async fn resume_dreamer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<DreamerPauseRequest>, JsonRejection>,
+) -> OwnerReply<DreamerPaused> {
+    owner(&auth, &server)?;
+    let _request = json_payload(payload)?;
+    let control = dreamer_control(&server).map_err(owner_error)?;
+    control.resume();
+    Ok(Json(DreamerPaused {
+        paused: control.paused(),
+        owner_paused: control.owner_paused(),
+    }))
 }
 
 /// `POST /v1/owner/dreamer/revert`: the owner's revert of one Dreamer

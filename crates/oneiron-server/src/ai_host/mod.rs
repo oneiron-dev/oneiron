@@ -37,6 +37,7 @@ mod code_fix;
 mod connector_event;
 mod contribution;
 mod dreamer;
+pub(crate) use dreamer::DreamerControl;
 mod eval_authoring;
 pub(crate) mod failure_signals;
 mod harness;
@@ -142,9 +143,20 @@ pub struct AiHandle {
     /// The compaction writer factory chat and code mode share, settled when
     /// the host attaches (FIX 4465 D).
     writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
+    /// The control the Dreamer's passes are admitted and paused through,
+    /// when this host attached under one (managed serve's reap freeze, FIX
+    /// 6909): the owner's pause and resume doors set and clear their own
+    /// cause on it. `None` elsewhere.
+    dreamer_control: Option<DreamerControl>,
 }
 
 impl AiHandle {
+    /// The control the Dreamer's passes read their pause through, when this
+    /// host attached under one: `None` where no owner pause can hold a pass.
+    pub(crate) fn dreamer_control(&self) -> Option<DreamerControl> {
+        self.dreamer_control.clone()
+    }
+
     pub(crate) fn host_compaction(
         &self,
     ) -> Option<(
@@ -199,6 +211,7 @@ impl AiHandle {
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),
+            dreamer_control: None,
         }
     }
 
@@ -478,7 +491,7 @@ pub struct AiHost {
     /// The server a workflow step's `self.use` sends through, bound once it
     /// exists, Dreamer or none (FIX 7016).
     step_host: step::StepHost,
-    /// The gate each Dreamer pass is admitted through.
+    /// The control each Dreamer pass is admitted and paused through.
     pass_admission: dreamer::PassAdmission,
     /// The watch that hands the bound Dreamer's timer work to its own
     /// sleepers should the Dreamer end before shutdown (FIX 1149).
@@ -490,6 +503,13 @@ pub struct AiHost {
     /// own, or at [`Self::bind_turn_actions`] for one attached to a server
     /// (FIX 6920), whose queue, boot backlog included, waits for it.
     turn_actions: OnceLock<()>,
+}
+
+/// How a host attached to a server starts: on a device of another home when
+/// `device`, its Dreamer under `control` when set (FIX 6909).
+struct Attached {
+    device: bool,
+    control: dreamer::PassAdmission,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -514,13 +534,25 @@ impl AiHost {
         models: Option<&ModelsConfig>,
         device: bool,
     ) -> (SyncServer, Self) {
+        Self::attach_controlled(server, models, device, None).await
+    }
+
+    /// [`Self::attach_device`] with the Dreamer under `control` when set:
+    /// managed serve's reap freeze (FIX 6909), installed before the Dreamer
+    /// starts, so its first pass is admitted and paused through it.
+    pub(crate) async fn attach_controlled(
+        server: SyncServer,
+        models: Option<&ModelsConfig>,
+        device: bool,
+        control: Option<DreamerControl>,
+    ) -> (SyncServer, Self) {
         let mut host = Self::start_with(
             Arc::clone(server.vault()),
             models,
             server.host_root_provisioned(),
             server.run_receipts(),
             Some(server.host_account()),
-            Some(device),
+            Some(Attached { device, control }),
             server.broker_context(),
         )
         .await;
@@ -604,7 +636,7 @@ impl AiHost {
             question_timer::DreamerFallback::spawn(
                 server,
                 dreamer.ended(),
-                Arc::clone(&self.pass_admission),
+                self.pass_admission.clone(),
             )
         });
         true
@@ -619,13 +651,6 @@ impl AiHost {
         if self.turn_actions.set(()).is_ok() {
             turn_actions::spawn_hosted(server.vault(), &self.handle, Arc::downgrade(server));
         }
-    }
-
-    /// Admits each Dreamer pass, its home-timer pump and its stewardship
-    /// drafts through `admit`: managed serve's reap freeze. Until a bind,
-    /// everything is admitted; a second bind keeps the first.
-    pub(crate) fn bind_pass_admission(&self, admit: crate::server::HousekeepingAdmission) {
-        let _ = self.pass_admission.set(admit);
     }
 
     /// The running Dreamer's next wake: the earliest instant (unix
@@ -658,19 +683,20 @@ impl AiHost {
     }
 
     /// `start_receipted`, `attached` to a server when `Some`, on a device
-    /// host when `Some(true)`, its `key_secret` providers sending through
-    /// `broker`, the vault's one credential-broker context. An attached
-    /// host's turn-action worker waits for [`Self::bind_turn_actions`].
+    /// host and under a Dreamer control as that says, its `key_secret`
+    /// providers sending through `broker`, the vault's one credential-broker
+    /// context. An attached host's turn-action worker waits for
+    /// [`Self::bind_turn_actions`].
     async fn start_with(
         vault: Arc<Vault>,
         models: Option<&ModelsConfig>,
         host_root: bool,
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
-        attached: Option<bool>,
+        attached: Option<Attached>,
         broker: Option<&BrokerContext>,
     ) -> Self {
-        let device = attached == Some(true);
+        let device = attached.as_ref().is_some_and(|attached| attached.device);
         recover_dead_leases(&vault);
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
         let mut runtime = ModelRuntime::build_hosted(models, broker, rests)
@@ -693,6 +719,9 @@ impl AiHost {
         }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         handle.device = device;
+        handle.dreamer_control = attached
+            .as_ref()
+            .and_then(|attached| attached.control.clone());
         let mut host = Self {
             handle: handle.clone(),
             dreamer: None,
@@ -701,7 +730,9 @@ impl AiHost {
             sync_wake: None,
             question_timer: dreamer::QuestionTimer::default(),
             step_host: step::StepHost::default(),
-            pass_admission: dreamer::PassAdmission::default(),
+            pass_admission: attached
+                .as_ref()
+                .and_then(|attached| attached.control.clone()),
             dreamer_fallback: OnceLock::new(),
             program_monitor: OnceLock::new(),
             turn_actions: if attached.is_some() {
@@ -717,7 +748,7 @@ impl AiHost {
         let status = Arc::clone(&handle.status);
         let idle = handle.idle_sample();
         let timer = Arc::clone(&host.question_timer);
-        let admission = Arc::clone(&host.pass_admission);
+        let admission = host.pass_admission.clone();
         let decisions = Arc::clone(&handle.decisions);
         match start_dreamer(
             &vault, &runtime, models, host_root, device, &status, idle, decisions, timer, admission,

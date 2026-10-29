@@ -44,6 +44,7 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 
 mod compaction_check;
 mod free_time;
+mod pause;
 mod run_log;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
@@ -107,18 +108,39 @@ impl Drop for ThreadEnded {
 pub(super) type QuestionTimer =
     Arc<std::sync::OnceLock<std::sync::Weak<crate::server::SyncServer>>>;
 
-/// The host's gate on each Dreamer pass, its home-timer pump and its
-/// stewardship drafts, bound once serve has it: managed serve's reap freeze.
-/// Unbound, everything is admitted.
-pub(super) type PassAdmission = Arc<std::sync::OnceLock<crate::server::HousekeepingAdmission>>;
+/// Managed serve's reap freeze over the Dreamer (FIX 6909), installed
+/// before the Dreamer starts: the admission each pass, its home-timer pump
+/// and its stewardship rounds take, and the pause each reads between its
+/// units.
+#[derive(Clone)]
+pub(crate) struct DreamerControl {
+    pub(crate) admission: crate::server::HousekeepingAdmission,
+    /// The freeze's current epoch: `true` once frozen, and kept `true` by
+    /// that epoch after a thaw, which starts the next and closes it.
+    pub(crate) pause: Arc<dyn Fn() -> tokio::sync::watch::Receiver<bool> + Send + Sync>,
+    /// Sets the owner's own pause cause (`POST /dreamer/pause`): no new
+    /// pass starts, and the running attempt parks at its next boundary.
+    pub(crate) set_owner_pause: Arc<dyn Fn(bool) + Send + Sync>,
+    /// Reads the owner's own pause cause (not the managed freeze).
+    pub(crate) read_owner_pause: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+/// The host's control over each Dreamer pass, its home-timer pump and its
+/// stewardship drafts. `None` admits everything and never pauses.
+pub(super) type PassAdmission = Option<DreamerControl>;
 
 /// What the gate returns for one pass, held until that pass ends; `None`
 /// when the gate refuses.
 pub(super) fn admit(admission: &PassAdmission) -> Option<Box<dyn Send>> {
-    match admission.get() {
-        Some(admit) => admit(),
+    match admission {
+        Some(control) => (control.admission)(),
         None => Some(Box::new(())),
     }
+}
+
+/// The host's pause epoch now; `None` with no control.
+pub(super) fn pause(admission: &PassAdmission) -> Option<tokio::sync::watch::Receiver<bool>> {
+    admission.as_ref().map(|control| (control.pause)())
 }
 
 pub(super) struct DreamerStart {
@@ -274,7 +296,7 @@ async fn supervise(
         Arc::clone(&vault),
         Arc::clone(&runtime),
         settings.pass_budget_units,
-        Arc::clone(&admission),
+        admission.clone(),
     ));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault, device)?;
@@ -803,6 +825,12 @@ impl PassExecutorFactory for ObservedFactory {
                 "dreamer pass not admitted: the vault is frozen or not yet served".into(),
             )),
         }
+    }
+
+    /// The host's pause, managed serve's reap freeze (FIX 6909): its
+    /// current epoch, read afresh for each pass; none unbound.
+    fn pass_pause(&self) -> Option<tokio::sync::watch::Receiver<bool>> {
+        pause(&self.admission)
     }
 
     /// The standing-question pump and the parked-conflict settlement, once

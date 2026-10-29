@@ -879,10 +879,10 @@ fn restore_dreamer_member_in_txn(
 }
 
 /// The dial a settlement ask runs under unless the host picks another. It
-/// ends below Human: the owner's open-conflict list is already the person's
-/// surface, so the ladder queues no second ask.
+/// starts at Rule, which abstains past no match toward Big, and ends
+/// below Human: the owner's open-conflict list is already the ask.
 pub const CONFLICT_SETTLE_DIAL: DecisionDial = DecisionDial {
-    first: DecisionRung::Local,
+    first: DecisionRung::Rule,
     ceiling: DecisionRung::Big,
     band: DecisionBand {
         low: 0.35,

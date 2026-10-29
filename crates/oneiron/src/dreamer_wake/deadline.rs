@@ -158,6 +158,18 @@ impl WakePassDeadline {
                 .ceiling_ms
                 .saturating_sub(DREAMER_GRACEFUL_WRAP_WINDOW_MS)
     }
+
+    /// True once even a finished partition must checkpoint rather than land
+    /// (FIX 11570): past the ceiling by more than the graceful-wrap window,
+    /// which a partition that finished its model steps borrows for its
+    /// landing write.
+    #[must_use]
+    pub fn landing_closed(&self) -> bool {
+        self.elapsed()
+            >= self
+                .ceiling_ms
+                .saturating_add(DREAMER_GRACEFUL_WRAP_WINDOW_MS)
+    }
 }
 
 impl fmt::Debug for WakePassDeadline {
@@ -185,10 +197,20 @@ impl fmt::Debug for WakePassDeadline {
 ///
 /// Clones share the flag; the token holds no waker — it is a level, not an
 /// edge, and the pass polls it synchronously as it reaches each checkpoint.
+/// The flag also records which request raised it first: a stop
+/// ([`cancel`](Self::cancel)) or the host's pause ([`pause`](Self::pause)).
 #[derive(Debug, Clone, Default)]
 pub struct WakeCancellation {
-    cancelled: Arc<std::sync::atomic::AtomicBool>,
+    /// `LIVE`, `STOPPED` or `PAUSED`.
+    raised: Arc<std::sync::atomic::AtomicU8>,
 }
+
+/// No cancellation requested.
+const LIVE: u8 = 0;
+/// Cancelled by a stop.
+const STOPPED: u8 = 1;
+/// Cancelled by the host's pause (FIX 6909).
+const PAUSED: u8 = 2;
 
 impl WakeCancellation {
     /// A fresh, un-cancelled token.
@@ -199,13 +221,36 @@ impl WakeCancellation {
 
     /// Requests cooperative preemption. Idempotent; never blocks.
     pub fn cancel(&self) {
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.raise(STOPPED);
+    }
+
+    /// Requests cooperative preemption for the host's pause (FIX 6909): as
+    /// [`Self::cancel`], except that an attempt it stops before dispatch
+    /// parks [`DreamerParkCause::Paused`](crate::DreamerParkCause::Paused),
+    /// which a later pass resumes. Once a stop raised the flag, it stays a
+    /// stop.
+    pub fn pause(&self) {
+        self.raise(PAUSED);
+    }
+
+    fn raise(&self, cause: u8) {
+        let _ = self.raised.compare_exchange(
+            LIVE,
+            cause,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        );
     }
 
     /// True once cancellation has been requested.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(std::sync::atomic::Ordering::Acquire)
+        self.raised.load(std::sync::atomic::Ordering::Acquire) != LIVE
+    }
+
+    /// True when the host's pause, not a stop, raised the flag.
+    #[must_use]
+    pub fn is_paused(&self) -> bool {
+        self.raised.load(std::sync::atomic::Ordering::Acquire) == PAUSED
     }
 }

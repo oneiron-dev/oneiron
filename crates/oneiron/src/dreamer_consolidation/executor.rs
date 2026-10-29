@@ -849,11 +849,15 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             )
             .await
         {
-            Ok(PartitionRun::Completed { .. } | PartitionRun::Held { .. })
-                if ctx.deadline.expired() =>
-            {
+            // A finished partition lands while its landing window is still
+            // open, even past the pass ceiling (FIX 11570): its model steps
+            // are done, so there is nothing left to checkpoint for. It
+            // checkpoints only once that window has closed.
+            Ok(PartitionRun::Completed { .. }) if ctx.deadline.landing_closed() => {
                 Ok(charges.checkpoint())
             }
+            // A held partition still checkpoints past the ceiling, as today.
+            Ok(PartitionRun::Held { .. }) if ctx.deadline.expired() => Ok(charges.checkpoint()),
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
             // A refused extraction, a refused citation (FIX 7274) among
             // them, retries as the same try after its retry delay (FIX 7218,

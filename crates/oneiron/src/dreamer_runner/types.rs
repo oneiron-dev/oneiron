@@ -670,6 +670,9 @@ pub enum DreamerParkCause {
     /// A refusal or error park: resumed as the same try, like Checkpoint,
     /// once its retry delay has passed.
     Retry,
+    /// The host's pause (a managed reap freeze, FIX 6909) stopped the pass
+    /// before the attempt dispatched: resumed like Checkpoint.
+    Paused,
     /// The pass was cancelled.
     Cancelled,
     /// It waits on a signal: a budget approval, a seat login, a peer.
@@ -687,6 +690,7 @@ impl DreamerParkCause {
             Self::ExecutorError => "executor_error",
             Self::Checkpoint => "checkpoint",
             Self::Retry => "retry",
+            Self::Paused => "paused",
             Self::Cancelled => "cancelled",
             Self::Signal => "signal",
             Self::Other => "other",
@@ -694,12 +698,12 @@ impl DreamerParkCause {
     }
 
     /// Whether a later wake pass resumes a park of this cause as the same
-    /// try (DOOR-144), and how long after it parked: a Checkpoint at once,
-    /// a Retry after [`DREAMER_RETRY_PARK_SECS`].
+    /// try (DOOR-144), and how long after it parked: a Checkpoint or a
+    /// Paused park at once, a Retry after [`DREAMER_RETRY_PARK_SECS`].
     #[must_use]
     pub const fn later_pass_resume_delay(self) -> Option<u64> {
         match self {
-            Self::Checkpoint => Some(0),
+            Self::Checkpoint | Self::Paused => Some(0),
             Self::Retry => Some(DREAMER_RETRY_PARK_SECS),
             _ => None,
         }
@@ -711,6 +715,7 @@ impl DreamerParkCause {
             "executor_error" => Some(Self::ExecutorError),
             "checkpoint" => Some(Self::Checkpoint),
             "retry" => Some(Self::Retry),
+            "paused" => Some(Self::Paused),
             "cancelled" => Some(Self::Cancelled),
             "signal" => Some(Self::Signal),
             "other" => Some(Self::Other),
