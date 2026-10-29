@@ -50,7 +50,8 @@ use hyper::body::{Frame, Incoming, SizeHint};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
 use oneiron_container::{
-    HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit, floor_saturated,
+    HOST_NET_BYTE_FLOOR, HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit,
+    floor_saturated,
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
@@ -58,6 +59,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
+use crate::byte_line::ByteLine;
 use crate::server::SyncServer;
 use crate::wire_telemetry::{
     LimitQuestions, LimitRow, ObservedBody, PoolPressure, with_body_credential,
@@ -125,7 +127,7 @@ pub(crate) async fn serve(
     questions: Arc<LimitQuestions>,
     shutdown: impl Future<Output = ()>,
 ) {
-    let pool = ConnectionPool::new(&limits, questions);
+    let pool = ConnectionPool::new(&limits, questions, None);
     let mut connections = JoinSet::new();
     serve_with_pool(listener, app, &pool, limits, &mut connections, shutdown).await;
 }
@@ -143,20 +145,33 @@ pub(crate) struct ConnectionPool {
     /// The owner's reserve beside the floor, which only the API listener's
     /// sockets take (FIX 8274).
     reserve: Arc<OwnerReserve>,
+    /// The questions a crossed floor raises; the lent floor asks its byte
+    /// crossings on them.
+    questions: Arc<LimitQuestions>,
+    /// The retained-memory line a guest's paused bytes are charged to
+    /// (FIX 10327); none where the listener serves embedded, which keeps
+    /// no byte reserve.
+    retained: Option<Arc<ByteLine>>,
 }
 
 impl ConnectionPool {
-    pub(crate) fn new(limits: &ConnectionLimits, questions: Arc<LimitQuestions>) -> Self {
+    pub(crate) fn new(
+        limits: &ConnectionLimits,
+        questions: Arc<LimitQuestions>,
+        retained: Option<Arc<ByteLine>>,
+    ) -> Self {
         Self {
             pressure: questions.pool_pressure().cloned(),
             floor: Admission::<()>::new(
                 LimitRow::Connections,
-                questions,
+                Arc::clone(&questions),
                 limits.max_connections,
                 limits.queue_wait,
             ),
             strangers: Strangers::new(stranger_share(limits)),
             reserve: OwnerReserve::new(limits.max_connections),
+            questions,
+            retained,
         }
     }
 
@@ -164,25 +179,48 @@ impl ConnectionPool {
     /// FIX 5979): a guest's socket entries and relayed datagrams hold its
     /// permits beside the connections until their work ends. They take only
     /// free permits and never wait in the floor's line, so a socket waiting
-    /// for the floor gets the next permit that comes free.
+    /// for the floor gets the next permit that comes free. Its paused
+    /// bytes hold the retained-memory line (FIX 10327).
     pub(crate) fn host_net_floor(&self) -> Arc<dyn HostNetFloor> {
-        Arc::new(DescriptorFloor(self.floor.clone()))
+        Arc::new(DescriptorFloor {
+            floor: self.floor.clone(),
+            retained: self.retained.clone(),
+            questions: Arc::clone(&self.questions),
+        })
     }
 }
 
 /// [`ConnectionPool`]'s descriptor floor, as guests' network work takes it:
-/// a permit for each descriptor and each worker thread.
-struct DescriptorFloor(Admission<()>);
+/// a permit for each descriptor and each worker thread, and paused bytes
+/// on the retained-memory line.
+struct DescriptorFloor {
+    floor: Admission<()>,
+    retained: Option<Arc<ByteLine>>,
+    questions: Arc<LimitQuestions>,
+}
 
 impl HostNetFloor for DescriptorFloor {
     fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
         let mut held: Vec<Permit> = Vec::with_capacity(fds + workers);
         for (count, floor) in [(fds, HOST_NET_FD_FLOOR), (workers, HOST_NET_WORKER_FLOOR)] {
             for _ in 0..count {
-                let permit = self.0.try_admit_background();
+                let permit = self.floor.try_admit_background();
                 held.push(permit.ok_or_else(|| floor_saturated(floor))?);
             }
         }
+        Ok(HostNetPermit::new(held))
+    }
+
+    fn acquire_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
+        let Some(line) = &self.retained else {
+            return Ok(HostNetPermit::new(()));
+        };
+        let held = line
+            .try_reserve_alone(
+                usize::try_from(bytes).unwrap_or(usize::MAX),
+                &self.questions,
+            )
+            .ok_or_else(|| floor_saturated(HOST_NET_BYTE_FLOOR))?;
         Ok(HostNetPermit::new(held))
     }
 }
