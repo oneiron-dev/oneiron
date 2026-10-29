@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 use crate::receipt::{ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::PackHookBinding;
+use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
 
 use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
+use super::grant::HookGrant;
 use super::lineage::LineageLink;
 use super::source::{
     ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
@@ -197,12 +199,14 @@ pub(super) struct HookReadPin {
     pub(super) rows: Vec<HookReadRow>,
 }
 
-/// One row a read served: its id and its revision's content-hash byte.
+/// One row a read served: its id, its revision's content-hash byte and the
+/// full digest of the exact body the hook received.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HookReadRow {
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) id: EntityId,
     pub(super) content_hash: u8,
+    pub(super) body_hash: [u8; 32],
 }
 
 /// One `ai.verdict` a run asked, and what it heard: the verdict's JSON, or
@@ -217,10 +221,150 @@ pub(super) struct HookVerdictPin {
     pub(super) evidence: Option<Vec<EntityId>>,
 }
 
+/// One source body a run's retained input, reads or verdict evidence depends
+/// on. Erasure scrubs by id; the revision and full body digest, when known,
+/// name exactly what the run used.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(super) struct HookDependency {
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub(super) id: EntityId,
+    pub(super) revision: Option<RevisionRef>,
+    pub(super) body_hash: Option<[u8; 32]>,
+}
+
+/// The post-execution identity beside a memo's stable delivery key. The
+/// remaining memo fields are its ordered read, verdict and preparation
+/// material; this row names the event, binding and grant and carries the
+/// finalized digest over all of them (FIX 10081).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct HookRunDerivation {
+    pub(super) digest: String,
+    pub(super) event_input_hash: [u8; 32],
+    pub(super) event_revision: Option<RevisionRef>,
+    pub(super) event_body_hash: Option<[u8; 32]>,
+    pub(super) hook_version: String,
+    pub(super) selector_hash: String,
+    pub(super) grant_hash: String,
+    /// The runtime's own stable identity, separate from source preparation.
+    pub(super) runtime_identity: Option<String>,
+    pub(super) dependencies: Vec<HookDependency>,
+}
+
+impl HookRunDerivation {
+    fn new(
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdicts: &[HookVerdictPin],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
+        let selector = serde_json::to_vec(&binding.selector)
+            .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
+        let mut params = blake3::Hasher::new();
+        params.update(&selector);
+        params.update(binding_id.as_bytes());
+        let mut dependencies = vec![HookDependency {
+            id: entry.entity,
+            revision: entry.revision,
+            body_hash: entry.body_hash,
+        }];
+        dependencies.extend(reads.iter().flat_map(|pin| {
+            pin.rows.iter().map(|row| HookDependency {
+                id: row.id,
+                revision: None,
+                body_hash: Some(row.body_hash),
+            })
+        }));
+        dependencies.extend(verdicts.iter().flat_map(|pin| {
+            pin.evidence
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|id| HookDependency {
+                    id: *id,
+                    revision: None,
+                    body_hash: None,
+                })
+        }));
+        dependencies.sort();
+        dependencies.dedup();
+        Ok(Self {
+            digest: String::new(),
+            event_input_hash: entry.input_hash,
+            event_revision: entry.revision,
+            event_body_hash: entry.body_hash,
+            hook_version: binding.hook_version.clone(),
+            selector_hash: params.finalize().to_hex().to_string(),
+            grant_hash: grant.digest(),
+            runtime_identity,
+            dependencies,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct HookDerivationMaterial<'a> {
+    binding: &'a EntityId,
+    code: &'a EntityId,
+    body_hash: &'a str,
+    source: FactSource,
+    position: &'a str,
+    fact: FactKind,
+    entity: &'a EntityId,
+    input_hash: &'a str,
+    event_input_hash: &'a [u8; 32],
+    event_revision: Option<RevisionRef>,
+    event_body_hash: Option<[u8; 32]>,
+    reads: &'a [HookReadPin],
+    verdicts: &'a [HookVerdictPin],
+    verdicts_complete: bool,
+    verdict_calls: &'a [HookSettledCallRef],
+    preparation: Option<&'a HookPreparation>,
+    hook_version: &'a str,
+    selector_hash: &'a str,
+    grant_hash: &'a str,
+    runtime_identity: Option<&'a str>,
+}
+
+/// Finalizes the derivation only after the body's reads, verdicts and
+/// preparation are known. It never changes the stable delivery/run key.
+pub(super) fn finalize_derivation(memo: &mut HookRunRecord) -> Result<()> {
+    let material = HookDerivationMaterial {
+        binding: &memo.binding,
+        code: &memo.code,
+        body_hash: &memo.body_hash,
+        source: memo.source,
+        position: &memo.position,
+        fact: memo.fact,
+        entity: &memo.entity,
+        input_hash: &memo.input_hash,
+        event_input_hash: &memo.derivation.event_input_hash,
+        event_revision: memo.derivation.event_revision,
+        event_body_hash: memo.derivation.event_body_hash,
+        reads: &memo.reads,
+        verdicts: &memo.verdicts,
+        verdicts_complete: memo.verdicts_complete,
+        verdict_calls: &memo.verdict_calls,
+        preparation: memo.preparation.as_ref(),
+        hook_version: &memo.derivation.hook_version,
+        selector_hash: &memo.derivation.selector_hash,
+        grant_hash: &memo.derivation.grant_hash,
+        runtime_identity: memo.derivation.runtime_identity.as_deref(),
+    };
+    let encoded = serde_json::to_vec(&material)
+        .map_err(|_| Error::InvariantViolation("hook derivation encode"))?;
+    memo.derivation.digest = blake3::hash(&encoded).to_hex().to_string();
+    Ok(())
+}
+
 /// The memo row: a run's saved result. A repeat run finds it and computes
 /// nothing. It does not prove an effect landed; the intent row says that.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HookRunRecord {
+    /// The post-execution derivation beside the memo's stable delivery key.
+    pub(super) derivation: HookRunDerivation,
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) binding: EntityId,
     #[serde(with = "crate::serialize::entity_ref")]

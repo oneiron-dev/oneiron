@@ -161,6 +161,7 @@ fn read_claim(
             served.push(HookReadRow {
                 id,
                 content_hash: row.content_hash,
+                body_hash: *blake3::hash(body).as_bytes(),
             });
         }
     }
@@ -221,6 +222,7 @@ fn read_about(
             served.push(HookReadRow {
                 id: row.id,
                 content_hash: row.content_hash,
+                body_hash: *blake3::hash(body).as_bytes(),
             });
         }
     }

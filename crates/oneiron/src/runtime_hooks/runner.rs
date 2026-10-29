@@ -490,7 +490,16 @@ impl Pass<'_> {
         let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let verdict = judge(run.binding, result, overrun, &context);
-        let memo = record(run, &input, pins, verdicts, &verdict, duration_ms, now);
+        let memo = record(
+            run,
+            &input,
+            pins,
+            verdicts,
+            &verdict,
+            duration_ms,
+            now,
+            self.runtime.runtime_identity(),
+        )?;
         let queued = self.commit(run, memo, &verdict)?;
         self.report.count(&verdict);
         if queued {
