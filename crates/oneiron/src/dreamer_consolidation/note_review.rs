@@ -57,6 +57,7 @@ use crate::llm::{
 };
 use crate::registry::ENTITY_TYPE_NOTE;
 use crate::side_table::{self, Named, SideTable};
+use crate::vault::ReadMode;
 use crate::{EntityId, Result, Vault};
 
 mod candidates;
@@ -548,8 +549,10 @@ fn check_note_review_reply(response: &crate::llm::LlmResponse) -> std::result::R
     check_extraction_reply(response)
 }
 
-/// The NOTEs on `page` the review reads: live and readable by the Dreamer,
-/// Allowed by its kind or its override, or sealed and AfterSeal (a sealed pad
+/// The NOTEs on `page` the review reads: readable by the Dreamer at their
+/// indexed frontier (ARCH-0032, FIX 7788), so the text it extracts from and
+/// the version its evidence pins are the indexed ones; Allowed by its kind or
+/// its override, or sealed and AfterSeal (a sealed pad
 /// read through its line marks), changed since their last review, and with a
 /// birth facet and one project for their beliefs. Anything else is skipped,
 /// never widened. An unchanged sealed pad is read again only for the
@@ -564,7 +567,11 @@ fn readable_notes(
     let txn = super::turn_text::snapshot(vault)?;
     let mut notes = Vec::new();
     for id in page {
-        let Ok(mut parts) = read.get_entities_parts_in_txn(&txn, std::slice::from_ref(id)) else {
+        let Ok(mut parts) = read.get_entities_parts_with_mode_in_txn(
+            &txn,
+            std::slice::from_ref(id),
+            ReadMode::Indexed,
+        ) else {
             continue;
         };
         let Some((kind, _, body)) = parts.pop().flatten() else {
