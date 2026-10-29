@@ -178,7 +178,6 @@ pub(crate) mod test_hooks;
 mod tests;
 
 pub(crate) use archive_scratch::ScratchEnv;
-pub(crate) use served_vaults::served_vault_at;
 #[cfg(unix)]
 pub(crate) use asset_body::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
@@ -191,6 +190,7 @@ pub(crate) use asset_body::{
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
 pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
 pub(crate) use backup_change::telemetry_batch_class;
