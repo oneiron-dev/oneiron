@@ -50,7 +50,7 @@ struct ErasedStart {
 /// erase of a spawn target publishes again is held inline in its row,
 /// whatever its size. The erase's writer cannot mint the body instance a
 /// spill needs, and the start must change in that writer; nothing is cut.
-fn republished_start_body(bytes: &[u8]) -> StoredBody {
+pub(super) fn republished_start_body(bytes: &[u8]) -> StoredBody {
     StoredBody::Inline {
         bytes: bytes.to_vec(),
         held: false,
@@ -122,7 +122,7 @@ pub(in crate::code_run::storage) fn erase_spawn_prefixes_in_txn(
 
 /// The bytes of `start`, as run `run` holds them, read in `txn`; `None` when
 /// the run no longer holds its occurrence or its bytes are gone or drifted.
-fn start_bytes_in_txn(
+pub(super) fn start_bytes_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     run: EntityId,
@@ -173,10 +173,10 @@ fn erased_start(bytes: &[u8], erased: &BTreeSet<EntityId>) -> Result<Option<Opti
 }
 
 /// `changed`, the changed start, published as the body run `run` holds at
-/// `start`'s path, in place of the body `start` names: the old occurrence is
-/// released, its taint and secret marks carried to the new one, and its
-/// instance retires once no other holder keeps it, under the erase of each
-/// target that reached it, the run's body all the same.
+/// `start`'s path, in place of the body `start` names
+/// ([`publish_start_in_txn`]): the old body's instance retires once no
+/// other holder keeps it, under the erase of each target that reached it,
+/// the run's body all the same.
 ///
 /// # Errors
 ///
@@ -188,7 +188,33 @@ fn republish_start_in_txn(
     start: &ExecutorStepStart,
     changed: &ErasedStart,
 ) -> Result<OutputRef> {
-    let bytes = changed.bytes.as_slice();
+    let (body, held) = publish_start_in_txn(store, wtxn, run, start, &changed.bytes)?;
+    if let Some(digest) = held {
+        for cause in &changed.causes {
+            erase_bodies_for_owner_in_txn(store, wtxn, cause, &run, &[digest], false)?;
+        }
+    }
+    Ok(body)
+}
+
+/// `bytes`, a start's new body, published as the body run `run` holds at
+/// `start`'s path, in place of the body `start` names: the old occurrence
+/// is released, its taint and secret marks carried to the new one. Returns
+/// the new body's ref and the digest the old occurrence held. Nothing
+/// retires here: the source-side erase retires the old body under its
+/// causes, and an activation's prune applies what its source retired (FIX
+/// 9180, coord-b slice d).
+///
+/// # Errors
+///
+/// Storage and custody errors.
+pub(super) fn publish_start_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    run: EntityId,
+    start: &ExecutorStepStart,
+    bytes: &[u8],
+) -> Result<(OutputRef, Option<[u8; 32]>)> {
     let old = CodeRunRawOutput {
         path: start.path.clone(),
         ..CodeRunRawOutput::of_ref(start.body)
@@ -218,10 +244,5 @@ fn republish_start_in_txn(
         RAW_OUTPUT_SECRETS.put(store, wtxn, &marks, &reason)?;
     }
     publish_body_in_txn(store, wtxn, &owned_body(run, &output, &body)?)?;
-    if let Some(digest) = held {
-        for cause in &changed.causes {
-            erase_bodies_for_owner_in_txn(store, wtxn, cause, &run, &[digest], false)?;
-        }
-    }
-    Ok(output.output_ref())
+    Ok((output.output_ref(), held))
 }

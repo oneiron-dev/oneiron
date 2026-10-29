@@ -21,6 +21,11 @@
 //! instance and body before the rows commit: a sealed vault takes each
 //! envelope as it is, a plain one the body opened, and an inline body goes
 //! back into its row.
+//!
+//! A replay row's or a step start's parts recompose their row once, after
+//! every part is read ([`replay`], FIX 9180).
+
+pub(super) mod replay;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
@@ -89,6 +94,11 @@ pub(super) struct CarriedInline {
     /// landed. Never in an image.
     #[serde(skip)]
     pub(super) superseded: bool,
+    /// A replay row's or a step start's part (FIX 9180): its row is the
+    /// one its destination recomposes into once every part is read, never a
+    /// row it lands in on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) replay: Option<replay::ReplayPartCarried>,
 }
 
 /// Whether the bodies `image` names are the streams its artifact's manifest
@@ -150,6 +160,9 @@ pub(super) struct BodyCensus {
     /// The row-held responses the rows hold, and the bindings read
     /// (KS-2B1).
     responses: ResponseCensus,
+    /// The step starts carried as parts, indexed at the first `vault_meta`
+    /// row (FIX 9180).
+    starts: Option<replay::StartIndex>,
 }
 
 impl BodyCensus {
@@ -169,9 +182,20 @@ impl BodyCensus {
         key: &[u8],
         value: &[u8],
     ) -> Result<Option<Vec<u8>>> {
+        // FIX 9180: a carried step start's capsule carries its parts, and
+        // its whole body travels nowhere.
+        if database == "vault_meta"
+            && let Some(stripped) = replay::note_start(self, store, txn, key, value)?
+        {
+            return Ok(stripped);
+        }
         match self.responses.note(store, txn, database, key, value)? {
             Noted::Not => {}
             Noted::Unbound => return Ok(None),
+            Noted::Parts(skeleton, parts) => {
+                self.inline.extend(parts);
+                return Ok(Some(skeleton));
+            }
             Noted::Bound {
                 carriage,
                 instance,
@@ -263,6 +287,7 @@ impl BodyCensus {
                 landed_len: None,
                 opaque: false,
                 superseded: false,
+                replay: None,
             },
             body.to_vec(),
         ));
@@ -481,6 +506,7 @@ pub(super) fn require(
     image: &mut CheckpointImage,
     plan: &mut CustodyPlan,
 ) -> Result<BTreeSet<[u8; 16]>> {
+    replay::require(image)?;
     let rows = image
         .databases
         .get_mut("vault_meta")
@@ -628,6 +654,7 @@ pub(super) fn restore(
             results.contains(digest),
         )?;
     }
+    let mut read = replay::ReadParts::default();
     for (inline, carried) in image.inline_bodies.iter().enumerate() {
         if carried.superseded || retired.contains(&carried.instance) {
             pass_over(&mut bodies, files + inline)?;
@@ -642,6 +669,11 @@ pub(super) fn restore(
             carried.len,
         )
         .read_to_end(&mut body)?;
+        // FIX 9180: a replay part waits for its destination's other parts.
+        if carried.replay.is_some() {
+            read.keep(inline, body);
+            continue;
+        }
         let rows = image
             .databases
             .get_mut(&carried.database)
@@ -656,7 +688,7 @@ pub(super) fn restore(
         value.truncate(keep);
         value.extend_from_slice(&body);
     }
-    Ok(())
+    replay::land(image, &read, retired)
 }
 
 /// Lands the `index`th file, the body `digest` of `len` bytes sealed under

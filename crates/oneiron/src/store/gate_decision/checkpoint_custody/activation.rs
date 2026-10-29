@@ -255,6 +255,10 @@ impl Store {
         prune: &ArchivePrune,
         source: &LiveCustody,
     ) -> Result<()> {
+        // FIX 9180: what the source retired of a replay row's or a step
+        // start's parts, read before the prune takes a start's rows and
+        // applied once per destination after it.
+        let replay = ResponseFamily::replay_prune_in_txn(self, wtxn, &prune.responses)?;
         destination::delete_vault_meta_in_txn(&self.env, wtxn, &prune.deleted)?;
         for (key, value) in &prune.rewritten {
             self.side_vault_meta().put(wtxn, key, value)?;
@@ -299,6 +303,7 @@ impl Store {
             }
             family.retire_in_txn(self, wtxn, key, &carriage)?;
         }
+        replay.apply_in_txn(self, wtxn)?;
         // A step claim whose response's artifact version rests in a body its
         // source retired takes its erased disposition too, and every pin
         // goes with what the archive no longer holds (FIX 6225). The retired
