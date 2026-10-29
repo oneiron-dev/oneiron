@@ -70,7 +70,8 @@ pub fn outcome_labels(
 /// Labels are observations of immutable answer receipts. Current facts and
 /// authority are checked again within one read snapshot before returning them.
 /// A window that closed in silence pairs its answer with the binding's
-/// silence label; such a pair names the answer as its own fact.
+/// silence label; such a pair names the answer as its own fact. Each answer a
+/// person changed pairs too ([`person_changed_pairs`]).
 /// A caller toward `destination` gets no pair derived from a row a world
 /// withheld from its machine keeps, and each pair names the rows it was
 /// derived from.
@@ -233,6 +234,8 @@ pub(crate) fn calibration_pairs_in_txn(
             derived_from,
         });
     }
+    // A person who changed the model's answer labels it too (OF-516).
+    pairs.extend(person_changed_pairs_in_txn(vault, txn, principal, question, &kept)?);
     Ok(pairs)
 }
 
@@ -241,9 +244,11 @@ pub(crate) fn calibration_pairs_in_txn(
 /// its probability are paired with the person's answer as the outcome. For a
 /// yes/no question the label is the person's answer, as a fact's mapped value
 /// is; for any other the label says the prior held, which a changed answer
-/// never does. A record without a prior probability pairs nothing. A caller
-/// toward `destination` gets no pair from a row a world withheld from its
-/// machine keeps.
+/// never does. A record without a prior probability pairs nothing. The
+/// Coach's threshold run marks the records it read and keeps them, so a pair
+/// stays readable after it (FIX 566). A caller toward `destination` gets no
+/// pair from a row a world withheld from its machine keeps. [`calibration_pairs`]
+/// carries these pairs beside the outcome pairs.
 pub fn person_changed_pairs(
     vault: &Vault,
     principal: EntityId,
@@ -252,8 +257,20 @@ pub fn person_changed_pairs(
 ) -> Result<Vec<CalibrationPair>> {
     let txn = vault.store.env.read_txn()?;
     let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
+    person_changed_pairs_in_txn(vault, &txn, principal, question, &kept)
+}
+
+/// [`person_changed_pairs`] in the caller's snapshot, past the rows `kept`
+/// worlds withhold.
+fn person_changed_pairs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+    kept: &std::collections::BTreeSet<EntityId>,
+) -> Result<Vec<CalibrationPair>> {
     let mut pairs = Vec::new();
-    for (source, record) in PERSON_CHANGED.scan(&vault.store, &txn)? {
+    for (source, record) in PERSON_CHANGED.scan(&vault.store, txn)? {
         if record.question != question || record.principal != principal {
             continue;
         }
@@ -261,7 +278,7 @@ pub fn person_changed_pairs(
             continue;
         };
         let derived_from = vec![question, source];
-        if !kept.is_empty() && kept_any(vault, &txn, &kept, &derived_from)? {
+        if !kept.is_empty() && kept_any(vault, txn, kept, &derived_from)? {
             continue;
         }
         let label = match (&record.prior, &record.person) {
@@ -271,7 +288,7 @@ pub fn person_changed_pairs(
         let person = serde_json::to_vec(&record.person)
             .map_err(|_| crate::Error::InvariantViolation("encode a person's answer"))?;
         let occurred_at =
-            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source)?
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &source)?
                 .and_then(|raw| crate::batch::EntityMetadataHeader::parse(&raw))
                 .map_or(0, |header| header.occurred_start);
         pairs.push(CalibrationPair {
