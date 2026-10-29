@@ -51,14 +51,16 @@ struct RematLedger {
 }
 
 /// Whose replay markers a forward pass settles (FIX 538). The markers of a
-/// window are keyed by its key alone, and they record what its live doc
-/// still owes.
+/// window are keyed by its key alone, so a sealed window's mirror and its
+/// live doc share them.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MarkerScope {
     /// The window's own doc: the pass settles the window's markers.
     Window,
-    /// A sealed window's mirror (OF-570 (d)): its rows land here, but the
-    /// live doc is not touched, so the pass settles none of its markers.
+    /// A sealed window's mirror (OF-570 (d)): the live doc is not touched,
+    /// so the pass settles only the markers of rows it rematerialized here
+    /// (a healing write, or its tombstone's purge), never one by a
+    /// quarantine of the mirror's own copy.
     Mirror,
 }
 
@@ -77,8 +79,9 @@ pub fn forward_rematerialize(
 }
 
 /// [`forward_rematerialize`] of a sealed window's mirror: it lands the
-/// mirror's rows and leaves every replay marker of the window as the
-/// untouched live doc still owes it (FIX 538).
+/// mirror's rows and settles the window's replay markers only for the rows
+/// it rematerialized; every other marker stays as the untouched live doc
+/// owes it (FIX 538).
 pub(crate) fn forward_rematerialize_mirror(
     vault: &Vault,
     mirror: &LoroDoc,
@@ -320,8 +323,7 @@ impl ForwardRun {
     }
 
     /// The NOTE preflight, the marker snapshot and the window's cutoffs,
-    /// then the entity plan. The caller holds the materializer lock. A
-    /// mirror's pass snapshots no marker, so it heals and clears none.
+    /// then the entity plan. The caller holds the materializer lock.
     fn begin(
         vault: &Vault,
         doc: &LoroDoc,
@@ -342,12 +344,10 @@ impl ForwardRun {
         // write (ONE-1147); the tombstone pass only via that entity's own
         // replay success (ONE-1124). Malformed marker rows never match a
         // canonical `to_hex()` and so are never discharged here (fail closed).
-        let marked: HashSet<String> = match scope {
-            MarkerScope::Window => quarantine::pending_remat_entities(vault, window_key.as_str())?
+        let marked: HashSet<String> =
+            quarantine::pending_remat_entities(vault, window_key.as_str())?
                 .into_iter()
-                .collect(),
-            MarkerScope::Mirror => HashSet::new(),
-        };
+                .collect();
         let ledger = RematLedger {
             marked,
             healed: Vec::new(),
