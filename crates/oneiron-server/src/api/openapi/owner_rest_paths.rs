@@ -21,20 +21,48 @@ use crate::api::owner_routes::conflict_routes::{
     review_resumed_schema, review_scope_body_schema, settle_conflict_body_schema,
     settlement_reverted_schema,
 };
+use crate::api::owner_routes::connector_admission_routes::schema::{
+    accept_request_body_schema, admitted_slate_schema, connector_key_schema,
+    enabled_request_body_schema, qualify_request_body_schema, refresh_request_body_schema,
+    refreshed_schema, register_request_body_schema, registered_schema,
+};
+use crate::api::owner_routes::connector_consent_routes::{
+    consent_request_body_schema, consented_schema,
+};
 use crate::api::owner_routes::connector_subscription_routes::{
-    revoke_subscription_body_schema, subscription_revoked_schema,
+    channel_subscription_schema, revoke_subscription_body_schema, subscribe_request_body_schema,
+    subscription_revoked_schema,
+};
+use crate::api::owner_routes::conversation_learning_routes::{
+    learning_reply_schema, own_reply_schema, set_learning_body_schema, set_own_body_schema,
 };
 use crate::api::owner_routes::desktop_takeover_routes::{
     desktop_input_body_schema, desktop_input_reply_schema, desktop_return_reply_schema,
     desktop_run_request_body_schema, desktop_takeover_schema,
 };
 use crate::api::owner_routes::diary_routes::{
-    diary_grant_body_schema, diary_grant_schema, diary_review_body_schema, diary_review_schema,
+    diary_grant_body_schema, diary_grant_schema, diary_read_outcome_schema,
+    diary_review_body_schema, diary_review_schema, read_diary_body_schema,
+};
+use crate::api::owner_routes::dreamer_maintenance_routes::{
+    applied_maintenance_schema, apply_action_mode_body_schema, maintenance_revert_schema,
+    revert_maintenance_body_schema,
+};
+use crate::api::owner_routes::dreamer_routes::{
+    change_reverted_schema, dreamer_pause_body_schema, dreamer_paused_schema,
+    revert_change_body_schema,
+};
+use crate::api::owner_routes::embedding_space_routes::{
+    clear_refused_body_schema, embedding_spaces_view_schema,
 };
 use crate::api::owner_routes::intent_routes::{intent_stated_schema, state_intent_body_schema};
 use crate::api::owner_routes::model_setting_routes::model_settings_schema;
 use crate::api::owner_routes::owner_work_routes::{
     bundle_publication_body_schema, owner_work_view_schema,
+};
+use crate::api::owner_routes::peer_confidence_routes::{
+    grant_travel_schema, peer_scale_schema, set_grant_travel_body_schema,
+    set_peer_scale_body_schema,
 };
 use crate::api::owner_routes::recovery_kit_routes::{
     anchor_advance_body_schema, anchor_advance_schema,
@@ -43,6 +71,9 @@ use crate::api::owner_routes::schema::{
     cleanup_accepted_schema, cleanup_review_schema, cleanup_settings_body_schema,
     decide_cleanup_body_schema, rehearsal_schema, rehearse_request_body_schema,
     restore_archived_body_schema, revert_cleanup_run_body_schema, run_reverted_schema,
+};
+use crate::api::owner_routes::shared_training_setup_routes::{
+    answer_setup_body_schema, setup_reply_schema,
 };
 use crate::api::owner_routes::wire_health_routes::{
     outcome_recorded_schema, record_outcome_body_schema,
@@ -287,6 +318,158 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
         "post",
         desktop_run_request_body_schema(),
         desktop_takeover_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/connectors/consent",
+        "post",
+        consent_request_body_schema(),
+        consented_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/connectors/enabled",
+        "post",
+        enabled_request_body_schema(),
+        connector_key_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/connectors/qualify",
+        "post",
+        qualify_request_body_schema(),
+        connector_key_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/connectors/refresh",
+        "post",
+        refresh_request_body_schema(),
+        refreshed_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/connectors/register",
+        "post",
+        register_request_body_schema(),
+        registered_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/connectors/slate/accept",
+        "post",
+        accept_request_body_schema(),
+        admitted_slate_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/connectors/subscriptions",
+        "post",
+        subscribe_request_body_schema(),
+        channel_subscription_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/conversation-learning",
+        "put",
+        set_learning_body_schema(),
+        learning_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/conversation-learning/me",
+        "put",
+        set_own_body_schema(),
+        own_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/conversation-learning/setup",
+        "put",
+        answer_setup_body_schema(),
+        setup_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/diary/read",
+        "post",
+        read_diary_body_schema(),
+        diary_read_outcome_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/dreamer/maintenance/action-mode/apply",
+        "post",
+        apply_action_mode_body_schema(),
+        applied_maintenance_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/dreamer/maintenance/revert",
+        "post",
+        revert_maintenance_body_schema(),
+        maintenance_revert_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/dreamer/pause",
+        "post",
+        dreamer_pause_body_schema(),
+        dreamer_paused_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/dreamer/resume",
+        "post",
+        dreamer_pause_body_schema(),
+        dreamer_paused_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/dreamer/revert",
+        "post",
+        revert_change_body_schema(),
+        change_reverted_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/embedding-spaces/refused/clear",
+        "post",
+        clear_refused_body_schema(),
+        embedding_spaces_view_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/federation/grant-travel",
+        "post",
+        set_grant_travel_body_schema(),
+        grant_travel_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/federation/peer-confidence",
+        "post",
+        set_peer_scale_body_schema(),
+        peer_scale_schema(),
         &[],
     );
 }
