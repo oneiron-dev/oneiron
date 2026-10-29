@@ -33,7 +33,7 @@ impl Vault {
         Ok(self
             .hook_blocks_for(session, branch)?
             .into_iter()
-            .filter(|(_, block)| block.activation <= now)
+            .filter(|(_, block)| block.activation_open(self, now))
             .map(|(id, block)| HookPin {
                 block: id,
                 binding: block.binding,
