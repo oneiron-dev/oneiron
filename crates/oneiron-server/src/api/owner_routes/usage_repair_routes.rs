@@ -122,10 +122,7 @@ async fn remove(
 /// for this server's metering scope, in key order, as its write kept it; a
 /// kept row that no longer decodes is counted in `undecodable`, never read
 /// as a receipt (FIX 11302).
-async fn receipts(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Value> {
+async fn receipts(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let scope = metered(&server)?;
     let response = blocking(move || {
