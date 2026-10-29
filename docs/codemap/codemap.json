@@ -40177,7 +40177,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 20,
-      "mod": 199,
+      "mod": 200,
       "re-export": 76
      }
     },
@@ -75505,7 +75505,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1219
+      "fn": 1222
      }
     },
     {
@@ -75950,7 +75950,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 86,
+      "re-export": 87,
       "struct": 38
      }
     },
@@ -76809,6 +76809,16 @@
      "surface": {
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/web_connector.rs",
+     "purpose": "Embedded-owner projection of the web connector's switch and usage doors (FIX 11598)",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -77734,6 +77744,80 @@
      "path": "src/wave_orchestration/tests.rs",
      "purpose": "Wave-orchestration tests (ONE-1905)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebFetchInput",
+      "WebFetchOutput",
+      "WebSearchHit",
+      "WebSearchInput",
+      "WebSearchOutput",
+      "WebTool"
+     ],
+     "path": "src/web_connector/mod.rs",
+     "purpose": "The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and…",
+     "surface": {
+      "const": 7,
+      "enum": 1,
+      "fn": 7,
+      "re-export": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FetchRoute",
+      "ResultRetention",
+      "WebProvider",
+      "WebProviderProfile"
+     ],
+     "path": "src/web_connector/provider.rs",
+     "purpose": "The provider registry: which providers may serve a web call, on whose key, at what declared price, and how…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebConnectorSetting",
+      "WebProviderKey"
+     ],
+     "path": "src/web_connector/setting.rs",
+     "purpose": "The vault's one switch: which provider serves its web calls, on whose key",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebCallOutcome",
+      "WebConnectorUsage",
+      "WebConnectorUsagePage",
+      "WebConnectorUsageRead",
+      "WebCostBasis",
+      "WebKeySource"
+     ],
+     "path": "src/web_connector/usage.rs",
+     "purpose": "One usage row per web call: provider, tool, key source, latency and cost",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 2,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -82445,7 +82529,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 97,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82478,6 +82562,13 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
+    },
+    "web_connector": {
+     "files": 4,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and…"
     },
     "web_fetch": {
      "files": 8,
@@ -82517,7 +82608,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5508,
+   "source_files": 5513,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94743,7 +94834,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1187
+      "fn": 1190
      }
     },
     {
@@ -96196,7 +96287,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1188
+      "fn": 1191
      }
     },
     {
@@ -100951,7 +101042,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 156
+      "crate-vis": 157
      }
     },
     {
@@ -101890,6 +101981,16 @@
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
       "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/web_connector_doors.rs",
+     "purpose": "Typed owner doors over the built-in web connector's switch and usage rows (FIX 11598)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -113979,6 +114080,96 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/keys.rs",
+     "purpose": "The provider key for one web call",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/mod.rs",
+     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that names…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/brave.rs",
+     "purpose": "Brave: Search-plan web search on the user's own key or the hub",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/context_dev.rs",
+     "purpose": "context.dev: web search and scrape, one credit a call, on the user's own key or the hub",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/exa.rs",
+     "purpose": "Exa: auto search with highlights and contents text, on the user's own key or the hub (Exa §4.2)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/mod.rs",
+     "purpose": "One adapter per provider: one HTTPS request per call, its answer shaped into search hits or one page, with…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/octen.rs",
+     "purpose": "Octen: web search with highlights and standard extraction. octen.ai runs only on the user's own key or the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/tavily.rs",
+     "purpose": "Tavily: basic search and basic extraction, the launch default on the deploy's backend key (CONN-1 A)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/tinyfish.rs",
+     "purpose": "Tinyfish: TinySearch and TinyFetch, free within their daily allowances, on the user's own key or the hub…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -114391,7 +114582,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 608,
+     "files": 609,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114866,6 +115057,13 @@
      "layout": "file",
      "purpose": "Endpoint discovery and browser access for an external shared web client"
     },
+    "web_connector": {
+     "files": 9,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that names…"
+    },
     "wire_health": {
      "files": 2,
      "impl_vault": false,
@@ -114883,7 +115081,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1408,
+   "source_files": 1418,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -119270,8 +119468,18 @@
       "WeaveSieveScoreView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
+      "WebCallOutcome",
+      "WebConnectorSetting",
+      "WebConnectorUsage",
+      "WebConnectorUsagePage",
+      "WebConnectorUsageRead",
+      "WebCostBasis",
       "WebCrawlRequest",
       "WebFetchRequest",
+      "WebKeySource",
+      "WebProvider",
+      "WebProviderKey",
+      "WebTool",
       "WellnessPersonRequest",
       "WellnessPolicyConfigureRequest",
       "WellnessProjection",
@@ -119365,8 +119573,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1051,
-      "struct": 3226
+      "enum": 1057,
+      "struct": 3230
      }
     },
     {
