@@ -57,7 +57,7 @@ pub(crate) struct RunProposal {
 }
 
 /// The run's one receipt.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct RunResolved {
     pub(crate) run_id: String,
     pub(crate) run_ref: String,
@@ -71,7 +71,7 @@ pub(crate) struct RunResolved {
     pub(crate) commitment_wakes: Vec<CommitmentWakeScheduled>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct CommitmentWakeScheduled {
     pub(crate) claim_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]

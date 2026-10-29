@@ -78,7 +78,7 @@ use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-mod pad_access;
+pub(crate) mod pad_access;
 mod root_doors;
 mod secret_anchor;
 
@@ -485,7 +485,7 @@ fn run_material(
 }
 
 /// One world key, by its world and generation.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct KeyView {
     world: String,
     generation: u64,
@@ -501,7 +501,7 @@ impl From<&WorldKeyId> for KeyView {
 }
 
 /// A key a door gave no new wrap, and why.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct WithheldView {
     #[serde(flatten)]
     key: KeyView,
@@ -527,7 +527,7 @@ fn withheld(list: &[(WorldKeyId, Withheld)]) -> Vec<WithheldView> {
 }
 
 /// What a re-pin did with each key.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct RepinView {
     rewrapped: Vec<KeyView>,
     withheld: Vec<WithheldView>,
