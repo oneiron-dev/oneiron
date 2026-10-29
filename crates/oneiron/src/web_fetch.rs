@@ -61,19 +61,6 @@ const DEFAULT_MAX_RESPONSE_BYTES: NonZeroUsize = match NonZeroUsize::new(8 * 102
     None => NonZeroUsize::MIN,
 };
 
-/// Ceiling on how many raw link entries one page may make the engine inspect.
-///
-/// This is separate from the normalized-link ceiling below. Duplicate, invalid,
-/// and non-HTTP entries still cost parse and join work, and a compact Firecrawl
-/// JSON array can otherwise expand into far more allocations than its wire bytes.
-const MAX_RAW_LINKS_PER_PAGE: usize = 16_384;
-
-/// Ceiling on how many distinct normalized links one page may contribute.
-///
-/// The normalized set is bounded while it is built. It never grows to the
-/// peer-controlled size and gets measured afterward.
-const MAX_DISCOVERED_LINKS_PER_PAGE: usize = 8192;
-
 /// The exact reason literal recorded when a same-site walk lands on a foreign
 /// host through a post-fetch redirect.
 const CROSS_SITE_REDIRECT_REASON: &str = "cross_site_redirect";
@@ -486,10 +473,8 @@ pub struct CrawlPageFailure {
     pub url: String,
     /// `AllRenderersFailed` renders as `"all web fetch renderers failed: "` plus
     /// each attempt as `{renderer}: {detail}` joined by `"; "` in ladder order.
-    /// A cross-site redirect is the exact literal `cross_site_redirect`, and a
-    /// page whose links would overflow the walk's frontier ceiling is the exact
-    /// literal `frontier_link_budget_exceeded`; other reasons are diagnostic and
-    /// are matched by substring.
+    /// A cross-site redirect is the exact literal `cross_site_redirect`; other
+    /// reasons are diagnostic and are matched by substring.
     pub reason: String,
 }
 
