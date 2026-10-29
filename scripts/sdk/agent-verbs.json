@@ -6741,8 +6741,7 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false,
-      "openapi": true
+      "section": false
     },
     {
       "name": "vault.cleanup.run",
