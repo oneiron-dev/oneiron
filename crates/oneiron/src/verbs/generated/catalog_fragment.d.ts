@@ -11,9 +11,9 @@
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
 // Census: 1216 code-mode rows (1176 host rows, 40 run rows), 4247 declarations.
-// Replies: 1090 fully typed, 125 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Replies: 1087 fully typed, 128 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 108; unread shapes: none.
+// Opaque serde_json::Value leaves: 109; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -213,15 +213,15 @@ declare namespace Sdk {
   type ShapeChannelProvision = { custody: ShapeChannelCustody; binding: ShapeChannelBinding; fulfillment: ShapeChannelFulfillment };
   type ShapeGrantBound = { domain: "action"; actor: string; actor_class?: string | null; class: string; selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean } | { domain: "disclosure"; audience: string[]; class: string; selectors: string[] };
   type ShapeTarget = { kind: "shared" } | { kind: "member"; member: string } | { kind: "world"; name: string } | { kind: "facet"; person: string; name: string } | { kind: "pack"; name: string } | { kind: "actor"; agent_id: string } | { kind: "skill"; skill_id: string } | { kind: "channel"; channel: string; address: string } | { kind: "grant"; grant_ref: string } | { kind: "manifest"; manifest_ref: string } | { kind: "sync"; entity_kind: string };
-  type ShapeRow = { kind: "shared"; vault_id: string; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole } | { kind: "world"; name: string } | { kind: "facet"; person: string; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null; source?: ShapeSkillSource | null } | { kind: "channel"; channel: string; address: string; provision?: ShapeChannelProvision | null } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "manifest"; manifest_ref: string; body: string } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
+  type ShapeRow = { kind: "shared"; vault_id: string; preset?: ShapePreset | null } | { kind: "member"; member: string; role: ShapeMemberRole; pending_invitation?: string | null } | { kind: "world"; name: string } | { kind: "facet"; person: string; name: string } | { kind: "pack"; name: string; version?: string | null } | { kind: "actor"; agent_id: string; ceiling: ShapeCeiling; enabled?: boolean } | { kind: "skill"; skill_id: string; version?: string | null; source?: ShapeSkillSource | null } | { kind: "channel"; channel: string; address: string; provision?: ShapeChannelProvision | null } | { kind: "grant"; grant_ref?: string; bound?: ShapeGrantBound | null } | { kind: "manifest"; manifest_ref: string; body?: string; json?: unknown | null } | { kind: "sync"; entity_kind: string; on_wire: boolean } | { kind: "retire"; target: ShapeTarget };
   type ShapeSeed = { rows: ShapeRow[] };
   type StoredShapeSeed = { id: string; revision: number; parent?: string | null; author: string; written_at: number; seed: ShapeSeed };
   type ShapeChange = "create" | "update" | "retire";
   type ShapeItemClass = "receipted" | "widening" | "authority";
   type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null };
-  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "file_refused"; reason: string } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
+  type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "file_refused"; reason: string } | { state: "held"; request_ref: string; approval_digest: string; quarantine_until: number; requested_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string };
   type ShapeApprovalDependencies = { digest: string };
-  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null };
+  type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null; slips_kept?: boolean };
   type ShapeApplyRun = { run_id: string; root: string; items: string[] };
   type ShapeLearningSetting = { on: boolean; revision: string; act?: string | null };
   type ShapeLearningOutcome = { requested: boolean; written: boolean; ignored: boolean; resulting?: ShapeLearningSetting | null; reason?: string | null };
@@ -3213,7 +3213,7 @@ declare namespace Sdk {
   type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
   type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[]; crossed: string[] };
   type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: VoiceRefSubjectKind; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: VoiceConsentBasis | null; state: VoiceConsentState; revision: string; sequence: number };
-  type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
+  type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string; awaiting_verification: boolean };
   type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
   type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection };
   type VoiceRenderLineageRequest = { voice_id: string };
