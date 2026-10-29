@@ -296,8 +296,8 @@ async fn not_a_secret(
 /// the kept value of a key the owner ruled no secret, sealed again where its
 /// custody key no longer opens it, which every batch write to its record
 /// otherwise answers `credential_leaf_unreadable` for (FIX 7404). The ruling
-/// stands and is returned. The body is read by the wiping reader rotation's
-/// is read by, after the owner door.
+/// stands and is returned. The body is read after the owner door, by the
+/// same wiping reader as rotation's.
 async fn reenter(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
