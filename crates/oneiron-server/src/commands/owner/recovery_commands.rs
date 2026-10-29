@@ -157,9 +157,7 @@ fn restore_unlocked(
     // `--pad-machine` opens pads on `--open-pads` or a restore where no
     // vault is yet; a restore over the vault reads no machine key.
     if args.pad_machine.is_some() {
-        anyhow::bail!(
-            "--pad-machine opens pads on --open-pads or a restore where no vault is yet"
-        );
+        anyhow::bail!("--pad-machine opens pads on --open-pads or a restore where no vault is yet");
     }
     let mut live = base_vault_config(config);
     live.page_seal = live_seal;

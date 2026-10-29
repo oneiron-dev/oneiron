@@ -11,6 +11,8 @@
 //! there back into its journal. Each apply is one run-tree root with a child
 //! per item (see [`super::run`]), and its waiting items are one inbox group
 //! (see [`super::group`]).
+mod journal;
+
 use super::approval::{
     ShapeApprovalDependencies, check_waiting_shape_approval, moves_reach, repin_waiting,
 };
@@ -29,7 +31,6 @@ use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
-use crate::side_table::{self, Named, SideTable};
 use crate::skill::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -44,10 +45,6 @@ const SHAPE_GRANT_PROPOSAL_SECS: u64 = 3600;
 
 /// The widen inbox's verdict on a filing the owner accepted, minting it.
 const SHAPE_FILING_ACCEPTED: &str = "accepted";
-
-/// Every apply's journal, keyed by the frontier of the plan it lands.
-const JOURNAL: SideTable<String, ShapeApplyReceipt, Named> =
-    SideTable::new(&side_table::VAULT_SHAPE_APPLY);
 
 /// `vault.shape.apply`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -226,39 +223,6 @@ fn list_pack_source(sources: &mut ShapeSources, source_id: &str) {
 }
 
 impl Vault {
-    /// The journal of the apply landing the plan at `frontier`.
-    ///
-    /// # Errors
-    ///
-    /// A read failure.
-    pub fn shape_apply(&self, frontier: &str) -> Result<Option<ShapeApplyReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        JOURNAL.get(&self.store, &txn, &frontier.to_owned())
-    }
-
-    /// Every apply with an item still pending or waiting for the owner.
-    ///
-    /// # Errors
-    ///
-    /// A read failure.
-    pub fn open_shape_applies(&self) -> Result<Vec<ShapeApplyReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        Ok(JOURNAL
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, receipt)| receipt)
-            .filter(|receipt| !receipt.done)
-            .collect())
-    }
-
-    /// Records `receipt`, and settles its run rows to match, in one writer.
-    pub(super) fn put_shape_apply(&self, receipt: &ShapeApplyReceipt, now: u64) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            JOURNAL.put(&self.store, txn, &receipt.frontier, receipt)?;
-            self.settle_shape_run_in_txn(txn, receipt, now)
-        })
-    }
-
     /// Lands `request.plan`. A first apply re-plans its seed over the rows
     /// `visible` admits and refuses a plan whose frontier has moved; then it
     /// stores the seed, and opens the journal and the apply's run tree in
@@ -278,33 +242,30 @@ impl Vault {
         now: u64,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapeApplyReceipt> {
-        self.apply_shape_into(applier, request, now, visible, &mut ShapeSources::off())
+        self.apply_shape_listing(applier, request, now, visible).0
     }
 
     /// [`Self::apply_shape`], beside the rows its receipt stands on
-    /// (`host_door_lists`): what its re-plan read (see
+    /// (`host_door_lists`): what its first apply's re-plan read (see
     /// [`Self::plan_shape_into`]), the seed revision it stored, every live
     /// read an owner's landing made, the staged source a pack installs
-    /// from, and the entity each landing wrote. `None` for a resumed apply:
-    /// its journal holds no source set, and the rows its plan was read from
-    /// may have moved since. `None` too once an item lands through a door
-    /// whose reads it does not follow (a delegated channel provision, whose
-    /// custody record its writer resolves by name; a skill import refused
-    /// before it lands a candidate).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::apply_shape`].
+    /// from, the custody record a delegated channel provision reads, the
+    /// hub a refused skill import read, and the entity each landing wrote.
+    /// The journal keeps them (FIX 3411, 3513), so a resumed apply lists
+    /// them beside its own reads without planning again. `None` once a read
+    /// ran whose rows it does not follow (a skill import refused after its
+    /// import began), and from then on for every apply of that journal. A
+    /// refusal answers beside the rows read before it.
     pub fn apply_shape_listing(
         &self,
         applier: ShapeApplier<'_>,
         request: &ShapeApplyRequest,
         now: u64,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
-    ) -> Result<(ShapeApplyReceipt, Option<Vec<EntityId>>)> {
+    ) -> (Result<ShapeApplyReceipt>, Option<Vec<EntityId>>) {
         let mut sources = ShapeSources::on();
-        let receipt = self.apply_shape_into(applier, request, now, visible, &mut sources)?;
-        Ok((receipt, sources.into_rows()))
+        let receipt = self.apply_shape_into(applier, request, now, visible, &mut sources);
+        (receipt, sources.into_rows())
     }
 
     /// [`Self::apply_shape`]'s landing, listing in `sources`.
@@ -321,10 +282,9 @@ impl Vault {
             ShapeApplier::Owner { owner, .. } => owner.revalidate(self)?,
             ShapeApplier::Actor { actor, .. } => actor,
         };
-        let mut journal = if let Some(journal) = self.shape_apply(&request.plan.frontier)? {
-            // A resumed apply lists nothing: its journal holds no source
-            // set, and nothing is re-planned to make one.
-            sources.unknown();
+        // A resumed apply lists what its journal stands on (FIX 3411).
+        let resumed = self.resume_shape_apply(&request.plan.frontier, sources)?;
+        let mut journal = if let Some(journal) = resumed {
             journal
         } else {
             let (plan, pin) = self.plan_shape_into(Some(&request.plan.seed), visible, sources)?;
@@ -362,7 +322,7 @@ impl Vault {
                     done: false,
                     conversation_learning: None,
                 };
-                JOURNAL.put(&self.store, txn, &journal.frontier, &journal)?;
+                self.put_shape_journal_in_txn(txn, &journal, sources)?;
                 Ok(journal)
             })?
         };
@@ -381,7 +341,7 @@ impl Vault {
                     }
                 }
                 journal.done = !journal.items.iter().any(|entry| open(&entry.state));
-                self.put_shape_apply(&journal, now)?;
+                self.put_shape_apply_listing(&journal, sources, now)?;
                 report_unread(&mut journal, &applier, request.conversation_learning);
                 return Ok(journal);
             }
@@ -436,6 +396,7 @@ impl Vault {
     /// `seq`, or is refused, and the journal and its run rows are written
     /// after each. An owner's apply and the owner's answer to an apply's
     /// inbox group both land through it; only the former carries `answer`.
+    /// What it reads and lands extends the rows the journal stands on.
     ///
     /// # Errors
     ///
@@ -449,7 +410,7 @@ impl Vault {
         answer: Option<CreatorAnswer>,
         now: u64,
     ) -> Result<()> {
-        let sources = &mut ShapeSources::off();
+        let sources = &mut self.shape_apply_sources(&journal.frontier)?;
         self.land_shape_journal_into(owner, slips, journal, approve, answer, now, sources)
     }
 
@@ -506,7 +467,7 @@ impl Vault {
                     repin_waiting(&mut journal.items, index, &before, &pin, true);
                 }
                 journal.items[index].state = state;
-                self.put_shape_apply(journal, now)?;
+                self.put_shape_apply_listing(journal, sources, now)?;
                 continue;
             }
             // What this item's own door lists, kept on the item (FIX 11175):
@@ -608,10 +569,10 @@ impl Vault {
                 journal.items[index].slips_kept = !own && slips.is_none() && lowers_member(&item);
             }
             journal.items[index].state = state;
-            self.put_shape_apply(journal, now)?;
+            self.put_shape_apply_listing(journal, sources, now)?;
         }
         journal.done = !journal.items.iter().any(|entry| open(&entry.state));
-        self.put_shape_apply(journal, now)
+        self.put_shape_apply_listing(journal, sources, now)
     }
 
     /// Where an actor's apply leaves `item`: a new grant it carries the bound
