@@ -535,19 +535,19 @@ pub(crate) fn revision_for_body_hash_in_txn(
     let live = raw_for_revision(&vault.store, txn, id, &raw, None)?;
     if matches(&live) {
         let current = state(&vault.store, txn, id)?;
-        return Ok(Some(current.map_or_else(
-            || reference(id, &raw),
-            |current| current.live,
-        )));
+        return Ok(Some(
+            current.map_or_else(|| reference(id, &raw), |current| current.live),
+        ));
     }
-    for (_, revision) in FRONTIER.scan_from(&vault.store, txn, id.as_bytes())? {
+    for (_, revision) in FRONTIER.scan_keys(&vault.store, txn, id.as_bytes())? {
         let Some(raw) = read_entity_revision_from_store_in_txn(
             vault,
             &vault.store,
             txn,
             id,
             ReadMode::Pinned(revision),
-        )? else {
+        )?
+        else {
             continue;
         };
         if matches(&raw) {

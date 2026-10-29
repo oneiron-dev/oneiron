@@ -11,18 +11,14 @@ const ERASED_HISTORY_REASON: &str = "source history erased";
 
 /// Whether a permanent erase, not a restorable soft delete, fences `id` in
 /// this write's snapshot.
-fn source_erased_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
+fn source_erased_in_txn(vault: &Vault, txn: &heed::RoTxn, id: &EntityId) -> Result<bool> {
     Ok(vault.local_hard_delete_marker_exists_in_txn(txn, id)?
         || vault.archive_tombstone_in_txn(txn, id)?.is_some())
 }
 
 /// A body that ran across an erase may not commit the erased source's bytes
 /// back into a memo or intent.
-pub(super) fn dependencies_erased_in_txn(
+pub(in crate::runtime_hooks) fn dependencies_erased_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     dependencies: &[HookDependency],
@@ -37,7 +33,7 @@ pub(super) fn dependencies_erased_in_txn(
 
 /// Retires every content-bearing field of a fact memo, preserving its stable
 /// delivery identity, derivation digest, outcome token and commit position.
-pub(super) fn scrub_memo_payload(memo: &mut HookRunRecord) {
+pub(in crate::runtime_hooks) fn scrub_memo_payload(memo: &mut HookRunRecord) {
     memo.input_json = None;
     memo.history_erased = true;
     memo.reads.clear();
@@ -58,7 +54,7 @@ fn scrub_verb_payload(record: &mut HookVerbRunRecord) {
 
 /// Retires an intent's payload. A pending one becomes explicitly refused so
 /// no later drain can land it; an applied one's landed effect is untouched.
-pub(super) fn scrub_intent_payload(intent: &mut HookIntent, at: u64) {
+pub(in crate::runtime_hooks) fn scrub_intent_payload(intent: &mut HookIntent, at: u64) {
     intent.outcome_json.clear();
     intent.reason = Some(ERASED_HISTORY_REASON.to_owned());
     if intent.state == HookIntentState::Pending {
@@ -69,7 +65,7 @@ pub(super) fn scrub_intent_payload(intent: &mut HookIntent, at: u64) {
 
 /// Removes free-text payload from a Hook receipt while keeping its truthful
 /// outcome and identity fields.
-pub(super) fn scrub_receipt_payload(receipt: &mut ReceiptRecord) {
+pub(in crate::runtime_hooks) fn scrub_receipt_payload(receipt: &mut ReceiptRecord) {
     receipt
         .fields
         .insert("reason".to_owned(), ERASED_HISTORY_REASON.to_owned());
@@ -147,8 +143,7 @@ pub(crate) fn scrub_hook_source_in_txn(
     let mut receipts = Vec::new();
     for row in RECEIPTS.iter_from(&vault.store, txn, &[])? {
         let (key, receipt) = row?;
-        if affected_runs.contains(&key) || receipt.trigger_ref.as_deref() == Some(id_hex.as_str())
-        {
+        if affected_runs.contains(&key) || receipt.trigger_ref.as_deref() == Some(id_hex.as_str()) {
             receipts.push((key, receipt));
         }
     }
