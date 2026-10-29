@@ -363,12 +363,13 @@ pub(super) fn report_device_stats(worker_id: &str, stats: &JsonValue) {
     };
     let ledger = host.ledger(&device);
     let rows = stats.get("devices").and_then(JsonValue::as_array);
+    let cuda_device = format!("cuda:{device}");
     let row = rows.and_then(|rows| {
         rows.iter()
             .find(|row| {
                 row.get("device")
                     .and_then(JsonValue::as_str)
-                    .is_some_and(|name| name == device || name == format!("cuda:{device}"))
+                    .is_some_and(|name| name == device.as_str() || name == cuda_device.as_str())
             })
             .or_else(|| (rows.len() == 1).then(|| rows.first()).flatten())
     });
