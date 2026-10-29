@@ -245,6 +245,7 @@ impl SyncServer {
         // Another vault of this process reads this one through this handle
         // (FIX 11157): the read-only door refuses a root held open here.
         vault.register_served();
+        let hyde_queue_wait = config.limits.queue_wait();
         Ok(Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
@@ -332,9 +333,7 @@ impl SyncServer {
             rerank_runtime: Default::default(),
             // Engine 00:59 for parked L14: the configured queue wait bounds
             // admission, not a new timeout of its own.
-            hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(
-                config.limits.queue_wait(),
-            )),
+            hyde_host: Arc::new(crate::server::recall_hyde::HydeHost::new(hyde_queue_wait)),
             extraction_egress: None,
             owner_host: None,
             feedback: None,
