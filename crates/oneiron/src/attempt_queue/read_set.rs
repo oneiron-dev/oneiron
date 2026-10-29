@@ -72,6 +72,12 @@ impl ReadSetProducer {
     /// and chat rows its context render read and its planner craft (FIX 6934).
     pub const WORKFLOW_STEP_INPUT: Self = Self("workflow.step_input");
 
+    /// A Coach attribution pass's complete trace inputs (FIX 7020).
+    pub const ATTRIBUTION_TRACE: Self = Self("coach.attribution_trace");
+
+    /// A review explainer's proposal, fork and live-entity inputs (FIX 7020).
+    pub const REVIEW_BUNDLE: Self = Self("entity_doc.review_bundle");
+
     /// The key the record keeps.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
