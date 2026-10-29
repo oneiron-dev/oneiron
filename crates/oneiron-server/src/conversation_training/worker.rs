@@ -4,10 +4,9 @@
 //! pass (`Vault::offer_conversation_training`) when the gate lets offers be
 //! written at all.
 //!
-//! Offers wait for the vault's admission (a managed vault frozen for reap
-//! writes no offer and no row). Withdrawals do not wait on it: a tick
-//! without admission still writes every control the vault already holds,
-//! records nothing, and leaves recording them to the next admitted tick, so
+//! Offers and withdrawals wait for the vault's admission: a tick without
+//! admission (a managed vault frozen for reap) writes nothing, and the next
+//! admitted tick reconciles and writes every control the vault holds, so
 //! what reaches `controls/` stays shippable from a cold vault.
 //!
 //! On a self-hosted vault with its shipper on, each tick first gives the
@@ -101,7 +100,6 @@ fn tick(
     };
     let vault = server.vault();
     if !admitted {
-        vault.spool_training_controls(&outbox, false)?;
         return Ok(());
     }
     let receipt_key = match intake_receipt_key(dir) {
