@@ -154,7 +154,6 @@ impl PackInstallPolicy {
                 .as_ref()
                 .is_some_and(|calls| !calls.is_empty())
             && self.owner.validate()
-            && self.holders.len() <= 128
             && self.holders.iter().all(|row| {
                 !row.holder_ref.trim().is_empty()
                     && row.holder_ref.len() <= 256

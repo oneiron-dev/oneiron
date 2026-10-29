@@ -5244,6 +5244,7 @@ class PackInstallReceipt(TypedDict):
     agent: NotRequired[str | None]
     installed_at: int
     notices: NotRequired[list[WorldRecipientNotice]]
+    owner_activated: NotRequired[list[PackCandidateReason]]
 class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]

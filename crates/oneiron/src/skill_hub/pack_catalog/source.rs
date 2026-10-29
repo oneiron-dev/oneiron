@@ -159,15 +159,27 @@ impl PackSource {
     pub fn has_code(&self) -> bool {
         self.manifest.kind == super::PackKind::Connector
             || !self.organs.is_empty()
-            || self.files.iter().any(|file| {
-                file.path.starts_with("scripts/")
-                    || file.path.contains("/scripts/")
-                    || file.path.starts_with("hooks/")
-            })
+            || self.files.iter().any(is_script_or_hook_file)
+    }
+    /// Organs are this source's only code: it is no connector and carries
+    /// no script and no hook.
+    pub(super) fn code_is_organs_only(&self) -> bool {
+        !self.organs.is_empty()
+            && self.manifest.kind != PackKind::Connector
+            && !matches!(self.manifest.adapter, Some(PackAdapter::Script(_)))
+            && self.hooks.is_empty()
+            && !self.files.iter().any(is_script_or_hook_file)
     }
     pub fn content_hash(&self) -> SkillContentHash {
         self.hash
     }
+}
+
+/// A script or hook body: code a source carries as a file.
+fn is_script_or_hook_file(file: &HubFile) -> bool {
+    file.path.starts_with("scripts/")
+        || file.path.contains("/scripts/")
+        || file.path.starts_with("hooks/")
 }
 
 /// A pack-carried board recipe. Its verbs and authority are permission requests,

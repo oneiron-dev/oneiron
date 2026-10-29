@@ -23,7 +23,8 @@ pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explaine
 /// fetched bytes carry scan evidence and the pack installs; which bytes are
 /// fetched is the ref's sync policy, vault data rather than an engine constant.
 pub(crate) const MODEL_PACK_SUBTREE: &str = "packs/model-catalog";
-pub(crate) const MODEL_PACK_NAME: &str = "oneiron.models";
+/// The first-party model catalog's pack name.
+pub const MODEL_PACK_NAME: &str = "oneiron.models";
 /// The publisher an owner admits when syncing the first-party catalog.
 const MODEL_PACK_PUBLISHER: &str = "publisher:oneiron-hub";
 

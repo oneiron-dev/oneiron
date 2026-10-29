@@ -33,8 +33,7 @@ pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
 pub use organs::{
-    MAX_ORGAN_BUILD_BYTES, PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree,
-    host_platform,
+    PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree, host_platform,
 };
 pub use screening::PackInstallRules;
 pub use setup::{
@@ -70,6 +69,8 @@ fn invalid(reason: &'static str) -> crate::error::Error {
 mod admission;
 mod admission_types;
 mod bundled_skills;
+mod owner_activation;
+mod permission_card;
 mod qualify;
 mod removal;
 mod route_halt;

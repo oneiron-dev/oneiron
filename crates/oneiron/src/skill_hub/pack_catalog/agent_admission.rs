@@ -203,6 +203,7 @@ impl Vault {
                     permissions: &candidate.permissions,
                     qualification: None,
                     world,
+                    owner_activated: &[],
                 },
             )
         })

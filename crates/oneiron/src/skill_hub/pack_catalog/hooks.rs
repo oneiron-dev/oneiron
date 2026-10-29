@@ -181,7 +181,8 @@ pub struct PackHook {
 
 impl PackHook {
     /// The capability set the update rule compares: an update that adds a
-    /// token asks consent again (ARCH-0080 §9).
+    /// token no prior one covers asks consent again (ARCH-0080 §9). A lower
+    /// `budget_ms`, or a specific scope where `*` stood, is covered.
     pub(super) fn capability_tokens(&self) -> Vec<String> {
         let selector = &self.selector;
         let name = &self.name;

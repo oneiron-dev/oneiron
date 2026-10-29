@@ -16250,6 +16250,12 @@ pub struct PackInstallReceipt {
     pub installed_at: u64,
     #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
     pub notices: Option<Vec<WorldRecipientNotice>>,
+    #[serde(
+        rename = "owner_activated",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub owner_activated: Option<Vec<PackCandidateReason>>,
 }
 
 /// `oneiron::verbs::host::PackPutReceipt`.

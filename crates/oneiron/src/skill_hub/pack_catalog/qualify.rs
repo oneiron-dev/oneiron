@@ -341,6 +341,7 @@ impl Vault {
                     permissions: &candidate.permissions,
                     qualification: None,
                     world: None,
+                    owner_activated: &[],
                 },
             )?;
             if let PackInstallDisposition::Installed(receipt) = &disposition {
@@ -495,6 +496,7 @@ impl Vault {
                     permissions: &candidate.permissions,
                     qualification: None,
                     world: None,
+                    owner_activated: &[],
                 },
             )?;
             if let PackInstallDisposition::Installed(receipt) = &disposition {
