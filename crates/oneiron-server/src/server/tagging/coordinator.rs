@@ -13,8 +13,9 @@
 //! (FIX 9519), with no timer. The markers resident in a class,
 //! claimed through settled, stay within the dispatcher's pending cap for it;
 //! the rest wait in the store. A failed call holds new claims in its class
-//! for its backoff (a live failure or a store error holds both classes),
-//! while every call already issued settles and wakes stay observed. A call
+//! for its backoff (a live failure holds bulk too), while every call
+//! already issued settles and wakes stay observed. A store error holds bulk
+//! claims and the upkeep for its own backoff, never live. A call
 //! already claimed can outlast the managed reap's bound: nothing times it
 //! out, cancels it or refuses it. A stop from the host (FIX 7252) ends new
 //! claims and upkeep, and the loop returns once every call it made has
@@ -70,7 +71,7 @@ struct Settlement {
     admission: Box<dyn Send>,
 }
 
-/// One class's backoff: how long its next failure holds new claims, and
+/// One hold's backoff: how long its next failure holds its claims, and
 /// until when the last one does.
 #[derive(Clone, Copy)]
 struct Backoff {
@@ -101,6 +102,8 @@ pub(super) struct Coordinator {
     /// Markers resident in each class, claimed through settled.
     resident: [usize; 2],
     backoff: [Backoff; 2],
+    /// The store's own hold over bulk claims and the upkeep.
+    store_backoff: Backoff,
     /// No claim and no upkeep before this: the host paused or refused.
     paused_until: Option<Instant>,
     /// When the loop reads the store again with no wake: the idle or retry
@@ -158,6 +161,7 @@ impl Coordinator {
             stop: Some(stop),
             resident: [0; 2],
             backoff: [backoff; 2],
+            store_backoff: backoff,
             paused_until: None,
             idle_until: None,
             next_retry: None,
@@ -223,7 +227,7 @@ impl Coordinator {
             return;
         }
         if self.upkeep_due {
-            if self.held(ExtractionWork::Live) {
+            if self.held(ExtractionWork::Live) || self.store_held() {
                 return;
             }
             self.upkeep().await;
@@ -253,7 +257,7 @@ impl Coordinator {
             Ok(Ok(class)) => class,
             Ok(Err(error)) => {
                 tracing::warn!(kind = ?error.kind(), "tagging read failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
                 return;
             }
             Err(error) => {
@@ -380,7 +384,7 @@ impl Coordinator {
             Some(Ok(_)) => self.dirty = true,
             Some(Err(error)) => {
                 tracing::warn!(kind = ?error.kind(), "tagging claim failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
                 self.upkeep_due = true;
             }
         }
@@ -432,7 +436,7 @@ impl Coordinator {
             Ok(trace) => self.settled(&trace),
             Err(error) => {
                 tracing::warn!(kind = ?error.kind(), "tagging settlement failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
                 self.upkeep_due = true;
             }
         }
@@ -517,6 +521,7 @@ impl Coordinator {
         for backoff in &mut self.backoff {
             passed(&mut backoff.until, now);
         }
+        passed(&mut self.store_backoff.until, now);
         self.dirty = true;
     }
 
@@ -547,7 +552,7 @@ impl Coordinator {
             Ok(Ok(true)) => self.pause(),
             Ok(Err(error)) => {
                 tracing::warn!(kind = ?error.kind(), "tagging upkeep failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
             }
             Err(error) => {
                 tracing::error!(
@@ -581,10 +586,10 @@ impl Coordinator {
         self.dirty = true;
     }
 
-    /// A unit in `work`'s class failed (a store error counts as live): no new
-    /// claim in the class for its backoff, and a live failure holds bulk too.
-    /// A class already held keeps its hold, so calls that fail together
-    /// count once. Whether this failure started a hold.
+    /// A call in `work`'s class failed: no new claim in the class for its
+    /// backoff, and a live failure holds bulk too. A class already held
+    /// keeps its hold, so calls that fail together count once. Whether this
+    /// failure started a hold.
     fn fail(&mut self, work: ExtractionWork) -> bool {
         let now = Instant::now();
         let backoff = &mut self.backoff[lane(work)];
@@ -601,14 +606,40 @@ impl Coordinator {
         true
     }
 
+    /// A store read, claim, settlement or upkeep failed: bulk claims and
+    /// the upkeep wait out the store's own backoff, while live claims go
+    /// on. A store already held keeps its hold, so errors that fail
+    /// together count once. Whether this failure started a hold.
+    fn fail_store(&mut self) -> bool {
+        let now = Instant::now();
+        let store = &mut self.store_backoff;
+        if store.until.is_some_and(|until| now < until) {
+            return false;
+        }
+        store.until = Some(now + store.delay);
+        store.delay = (store.delay * 2).min(MAX_BACKOFF);
+        true
+    }
+
     /// The class a claim awaits room in, if one does.
     fn wanted(&self) -> Option<ExtractionWork> {
         self.want.as_ref().map(|(work, _)| *work)
     }
 
-    /// Whether new claims in `work`'s class wait out a failure.
+    /// Whether new claims in `work`'s class wait out a failure: its own
+    /// backoff, or, for bulk, the store's hold.
     fn held(&self, work: ExtractionWork) -> bool {
+        if work == ExtractionWork::Bulk && self.store_held() {
+            return true;
+        }
         self.backoff[lane(work)]
+            .until
+            .is_some_and(|until| Instant::now() < until)
+    }
+
+    /// Whether a store error still holds bulk claims and the upkeep.
+    fn store_held(&self) -> bool {
+        self.store_backoff
             .until
             .is_some_and(|until| Instant::now() < until)
     }
@@ -626,6 +657,7 @@ impl Coordinator {
             self.paused_until,
             self.backoff[0].until,
             self.backoff[1].until,
+            self.store_backoff.until,
             self.idle_until,
         ]
         .into_iter()
