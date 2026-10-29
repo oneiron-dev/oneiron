@@ -11,10 +11,10 @@
 //! question's principal's, on its dial and clock, through the decider the
 //! caller binds, the pump's own; model admission is the ask's own.
 
-use std::collections::BTreeSet;
 use std::time::Instant;
 
-use super::super::refresh::{source_actor_key, standing_asker};
+use super::super::refresh::standing_asker;
+use super::super::saved_reader::{SavedArtifactReads, saved_artifact_reads};
 use super::super::store::{QUESTION_VERSION, VersionKey, owned_head};
 use super::{
     ASK_DEADLINE, ASKED, ArtifactAskRecord, Asking, Selection, artifact_ask_records, ask_selection,
@@ -110,20 +110,13 @@ impl Asking<'_> {
         {
             return Ok(());
         }
+        // As the standing pump asks: inside the version's saved lane (FIX 2116).
         let principal = self.record.principal;
-        let readable = {
-            let txn = vault.store.env.read_txn()?;
-            let key = source_actor_key(vault, &txn, principal, None)?
-                .require_access_grants(Some(principal));
-            let read = super::super::reader_authority::question_lane(vault, key);
-            let mut readable = BTreeSet::new();
-            for id in std::iter::once(&artifact).chain(&files) {
-                if read.entity_raw_live_in(&txn, id)?.is_some() {
-                    readable.insert(*id);
-                }
-            }
-            readable
-        };
+        let ids: Vec<EntityId> = std::iter::once(artifact)
+            .chain(files.iter().copied())
+            .collect();
+        let SavedArtifactReads { readable, sight } =
+            saved_artifact_reads(vault, principal, &self.record.read_lane, &ids)?;
         if !readable.contains(&artifact) {
             return Ok(());
         }
@@ -146,7 +139,7 @@ impl Asking<'_> {
                 deadline: Instant::now() + ASK_DEADLINE,
                 run_ref: reference,
             };
-            ask_selection(vault, artifact, &selection, &files, None, ask)
+            ask_selection(vault, artifact, &selection, &files, None, ask, sight)
         })?;
         Ok(())
     }

@@ -80,6 +80,8 @@ pub use self::program::{
     ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
     release_turn_program_hold_as_owner,
 };
+// FIX 11429: the waking actor's rebind of a turn program to a live slip.
+pub use self::program::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;
