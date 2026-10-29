@@ -114,7 +114,7 @@ impl SieveTexts {
         let texts = Self::default();
         let mut prefetched = BTreeSet::new();
         let mut turns = 0;
-        let mut bytes = 0;
+        let mut bytes = 0_usize;
         for turn in &continuing {
             if stop.stopped() {
                 return Ok(None);
@@ -197,7 +197,7 @@ impl SieveTexts {
         txn: &heed::RoTxn<'_>,
         turn: &EntityId,
     ) -> Result<usize> {
-        let mut bytes = 0;
+        let mut bytes = 0_usize;
         let chunks = turn_chunks_in_txn(vault, txn, turn)?;
         if let Some(chunks) = &chunks {
             bytes = bytes.saturating_add(
