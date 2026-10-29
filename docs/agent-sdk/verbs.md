@@ -918,6 +918,7 @@ both bindings and their export-census tests in one change.
 - `vault.questions.pause`
 - `vault.questions.backfill`
 - `vault.questions.read`
+- `vault.questions.outcome_windows`
 - `vault.questions.answers`
 - `vault.questions.refresh`
 - `vault.questions.outcomes`

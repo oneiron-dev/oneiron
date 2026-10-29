@@ -916,6 +916,7 @@ pub enum AgentVerb {
     VaultQuestionsPause,
     VaultQuestionsBackfill,
     VaultQuestionsRead,
+    VaultQuestionsOutcomeWindows,
     VaultQuestionsAnswers,
     VaultQuestionsRefresh,
     VaultQuestionsOutcomes,
@@ -2126,6 +2127,7 @@ impl AgentVerb {
         Self::VaultQuestionsPause,
         Self::VaultQuestionsBackfill,
         Self::VaultQuestionsRead,
+        Self::VaultQuestionsOutcomeWindows,
         Self::VaultQuestionsAnswers,
         Self::VaultQuestionsRefresh,
         Self::VaultQuestionsOutcomes,
@@ -3363,6 +3365,7 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "vault.questions.pause",
             Self::VaultQuestionsBackfill => "vault.questions.backfill",
             Self::VaultQuestionsRead => "vault.questions.read",
+            Self::VaultQuestionsOutcomeWindows => "vault.questions.outcome_windows",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
             Self::VaultQuestionsRefresh => "vault.questions.refresh",
             Self::VaultQuestionsOutcomes => "vault.questions.outcomes",
@@ -4579,6 +4582,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomes
@@ -5818,6 +5822,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomes
@@ -6188,6 +6193,7 @@ impl AgentVerb {
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultVoicesLineage
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
@@ -7153,6 +7159,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomes
@@ -9091,6 +9098,7 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
+            Self::VaultQuestionsOutcomeWindows => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
             Self::VaultQuestionsOutcomes => &["spec"],
@@ -10302,6 +10310,7 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
+            Self::VaultQuestionsOutcomeWindows => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
             Self::VaultQuestionsOutcomes => &["spec"],
@@ -13274,6 +13283,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
+            Self::VaultQuestionsOutcomeWindows => {
+                "Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed."
+            }
             Self::VaultQuestionsAnswers => {
                 "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."
             }

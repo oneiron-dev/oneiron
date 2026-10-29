@@ -2827,6 +2827,9 @@ impl OneironClient {
                 "vault.questions.read" => remote_agent_verb_output::<
                     Option<oneiron::llm::decision::questions::QuestionRecord>,
                 >(client, verb, &input),
+                "vault.questions.outcome_windows" => remote_agent_verb_output::<
+                    Vec<oneiron::llm::decision::questions::OutcomeWindowClose>,
+                >(client, verb, &input),
                 "vault.questions.answers" => remote_agent_verb_output::<
                     oneiron::receipt::QuestionAnswersReply,
                 >(client, verb, &input),
@@ -14871,6 +14874,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.questions.read", value)
+    }
+    pub fn vault_questions_outcome_windows(
+        &self,
+        input: &oneiron::receipt::QuestionOutcomeWindowsRequest,
+    ) -> Result<Vec<oneiron::llm::decision::questions::OutcomeWindowClose>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.questions.outcome_windows", value)
     }
     pub fn vault_questions_answers(
         &self,

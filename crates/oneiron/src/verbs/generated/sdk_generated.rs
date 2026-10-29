@@ -5044,6 +5044,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.questions.outcome_windows",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::QuestionOutcomeWindowsRequest,
+                >(),
+            ),
+            (
                 "vault.questions.answers",
                 crate::code_run::vault_read::request_schema::<crate::receipt::QuestionAnswersRequest>(
                 ),
@@ -16576,6 +16582,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.questions.outcome_windows" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.questions.answers" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21513,6 +21526,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.read" => {
             let _input: crate::receipt::QuestionReadRequest = decode(value.clone())?;
         }
+        "vault.questions.outcome_windows" => {
+            let _input: crate::receipt::QuestionOutcomeWindowsRequest = decode(value.clone())?;
+        }
         "vault.questions.answers" => {
             let _input: crate::receipt::QuestionAnswersRequest = decode(value.clone())?;
         }
@@ -24359,6 +24375,9 @@ pub fn invoke(
         "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
         "vault.questions.backfill" => encode(vault_questions_backfill(memory, decode(value)?)?),
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
+        "vault.questions.outcome_windows" => {
+            encode(vault_questions_outcome_windows(memory, decode(value)?)?)
+        }
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "vault.questions.refresh" => encode(vault_questions_refresh(memory, decode(value)?)?),
         "vault.questions.outcomes" => encode(vault_questions_outcomes(memory, decode(value)?)?),
@@ -32623,6 +32642,12 @@ pub fn vault_questions_read(
     input: crate::receipt::QuestionReadRequest,
 ) -> MemoryResult<Option<crate::llm::decision::questions::QuestionRecord>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.read", &input)
+}
+pub fn vault_questions_outcome_windows(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionOutcomeWindowsRequest,
+) -> MemoryResult<Vec<crate::llm::decision::questions::OutcomeWindowClose>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.outcome_windows", &input)
 }
 pub fn vault_questions_answers(
     memory: &Memory<'_>,

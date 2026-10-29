@@ -55,8 +55,8 @@ use oneiron::memory::{
 };
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionBackfillRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionPauseRequest,
-    QuestionPaused, QuestionReadRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::skill_attribution::{RunWriteToken, with_run_write_token};

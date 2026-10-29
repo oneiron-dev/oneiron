@@ -4746,6 +4746,9 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_questions_backfill(json.dumps(spec))))
         def read(self, spec):
             return json.loads(_translate(lambda: self._client.vault_questions_read(json.dumps(spec))))
+        def outcome_windows(self, spec):
+            """Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed."""
+            return json.loads(_translate(lambda: self._client.vault_questions_outcome_windows(json.dumps(spec))))
         def answers(self, spec):
             """Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."""
             return json.loads(_translate(lambda: self._client.vault_questions_answers(json.dumps(spec))))

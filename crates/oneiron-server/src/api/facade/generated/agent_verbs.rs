@@ -1003,6 +1003,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.questions.pause", post(facade_route))
         .route("/vault.questions.backfill", post(facade_route))
         .route("/vault.questions.read", post(facade_route))
+        .route("/vault.questions.outcome_windows", post(facade_route))
         .route("/vault.questions.answers", post(facade_route))
         .route("/vault.questions.refresh", post(facade_route))
         .route("/vault.questions.outcomes", post(facade_route))
