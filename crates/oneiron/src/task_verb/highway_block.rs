@@ -41,6 +41,7 @@ use super::highway_report::{
     DONE_MET_OPTION, DONE_UNMET_OPTION, fail_final_in, fail_unmet_in, land_done_in, requeue,
     short_digest,
 };
+use super::settlement_anchor::{SETTLEMENT_ANCHOR_ASK, anchor_settlement_in_txn, owner_answered};
 use super::terminal_state::TaskExecutionState;
 use super::wire_decode::{task_body_optional, task_verb_body_in};
 use super::wire_encode::canonical_bytes;
@@ -441,12 +442,16 @@ pub(super) fn continue_blocked_task_in(
     if !matches!(
         &body.state,
         Some(TaskExecutionState::Blocked { on, .. }) if on.contains(&group_ref)
-    ) || vault
-        .task_standing_in(txn, task_ref)?
-        .is_none_or(|standing| standing.cancelled)
-    {
+    ) {
         return Ok(());
     }
+    let Some(owner) = vault
+        .task_standing_in(txn, task_ref)?
+        .filter(|standing| !standing.cancelled)
+        .map(|standing| standing.owner)
+    else {
+        return Ok(());
+    };
     let Some(class) = envelope_actor_class(&claim) else {
         return Ok(());
     };
@@ -522,6 +527,19 @@ pub(super) fn continue_blocked_task_in(
     // the settling write commits, not at the next wake pass.
     if settled {
         crate::batch::queue_settled_tasks(vault, txn, [task_ref]);
+        // The TASK's owner answered it in their own counted word: the ask
+        // anchors the settlement, on the settled row it keeps.
+        if owner_answered(result, option, owner) {
+            anchor_settlement_in_txn(
+                vault,
+                txn,
+                task_ref,
+                SETTLEMENT_ANCHOR_ASK,
+                &group_ref.to_hex(),
+                owner,
+                continuation.attempt,
+            )?;
+        }
     }
     Ok(())
 }

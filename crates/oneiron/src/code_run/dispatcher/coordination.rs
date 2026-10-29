@@ -392,11 +392,18 @@ impl<'a> HostSelfDispatcher<'a> {
             },
             // FIX 9051: a proposal answers with the receipt its first call
             // kept, fresh or repeated; none kept, or none read, lists none.
+            // FIX 11097: a failed read is logged, not swallowed.
             AgentDispatchOutcome::ProposedWiden(proposal) => {
                 let first = AgentDispatcher::new(vault)
                     .widen_direct_spawn_receipt(&proposal)
-                    .ok()
-                    .flatten();
+                    .unwrap_or_else(|err| {
+                        tracing::warn!(
+                            proposal = %proposal.proposal_id,
+                            error = %err,
+                            "direct-spawn receipt read failed; replying with none unapplied"
+                        );
+                        None
+                    });
                 SelfAgentSpawnResult::ProposedWiden {
                     proposal_ref: proposal.proposal_id,
                     unapplied: kept(first.as_ref()),
