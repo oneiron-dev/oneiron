@@ -371,6 +371,23 @@ pub(crate) fn build_slot_with_rows(
     config: Option<&OneironerConfig>,
     rows_location: Option<&Path>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
+    build_slot_inner(config, rows_location, true)
+}
+
+/// [`build_slot`], without starting a worker thread or its warm-up call:
+/// what init validates. It loads and checks the same bundle, engine and
+/// probe, and reports the same serving engine, but starts no worker.
+pub(crate) fn build_slot_for_validation(
+    config: Option<&OneironerConfig>,
+) -> anyhow::Result<Option<TaggerSlot>> {
+    build_slot_inner(config, None, false)
+}
+
+fn build_slot_inner(
+    config: Option<&OneironerConfig>,
+    rows_location: Option<&Path>,
+    start_workers: bool,
+) -> anyhow::Result<Option<TaggerSlot>> {
     let Some(config) = config.filter(|config| config.is_active()) else {
         return Ok(None);
     };
@@ -412,31 +429,50 @@ pub(crate) fn build_slot_with_rows(
             // device is the one worker the owner pinned.
             let pinned = engine.pick == engines::Pick::Named;
             let windows = tagger.window_counter();
-            let worker = WorkerSpec::local(engine.engine, tagger);
-            let tagger = ProviderTagger::new(
-                model,
-                EmbedderLocality::OnDevice,
-                provider,
-                pinned,
-                Some(windows),
-            );
-            // The Candle baseline the rows chose, or the device the owner
-            // named, ranks first (FIX 6755).
-            let worker = tagger.dispatcher.add(worker)?;
-            tagger.dispatcher.publish_rank(worker, 0);
-            // A platform runtime joins it only from the serving build, in
-            // the background, and never beside a pinned engine.
-            let handle = tagger.dispatcher.handle();
-            platforms = Admission::new(config, rows_location, handle, engine, worker, card);
+            let tagger = if start_workers {
+                let worker = WorkerSpec::local(engine.engine, tagger);
+                let tagger = ProviderTagger::new(
+                    model,
+                    EmbedderLocality::OnDevice,
+                    provider,
+                    pinned,
+                    Some(windows),
+                );
+                // The Candle baseline the rows chose, or the device the owner
+                // named, ranks first (FIX 6755).
+                let worker = tagger.dispatcher.add(worker)?;
+                tagger.dispatcher.publish_rank(worker, 0);
+                // A platform runtime joins it only from the serving build, in
+                // the background, and never beside a pinned engine.
+                let handle = tagger.dispatcher.handle();
+                platforms = Admission::new(config, rows_location, handle, engine, worker, card);
+                tagger
+            } else {
+                let _ = WorkerSpec::validate_local(engine.engine, &tagger);
+                ProviderTagger::new(
+                    model,
+                    EmbedderLocality::OnDevice,
+                    provider,
+                    pinned,
+                    Some(windows),
+                )
+            };
             tagger
         }
         OneironerProvider::Endpoint => {
             let http = Arc::new(endpoint::HttpTagger::from_config(config)?);
             let (model, locality) = (http.model_id().clone(), http.locality());
             let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
-            let worker = WorkerSpec::endpoint(Arc::clone(&http), checkpoint);
-            let tagger = ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None);
-            tagger.dispatcher.add(worker)?;
+            let tagger = if start_workers {
+                let worker = WorkerSpec::endpoint(Arc::clone(&http), checkpoint);
+                let tagger =
+                    ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None);
+                tagger.dispatcher.add(worker)?;
+                tagger
+            } else {
+                let _ = WorkerSpec::validate_endpoint(checkpoint);
+                ProviderTagger::new(model, locality, Provider::Endpoint(http), true, None)
+            };
             tagger
         }
         OneironerProvider::None => return Ok(None),

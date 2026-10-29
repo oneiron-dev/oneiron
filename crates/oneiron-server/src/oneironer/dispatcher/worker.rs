@@ -212,12 +212,9 @@ impl WorkerSpec {
     /// A candle model loaded where it always loads (`engines::load`), before
     /// the listener binds. Its thread warms it once, and it is Ready.
     pub(crate) fn local(engine: Engine, tagger: LocalTagger) -> Self {
+        let descriptor = Self::validate_local(engine, &tagger);
         Self {
-            descriptor: WorkerDescriptor::candle(
-                engine,
-                tagger.stack_sha16(),
-                tagger.max_input_tokens(),
-            ),
+            descriptor,
             // Candle runs one unpadded sequence at a time.
             batch: 1,
             bring: Bring::Once {
@@ -227,12 +224,19 @@ impl WorkerSpec {
         }
     }
 
+    /// What [`Self::local`] would run, without its thread or its warm-up
+    /// call: what init validates.
+    pub(crate) fn validate_local(engine: Engine, tagger: &LocalTagger) -> WorkerDescriptor {
+        WorkerDescriptor::candle(engine, tagger.stack_sha16(), tagger.max_input_tokens())
+    }
+
     /// The configured endpoint, which must report `checkpoint`: one opaque
     /// worker, Ready at once. Its server warms itself, and one that is not
     /// up yet fails its calls, not the worker.
     pub(crate) fn endpoint(tagger: Arc<HttpTagger>, checkpoint: &str) -> Self {
+        let descriptor = Self::validate_endpoint(checkpoint);
         Self {
-            descriptor: WorkerDescriptor::endpoint(checkpoint),
+            descriptor,
             // The dispatcher sends it one call at a time.
             batch: 1,
             bring: Bring::Once {
@@ -240,6 +244,12 @@ impl WorkerSpec {
                 warm: None,
             },
         }
+    }
+
+    /// What [`Self::endpoint`] would run, without its thread: what init
+    /// validates.
+    pub(crate) fn validate_endpoint(checkpoint: &str) -> WorkerDescriptor {
+        WorkerDescriptor::endpoint(checkpoint)
     }
 
     /// A platform runtime's worker, started after the listener binds and
