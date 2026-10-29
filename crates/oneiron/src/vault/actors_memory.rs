@@ -162,6 +162,17 @@ impl Vault {
     #[doc(hidden)]
     pub fn ensure_embedded_owner_actor(&self) -> crate::memory::MemoryResult<EntityId> {
         let owner = embedded_owner_actor_id()?;
+        // FIX 11664: an owner PERSON already there comes back with no writer
+        // taken; the write below decides every other case, as before.
+        {
+            let rtxn = self.store.env.read_txn().map_err(Error::from)?;
+            if !self.local_hard_delete_marker_exists_in_txn(&rtxn, &owner)?
+                && self.get_entity_type_in_txn(&rtxn, &owner)?
+                    == Some(crate::registry::ENTITY_TYPE_PERSON)
+            {
+                return Ok(owner);
+            }
+        }
         self.try_with_write_txn_grouped(|wtxn| {
             if self.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                 return Err(crate::memory::hard_deleted_refusal(&owner));
