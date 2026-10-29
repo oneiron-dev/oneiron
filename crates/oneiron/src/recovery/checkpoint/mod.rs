@@ -72,10 +72,7 @@ pub use pad_custody::PadRestoreNote;
 pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
     BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSnapshotReceipt,
@@ -504,6 +501,8 @@ impl Vault {
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<(Self, RestoreReport)> {
         let live = source.capture()?;
+        // What the source erased, those after the cut too (FIX 4753).
+        let erased = source.erased_ids();
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
@@ -520,7 +519,7 @@ impl Vault {
             RestoreReason::Restore,
             restored_at,
             Custody::Fork(Some((&live, &pads))),
-            &BTreeSet::new(),
+            &erased,
             budget,
         )?;
         pad_objects::land_on_restore(&vault, &live.pad_objects, &mut report);
