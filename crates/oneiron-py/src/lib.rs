@@ -19,7 +19,8 @@
 //! census asserts `not hasattr(oneiron, "NativeClient")`.
 
 use oneiron::memory::{
-    ClaimInput, MemoryError, MemoryPack, WitnessAuthor, WitnessMessage, WitnessTurn,
+    ClaimInput, MemoryError, MemoryPack, WitnessAssertions, WitnessAuthor, WitnessMessage,
+    WitnessTurn,
 };
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -63,6 +64,11 @@ struct WitnessTurnInput {
     /// room does.
     #[serde(default)]
     thread_audience: Option<std::collections::BTreeSet<oneiron::EntityId>>,
+    /// The records this reply names as cited or created (OF-063), the
+    /// engine's own shape, judged under the writer's own read; omitted ⇒ it
+    /// asserts nothing.
+    #[serde(default)]
+    assertions: WitnessAssertions,
 }
 
 impl WitnessTurnInput {
@@ -94,7 +100,7 @@ impl WitnessTurnInput {
             thread_audience: self.thread_audience,
             messages,
             occurred_at,
-            assertions: Default::default(),
+            assertions: self.assertions,
         })
     }
 }

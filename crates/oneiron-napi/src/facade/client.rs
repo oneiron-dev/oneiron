@@ -11,7 +11,8 @@ use super::convert::{
 };
 use super::dtos::{
     NapiClaimInput, NapiCommitReceipt, NapiMemoryPack, NapiQueryAffect, NapiRecallMedia,
-    NapiRecallScope, NapiWitnessMessage, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiRecallScope, NapiWitnessAssertions, NapiWitnessMessage, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 use super::input_error::witness_input_error;
 use super::js_json::js_json;
@@ -53,6 +54,9 @@ pub struct NapiWitnessTurnInput {
     /// AGENT_DEF ids), edited later through `vault.rooms.thread_audience`;
     /// omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
+    /// The records this reply names as cited or created (OF-063), judged by
+    /// the engine under the writer's own read; omitted ⇒ it asserts nothing.
+    pub assertions: Option<NapiWitnessAssertions>,
 }
 
 impl NapiWitnessTurnInput {
@@ -68,6 +72,7 @@ impl NapiWitnessTurnInput {
             messages: self.messages,
             occurred_at,
             thread_audience: self.thread_audience,
+            assertions: self.assertions,
         })
         .map_err(witness_input_error)
     }

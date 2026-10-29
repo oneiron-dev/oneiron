@@ -100,7 +100,7 @@ pub struct WitnessMessage {
 }
 
 /// One turn to witness.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WitnessTurn {
     /// Conversation ref (create-or-get, or an existing short ref).
     pub conversation_ref: String,
@@ -115,6 +115,10 @@ pub struct WitnessTurn {
     /// Unix seconds; omitted is stamped with the current time at the call
     /// boundary.
     pub occurred_at: Option<i64>,
+    /// The records this reply names as cited or created (OF-063), judged by
+    /// the engine under the writer's own read. Omitted means it asserts
+    /// nothing.
+    pub assertions: Option<crate::WitnessAssertions>,
 }
 
 /// The quoted span of one MESSAGE: the message and its scalar range.

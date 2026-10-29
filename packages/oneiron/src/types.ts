@@ -186,6 +186,16 @@ export type WitnessTurn = {
   occurredAt?: number
   /** A new project room thread root's audience seed (32-hex ids); edited later through vault.rooms.thread_audience. */
   threadAudience?: string[]
+  /** The records this reply names as cited or created, judged by the engine under the writer's own read; omitted means it asserts nothing. */
+  assertions?: WitnessAssertions
+}
+
+/** The records one witnessed reply names. A supplied assertion is the engine's input, never proof of creation: a `created` record whose birth does not prove the writer made it is recorded `creation_not_proven`. */
+export type WitnessAssertions = {
+  /** Records the reply cites. */
+  cited: RecordRef[]
+  /** Records the reply reports it created. */
+  created: RecordRef[]
 }
 
 /** The quoted span of one MESSAGE: half-open Unicode scalar indices, never UTF-16 units. */
