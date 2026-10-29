@@ -683,26 +683,25 @@ fn archive_custody_secret(
 ) -> Result<Option<(ArchiveSecretCustody, Option<HolderExportNeed>)>> {
     use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
-    let carries = |record: &crate::secret_custody::SecretCustodyRecord| {
+    let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
             && !crate::secret_custody::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
-    };
-    let (record, plain) = crate::secret_custody::archive_custody_body(store, id, body, &carries)?;
+    })?;
     if record.status == SecretCustodyStatus::Revoked {
         return Ok(None);
     }
     // The archive carries this value and it did not open: it goes as its
     // handle, and its holder is asked for it when it may leave its device.
-    let need = (plain.is_none()
-        && carries(&record)
+    let need = (value.is_unopened()
         && !record.device_only
         && record.class == CustodyClass::CustodyPortable)
         .then_some(HolderExportNeed {
             secret: *id,
             generation: record.rotation_generation,
         });
+    let plain = value.into_opened();
     Ok(Some((
         ArchiveSecretCustody {
             id: id.to_hex(),
