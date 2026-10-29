@@ -958,8 +958,8 @@ export class Oneiron {
       },
       /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
       lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.vaultInboxLens(input) as Facade.InboxLensPage),
-      /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
-      groups: (input: Facade.InboxRunGroupsRequest): Facade.InboxGroup[] => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.InboxGroup[]),
+      /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
+      groups: (input: Facade.InboxRunGroupsRequest): Facade.InboxGroupPage => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.InboxGroupPage),
     },
     skills: {
       /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
