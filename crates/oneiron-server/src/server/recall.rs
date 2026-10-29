@@ -435,6 +435,7 @@ impl SyncServer {
                 .listing_producers(producers);
             return blocking(|| self.recall(&memory, actor, class, input, None));
         };
+        let detail = recall_effort_name(input.effort);
         let ready = CutSlot::default();
         let publish = ready.clone();
         let vault = Arc::clone(&self.vault);
@@ -466,11 +467,19 @@ impl SyncServer {
             .map_err(|_| recall_did_not_finish())?;
         // The wait counts down to the due instant from wherever it starts.
         let due = arrived + budget;
-        match blocking(move || answer.recv_timeout(due.saturating_duration_since(Instant::now()))) {
+        let pack = match blocking(move || {
+            answer.recv_timeout(due.saturating_duration_since(Instant::now()))
+        }) {
             Ok(answer) => answer,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ready.take(),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(recall_did_not_finish()),
+        };
+        // The light deadline's own door meters its answer as the other two
+        // do (FIX 11011).
+        if pack.is_ok() {
+            self.push_retrieval_meter(detail);
         }
+        pack
     }
 
     /// The query's vector, or `None` when no embedder is serving.
