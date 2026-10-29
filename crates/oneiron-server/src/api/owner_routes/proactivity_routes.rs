@@ -128,7 +128,7 @@ struct DigestQuery {
     id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct DigestView {
     /// The digest's stable locator (FIX 2332), as 64 hex: what its inbox
     /// NOTIFICATION names. Not a hash of what this reply shows.
