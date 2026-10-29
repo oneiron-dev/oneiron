@@ -8,10 +8,12 @@
 
 use base64::Engine;
 use oneiron::authority::PeerMachine;
-use oneiron::store::custody_protocol::{AckPosition, Lineage, ResidenceCommit};
+use oneiron::store::custody_protocol::{
+    AckPosition, DrainTicket, DrainToken, Lineage, ResidenceCommit, TargetId,
+};
 use oneiron::sync::residence::{
-    custody_residence_commit, custody_residence_frames, custody_residence_held,
-    custody_residence_stage, sealed_digest_from_hex,
+    custody_residence_commit, custody_residence_drain, custody_residence_frames,
+    custody_residence_held, custody_residence_stage, sealed_digest_from_hex,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -57,6 +59,18 @@ struct CommitRequest {
     operation_id: String,
 }
 
+/// The owner's begun drain of this home's residence member: the ticket its
+/// sweep ack must name. The token rides base64, as the custody parts do.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DrainRequest {
+    target_id: String,
+    set_revision: u64,
+    position: AckPosition,
+    operation_id: String,
+    token: String,
+}
+
 fn lineage(vault: &str, namespace: &str) -> Result<Lineage, AppError> {
     Lineage::from_hex(vault, namespace).ok_or_else(AppError::invalid_params)
 }
@@ -97,6 +111,10 @@ pub(super) fn run(
         "residence.custody.commit" => {
             auth.require(CoreScope::Write)?;
             commit(server, peer, params)
+        }
+        "residence.custody.drain" => {
+            auth.require(CoreScope::Write)?;
+            drain(server, peer, params)
         }
         _ => Err(AppError::bad_request(
             "unknown residence RPC",
@@ -167,5 +185,25 @@ fn commit(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answe
         operation_id: digest(&input.operation_id)?,
     };
     let ack = custody_residence_commit(&server.vault, peer, &commit).map_err(missing)?;
+    Ok((json!({"ack": ack}), Some(Vec::new())))
+}
+
+fn drain(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: DrainRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let token: [u8; 32] = base64(&input.token)?
+        .try_into()
+        .map_err(|_| AppError::invalid_params())?;
+    let ticket = DrainTicket {
+        target_id: TargetId::new(&input.target_id).map_err(|_| AppError::invalid_params())?,
+        set_revision: input.set_revision,
+        position: input
+            .position
+            .position()
+            .ok_or_else(AppError::invalid_params)?,
+        operation_id: digest(&input.operation_id)?,
+        token: DrainToken::from_bytes(token),
+    };
+    let ack = custody_residence_drain(&server.vault, peer, &ticket).map_err(missing)?;
     Ok((json!({"ack": ack}), Some(Vec::new())))
 }
