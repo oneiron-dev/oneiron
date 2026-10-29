@@ -56,11 +56,7 @@ impl ConsolidationExecutor<'_> {
                     .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                     .await
                 {
-                    return super::super::residency::spent_or_deferred(
-                        error,
-                        ctx.now_ms,
-                        charges.units,
-                    );
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
@@ -74,11 +70,7 @@ impl ConsolidationExecutor<'_> {
                     .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                     .await
                 {
-                    return super::super::residency::spent_or_deferred(
-                        error,
-                        ctx.now_ms,
-                        charges.units,
-                    );
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: charges.units,
@@ -90,8 +82,10 @@ impl ConsolidationExecutor<'_> {
             Ok(PartitionRun::Trapped) => {
                 Ok(charges.park_for("durable step trapped for resume", DreamerParkCause::Signal))
             }
+            // The error leaves as it is; what the partition already spent
+            // settles with it (FIX 7432).
             Err(crate::llm::DurableStepError::Engine(error)) => {
-                super::super::residency::spent_or_deferred(error, ctx.now_ms, charges.units)
+                super::super::residency::spent_or_deferred(error, ctx, &charges)
             }
             // Every other failure parks with what the attempt spent, a
             // refused conflict read's paid usage included (FIX 414).

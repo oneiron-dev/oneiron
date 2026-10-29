@@ -16,8 +16,8 @@ use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, WakeAttemptContext, WriteActor};
 
 use super::super::policy::extraction_egress;
+use super::request_sources::SourcedRunBackend;
 use super::{DREAMER_PASS_RUN, ResidentLend, own_dreaming_slot, served_slot_model};
-use crate::models::RunBackend;
 
 impl ResidentLend<'_> {
     /// Runs one free-time item for `binding`'s resident: its free time for
@@ -73,7 +73,7 @@ impl ResidentLend<'_> {
         // The driver settles what this line charges if the item fails or
         // parks before it reports its spend (SCAN C012).
         ctx.meter_run_line(&line);
-        let backend = RunBackend::new(
+        let backend = SourcedRunBackend::new(
             ladder,
             self.runtime.attributed_run(
                 line_id.clone(),
@@ -111,6 +111,7 @@ impl ResidentLend<'_> {
             role,
             instruction: self.instruction,
             window_tokens,
+            sourced: Some(&backend),
         };
         if attempt.status.payload.attempt_type == DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND {
             run_free_time_for_human(attempt, ctx, lent).await

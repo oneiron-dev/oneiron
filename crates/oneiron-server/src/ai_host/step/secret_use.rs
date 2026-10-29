@@ -39,6 +39,7 @@ use oneiron::{
 use serde_json::{Value, json};
 
 use super::StepHost;
+use super::live_lease::LiveLease;
 use crate::models::OfferLadder;
 
 /// The `self.use` verb as the step's tool: providers take letters, digits,
@@ -126,20 +127,29 @@ impl<'a> StepSecretUse<'a> {
     /// Asks `ladder` on `run` until an answer calls no tool, answering each
     /// tool call in between; that answer and the rung that gave it. Each
     /// round is the step's model call again: its permit, its gate, its
-    /// meter, and the same errors end it.
+    /// meter bounded by `lease`'s live room, and the same errors end it.
     pub(super) fn converse(
         &self,
         runtime: &tokio::runtime::Runtime,
         ladder: &OfferLadder,
         run: &RunAdmission,
+        lease: &LiveLease<'_>,
         mut request: LlmRequest,
     ) -> LlmResult<(LlmResponse, ModelId)> {
         // A rung that cannot read reasoning back is never sent it.
         let reasoning = ladder.supports(&request.model, &LlmCapability::Reasoning);
+        let may_send = || {
+            lease.book_and_revise();
+            true
+        };
         let mut uses = 0_u64;
         loop {
-            let (response, served) =
-                runtime.block_on(ladder.generate_served(run, request.clone(), None))?;
+            let (response, served) = runtime.block_on(ladder.generate_served_while(
+                run,
+                request.clone(),
+                None,
+                &may_send,
+            ))?;
             let calls: Vec<(String, String, Value)> = response
                 .message
                 .content
@@ -156,6 +166,9 @@ impl<'a> StepSecretUse<'a> {
             if calls.is_empty() {
                 return Ok((response, served));
             }
+            // The round's spend goes on the lease before its tools run, so
+            // siblings see it meanwhile (FIX 1819).
+            lease.book_and_revise();
             let content = response
                 .message
                 .content
