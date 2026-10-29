@@ -25,6 +25,7 @@ impl FacadeApiError {
                     retry_after: None,
                     resets_at: Vec::new(),
                     reason_codes: Vec::new(),
+                    legal_hold: None,
                     program_steps: Vec::new(),
                 },
                 narrowing: None,
@@ -204,6 +205,7 @@ impl From<MemoryError> for FacadeApiError {
                     retry_after: error.retry_after,
                     resets_at: error.resets_at,
                     reason_codes: error.reason_codes,
+                    legal_hold: error.legal_hold,
                     program_steps: Vec::new(),
                 },
                 narrowing: error.read_receipt,
@@ -218,12 +220,15 @@ impl From<MemoryError> for FacadeApiError {
 /// `code`, which is the same text a client would have read either way.
 impl From<ApiError> for FacadeApiError {
     fn from(error: ApiError) -> Self {
-        Self::new(
+        let legal_hold = error.legal_hold().cloned().map(Box::new);
+        let mut refusal = Self::new(
             error.status(),
             error.code().as_str(),
             error.message().to_owned(),
             error.suggestions().to_vec(),
-        )
+        );
+        refusal.body.error.legal_hold = legal_hold;
+        refusal
     }
 }
 
@@ -265,6 +270,7 @@ impl FacadeApiError {
         refusal.retry_after = error.retry_after;
         refusal.resets_at = error.resets_at;
         refusal.reason_codes = error.reason_codes;
+        refusal.legal_hold = error.legal_hold;
         refusal
     }
 }

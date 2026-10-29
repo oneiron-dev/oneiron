@@ -376,6 +376,10 @@ pub(crate) fn mcp_text_content(text: impl Into<String>) -> Value {
 }
 
 pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
+    if let Some(legal_hold) = error.legal_hold().cloned().map(Box::new) {
+        return McpGatewayError::new(-32020, "legal_hold", error.message())
+            .with_legal_hold(legal_hold);
+    }
     // The typed 403 refusals answer as the facade's copy of each does: one
     // MCP code and stable kind, whichever door reported it (FIX 11434).
     let typed = match error.code() {
@@ -449,6 +453,7 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
         ErrorKind::HostActionRequiresSupportGrant => {
             McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
+        ErrorKind::LegalHold => mcp_facade_error(oneiron::MemoryError::from(error)),
         _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
     }
 }
@@ -562,6 +567,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
         && let Some(object) = data.as_object_mut()
     {
         object.insert("hook".to_owned(), json!(*stop));
+    }
+    if let Some(legal_hold) = error.legal_hold
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("legal_hold".to_owned(), json!(*legal_hold));
     }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()

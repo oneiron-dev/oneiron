@@ -1227,6 +1227,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1290,6 +1291,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1314,6 +1316,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1338,6 +1341,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1362,6 +1366,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1386,6 +1391,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5217,6 +5223,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5373,6 +5380,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5397,6 +5405,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5421,6 +5430,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5613,6 +5623,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6162,6 +6173,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6615,6 +6627,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6639,6 +6652,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6663,6 +6677,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6687,6 +6702,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6711,6 +6727,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6735,6 +6752,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6843,6 +6861,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6867,6 +6886,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6891,6 +6911,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6915,6 +6936,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6939,6 +6961,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6963,6 +6986,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -6984,6 +7008,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -8889,6 +8914,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8913,6 +8939,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8937,6 +8964,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8961,6 +8989,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8985,6 +9014,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9009,6 +9039,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9033,6 +9064,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9057,6 +9089,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9081,6 +9114,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9105,6 +9139,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9129,6 +9164,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9156,6 +9192,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9180,6 +9217,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9204,6 +9242,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9228,6 +9267,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9252,6 +9292,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9276,6 +9317,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9300,6 +9342,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9324,6 +9367,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9348,6 +9392,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -10179,6 +10224,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -10203,6 +10249,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -10227,6 +10274,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -10251,6 +10299,7 @@ impl NativeClient {
                 retry_after: None,
                 resets_at: Vec::new(),
                 reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
