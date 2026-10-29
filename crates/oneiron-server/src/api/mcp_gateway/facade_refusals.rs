@@ -101,11 +101,13 @@ fn mcp_facade_refusal(error: oneiron::MemoryError) -> McpGatewayError {
 
 /// The stable kind of a typed refusal whose code the gateway names in its
 /// own spelling, each a -32020 refusal: the owner's world read setting
-/// (FIX 7562), a hosted vault paused for its reap (FIX 5325), and a deck
-/// render past its deadline or at a machine floor (FIX 8242). `None` for
-/// any other code.
+/// (FIX 7562), a hosted vault paused for its reap (FIX 5325), a deck render
+/// past its deadline or at a machine floor (FIX 8242), and a damaged
+/// authority clock floor, which the owner's repair answers (FIX 11190).
+/// `None` for any other code.
 fn refusal_kind(code: &str) -> Option<&'static str> {
     Some(match code {
+        oneiron_contracts::memory::MEMORY_CODE_AUTHORITY_CLOCK_CORRUPT => "authority_clock_corrupt",
         oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT => "world_recipient_limit",
         oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
             "world_placement_unverifiable"

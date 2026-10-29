@@ -68,7 +68,7 @@ pub(crate) use self::step_only::{
 };
 
 pub(crate) use self::settled::{
-    CallerSettledStep, committed_steps_in_txn, settled_step_for_caller,
+    CallerSettledStep, committed_steps_in_txn, settled_step_for_caller, settled_step_usage_in_txn,
 };
 pub(crate) use self::step_claim::{
     deindex_dreamer_step_claim, forget_step_memo, index_dreamer_step_claim_for_put,

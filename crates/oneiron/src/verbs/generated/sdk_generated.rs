@@ -7133,6 +7133,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.budget",
     "vault.authority.handoff_alarms",
     "vault.authority.handoff_alarms.acknowledge",
+    "vault.roots.requests.cancel",
     "vault.roots.requests.create",
     "vault.roots.requests.list",
     "vault.owner_work.get",
@@ -8629,6 +8630,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.authority.handoff_alarms.acknowledge" => {
             crate::code_run::vault_read::request_schema::<crate::authority::AuthorityHandoffAlarm>()
+        }
+        "vault.roots.requests.cancel" => {
+            crate::code_run::vault_read::request_schema::<crate::world_keys::OwnerWorkReceipt>()
         }
         "vault.roots.requests.create" => {
             crate::code_run::vault_read::request_schema::<crate::world_keys::OwnerWorkReceipt>()
@@ -27388,9 +27392,9 @@ pub fn vault_authority_clock_repair(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AuthorityClockRepair> {
-    crate::task_verb::sdk::repair_authority_clock_as_owner(
+    crate::task_verb::sdk::repair_authority_clock_as(
         memory.vault(),
-        &memory.embedded_owner("vault.authority.clock.repair")?,
+        memory.embedded_clock_repair_caller("vault.authority.clock.repair")?,
     )
 }
 pub fn vault_wire_health_thresholds_get(

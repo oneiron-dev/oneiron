@@ -57,11 +57,13 @@ impl ConsolidationExecutor<'_> {
         let config = ctx.vault.consolidation_selection()?;
         let (slices, low_trust) =
             resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
-        // The attempt's read set: every row its slices' calls read, which
-        // every later read of this branch reads within (FIX 7019).
+        // The attempt's read set: every row its slices' calls read and
+        // every row its branch pinned, which every later read of this branch
+        // reads within (FIX 7019).
         let read = slices
             .iter()
             .flat_map(|slice| slice.sources.iter().copied())
+            .chain(resources.pinned_source_ids())
             .collect();
         super::declare_attempt_reads(
             ctx.vault,
