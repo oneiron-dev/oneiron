@@ -35,7 +35,9 @@ fn run_connection(run_id: EntityId) -> StreamConnectionId {
 
 /// One board verb on the attached run, answered as the verb's wire value
 /// and the writer it ran as. The hook blocks the answer shows are spent
-/// once it clears, as a pumped run's own board row spends them.
+/// once it clears, as a pumped run's own board row spends them. The board's
+/// SCRATCHPAD is the live pad of the session the attached agent's own
+/// request names (FIX 2340); a request that names none renders no pad.
 async fn on_run_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -45,8 +47,15 @@ async fn on_run_board(
     let (writer, run, held) = hold_live_run(server, auth, None, &live_run).await?;
     let connection = run_connection(run.run_id());
     let mut hooks = None;
-    let (value, _rows) =
-        crate::api::execute_run_board_verb(server, writer, &connection, call, &mut hooks).await?;
+    let (value, _rows) = crate::api::execute_run_board_verb_in_session(
+        server,
+        writer,
+        &connection,
+        auth.off_record_session(),
+        call,
+        &mut hooks,
+    )
+    .await?;
     if let Some(hooks) = hooks {
         crate::api::deliver_run_board_hooks(server, hooks).await?;
     }

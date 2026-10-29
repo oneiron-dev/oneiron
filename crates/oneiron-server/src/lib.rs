@@ -116,10 +116,10 @@ pub use crate::projection::View;
 
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
 ///
-/// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. WebSocket
-/// read RPCs run synchronously and leave the worker with `block_in_place`,
-/// which a `LocalSet` forbids; on a current-thread runtime they hold the only
-/// executor thread while they read.
+/// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. A door that
+/// runs blocking work in line (`server::blocking`) leaves the worker with
+/// `block_in_place`, which a `LocalSet` forbids; on a current-thread runtime
+/// it holds the only executor thread while that work runs.
 pub fn build_app(server: Arc<SyncServer>) -> Router {
     let position = if server.managed_issuer.is_some() || server.vault().is_host_readable() {
         // A cloud node's provider requests skip gzip (ARCH-0081 §6, OF-603).
