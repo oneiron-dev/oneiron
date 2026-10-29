@@ -30,14 +30,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/budget/tests.rs` | test | s | — | — | — |
 | `src/llm/budget/tests/dispatch.rs` | test | s | — | — | — |
 | `src/llm/budget/tests/per_call.rs` | test | s | — | — | — |
-| `src/llm/budget/types.rs` | src | s | 5 struct · 4 enum · 4 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetLeaseState, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal +1 | Public budget DTOs and the exhaustion policy |
+| `src/llm/budget/types.rs` | src | s | 5 struct · 4 enum · 5 fn · 1 const | BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetLeaseState, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal +1 | Public budget DTOs and the exhaustion policy |
 | `src/llm/burst_inputs.rs` | src | s | 1 struct · 1 fn | NormalizedBurstInputs | Peer-relative write velocity and structural-failure streaks for automatic verdicts |
 | `src/llm/bus.rs` | src | m | 2 struct · 1 trait · 7 fn | LlmEventBus, StreamSubscription, TerminalSink | Ephemeral one-producer fanout |
 | `src/llm/cache.rs` | src | m | 6 struct · 5 enum · 7 fn | CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError, CacheIdentity, CacheOutcome +3 | What a backend reported about its prompt cache on one physical model call (FIX 6567, INF 2 step 1): for each… |
 | `src/llm/call.rs` | src | s | 5 struct · 6 enum · 6 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +3 | Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality |
-| `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 10 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
+| `src/llm/catalog.rs` | src | m | 2 struct · 2 enum · 10 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
 | `src/llm/defaults.rs` | src | s | 5 struct · 3 enum · 1 trait · 15 fn | ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault, SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane +1 | Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies |
-| `src/llm/error.rs` | src | s | 2 struct · 6 enum · 3 fn | BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError, RetryableLlmError, SpentKind, UnsupportedCapability | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
+| `src/llm/error.rs` | src | m | 3 struct · 7 enum · 9 fn | BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError, RetryableLlmError, SpentKind, TransportFault +2 | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/failure_policy.rs` | src | s | 2 struct · 3 enum · 9 fn | DreamerFailureClass, DreamerFailureDecision, DreamerFailurePrecedence, DreamerFailureRoute, DreamerFailureRule | Vault-resident Dreamer failure decisions; these restrict downstream use, never grant authority |
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 4 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
 | `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
@@ -48,7 +48,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
 | `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 fn · 1 type | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
 | `src/llm/media/caps.rs` | src | s | 1 struct · 3 enum · 10 fn · 1 const | AiOperation, MediaCaps, Modality, NativeUnit | Media call operations, modalities and row capabilities |
-| `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 5 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
+| `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 6 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
+| `src/llm/media/replay.rs` | src | s | 1 enum · 3 fn | MediaReplayKey | A media call's replay key (FIX 465, FIX 2962): the name a repeat of one call shares with the first, so the… |
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
 | `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 5 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
