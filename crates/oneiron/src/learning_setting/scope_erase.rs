@@ -1,7 +1,8 @@
-//! A project's owner rows and fits go with the project (FIX 6038): its erase
-//! deletes every seed and pin laid over that project, whoever set it, and
-//! every cached fit keyed by it, even where no cell is left. Rows over the
-//! vault, a goal, a type or another project stay as they are.
+//! An erased scope's owner rows and fits go with it (FIX 6038, FIX 11533):
+//! its erase deletes every seed and pin laid over that project or goal,
+//! whoever set it, and every cached fit keyed by it as a project or a
+//! subject, even where no cell is left. Rows over the vault, a type,
+//! another project or another goal stay as they are.
 
 use super::fit::parse_setting_fit_key;
 use super::{SETTING, SettingScope, parse_row_key};
@@ -9,10 +10,10 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
-/// Deletes the owner setting rows scoped to `project` and every cached fit
-/// keyed by it, in the erase's own transaction. A key its codec does not
-/// read is passed over with a WARN, never an abort: the erase is the
-/// owner's own act.
+/// Deletes the owner setting rows scoped to `entity` as a project or a goal
+/// and every cached fit keyed by it as a project or a subject, in the
+/// erase's own transaction. A key its codec does not read is passed over
+/// with a WARN, never an abort: the erase is the owner's own act.
 ///
 /// # Errors
 ///
@@ -20,13 +21,13 @@ use crate::error::Result;
 pub(crate) fn erase_setting_scope_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    project: &EntityId,
+    entity: &EntityId,
 ) -> Result<()> {
     let rows = SETTING
         .iter_raw_from(&vault.store, wtxn, &[])?
         .map(|row| row.map(|(key, _)| key))
         .collect::<Result<Vec<_>>>()?;
-    for key in project_row_keys(rows, project, "setting") {
+    for key in project_row_keys(rows, entity, "setting") {
         SETTING.delete(&vault.store, wtxn, &key)?;
     }
     let fits = crate::learning::project::SETTING_FIT
@@ -39,7 +40,9 @@ pub(crate) fn erase_setting_scope_in_txn(
             continue;
         };
         match parse_setting_fit_key(stored) {
-            Some((_, scoped, _, _)) if scoped == Some(*project) => {
+            Some((_, scoped, subject, _))
+                if scoped == Some(*entity) || subject == Some(*entity) =>
+            {
                 crate::learning::project::SETTING_FIT.delete(
                     &vault.store,
                     wtxn,
@@ -56,11 +59,11 @@ pub(crate) fn erase_setting_scope_in_txn(
 }
 
 /// The owner-row keys among `rows` (a setting or choice table's raw keys)
-/// whose scope is exactly `project`. A key that does not parse is passed
-/// over with a WARN.
+/// whose scope is exactly `entity`, as a project or a goal. A key that does
+/// not parse is passed over with a WARN.
 pub(crate) fn project_row_keys(
     rows: Vec<Vec<u8>>,
-    project: &EntityId,
+    entity: &EntityId,
     table: &'static str,
 ) -> Vec<String> {
     let mut out = Vec::new();
@@ -79,7 +82,7 @@ pub(crate) fn project_row_keys(
             );
             continue;
         };
-        if scope == SettingScope::Project(*project) {
+        if scope == SettingScope::Project(*entity) || scope == SettingScope::Goal(*entity) {
             out.push(stored);
         }
     }

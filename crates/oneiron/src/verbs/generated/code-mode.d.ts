@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1242 code-mode rows (1202 host rows, 40 run rows), 4364 declarations.
-// Replies: 1065 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1243 code-mode rows (1203 host rows, 40 run rows), 4365 declarations.
+// Replies: 1066 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
@@ -709,6 +709,7 @@ declare namespace Sdk {
   type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null; comm?: CommReach | null };
   type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null };
   type CredentialAttenuated = { token: string; binding_key: number[] };
+  type SelfActorRefs = { actor_ref: string; actor_class: string; person_ref?: string | null };
   type RecordPositionRequest = { record_ref: string };
   type RecordPosition = { kind: "position"; scope: Scope };
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
@@ -4573,6 +4574,8 @@ declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.RevealPending |
   wait(input: Sdk.RevealWaitRequest): Promise<Sdk.RevealWaitAnswer | StoredResult>;
 };
 declare namespace self {
+  /** The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else. */
+  const actor: (input: Sdk.EmptyRequest) => Promise<Sdk.SelfActorRefs | StoredResult>;
   const admission: {
     /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
     receipts(input: Sdk.AdmissionReceiptsRequest): Promise<Sdk.AdmissionReceipt[] | StoredResult>;
