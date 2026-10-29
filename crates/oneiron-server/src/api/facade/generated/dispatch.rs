@@ -28977,7 +28977,7 @@ async fn vault_questions_answers(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.answers")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.answers", &value)?;

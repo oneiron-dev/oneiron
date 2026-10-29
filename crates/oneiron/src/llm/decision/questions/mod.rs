@@ -1,5 +1,6 @@
 //! Versioned questions, scoped answer receipts, and bound outcome labels.
 
+mod answer_scope;
 mod answers;
 mod arrival;
 mod artifact_refresh;
@@ -24,6 +25,7 @@ mod windows;
 #[cfg(test)]
 mod standing_tests;
 
+pub use answer_scope::question_answers_in_lane;
 pub use answers::question_answers;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub(crate) use artifact_refresh::artifact_unit_receipts;
