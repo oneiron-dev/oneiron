@@ -1741,7 +1741,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InboxConcernGroup",
@@ -37386,7 +37386,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 64
+      "crate-vis": 65
      }
     },
     {
@@ -37440,7 +37440,9 @@
       "InboxCheckInException",
       "InboxExceptionClass",
       "InboxGroup",
+      "InboxGroupCursor",
       "InboxGroupMember",
+      "InboxGroupPage",
       "InboxGroupReopen",
       "InboxPointerRow",
       "InboxQuery",
@@ -37450,11 +37452,11 @@
      "path": "src/inbox/model.rs",
      "purpose": "Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants",
      "surface": {
-      "const": 4,
-      "crate-vis": 12,
+      "const": 3,
+      "crate-vis": 13,
       "enum": 3,
-      "fn": 5,
-      "struct": 9
+      "fn": 8,
+      "struct": 11
      }
     },
     {
@@ -37483,7 +37485,7 @@
      "path": "src/inbox/projection.rs",
      "purpose": "Read-side inbox grouping projection, member classification, and dial surfacing",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -37496,6 +37498,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inbox/root_group.rs",
+     "purpose": "Complete root group cards (FIX 9871): every open Dreamer proposal in the tray, read in one pass with its…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -37515,6 +37527,17 @@
      "path": "src/inbox/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inbox/traversal.rs",
+     "purpose": "The complete pending traversal (FIX 9523, 9873): every stamped Dreamer run holding a pending consent, in the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
     },
     {
      "bucket": "m",
@@ -44335,6 +44358,7 @@
      "purpose": "PEOPLE verbs (owner ruling, ARCH-0067): `vault.people.list`, `vault.people.get`, `self.message` and…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 3,
       "struct": 7
@@ -44960,6 +44984,16 @@
      "purpose": "The run review snapshot: the claim author, the member binding and the in-transaction review",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/run_review/topology.rs",
+     "purpose": "A reviewed topology event's effective state (FIX 9966): its verdict from the effective ledger's resolution…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -45757,6 +45791,16 @@
      "purpose": "Turn-speaker and message-envelope codec plus session alias formatting",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/linked.rs",
+     "purpose": "A base witness that commits its caller's own record with the turn (FIX 8533): the record runs in the turn's…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -57067,7 +57111,7 @@
      "path": "src/run_tree/signal.rs",
      "purpose": "Durable, branch-addressed Signal inbox",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 7,
       "struct": 5
@@ -75131,7 +75175,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DiaryEntryReceipt",
@@ -75142,6 +75186,7 @@
      "path": "src/verbs/self.rs",
      "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 4
      }
@@ -80352,7 +80397,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 9,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80478,7 +80523,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 287,
+     "files": 289,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81166,7 +81211,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5403,
+   "source_files": 5407,
    "test_files": 902
   },
   "oneiron-android": {
@@ -114792,6 +114837,7 @@
       "InboxExceptionClass",
       "InboxGroup",
       "InboxGroupMember",
+      "InboxGroupPage",
       "InboxLensConcern",
       "InboxLensDiaryReview",
       "InboxLensKind",
@@ -117135,7 +117181,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1027,
-      "struct": 3137
+      "struct": 3138
      }
     },
     {
