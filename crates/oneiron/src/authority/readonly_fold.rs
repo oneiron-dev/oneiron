@@ -13,10 +13,14 @@ use std::sync::Arc;
 
 mod adopted;
 mod arriving;
+#[cfg(feature = "sync")]
+mod stored_records;
 
 pub(super) use adopted::adopted_history_request_in_txn;
 use adopted::fold_adopted_in_txn;
 pub(super) use arriving::{ArrivingFold, authority_view_with_rows_for_store_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use stored_records::folded_vault_id_of_records;
 
 /// The generation belongs to the snapshot, not to the most recent process-wide
 /// write. An abort discards its generation update with its authority row.

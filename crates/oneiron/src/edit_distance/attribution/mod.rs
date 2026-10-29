@@ -114,9 +114,14 @@ pub use self::triage::{
 
 pub(crate) use self::causes::amendment_causes_in_txn;
 pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
-pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
+pub(in crate::edit_distance) use self::evidence_judge::{
+    amendment_evidence_in_txn, amendment_judgment_in_txn,
+};
 pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
-pub(in crate::edit_distance) use self::rejection::{Rejection, judge_rejection_in_txn};
+pub use self::rejection::judge_rejection_with_cause;
+pub(in crate::edit_distance) use self::rejection::{
+    Rejection, judge_rejection_in_txn, judge_rejection_with_cause_in_txn,
+};
 pub(crate) use self::scope_erase::erase_amendment_project_in_txn;
 
 /// The recorded, grounded attempt→amendment joins, judged or not: every

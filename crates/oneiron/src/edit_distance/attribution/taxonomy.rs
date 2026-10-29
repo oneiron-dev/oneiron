@@ -247,8 +247,9 @@ pub struct AmendmentJudgment {
     /// The terminal pack receipt of the attempt the proposal came from, when
     /// the evidence named one.
     pub attempt_receipt: Option<String>,
-    /// The judge revision whose answers this judgment stands on; `None` for
-    /// the rule tier and for settled or owner-scripted labels.
+    /// The judge revision whose answers this judgment stands on; `None`
+    /// only for settled, unjudged or owner-scripted labels — the rule tier
+    /// stamps its own revision.
     pub judge: Option<String>,
     /// The answering model's identity (`provider/name@revision`) behind
     /// `judge`, when one model gave every answer: the identity an executor

@@ -18,7 +18,9 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::{ModelId, WriteActor};
 
-use super::host_doors::support::{Listed, MaybeListed, internal, owner_proof, refused};
+use super::host_doors::support::{
+    Listed, MaybeListed, internal, owner_proof, refused, with_calling_origin,
+};
 use super::{FacadeApiError, FacadeCall, facade_actor};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
@@ -176,7 +178,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
     fn call(
         &self,
         call: &SelfAgentVerbCall,
-        _origin: &HostWriteOrigin,
+        origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Err(error) = self.read_key() {
@@ -186,13 +188,16 @@ impl AgentVerbDoor for SkillCredentialDoor {
         let auth = self.auth.clone();
         let verb = call.verb.as_str();
         let input = call.input.clone();
+        let origin = origin.clone();
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-        self.runtime.spawn(async move {
+        // The skill's call is its run's (FIX 10748): its handles carry the
+        // run's origin and its writes are witnessed for the run's lease.
+        self.runtime.spawn(with_calling_origin(origin, async move {
             let id = invocation.to_hex();
             let call = FacadeCall::bound(&auth, None, Some(&id), None);
             let answer = super::call_verb(&server, &call, verb, Ok(input)).await;
             let _ = sender.send(answer);
-        });
+        }));
         Ok(match receiver.recv() {
             Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
             Ok(Err(error)) => Err(AgentVerbRefusal {
@@ -227,6 +232,12 @@ impl AgentVerbDoor for SkillCredentialDoor {
             })
         };
         check().map_err(|error| AgentVerbRefusal { code: error.code })
+    }
+
+    /// The host turn's hooks read on the credential's lane, with its proof
+    /// and destination, as the run's own search does (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.read_key().ok()
     }
 
     fn withholds_retained(

@@ -22,6 +22,7 @@ mod channel;
 mod connector_reach;
 mod grant;
 mod group;
+mod item_refs;
 mod live;
 mod live_source;
 mod manifest;
@@ -56,7 +57,10 @@ pub use reach::{
     REACH_LINE_MAX_CHANGES, REACH_LINE_NO_CHANGE, REACH_LINE_NONE, ShapePlanReach, ShapeReach,
     ShapeReachFact, ShapeReachVerdict,
 };
-pub use run::{SHAPE_APPLY_ATTEMPT_KIND, SHAPE_ITEM_ATTEMPT_KIND, ShapeApplyRun, shape_item_ref};
+pub use run::{
+    SHAPE_APPLY_ATTEMPT_KIND, SHAPE_ITEM_ATTEMPT_KIND, ShapeApplyRun, shape_item_ref,
+    shape_item_ref_parts,
+};
 pub use seed::StoredShapeSeed;
 pub use shared_setup::{ShapeLearningOutcome, ShapeLearningSetting};
 pub use skill::ShapeSkillSource;

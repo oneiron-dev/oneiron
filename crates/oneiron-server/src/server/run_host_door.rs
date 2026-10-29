@@ -387,6 +387,12 @@ impl AgentVerbDoor for RunHostDoor {
             .map_err(|error| AgentVerbRefusal { code: error.code })
     }
 
+    /// The host turn's hooks read as the run's own agent does, on this
+    /// device, under the waking slip when one binds the door (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.admitting_memory().read_key().ok()
+    }
+
     /// Its keyed search drops only rows the agent's lane may not read.
     fn keyed_search_surfaceable_only(&self) -> bool {
         false

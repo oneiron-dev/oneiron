@@ -52,10 +52,13 @@ impl OneironClient {
                 let read = remote.read_export_transfer(&transfer, &mut sink);
                 let released = remote.release_export_transfer(&transfer.transfer_ref);
                 match (read, released) {
+                    // The server keeps the render's act; the transfer it
+                    // answered with names none.
                     (Ok(()), Ok(())) => Ok(MemoryExportReceipt {
                         format: transfer.format,
                         bytes: transfer.bytes,
                         digest: transfer.digest,
+                        act: None,
                     }),
                     (Err(error), Ok(())) => Err(error),
                     (Ok(()), Err(kept)) => Err(still_kept(None, &transfer.transfer_ref, kept)),

@@ -103,6 +103,11 @@ pub const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inb
 /// (`outbound::reply_content`). Parts: event id, agent, reply ref.
 pub const CONNECTOR_REPLY_BODY_BLOB: &[u8] = b"oneiron:connector-reply-body-blob:v1:";
 
+/// The BLOB artifact holding one campaign program step's filed outbound body
+/// (`campaign::step_body`, FIX 11513). Parts: program ref, step ref, call_seq
+/// (u64 big-endian).
+pub const CAMPAIGN_STEP_BODY_BLOB: &[u8] = b"oneiron:campaign-step-body-blob:v1:";
+
 /// An asking actor's origin (`task_verb::ask_record`). Parts: vault ask origin, actor.
 pub const TASK_ASK_ORIGIN: &[u8] = b"oneiron.tasks.ask.origin.v1";
 
@@ -255,7 +260,7 @@ pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 56] = [
+pub(crate) const ALL: [&[u8]; 57] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -279,6 +284,7 @@ pub(crate) const ALL: [&[u8]; 56] = [
     SURFACE_PROVIDER_EVENT_BLOB,
     SURFACE_PROVIDER_INBOUND_ACTOR,
     CONNECTOR_REPLY_BODY_BLOB,
+    CAMPAIGN_STEP_BODY_BLOB,
     TASK_ASK_ORIGIN,
     TASK_ASK_INTENT,
     TASK_ASK_MEMBER,

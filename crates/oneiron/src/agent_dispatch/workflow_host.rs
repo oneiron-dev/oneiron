@@ -87,6 +87,13 @@ impl AgentDispatcher<'_> {
         }
         let input = super::decode_agent_dispatch_input(&payload.input)?;
         self.dispatchable_definition_in_txn(&txn, &input.target)?;
+        // FIX 11592: a requester whose authority was withdrawn ends the leaf
+        // unrun, and the workflow reads it as any failed leaf.
+        if self.requester_withdrawn_in_txn(&txn, &input).is_some() {
+            drop(txn);
+            self.end_withdrawn(active.id, lease_owner, now)?;
+            return self.advance_workflow(root, now);
+        }
         // A leaf placed on another worker, or not yet ready at the recorded
         // clock, is not this host's to run.
         let ClaimOutcome::Claimed(attempt) = crate::ports::JobQueue::port_job_claim_id(

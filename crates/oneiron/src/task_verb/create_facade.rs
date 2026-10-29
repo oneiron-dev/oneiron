@@ -1,6 +1,8 @@
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
+mod hook_effect;
+
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
@@ -593,6 +595,9 @@ impl Memory<'_> {
                         origin_conversation: origin.and_then(TaskCreateOrigin::origin_conversation),
                         team,
                         objectives,
+                        // FIX 11592: the instrument this request was admitted
+                        // on; a child with none keeps its creator's.
+                        requester: crate::agent_dispatch::QueuedRequester::of_memory(self),
                         ..AgentSpawnContext::default()
                     },
                 )?;

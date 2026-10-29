@@ -71,6 +71,14 @@ impl RecordingJsHost<'_, '_> {
                 |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
             );
         }
+        // The spool-to-body copy holds its bytes on the run's own share
+        // (FIX 10674), as the answer check does; past the share the watch
+        // has fired and the copy still goes out whole, as before. A host
+        // lent none copies unheld, as before.
+        let _copy_hold = self
+            .result_share
+            .zip(self.storage)
+            .and_then(|(share, storage)| share.hold(answer.byte_len(), storage.limit_watch()));
         self.store_answer(seq, |sink| {
             let reader = answer.reader()?;
             let mut frame = vec![0; 64 * 1024];
@@ -284,8 +292,9 @@ impl RecordingJsHost<'_, '_> {
         }
         if let Some(wait) = &self.durable_wait {
             let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
-            let row =
+            let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome, None));
         }
@@ -305,8 +314,9 @@ impl RecordingJsHost<'_, '_> {
                 effect: call.effect(),
                 error: error.to_owned(),
             });
-            let row =
+            let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome, None));
         }
