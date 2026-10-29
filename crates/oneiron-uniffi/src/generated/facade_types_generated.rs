@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1204 facade rows, 4342 generated types.
+// UniFFI census: 1204 facade rows, 4343 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1156.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -51656,13 +51656,21 @@ pub enum ConnectorCallReply {
     },
 }
 
+/// `oneiron::verbs::live_voice::LiveVoiceToolCallReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum LiveVoiceToolCallReply {
+    QuestionsNarrowed(NarrowedQuestions),
+    Done(ConnectorCallReply),
+}
+
 /// `oneiron::verbs::live_voice::LiveVoiceToolReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LiveVoiceToolReply {
     #[serde(rename = "processed")]
     pub processed: LiveVoiceProcessed,
     #[serde(rename = "reply")]
-    pub reply: ConnectorCallReply,
+    pub reply: LiveVoiceToolCallReply,
 }
 
 /// `oneiron::verbs::act_answer::ActAnswer` with `T` = `LiveVoiceToolReply`.

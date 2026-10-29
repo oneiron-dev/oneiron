@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1204 facade rows, 4350 declarations.
+Census: 1204 facade rows, 4351 declarations.
 Inputs: 1132 of 1204 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1038 of 1204 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -16449,9 +16449,10 @@ class ConnectorCallReplyAwaitingInput(TypedDict):
     live_until_ms: int
     reasons: NotRequired[list[str]]
 ConnectorCallReply = ConnectorCallReplyDelivered | ConnectorCallReplyHeld | ConnectorCallReplyRefused | ConnectorCallReplyPendingDelivery | ConnectorCallReplyAwaitingInput
+LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply
 class LiveVoiceToolReply(TypedDict):
     processed: LiveVoiceProcessed
-    reply: ConnectorCallReply
+    reply: LiveVoiceToolCallReply
 class LiveVoiceSessionRequest(TypedDict):
     session_ref: str
 AnonymousChatRequestTarget = Literal["house_mind", "plain_model"]
