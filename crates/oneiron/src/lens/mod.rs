@@ -16,7 +16,8 @@
 //! - `proposal`, `activation` — pack lens proposals and the owner's slot
 //!   selection (`vault.lenses.*`); `actor_erase` — an erased actor out of
 //!   both; `regen` — enacting a regeneration outcome through those doors;
-//!   `sdk` — the default vault projection verb.
+//!   `pack_export` — a lens as a portable pack file (FIX 1192); `sdk` — the
+//!   default vault projection verb.
 //! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
 mod activation;
@@ -47,6 +48,10 @@ mod generated_ui;
 mod mediation;
 mod mount;
 pub use mount::LensMount;
+mod pack_export;
+pub use pack_export::{
+    LENS_PACK_SCHEMA, LensPackExport, LensPackExportReceipt, LensPackExportRequest, LensPackFile,
+};
 mod proposal;
 mod regen;
 pub use activation::{
@@ -61,7 +66,7 @@ pub use regen::{
     regenerate_and_enact_lens_embedded,
 };
 mod sdk;
-pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource};
+pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource, WeaveLensRequest};
 mod record_ref;
 pub use record_ref::{
     LinkedText, ProseSpan, RECORD_LINKS_TEXT_MAX_BYTES, RECORD_LINKS_TURN_PAGE_MAX,
@@ -85,7 +90,7 @@ pub use atom::{
     AnswerSheetAtom, AsofScrubberAtom, ClaimLineAtom, CollectionAtom, FiniteF64,
     GENERATED_LENS_ATOM_KINDS, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom,
     GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll, GeneratedUiResultSetSelection,
-    GraphEdge, GraphNode, InspectorAtom, LENS_ATOM_KIT_VERSION, LENS_RESULT_SET_UNSUPPORTED,
+    GraphEdge, GraphNode, InspectorAtom, LENS_ATOM_KIT_VERSION,
     LedgerCell, LedgerRowAtom, LensAtom, LensNode, LensStatus, LensText, LensTextSpan, MediaAtom,
     MetaLineAtom, NeighborhoodGraphAtom, PackLineAtom, PostmarkAtom, QuickFilterAtom,
     RESULT_SET_ATOM_KIND, ReceiptAtom, SealAtom, SealLevel, SectionAtom, StatusDotAtom,
@@ -95,10 +100,15 @@ pub use generated_ui::{
     GENERATED_UI_SEGMENT_CONTENT_TYPE, GENERATED_UI_WIRE_VERSION, GeneratedLens,
     GeneratedUiActionDeclaration, GeneratedUiActionEvent, GeneratedUiActionTier,
     GeneratedUiArchiveReason, GeneratedUiCard, GeneratedUiCardElement, GeneratedUiCardLifecycle,
-    GeneratedUiCardPhase, GeneratedUiCardStart, GeneratedUiCardStateUpdate, GeneratedUiCatalog,
-    GeneratedUiDataModel, GeneratedUiNode, GeneratedUiPrebuilt, GeneratedUiPrimitive,
-    GeneratedUiRender, GeneratedUiSegment, GeneratedUiStatePatch, GeneratedUiStateSnapshot,
-    GeneratedUiSummaryCardPrebuilt, GeneratedUiSurfaceCapabilities, LENS_APPS_CONTRACT_VERSION,
+    GeneratedUiCardPhase, GeneratedUiCardReady, GeneratedUiCardStart, GeneratedUiCardStatePatch,
+    GeneratedUiCardStateSnapshot, GeneratedUiCardStateUpdate, GeneratedUiCatalog,
+    GeneratedUiCatalogDescriptor, GeneratedUiCatalogVersion, GeneratedUiComponentAtom,
+    GeneratedUiComponentSchema, GeneratedUiDataModel, GeneratedUiDecoded, GeneratedUiFallback,
+    GeneratedUiJsonPatchOperation, GeneratedUiNode, GeneratedUiPartialNode,
+    GeneratedUiPartialTree, GeneratedUiPrebuilt, GeneratedUiPrimitive, GeneratedUiRender,
+    GeneratedUiSegment, GeneratedUiStatePatch, GeneratedUiStateSnapshot, GeneratedUiStream,
+    GeneratedUiStreamOutcome, GeneratedUiStreamProfile, GeneratedUiSummaryCardPrebuilt,
+    GeneratedUiSurfaceCapabilities, LENS_APPS_CONTRACT_VERSION, LENS_ATOM_KIT_CATALOG_VERSION,
     LensAtomInventoryChange, LensBehaviorDiff, LensBehaviorFingerprint, LensBehaviorHandle,
     LensEvaluatedRevision, LensHandleRoleChange, LensLoadAction, LensRegenFailure,
     LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator, LensVersionStamp,
@@ -118,7 +128,7 @@ pub use self_ui::{
     SelfUiValue, SliderControl, TextInputControl, ToggleControl,
 };
 pub use wire_ids::{
-    LensAtomId, LensBackingRefId, LensHandleName, LensHandleRef, LensHandleRole, LensMediaHandle,
-    LensRenderId, LensResultSetRowId, SelfUiActionId, SelfUiControlId, SelfUiOptionValue,
-    SelfUiStateKey,
+    GeneratedUiCatalogName, GeneratedUiComponentName, LensAtomId, LensBackingRefId,
+    LensHandleName, LensHandleRef, LensHandleRole, LensMediaHandle, LensRenderId,
+    LensResultSetRowId, SelfUiActionId, SelfUiControlId, SelfUiOptionValue, SelfUiStateKey,
 };

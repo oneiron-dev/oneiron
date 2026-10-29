@@ -189,17 +189,20 @@ pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
                     .into_iter()
                     .collect(),
                 message,
+                reason_codes: Vec::new(),
             }
         }
         BrowserError::DestinationRefused(refused) => AgentVerbRefusalWords {
             code: refused.reason.clone(),
             message: refused.message.clone(),
             suggestions: Vec::new(),
+            reason_codes: Vec::new(),
         },
         BrowserError::NeedsPress(_) | BrowserError::StaleRef(_) => AgentVerbRefusalWords {
             code: error.code().to_owned(),
             message: error.to_string(),
             suggestions: Vec::new(),
+            reason_codes: Vec::new(),
         },
         _ => code_words(error.code().to_owned()),
     }
@@ -252,5 +255,6 @@ pub(super) fn code_words(code: String) -> AgentVerbRefusalWords {
         message: code.clone(),
         code,
         suggestions: Vec::new(),
+        reason_codes: Vec::new(),
     }
 }

@@ -44,6 +44,9 @@ struct ApiErrorBody {
     /// Each time the refused call's limit resets, as Unix seconds (FIX 8190).
     #[serde(default, rename = "resetsAt")]
     resets_at: Vec<u64>,
+    /// The refusal's stable reason codes, in order (FIX 7398).
+    #[serde(default, rename = "reasonCodes")]
+    reason_codes: Vec<String>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -174,6 +177,7 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         hook: envelope.error.hook.map(Box::new),
         retry_after: envelope.error.retry_after,
         resets_at: envelope.error.resets_at,
+        reason_codes: envelope.error.reason_codes,
     })
 }
 

@@ -10,6 +10,7 @@ use crate::persona_snapshot::{
     PersonaSnapshotCopyRequest,
 };
 use crate::settings::ReadDestination;
+use crate::share_travel::{CopyRefs, effective_copy_refs};
 use crate::{EntityId, Vault};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
@@ -147,11 +148,33 @@ pub struct PersonaSnapshotExportedCopy {
     /// The copy edited to issue this version; null for the initial export.
     pub previous_export_id: Option<EntityId>,
     pub memory_pack: PersonaSnapshotMemoryPack,
+    /// The MemoryPack-lite render's exact bytes, as the export issued them
+    /// and its receipt's fingerprint covers them; `memory_pack` is their
+    /// typed view.
+    pub memory_pack_json: String,
     pub markdown: String,
     pub included_row_ids: Vec<String>,
     pub struck_row_ids: Vec<String>,
     pub compiled_at: String,
     pub stale_after_secs: u64,
+    /// What this copy is, by digest, and what it left out (FIX 1199).
+    pub receipt: PersonaSnapshotCopyReceipt,
+}
+
+/// A persona copy's local receipt (FIX 1199): the export record's digest of
+/// both renders and the vault ref slots they left out. It names the copy;
+/// it grants nothing.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PersonaSnapshotCopyReceipt {
+    /// The ref choice the copy was made under.
+    pub refs: CopyRefs,
+    /// blake3 hex over both renders as the export issued them:
+    /// `memory_pack_json`, a NUL byte, then `markdown`.
+    pub artifact_fingerprint: String,
+    /// The vault ref slots both renders left out (`subject_ref`,
+    /// `audience_ref` and `provenance_refs` dropped; `row_id` and
+    /// `attribution` under copy-local labels); empty for `preserve`.
+    pub omitted_refs: Vec<String>,
 }
 
 fn compiled_at(seconds: u64) -> MemoryResult<String> {
@@ -200,6 +223,7 @@ pub fn preview_persona_snapshot_as(
 fn exported_copy(
     artifact: PersonaSnapshotArtifact,
     previous_export_id: Option<EntityId>,
+    refs: CopyRefs,
 ) -> MemoryResult<PersonaSnapshotExportedCopy> {
     Ok(PersonaSnapshotExportedCopy {
         export_id: artifact.export_id,
@@ -208,11 +232,17 @@ fn exported_copy(
         previous_export_id,
         memory_pack: serde_json::from_str(&artifact.memory_pack_json)
             .map_err(|_| MemoryError::bad_request("invalid persona MemoryPack JSON"))?,
+        memory_pack_json: artifact.memory_pack_json,
         markdown: artifact.markdown,
         included_row_ids: artifact.included_row_ids,
         struck_row_ids: artifact.struck_row_ids,
         compiled_at: compiled_at(artifact.compiled_at_secs)?,
         stale_after_secs: artifact.stale_after_secs,
+        receipt: PersonaSnapshotCopyReceipt {
+            refs,
+            artifact_fingerprint: artifact.artifact_fingerprint,
+            omitted_refs: artifact.omitted_refs,
+        },
     })
 }
 
@@ -225,6 +255,7 @@ pub fn export_persona_snapshot_copy_as(
     exported_copy(
         vault.export_persona_snapshot_copy_as(owner, &input, destination)?,
         None,
+        effective_copy_refs(input.travel.as_ref()),
     )
 }
 
@@ -238,5 +269,6 @@ pub fn edit_persona_snapshot_copy_as(
     exported_copy(
         vault.edit_persona_snapshot_copy_as(owner, &input, destination)?,
         Some(previous),
+        effective_copy_refs(input.travel.as_ref()),
     )
 }

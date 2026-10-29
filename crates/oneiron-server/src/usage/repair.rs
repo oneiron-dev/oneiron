@@ -17,7 +17,7 @@ use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::usage_repair::{
     UndecodableUsageList, UndecodableUsageReason, UndecodableUsageRow, UsageRepairReason,
-    UsageRepairReceipt, UsageRepairRemoveRequest, UsageRepairVerb,
+    UsageRepairReceipt, UsageRepairReceiptList, UsageRepairRemoveRequest, UsageRepairVerb,
 };
 use oneiron::memory::{
     MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
@@ -195,6 +195,43 @@ impl UsageLedger {
                 &encoded,
             )?;
             Ok(receipt)
+        })
+    }
+}
+
+impl UsageLedger {
+    /// Every receipt a removal kept for `scope` (FIX 7036), in key order, as
+    /// its write kept it, whichever billing owner it names, read in the
+    /// writer that admits the caller for the receipts' own verb
+    /// ([`Memory::with_usage_repair_txn`]). None is capped or dropped. A kept
+    /// row that does not decode is counted, never read as a receipt; a
+    /// storage failure fails the list.
+    pub(crate) fn list_repair_receipts(
+        &self,
+        memory: &Memory<'_>,
+        owner: Option<&AuthenticatedOwner>,
+        scope: Option<&UsageScope>,
+    ) -> MemoryResult<UsageRepairReceiptList> {
+        memory.with_usage_repair_txn(owner, UsageRepairVerb::Receipts, |txn, _| {
+            let scope = bound(scope)?;
+            let mut receipts = Vec::new();
+            let mut undecodable = 0_u64;
+            self.vault.sync_state_visit_prefix_in_write_txn(
+                txn,
+                &usage_repair_receipt_key(""),
+                |_, raw| -> MemoryResult<()> {
+                    match rmp_serde::from_slice::<UsageRepairReceipt>(raw) {
+                        Ok(receipt) if receipt.vault_id == scope.vault_id => receipts.push(receipt),
+                        Ok(_) => {}
+                        Err(_) => undecodable = undecodable.saturating_add(1),
+                    }
+                    Ok(())
+                },
+            )?;
+            Ok(UsageRepairReceiptList {
+                receipts,
+                undecodable,
+            })
         })
     }
 }

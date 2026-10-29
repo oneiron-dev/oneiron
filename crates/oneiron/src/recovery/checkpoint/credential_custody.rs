@@ -143,7 +143,11 @@ impl std::fmt::Display for CredentialRestoreNote {
             Self::PendingCustody { handle, generation } => write!(
                 f,
                 "credential {handle} generation {generation}: its value did not open from \
-                 custody here; it rests sealed or withheld, pending: retry, or re-enter it"
+                 custody here; it rests sealed or withheld, pending. One the restore saved \
+                 pending on its source's evidence is rechecked on its own, and its batch is \
+                 listed with the confirm that keeps it without the source (`oneiron secrets \
+                 pending`, `GET /v1/owner/secrets/custody/pending`); a value that never opens \
+                 is re-entered or reissued"
             ),
             Self::CensusPending { listed } => write!(
                 f,

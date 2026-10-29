@@ -19,6 +19,7 @@ type NativeErrorPayload = {
   hook?: unknown
   retry_after?: unknown
   resets_at?: unknown
+  reason_codes?: unknown
 }
 
 /** A `WRONG_ROOT` refusal's correction: call `replacement`, never `attempted`. */
@@ -74,6 +75,9 @@ export class OneironError extends Error {
   /** Present when the refusal's source said when its limit resets: Unix seconds, in its order. */
   readonly resetsAt?: readonly number[]
 
+  /** Present when the refusal's producer named stable reason codes, in its order (FIX 7398). */
+  readonly reasonCodes?: readonly string[]
+
   constructor(
     code: string,
     message: string,
@@ -81,6 +85,7 @@ export class OneironError extends Error {
     wrongRoot?: WrongRoot,
     hook?: HookStop,
     timing?: RetryTiming,
+    reasonCodes?: readonly string[],
   ) {
     super(message)
     this.name = "OneironError"
@@ -90,7 +95,16 @@ export class OneironError extends Error {
     if (hook) this.hook = Object.freeze({...hook})
     if (timing?.retryAfter !== undefined) this.retryAfter = timing.retryAfter
     if (timing?.resetsAt !== undefined) this.resetsAt = Object.freeze([...timing.resetsAt])
+    if (reasonCodes !== undefined) this.reasonCodes = Object.freeze([...reasonCodes])
   }
+}
+
+/** The payload's `reason_codes`, kept only when they are the strings the engine sends. */
+function reasonCodes(payload: NativeErrorPayload): readonly string[] | undefined {
+  const codes = payload.reason_codes
+  return Array.isArray(codes) && codes.every((entry) => typeof entry === "string")
+    ? (codes as string[])
+    : undefined
 }
 
 /** The payload's `retry_after` and `resets_at`, kept only when they are the numbers the engine sends. */
@@ -168,6 +182,7 @@ export function translateNativeError(error: unknown): OneironError {
       wrongRoot,
       hookStop(parsed.hook),
       retryTiming(parsed),
+      reasonCodes(parsed),
     )
   }
 

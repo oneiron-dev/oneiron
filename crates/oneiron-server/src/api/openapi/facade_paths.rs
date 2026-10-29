@@ -130,6 +130,11 @@ fn facade_error_schema() -> Value {
                         "type": "array",
                         "items": {"type": "integer", "minimum": 0},
                         "description": "Each time the refused call's limit resets, as Unix seconds, when its source said."
+                    },
+                    "reasonCodes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "The refusal's stable reason codes, in its producer's order, when it named any."
                     }
                 }
             },

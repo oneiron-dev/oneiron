@@ -3,7 +3,9 @@
 use napi_derive::napi;
 
 mod read_scope;
+mod witness_assertions;
 pub(super) use self::read_scope::{NapiReadReceipt, NapiReadScope, NapiRecallScope};
+pub(super) use self::witness_assertions::NapiWitnessAssertions;
 
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
 
@@ -63,6 +65,9 @@ pub struct NapiWitnessTurn {
     /// AGENT_DEF ids), edited later through `vault.rooms.thread_audience`;
     /// omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
+    /// The records this reply names as cited or created (OF-063), judged by
+    /// the engine under the writer's own read; omitted ⇒ it asserts nothing.
+    pub assertions: Option<NapiWitnessAssertions>,
 }
 
 /// The quoted span of one MESSAGE: half-open Unicode scalar indices into

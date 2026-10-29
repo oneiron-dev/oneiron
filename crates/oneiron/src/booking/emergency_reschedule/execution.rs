@@ -194,6 +194,7 @@ pub(super) fn dispatch_item_effect(
                 hook: None,
                 retry_after: None,
                 resets_at: Vec::new(),
+                reason_codes: Vec::new(),
             },
         )));
     }

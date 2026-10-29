@@ -12,6 +12,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 
+use super::{
+    RestoreWrapArgs, SecretBindArgs, SecretPendingArgs, SecretUnbindArgs, VaultUnlockArgs,
+};
 use crate::config::ServeArgs;
 
 #[derive(Args, Clone, Debug)]
@@ -210,6 +213,9 @@ pub struct RestoreArgs {
     pub pad_machine: Option<String>,
 
     #[command(flatten)]
+    pub wrap: RestoreWrapArgs,
+
+    #[command(flatten)]
     pub secret: SecretSourceArgs,
 
     #[command(flatten)]
@@ -309,6 +315,9 @@ pub struct VaultKeyResealArgs {
 #[derive(Args, Clone, Debug)]
 pub struct VaultKeyArgs {
     #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
     pub secret: SecretSourceArgs,
 
     #[command(flatten)]
@@ -329,8 +338,13 @@ pub struct VaultKeyAddDeviceArgs {
     pub credential: Option<String>,
 
     /// With `--unlock escrow`: the escrow wrap's label.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", conflicts_with = "capsule")]
     pub label: Option<String>,
+
+    /// With `--unlock escrow`: a registry's escrow capsule report (JSON) for
+    /// this vault and key, opened in place of a wrap (FIX 2559).
+    #[arg(long, value_name = "REPORT")]
+    pub capsule: Option<PathBuf>,
 
     /// With `--unlock kit`: a world kit or data-key kit piece file, a
     /// recovery code as text or a piece export. Give two, or one and the kit
@@ -357,6 +371,9 @@ pub struct VaultKeyNamedArgs {
     /// The passkey's credential name, the escrow wrap's label (1 to 64
     /// letters, digits, dots, dashes or underscores), or the wrap's id.
     pub name: String,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
 
     #[command(flatten)]
     pub secret: SecretSourceArgs,
@@ -452,6 +469,13 @@ pub enum SecretsCommand {
     /// recovery kit from stdin, one recovery code per line; the kit never
     /// leaves this process, so the vault must be stopped.
     AnchorSign(Box<SecretAnchorSignArgs>),
+    /// Bind a secret to an effector, so its door uses it unread.
+    Bind(Box<SecretBindArgs>),
+    /// Withdraw a secret's binding to one effector; every other stays.
+    Unbind(Box<SecretUnbindArgs>),
+    /// A restore's credentials pending on their source's evidence, and the
+    /// typed confirm that keeps a batch without it.
+    Pending(Box<SecretPendingArgs>),
 }
 
 /// A secret's custody class (ARCH-0069 S1).
@@ -873,6 +897,11 @@ pub enum GuestsCommand {
 pub struct GuestRevokeArgs {
     /// The guest's grant, 32 hex.
     pub grant_ref: String,
+
+    /// The former peer host's origin (`https://...`): once the revoke
+    /// commits, ask it to drop what each ended pact delivered.
+    #[arg(long, value_name = "ORIGIN")]
+    pub peer: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

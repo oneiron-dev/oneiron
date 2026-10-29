@@ -192,6 +192,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/secrets/anchor-sign",
+        summary: "The owner's recovery kit, in this one call, pushes a portable secret's current custody transition signed with his owner anchor to the installs he names; the engine takes it only from an install with no live machine profile.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/secrets/bind",
         summary: "With {\"handle\"} or {\"name\"}, \"effector\", and optionally \"tier_ceiling\" and \"scopes\".",
         row: None,
@@ -206,6 +212,18 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/secrets/custody",
         summary: "A register or rotate whose protected input the surface sealed to the holder itself: this install takes only the ciphertext.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/secrets/custody/pending",
+        summary: "Each restore batch whose credentials wait on their source's evidence, by handle, and each batch an owner kept, with its receipt and a generic owner card.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/custody/pending",
+        summary: "With {\"batch\", \"confirm\": \"keep_without_source\"}: keeps the batch without its source's evidence, the owner's election; returns its receipt.",
         row: None,
     },
     OwnerRoute {
@@ -284,6 +302,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/secrets/rotate",
         summary: "The body is read by RotateSecret::read, not Json: the extractor's body copy and parser scratch would outlive the request unwiped.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/unbind",
+        summary: "With {\"handle\"} or {\"name\"} and \"effector\": withdraws that one binding; every other stays.",
         row: None,
     },
     OwnerRoute {

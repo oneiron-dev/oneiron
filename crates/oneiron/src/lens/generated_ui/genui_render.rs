@@ -1,9 +1,12 @@
 //! Flat render validation, segment framing and reassembly, and segment wire validators.
 
+use super::genui_app_catalog::catalog_version_or_kit;
 use super::genui_state::validate_generated_ui_interactivity;
 use super::{
     GENERATED_UI_WIRE_VERSION, GeneratedUiActionDeclaration, GeneratedUiCardLifecycle,
-    GeneratedUiCatalog, GeneratedUiStateSnapshot, LensElementRef, SelfUiBinding,
+    GeneratedUiCardReady, GeneratedUiCardStatePatch, GeneratedUiCardStateSnapshot,
+    GeneratedUiCatalog, GeneratedUiCatalogVersion, GeneratedUiStateSnapshot, GeneratedUiStream,
+    GeneratedUiStreamProfile, LensElementRef, SelfUiBinding,
 };
 use crate::lens::atom::{LensAtom, LensText};
 use crate::lens::validate::{
@@ -21,8 +24,14 @@ use std::collections::{HashMap, HashSet};
 pub struct GeneratedUiRender {
     pub protocol_version: u16,
     pub catalog: GeneratedUiCatalog,
+    /// The semver of the component set this render targets (FIX 9893), apart
+    /// from the lens body's kit and apps-contract stamps.
+    pub catalog_version: GeneratedUiCatalogVersion,
     pub card_id: LensRenderId,
     pub root: LensAtomId,
+    /// The whole card as text: what a reader that does not know this
+    /// `protocolVersion` shows (FIX 7967). The root node's `fallbackText`.
+    pub fallback_text: LensText,
     pub nodes: Vec<GeneratedUiNode>,
     pub actions: Vec<GeneratedUiActionDeclaration>,
     #[serde(rename = "$state")]
@@ -34,12 +43,14 @@ impl GeneratedUiRender {
     pub fn new(
         card_id: LensRenderId,
         catalog: GeneratedUiCatalog,
+        catalog_version: GeneratedUiCatalogVersion,
         root: LensAtomId,
         nodes: Vec<GeneratedUiNode>,
     ) -> Result<Self> {
         Self::interactive(
             card_id,
             catalog,
+            catalog_version,
             root,
             nodes,
             Vec::new(),
@@ -48,9 +59,11 @@ impl GeneratedUiRender {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn interactive(
         card_id: LensRenderId,
         catalog: GeneratedUiCatalog,
+        catalog_version: GeneratedUiCatalogVersion,
         root: LensAtomId,
         nodes: Vec<GeneratedUiNode>,
         actions: Vec<GeneratedUiActionDeclaration>,
@@ -60,7 +73,9 @@ impl GeneratedUiRender {
         let render = Self {
             protocol_version: GENERATED_UI_WIRE_VERSION,
             catalog,
+            catalog_version,
             card_id,
+            fallback_text: root_fallback_text(&nodes, &root),
             root,
             nodes,
             actions,
@@ -71,24 +86,19 @@ impl GeneratedUiRender {
         Ok(render)
     }
 
+    /// Today's full-model stream: `card_start`, one `card_element` per node,
+    /// then `card_state_update` with the whole data model.
     #[must_use]
     pub fn segments(&self) -> Vec<GeneratedUiSegment> {
         let mut segments = Vec::with_capacity(self.nodes.len() + 2);
-        let fallback_text = self
-            .nodes
-            .iter()
-            .find(|node| node.id == self.root)
-            .map_or_else(
-                || LensText::new("generated ui").expect("static fallback is valid"),
-                |node| node.fallback_text.clone(),
-            );
         segments.push(GeneratedUiSegment::CardStart(GeneratedUiCardStart {
             protocol_version: self.protocol_version,
-            catalog: self.catalog,
+            catalog: self.catalog.clone(),
+            catalog_version: self.catalog_version.clone(),
             card_id: self.card_id.clone(),
             root: self.root.clone(),
             node_count: self.nodes.len(),
-            fallback_text,
+            fallback_text: self.fallback_text.clone(),
         }));
         segments.extend(self.nodes.iter().cloned().map(|node| {
             GeneratedUiSegment::CardElement(Box::new(GeneratedUiCardElement {
@@ -104,13 +114,33 @@ impl GeneratedUiRender {
                 data_model: GeneratedUiDataModel {
                     root: self.root.clone(),
                     node_count: self.nodes.len(),
-                    catalog: self.catalog,
+                    catalog: self.catalog.clone(),
+                    catalog_version: self.catalog_version.clone(),
                     actions: self.actions.clone(),
                     state: self.state.clone(),
                     lifecycle: self.lifecycle.clone(),
                 },
             },
         ));
+        segments
+    }
+
+    /// The stream `profile` frames this render as (FIX 7968). The patch
+    /// profile sends today's full-model stream, then `card_ready`; the card
+    /// renders at its `card_state_update` as before, and ready waits on
+    /// nothing.
+    #[must_use]
+    pub fn segments_for_profile(
+        &self,
+        profile: GeneratedUiStreamProfile,
+    ) -> Vec<GeneratedUiSegment> {
+        let mut segments = self.segments();
+        if profile == GeneratedUiStreamProfile::Patch {
+            segments.push(GeneratedUiSegment::CardReady(GeneratedUiCardReady {
+                protocol_version: self.protocol_version,
+                card_id: self.card_id.clone(),
+            }));
+        }
         segments
     }
 
@@ -121,115 +151,16 @@ impl GeneratedUiRender {
             .collect()
     }
 
+    /// Reassemble a complete stream: exactly one `card_start`, its elements,
+    /// one `card_state_update`, then any `card_ready`, `card_state_patch` and
+    /// `card_state_snapshot` refinements, through the one incremental
+    /// [`GeneratedUiStream`] a partial reader also uses.
     pub fn from_segments(segments: &[GeneratedUiSegment]) -> Result<Self> {
-        let Some((start_segment, rest)) = segments.split_first() else {
-            return Err(Error::InvalidConfig(
-                "generated-ui segment stream must contain card_start".to_string(),
-            ));
-        };
-        let GeneratedUiSegment::CardStart(start) = start_segment else {
-            return Err(Error::InvalidConfig(
-                "generated-ui segment stream must start with card_start".to_string(),
-            ));
-        };
-        start.validate()?;
-
-        // The declared count is the caller's; capacity grows with the
-        // elements that actually arrive.
-        let mut nodes = Vec::new();
-        let mut interactivity = None;
-
-        for segment in rest {
-            match segment {
-                GeneratedUiSegment::CardStart(_) => {
-                    return Err(Error::InvalidConfig(
-                        "generated-ui segment stream must contain exactly one card_start"
-                            .to_string(),
-                    ));
-                }
-                GeneratedUiSegment::CardElement(element) => {
-                    if interactivity.is_some() {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui card_element segments must precede card_state_update"
-                                .to_string(),
-                        ));
-                    }
-                    // Refuse the first element past the declared count, before it is
-                    // validated or copied, rather than after the whole stream.
-                    if nodes.len() >= start.node_count {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui card_element count must match card_start node count"
-                                .to_string(),
-                        ));
-                    }
-                    validate_generated_ui_protocol_version(element.protocol_version)?;
-                    if element.card_id != start.card_id {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui card_element card_id must match card_start".to_string(),
-                        ));
-                    }
-                    element.node.validate()?;
-                    nodes.push(element.node.clone());
-                }
-                GeneratedUiSegment::CardStateUpdate(state) => {
-                    if interactivity.is_some() {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui segment stream must contain exactly one card_state_update"
-                                .to_string(),
-                        ));
-                    }
-                    state.validate()?;
-                    if state.card_id != start.card_id {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui card_state_update card_id must match card_start"
-                                .to_string(),
-                        ));
-                    }
-                    if state.data_model.root != start.root {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui card_state_update root must match card_start".to_string(),
-                        ));
-                    }
-                    if state.data_model.catalog != start.catalog {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui card_state_update catalog must match card_start"
-                                .to_string(),
-                        ));
-                    }
-                    if state.data_model.node_count != start.node_count {
-                        return Err(Error::InvalidConfig(
-                            "generated-ui card_state_update node count must match card_start"
-                                .to_string(),
-                        ));
-                    }
-                    interactivity = Some(&state.data_model);
-                }
-            }
+        let mut stream = GeneratedUiStream::new();
+        for segment in segments {
+            stream.push(segment.clone())?;
         }
-
-        let Some(data_model) = interactivity else {
-            return Err(Error::InvalidConfig(
-                "generated-ui segment stream must end with card_state_update".to_string(),
-            ));
-        };
-        if nodes.len() != start.node_count {
-            return Err(Error::InvalidConfig(
-                "generated-ui card_element count must match card_start node count".to_string(),
-            ));
-        }
-
-        let render = Self {
-            protocol_version: start.protocol_version,
-            catalog: start.catalog,
-            card_id: start.card_id.clone(),
-            root: start.root.clone(),
-            nodes,
-            actions: data_model.actions.clone(),
-            state: data_model.state.clone(),
-            lifecycle: data_model.lifecycle.clone(),
-        };
-        render.validate()?;
-        Ok(render)
+        stream.into_render()
     }
 
     pub(in crate::lens) fn validate(&self) -> Result<()> {
@@ -240,6 +171,7 @@ impl GeneratedUiRender {
             )));
         }
         self.lifecycle.validate()?;
+        validate_required_lens_text("generated-ui render fallbackText", &self.fallback_text)?;
         if self.nodes.is_empty() {
             return Err(Error::InvalidConfig(
                 "generated-ui flat tree must contain at least one node".to_string(),
@@ -372,8 +304,12 @@ impl<'de> Deserialize<'de> for GeneratedUiRender {
         struct GeneratedUiRenderWire {
             protocol_version: u16,
             catalog: GeneratedUiCatalog,
+            #[serde(default)]
+            catalog_version: Option<GeneratedUiCatalogVersion>,
             card_id: LensRenderId,
             root: LensAtomId,
+            #[serde(default)]
+            fallback_text: Option<LensText>,
             nodes: Vec<GeneratedUiNode>,
             #[serde(default)]
             actions: Vec<GeneratedUiActionDeclaration>,
@@ -383,10 +319,16 @@ impl<'de> Deserialize<'de> for GeneratedUiRender {
         }
 
         let wire = GeneratedUiRenderWire::deserialize(deserializer)?;
+        let catalog_version = catalog_version_or_kit(&wire.catalog, wire.catalog_version)
+            .map_err(de::Error::custom)?;
         let render = Self {
             protocol_version: wire.protocol_version,
             catalog: wire.catalog,
+            catalog_version,
             card_id: wire.card_id,
+            fallback_text: wire
+                .fallback_text
+                .unwrap_or_else(|| root_fallback_text(&wire.nodes, &wire.root)),
             root: wire.root,
             nodes: wire.nodes,
             actions: wire.actions,
@@ -414,8 +356,19 @@ pub struct GeneratedUiNode {
     pub child_refs: Vec<LensAtomId>,
 }
 
+/// The root node's `fallbackText`: the whole card as text.
+fn root_fallback_text(nodes: &[GeneratedUiNode], root: &LensAtomId) -> LensText {
+    nodes
+        .iter()
+        .find(|node| &node.id == root)
+        .map_or_else(
+            || LensText::new("generated ui").expect("static fallback is valid"),
+            |node| node.fallback_text.clone(),
+        )
+}
+
 impl GeneratedUiNode {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         validate_required_lens_text("generated-ui node fallbackText", &self.fallback_text)?;
         self.atom.validate()
     }
@@ -427,6 +380,12 @@ pub enum GeneratedUiSegment {
     CardStart(GeneratedUiCardStart),
     CardElement(Box<GeneratedUiCardElement>),
     CardStateUpdate(GeneratedUiCardStateUpdate),
+    /// The patch profile's end of generation (FIX 7968).
+    CardReady(GeneratedUiCardReady),
+    /// An RFC-6902 refinement of the card, its nodes keyed by stable id.
+    CardStatePatch(GeneratedUiCardStatePatch),
+    /// The whole card again, replacing what the reader holds.
+    CardStateSnapshot(Box<GeneratedUiCardStateSnapshot>),
 }
 
 impl GeneratedUiSegment {
@@ -435,6 +394,22 @@ impl GeneratedUiSegment {
             Self::CardStart(payload) => payload.validate(),
             Self::CardElement(payload) => payload.validate(),
             Self::CardStateUpdate(payload) => payload.validate(),
+            Self::CardReady(payload) => payload.validate(),
+            Self::CardStatePatch(payload) => payload.validate(),
+            Self::CardStateSnapshot(payload) => payload.validate(),
+        }
+    }
+
+    /// The card this segment belongs to.
+    #[must_use]
+    pub fn card_id(&self) -> &LensRenderId {
+        match self {
+            Self::CardStart(payload) => &payload.card_id,
+            Self::CardElement(payload) => &payload.card_id,
+            Self::CardStateUpdate(payload) => &payload.card_id,
+            Self::CardReady(payload) => &payload.card_id,
+            Self::CardStatePatch(payload) => &payload.card_id,
+            Self::CardStateSnapshot(payload) => &payload.card_id,
         }
     }
 
@@ -462,6 +437,12 @@ impl<'de> Deserialize<'de> for GeneratedUiSegment {
             Element(Box<GeneratedUiCardElement>),
             #[serde(rename = "card_state_update")]
             StateUpdate(GeneratedUiCardStateUpdate),
+            #[serde(rename = "card_ready")]
+            Ready(GeneratedUiCardReady),
+            #[serde(rename = "card_state_patch")]
+            StatePatch(GeneratedUiCardStatePatch),
+            #[serde(rename = "card_state_snapshot")]
+            StateSnapshot(Box<GeneratedUiCardStateSnapshot>),
         }
 
         let wire = GeneratedUiSegmentWire::deserialize(deserializer)?;
@@ -469,6 +450,9 @@ impl<'de> Deserialize<'de> for GeneratedUiSegment {
             GeneratedUiSegmentWire::Start(payload) => Self::CardStart(payload),
             GeneratedUiSegmentWire::Element(payload) => Self::CardElement(payload),
             GeneratedUiSegmentWire::StateUpdate(payload) => Self::CardStateUpdate(payload),
+            GeneratedUiSegmentWire::Ready(payload) => Self::CardReady(payload),
+            GeneratedUiSegmentWire::StatePatch(payload) => Self::CardStatePatch(payload),
+            GeneratedUiSegmentWire::StateSnapshot(payload) => Self::CardStateSnapshot(payload),
         };
         segment.validate().map_err(de::Error::custom)?;
         Ok(segment)
@@ -480,6 +464,7 @@ impl<'de> Deserialize<'de> for GeneratedUiSegment {
 pub struct GeneratedUiCardStart {
     pub protocol_version: u16,
     pub catalog: GeneratedUiCatalog,
+    pub catalog_version: GeneratedUiCatalogVersion,
     pub card_id: LensRenderId,
     pub root: LensAtomId,
     pub node_count: usize,
@@ -487,7 +472,7 @@ pub struct GeneratedUiCardStart {
 }
 
 impl GeneratedUiCardStart {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         validate_generated_ui_protocol_version(self.protocol_version)?;
         validate_generated_ui_node_count("generated-ui segment node count", self.node_count)?;
         validate_required_lens_text("generated-ui segment fallbackText", &self.fallback_text)
@@ -504,6 +489,8 @@ impl<'de> Deserialize<'de> for GeneratedUiCardStart {
         struct GeneratedUiCardStartWire {
             protocol_version: u16,
             catalog: GeneratedUiCatalog,
+            #[serde(default)]
+            catalog_version: Option<GeneratedUiCatalogVersion>,
             card_id: LensRenderId,
             root: LensAtomId,
             node_count: usize,
@@ -511,9 +498,12 @@ impl<'de> Deserialize<'de> for GeneratedUiCardStart {
         }
 
         let wire = GeneratedUiCardStartWire::deserialize(deserializer)?;
+        let catalog_version = catalog_version_or_kit(&wire.catalog, wire.catalog_version)
+            .map_err(de::Error::custom)?;
         let payload = Self {
             protocol_version: wire.protocol_version,
             catalog: wire.catalog,
+            catalog_version,
             card_id: wire.card_id,
             root: wire.root,
             node_count: wire.node_count,
@@ -533,7 +523,7 @@ pub struct GeneratedUiCardElement {
 }
 
 impl GeneratedUiCardElement {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         validate_generated_ui_protocol_version(self.protocol_version)?;
         self.node.validate()
     }
@@ -572,7 +562,7 @@ pub struct GeneratedUiCardStateUpdate {
 }
 
 impl GeneratedUiCardStateUpdate {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         validate_generated_ui_protocol_version(self.protocol_version)?;
         self.data_model.validate()
     }
@@ -608,6 +598,7 @@ pub struct GeneratedUiDataModel {
     pub root: LensAtomId,
     pub node_count: usize,
     pub catalog: GeneratedUiCatalog,
+    pub catalog_version: GeneratedUiCatalogVersion,
     pub actions: Vec<GeneratedUiActionDeclaration>,
     #[serde(rename = "$state")]
     pub state: GeneratedUiStateSnapshot,
@@ -637,6 +628,8 @@ impl<'de> Deserialize<'de> for GeneratedUiDataModel {
             node_count: usize,
             catalog: GeneratedUiCatalog,
             #[serde(default)]
+            catalog_version: Option<GeneratedUiCatalogVersion>,
+            #[serde(default)]
             actions: Vec<GeneratedUiActionDeclaration>,
             #[serde(rename = "$state", default)]
             state: GeneratedUiStateSnapshot,
@@ -644,10 +637,13 @@ impl<'de> Deserialize<'de> for GeneratedUiDataModel {
         }
 
         let wire = GeneratedUiDataModelWire::deserialize(deserializer)?;
+        let catalog_version = catalog_version_or_kit(&wire.catalog, wire.catalog_version)
+            .map_err(de::Error::custom)?;
         let data_model = Self {
             root: wire.root,
             node_count: wire.node_count,
             catalog: wire.catalog,
+            catalog_version,
             actions: wire.actions,
             state: wire.state,
             lifecycle: wire.lifecycle,

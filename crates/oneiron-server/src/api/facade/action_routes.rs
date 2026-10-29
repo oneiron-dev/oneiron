@@ -41,12 +41,14 @@ use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use oneiron::authority::ActSurface;
-use oneiron::code_run::SelfDispatchOutcome;
+use oneiron::code_run::{SelfDispatchOutcome, SelfFailedResult};
 use oneiron::code_run::actions::{ActionArgument, ActionDispatch, ActionJson, AgentActionCall};
 use oneiron::code_run::live_run::{LiveRunCredential, is_live_run_verb};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::lens::{GeneratedUiValidatedAction, SelfUiActionId};
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MemoryError};
+use oneiron::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE, MemoryError,
+};
 use oneiron::task_verb::sdk::{AgentVerb, RunVerb};
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde::Deserialize;
@@ -566,15 +568,31 @@ pub(crate) async fn execute_facade_row<T: serde::Serialize>(
         SelfDispatchOutcome::Denied(denied) => Err(match dispatch.refusal {
             Some(row) => {
                 let suggestions: Vec<&str> = row.suggestions.iter().map(String::as_str).collect();
-                MemoryError::new(&row.code, row.message, &suggestions)
+                let mut refusal = MemoryError::new(&row.code, row.message, &suggestions);
+                refusal.reason_codes = row.reason_codes;
+                refusal
             }
             None => MemoryError::new(&denied.outcome, "the action was refused", &[]),
         }
         .into()),
-        SelfDispatchOutcome::Failed(failed) => {
-            Err(MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[]).into())
-        }
+        SelfDispatchOutcome::Failed(failed) => Err(failed_outcome(row.as_str(), failed).into()),
         _ => Err(internal()),
+    }
+}
+
+/// The error an action of `verb` answers for its `Failed` outcome (FIX
+/// 5351). A live-run row fails on its run's own state (a team, a workflow, a
+/// planner, a fold the run stands in), so its call answers `INVALID_STATE`
+/// (409) with the run's words; any other row's failure stays `INTERNAL`.
+pub(super) fn failed_outcome(verb: &str, failed: SelfFailedResult) -> MemoryError {
+    if is_live_run_verb(verb) {
+        MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            failed.error,
+            &["Read the run's state, then call again once it allows the act."],
+        )
+    } else {
+        MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[])
     }
 }
 

@@ -1,6 +1,7 @@
 //! The usage repair doors (FIX 6476): the stored usage events of this
-//! server's metering scope that no longer decode, and the removal of one
-//! reviewed row by the hash of its bytes. HTTP, MCP and the SDK reach the
+//! server's metering scope that no longer decode, the removal of one
+//! reviewed row by the hash of its bytes, and the receipts those removals
+//! kept (FIX 7036). HTTP, MCP and the SDK reach the
 //! engine writer the owner's routes reach, which admits the caller's own
 //! owner proof or an agent's own Grant that names the verb, in the write
 //! itself. The scope is the vault this server's meter is bound to, never a
@@ -13,8 +14,8 @@ use std::sync::Arc;
 use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::usage_repair::{
-    UndecodableUsageList, UsageRepairListRequest, UsageRepairReceipt, UsageRepairRemoveRequest,
-    UsageRepairVerb,
+    UndecodableUsageList, UsageRepairListRequest, UsageRepairReceipt, UsageRepairReceiptList,
+    UsageRepairReceiptsRequest, UsageRepairRemoveRequest, UsageRepairVerb,
 };
 use oneiron::memory::{Memory, MemoryResult};
 
@@ -124,6 +125,26 @@ pub(crate) async fn vault_usage_events_remove_undecodable(
             server
                 .usage_ledger
                 .remove_undecodable_event(&memory, owner, scope, surface, &input)
+        },
+    )
+    .await
+}
+
+/// `vault.usage.repair.receipts` (FIX 7036): every receipt a removal kept for
+/// the metering scope, under the repair's own admission for this verb.
+pub(crate) async fn vault_usage_repair_receipts(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: UsageRepairReceiptsRequest,
+) -> Listed<UsageRepairReceiptList> {
+    repair(
+        server,
+        auth,
+        UsageRepairVerb::Receipts,
+        |server, memory, owner, scope| {
+            server
+                .usage_ledger
+                .list_repair_receipts(&memory, owner, scope)
         },
     )
     .await

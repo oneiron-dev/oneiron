@@ -80,12 +80,14 @@ use crate::server::SyncServer;
 
 mod pad_access;
 mod root_doors;
+mod secret_anchor;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/roots/requests/run", post(run))
         .merge(pad_access::routes())
         .merge(root_doors::routes())
+        .merge(secret_anchor::routes())
 }
 
 /// The material for one pending root request, as the target's caller

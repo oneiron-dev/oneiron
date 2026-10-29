@@ -65,9 +65,6 @@ impl HostSelfDispatcher<'_> {
         let output = serde_json::to_value(WorldPrivacySetOutput::try_from(&outcome)?)
             .map_err(|_| Error::InvariantViolation("world privacy answer encode"))?;
         // The answer names ids only, and serves no vault rows.
-        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
-            output,
-            rows: Some(Vec::new()),
-        }))
+        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(output, Some(Vec::new()))))
     }
 }

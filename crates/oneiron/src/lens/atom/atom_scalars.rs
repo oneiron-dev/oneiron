@@ -34,15 +34,11 @@ pub const GENERATED_LENS_ATOM_KINDS: &[&str] = &[
     "self_ui",
     "media",
     "result_set",
+    "component",
 ];
 
 /// Wire name of the selectable result-set atom minted at catalog version 3.
 pub const RESULT_SET_ATOM_KIND: &str = "result_set";
-
-/// The single rejection a surface below catalog 3 — or one whose primitive list omits
-/// [`GeneratedUiPrimitive::ResultSet`](crate::lens::GeneratedUiPrimitive::ResultSet) — gets. A result set never lowers to fallback
-/// text: a degraded selection surface would offer rows the host cannot resolve.
-pub const LENS_RESULT_SET_UNSUPPORTED: &str = "result_set requires lens atom catalog version 3";
 
 pub(in crate::lens) const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
 

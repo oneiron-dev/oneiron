@@ -58,6 +58,7 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         pending: None,
         retry_after: None,
         resets_at: Vec::new(),
+        reason_codes: Vec::new(),
     }
 }
 
@@ -320,13 +321,18 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
                     .collect::<Result<std::collections::BTreeSet<_>, OneironError>>()
             })
             .transpose()?;
+        // The generated record shares the engine's wire shape.
+        let assertions: Option<engine::WitnessAssertions> = self
+            .assertions
+            .map(|assertions| lower_record("vault.witness", assertions))
+            .transpose()?;
         Ok(engine::WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             thread_audience,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
-            assertions: Default::default(),
+            assertions: assertions.unwrap_or_default(),
         })
     }
 }

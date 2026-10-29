@@ -112,6 +112,12 @@ pub(super) struct FreeTimePolicyRecord {
     /// it with its act, so a record's list is a prefix of the list of every
     /// record that follows it.
     pub(super) acts: Vec<[u8; 32]>,
+    /// Where the owner said the clear this row witnesses (FIX 5721), while
+    /// no policy is in force; `None` once a set follows it (the policy's own
+    /// `surface` says where that was said), and once the linked machine it
+    /// was said on was erased. Audit only; no rule reads it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) clear_surface: Option<ActSurface>,
 }
 
 impl FreeTimePolicyRecord {
@@ -132,7 +138,11 @@ impl FreeTimePolicyRecord {
         witness.update(acts.last().unwrap_or(&[0; 32]));
         witness.update(&act);
         acts.push(*witness.finalize().as_bytes());
-        Ok(Self { policy, acts })
+        Ok(Self {
+            policy,
+            acts,
+            clear_surface: None,
+        })
     }
 }
 
@@ -306,7 +316,8 @@ impl Vault {
     /// revision `expected_revision`: its open cycle ends now, no new cycle
     /// opens, and the agent goes back to its nightly dreaming. Calls already
     /// made settle normally. Clearing a policy that is not there, at
-    /// revision 0, does nothing.
+    /// revision 0, does nothing. The row that witnesses the clear keeps
+    /// `surface`, where the owner said so (FIX 5721): audit only.
     ///
     /// # Errors
     /// A proof that does not hold here, [`Error::ConcurrentWrite`] for a
@@ -314,6 +325,7 @@ impl Vault {
     pub fn clear_free_time_policy(
         &self,
         owner: &AuthenticatedOwner,
+        surface: Option<ActSurface>,
         agent: EntityId,
         expected_revision: u64,
     ) -> Result<()> {
@@ -327,7 +339,8 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             // The row stays as the witness of this clear (FIX 5661), with no
             // policy in force.
-            let record = FreeTimePolicyRecord::after(Some(record), agent, None, actor, now)?;
+            let mut record = FreeTimePolicyRecord::after(Some(record), agent, None, actor, now)?;
+            record.clear_surface = surface;
             POLICY.put(&self.store, txn, &agent, &record)?;
             super::cycle::close_open_cycle_in_txn(self, txn, agent, now)?;
             // The clock goes with the policy: a later policy starts at its

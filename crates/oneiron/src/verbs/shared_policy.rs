@@ -1,7 +1,8 @@
 //! The shared-act policy rows a host door answers (DOOR-129):
 //! `vault.shared.policy.get` reads every row a live Owner may inspect,
 //! `.propose` proposes one row change, `.answer` approves or vetoes it under
-//! the answerer's own credential and `.change` reads one change back. Each fn
+//! the answerer's own credential, `.change` reads one change back and
+//! `.changes` lists every change of the vault (FIX 4288). Each fn
 //! passes the engine exactly what it asks for; no input names another
 //! Owner, a time or an approval count.
 use serde::{Deserialize, Serialize};
@@ -85,4 +86,14 @@ pub fn read_shared_act_policy_change(
     input: SharedActPolicyChangeRequest,
 ) -> MemoryResult<SharedActPolicyChange> {
     Ok(vault.shared_act_policy_change(owner, &input.change_id)?)
+}
+
+/// `vault.shared.policy.changes` (FIX 4288): every proposed change of the
+/// vault's policy rows and its answers, pending, applied, vetoed or stale.
+pub fn read_shared_act_policy_changes(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: SharedVaultRequest,
+) -> MemoryResult<Vec<SharedActPolicyChange>> {
+    Ok(vault.shared_act_policy_changes(owner, input.vault_id)?)
 }

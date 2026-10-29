@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
+use super::VaultUnlockArgs;
 use crate::config::ServeArgs;
 
 /// A stopped vault's world recovery kit.
@@ -197,6 +198,11 @@ pub struct RecoveryKitConfirmArgs {
     /// yours under the new root, by its 32-hex id. Repeat for each.
     #[arg(long, value_name = "MACHINE")]
     pub carry: Vec<String>,
+
+    /// How the vault key unlocks, so confirm can replace its world-kit wrap
+    /// (FIX 2201): this install's keystore by default.
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
 
     #[command(flatten)]
     pub serve: ServeArgs,

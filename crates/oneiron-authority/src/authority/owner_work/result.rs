@@ -23,7 +23,17 @@ const REGISTER_CHECK_KEYS: [&str; 3] = [OP_KEY_KIND, "reason", "refs"];
 /// Why an executor refused a request. Closed and value-free: each reason
 /// names a fact the executor read in its own transaction.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerWorkRefusal {
@@ -112,7 +122,17 @@ impl OwnerWorkRefusal {
 /// Why a custody register's holder took the record without a manifest
 /// check. Closed and value-free: each reason names what the holder found.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CustodyUncheckedReason {
@@ -172,7 +192,16 @@ impl CustodyUncheckedReason {
 /// its enacted result (FIX 5334). Manifest refs and a closed reason only.
 /// `Clone`, not `Copy`: a ref is text.
 #[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum CustodyRegisterCheck {

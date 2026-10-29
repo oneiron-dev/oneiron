@@ -7,10 +7,9 @@ use std::collections::HashSet;
 use crate::{Error, Result};
 
 use super::atom::{
-    GeneratedUiResultSetSelectAll, LENS_RESULT_SET_UNSUPPORTED, LensAtom, LensNode, LensText,
-    LensTextSpan, TextBlockAtom,
+    GeneratedUiResultSetSelectAll, LensAtom, LensNode, LensText, LensTextSpan, TextBlockAtom,
 };
-use super::generated_ui::{GENERATED_UI_WIRE_VERSION, GeneratedUiSurfaceCapabilities};
+use super::generated_ui::GENERATED_UI_WIRE_VERSION;
 use super::self_ui::SelfUiOption;
 use super::wire_ids::SelfUiOptionValue;
 
@@ -123,27 +122,13 @@ pub(super) fn fallback_lens_text(kind: &'static str, value: String) -> LensText 
     LensText::new(value).unwrap_or_else(|_| LensText::new(kind).expect("static fallback is valid"))
 }
 
-pub(super) fn compile_atom_for_surface(
-    atom: &LensAtom,
-    fallback_text: &LensText,
-    surface: &GeneratedUiSurfaceCapabilities,
-) -> Result<LensAtom> {
-    if surface.supports(atom.primitive()) {
-        return Ok(atom.clone());
-    }
-
-    // A result set is the one atom that must not silently lower: a text fallback would
-    // show rows the surface cannot select and an action bar the host would never honor.
-    // The rejection lands before any row, action bar, or handle is serialized.
-    if matches!(atom, LensAtom::ResultSet(_)) {
-        return Err(Error::InvalidConfig(
-            LENS_RESULT_SET_UNSUPPORTED.to_string(),
-        ));
-    }
-
-    Ok(LensAtom::TextBlock(TextBlockAtom {
+/// The text block an atom lowers to on a surface that does not draw it: its
+/// node's `fallbackText` (ARCH-0048 G3 compile-to-lowest). A result set
+/// lowers like any other atom (FIX 9892).
+pub(super) fn fallback_text_atom(fallback_text: &LensText) -> LensAtom {
+    LensAtom::TextBlock(TextBlockAtom {
         spans: vec![LensTextSpan::Literal(fallback_text.clone())],
-    }))
+    })
 }
 
 pub(super) fn validate_self_ui_options(context: &str, options: &[SelfUiOption]) -> Result<()> {

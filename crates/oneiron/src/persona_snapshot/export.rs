@@ -201,6 +201,8 @@ impl crate::Vault {
             stamp: compile.stamp.clone(),
             included_row_ids,
             struck_row_ids,
+            artifact_fingerprint: record.artifact_fingerprint,
+            omitted_refs: record.omitted_refs,
         })
     }
 

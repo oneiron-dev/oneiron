@@ -134,16 +134,22 @@ pub(crate) enum CoreRunTreeInterventionEffect {
     Proposed,
 }
 
-/// Runtime attempt tree response.
+/// Runtime attempt tree response, as its flat table (FIX 11107): every
+/// attempt once, in pre-order, with the roots and each attempt's children
+/// named by index into `nodes`. The SDK reads the same table.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeResponse {
-    /// Root attempts after non-mutating repair of missing parents or cycles.
-    roots: Vec<CoreRunTreeNode>,
+    /// Every attempt in the tree, once, in pre-order.
+    nodes: Vec<CoreRunTreeNode>,
+    /// Root attempts after non-mutating repair of missing parents or cycles,
+    /// as indexes into `nodes`, in order.
+    #[schema(example = json!([0]))]
+    roots: Vec<u64>,
     /// Repairs applied while rendering the tree from queue rows.
     repairs: Vec<CoreRunTreeRepair>,
 }
 
-/// One runtime attempt in the rendered tree.
+/// One runtime attempt in the rendered tree's table.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeNode {
     /// Hex-encoded attempt id.
@@ -183,9 +189,10 @@ pub(crate) struct CoreRunTreeNode {
     failure: Option<CoreRunTreeFailure>,
     /// Lifecycle/operator events projected from the backing queue row.
     events: Vec<CoreRunTreeEvent>,
-    /// Child attempts ordered deterministically by creation time and attempt id.
-    #[schema(no_recursion)]
-    children: Vec<CoreRunTreeNode>,
+    /// Child attempts, as indexes into the response's `nodes`, ordered
+    /// deterministically by creation time and attempt id.
+    #[schema(example = json!([1, 2]))]
+    children: Vec<u64>,
 }
 
 /// Surface lifecycle state for a runtime attempt.
@@ -314,7 +321,7 @@ pub(crate) async fn core_run_tree(
         core_engine_error("core run tree read failed", error)
     })?;
 
-    // FIX 10067: written on a heap stack, however deep the tree.
+    // FIX 11107: the flat table, however deep the tree.
     let body = encode::run_tree_json(tree)
         .map_err(|_| ApiError::internal_server_error("run tree serialization failed"))?;
     Ok(encode::raw_json(body))
@@ -455,7 +462,7 @@ pub(crate) async fn core_run_tree_intervene(
         None => None,
     };
 
-    // FIX 10067: the snapshot is written on a heap stack, however deep.
+    // FIX 11107: the snapshot is the flat table, however deep.
     let response = CoreRunTreeInterventionResponse {
         attempt_id: response_attempt_id,
         run_id,

@@ -178,10 +178,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend(listed.iter().flatten().copied());
-        let answer = AgentVerbAnswer {
-            output,
-            rows: listed,
-        };
+        let answer = AgentVerbAnswer::new(output, listed);
         drop(kept);
         Ok(Ok(answer))
     }
@@ -223,10 +220,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         };
         Ok(match receiver.recv() {
             Ok(Ok(reply)) => match serde_json::to_value(reply) {
-                Ok(output) => Ok(AgentVerbAnswer {
-                    output,
-                    rows: Some(Vec::new()),
-                }),
+                Ok(output) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
                 Err(_) => Err(refusal("engine_error")),
             },
             Ok(Err(error)) => Err(refusal(&error.code)),

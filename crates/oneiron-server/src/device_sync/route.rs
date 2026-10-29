@@ -9,6 +9,7 @@
 //! stays in the vault for the next connection. Nothing here elects, judges
 //! liveness or waits for a route.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oneiron::EntityId;
@@ -19,6 +20,28 @@ use tokio::sync::watch;
 /// The routes a connection's committed elections publish, when it has a
 /// home-node topology.
 pub(super) type Routes = Option<watch::Receiver<Option<HomeRoute>>>;
+
+/// The connection's home-node topology: the one named home, as this
+/// device's own candidate beside the vault's authorized candidates, reached
+/// at `url`, so residence reads go there while it is the elected home. It
+/// is the sync URL itself, so residence reads ride the same mesh dialer.
+/// The link's configuration names `node` and `machine` together, so the
+/// host binds the node to that MACHINE (FIX 11154): until the home's own
+/// signed declaration names the node, its route still names the MACHINE.
+pub(super) fn home_topology(
+    node: u64,
+    machine: EntityId,
+    url: &str,
+) -> oneiron::sync::HomeNodeTopology {
+    let home = super::home_candidate(node);
+    let topology = oneiron::sync::HomeNodeTopology::new(vec![home]);
+    topology.publish_with_bindings(
+        vec![home],
+        BTreeMap::from([(node, url.to_owned())]),
+        BTreeMap::from([(node, machine)]),
+    );
+    topology
+}
 
 /// The home each dial targets: the routed MACHINE when it is another machine
 /// with a paired mesh address here, else `configured`. `local` is this
