@@ -89,9 +89,7 @@ pub(crate) async fn vault_free_time_policy_set_as(
         auth,
         caller,
         "vault.free_time.policy.set_as",
-        move |_, _, memory| {
-            oneiron::task_verb::sdk::free_time_policy_set_as_agent(&memory, input)
-        },
+        move |_, _, memory| oneiron::task_verb::sdk::free_time_policy_set_as_agent(&memory, input),
     )
     .await
 }
