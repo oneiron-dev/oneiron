@@ -3,6 +3,7 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::memory::WitnessAssertions;
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
 use super::on_record::Landing;
@@ -113,11 +114,8 @@ impl OffRecordSession<'_> {
     /// capability so a retry can create-or-verify one TURN and one MESSAGE
     /// without weakening `OffRecordGuestTurnRefRejected`. A `result` MESSAGE
     /// carries its typed attachment (FIX 365).
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "every parameter is a host-bound witness axis; the separate function is the turn-ref capability"
-    )]
-    pub(crate) fn witness_host_executor_turn(
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn witness_host_executor_turn_sourced(
         &self,
         container: &EntityId,
         kind: ExecutorUtterance,
@@ -129,8 +127,9 @@ impl OffRecordSession<'_> {
         turn_ref: EntityId,
         route: &SessionWriteRoute,
         actor: crate::WriteActor,
+        assertions: WitnessAssertions,
     ) -> Result<crate::memory::WitnessReceipt> {
-        self.witness_bound_executor_turn(
+        self.witness_bound_executor_turn_sourced(
             container,
             kind,
             text,
@@ -141,6 +140,7 @@ impl OffRecordSession<'_> {
             Some(turn_ref),
             route,
             actor,
+            assertions,
         )
     }
 
@@ -160,6 +160,36 @@ impl OffRecordSession<'_> {
         host_turn_ref: Option<EntityId>,
         route: &SessionWriteRoute,
         actor: crate::WriteActor,
+    ) -> Result<crate::memory::WitnessReceipt> {
+        self.witness_bound_executor_turn_sourced(
+            container,
+            kind,
+            text,
+            result,
+            occurred_at,
+            order,
+            message_id,
+            host_turn_ref,
+            route,
+            actor,
+            WitnessAssertions::default(),
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn witness_bound_executor_turn_sourced(
+        &self,
+        container: &EntityId,
+        kind: ExecutorUtterance,
+        text: &str,
+        result: Option<crate::code_run::ResultSpeech<'_>>,
+        occurred_at: u64,
+        order: u32,
+        message_id: Option<EntityId>,
+        host_turn_ref: Option<EntityId>,
+        route: &SessionWriteRoute,
+        actor: crate::WriteActor,
+        assertions: WitnessAssertions,
     ) -> Result<crate::memory::WitnessReceipt> {
         route.require_recording(&self.session_ref)?;
         let memory = self.vault.memory(actor.entity_ref(), actor.actor_class());
@@ -181,7 +211,7 @@ impl OffRecordSession<'_> {
                 quote: None,
             }],
             occurred_at,
-            assertions: Default::default(),
+            assertions,
         };
         // The run's own checks, first in each transaction the witness opens
         // (its container probes and the one that lands the turn): its
