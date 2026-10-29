@@ -78,6 +78,51 @@ pub(crate) async fn run_current_board(
     })
 }
 
+/// [`super::board_observations::ride`] for a pumped run's carrier (FIX
+/// 2135): the session's changed line, read under the agent's own lane,
+/// rides `frame`, and the session moves past it as the frame is delivered.
+/// Beside the frame come the rows that line names. A session that cannot
+/// be read lets the frame ride as it was queued, as a connector's does.
+pub(crate) async fn ride_run_carrier(
+    server: &Arc<SyncServer>,
+    actor: oneiron::WriteActor,
+    connection: &oneiron::context_board::StreamConnectionId,
+    frame: oneiron::context_board::BoardStreamFrame,
+) -> (
+    oneiron::context_board::BoardStreamFrame,
+    Vec<oneiron::EntityId>,
+) {
+    let mut queued = frame.clone();
+    if let oneiron::context_board::FrameKind::Delta(rows) = &mut queued.kind {
+        rows.retain(|row| row.key != "changed");
+    }
+    let Ok(read) = run_lane(server, actor) else {
+        return (frame, Vec::new());
+    };
+    let Ok(packs) = run_visible_pack_inventory(server, &read) else {
+        return (frame, Vec::new());
+    };
+    let Ok((_, changes, _)) =
+        super::board_observations::run_state(server, actor, connection, &read, &packs).await
+    else {
+        return (frame, Vec::new());
+    };
+    let ridden = changes
+        .ride(Some(queued))
+        .expect("rider preserves an existing frame");
+    super::board_observations::run_delivered(
+        server,
+        actor,
+        connection,
+        &changes,
+        false,
+        ridden.epoch,
+    )
+    .await;
+    let rows = crate::device_local::changed_line_rows(&changes).collect();
+    (ridden, rows)
+}
+
 /// The hook blocks that reach a pumped run's board: those addressed to no
 /// session, since the run's host door names none, each kept to the refs the
 /// agent's own lane reads (OF-579).

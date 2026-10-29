@@ -11,6 +11,7 @@
 //! response owned by those same rows, so their erase retires every image's
 //! copy too, and a retired memo row leaves nothing behind.
 use super::evidence::{VerdictMemoKey, VerdictMemoRow};
+use super::health::HEALTH;
 use super::storage::MEMOS;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -57,10 +58,10 @@ pub(crate) fn memo_carriage(value: &[u8]) -> ResponseScan {
 }
 
 /// The erase of `source` takes every memo it is a source of, its `why`
-/// included, in the erase's own transaction at both delete doors; a memo
-/// that does not know its sources whole goes too. A row that does not
-/// decode stays as it is (FIX 5736); images' copies retire through the rows'
-/// obligations.
+/// included, and its health row, in the erase's own transaction at both
+/// delete doors; a memo that does not know its sources whole goes too. A
+/// row that does not decode stays as it is (FIX 5736); images' copies
+/// retire through the rows' obligations.
 ///
 /// # Errors
 ///
@@ -93,5 +94,6 @@ pub(crate) fn erase_memos_for_source_in_txn(
         };
         MEMOS.delete(store, wtxn, &key)?;
     }
+    HEALTH.delete(store, wtxn, source)?;
     Ok(())
 }

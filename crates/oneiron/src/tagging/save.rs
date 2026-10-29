@@ -64,6 +64,9 @@ pub(super) struct Saved {
     pub(super) unresolved_context_links: usize,
     /// Speaker links that named no one person.
     pub(super) unresolved_speaker_links: usize,
+    /// Whether this save replaced the turn's set: `false` when the set it
+    /// held already carried this answer's envelope and was kept.
+    pub(super) retagged: bool,
 }
 
 /// The envelope of a tag set read from `content_hash` by `made_by`, of the
@@ -138,6 +141,7 @@ pub(super) fn save_in_txn(
                 .count()
         };
         return Ok(Saved {
+            retagged: false,
             linked: held
                 .mentions
                 .iter()
@@ -305,6 +309,7 @@ pub(super) fn save_in_txn(
         surprise: tags.surprise,
         unresolved_context_links,
         unresolved_speaker_links,
+        retagged: true,
     };
     replace_in_txn(vault, txn, &turn, Some(&tags))?;
     Ok(saved)

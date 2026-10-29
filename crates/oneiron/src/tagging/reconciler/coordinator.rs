@@ -373,6 +373,11 @@ impl TaggingReconciler {
     ) -> Result<TaggingTrace> {
         prepared.trace.call_micros = Some(u64::try_from(timing.as_micros()).unwrap_or(u64::MAX));
         prepared.trace.execution = attempt.execution;
-        self.settle_called(prepared, Ok(attempt.result))
+        let called = if attempt.panicked {
+            Err(Box::new("the worker panicked") as Box<dyn std::any::Any + Send>)
+        } else {
+            Ok(attempt.result)
+        };
+        self.settle_called(prepared, called)
     }
 }

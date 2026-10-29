@@ -28,9 +28,6 @@ use clap::{Args, Subcommand, ValueEnum};
 use oneiron::llm::manifest::{
     EncoderDistillationRequest, EncoderExport, ModelManifest, ModelRole, SharedBaseFork,
 };
-use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, EncoderRegister, EncoderTurn, SpeakerRole,
-};
 use serde::Deserialize;
 
 use super::{ensure_existing_vault_for_revoke, init_tracing};
@@ -40,6 +37,7 @@ use crate::config::{
     resolve_serve_config,
 };
 use crate::oneironer::release::{self, Platforms, ReleaseSource};
+use crate::oneironer::wire::WireInput;
 
 #[derive(Subcommand)]
 pub enum OneironerCommand {
@@ -126,7 +124,7 @@ pub struct QualifyArgs {
     #[arg(long)]
     pub inputs: PathBuf,
     /// Where each case's `{"id", "output"}` line is appended, or
-    /// `{"id", "error"}` for a case the tagger failed.
+    /// `{"id", "error", "diagnostic"}` for a case the tagger failed.
     #[arg(long)]
     pub out: PathBuf,
     /// The decode layers: `e4` (E4's baseline, with no DATE snap after
@@ -343,14 +341,18 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
         // A parse error can quote the line, so the refusal names its number.
         let case: Case = serde_json::from_str(&line)
             .map_err(|_| anyhow::anyhow!("qualify input line {number} is not a case"))?;
-        let row = match tagger.infer(&case.input.into()) {
+        let row = match tagger.infer_with_diagnostic(&case.input.into()) {
             Ok(output) => {
                 answered += 1;
                 serde_json::json!({ "id": case.id, "output": output })
             }
-            Err(error) => {
+            Err((error, diagnostic)) => {
                 failed += 1;
-                serde_json::json!({ "id": case.id, "error": error.to_string() })
+                serde_json::json!({
+                    "id": case.id,
+                    "error": error.to_string(),
+                    "diagnostic": diagnostic.as_str(),
+                })
             }
         };
         writeln!(out, "{row}")?;
@@ -436,68 +438,7 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
 #[serde(deny_unknown_fields)]
 struct Case {
     id: String,
-    input: CaseInput,
-}
-
-/// An [`EncoderInput`] as contract version 2 sends it.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CaseInput {
-    turn: String,
-    messages: Vec<CaseMessage>,
-    #[serde(default)]
-    context: Vec<CaseTurn>,
-    #[serde(default)]
-    language: Option<String>,
-    #[serde(default)]
-    speaker: Option<SpeakerRole>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CaseMessage {
-    id: String,
-    text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CaseTurn {
-    turn: String,
-    messages: Vec<CaseMessage>,
-    #[serde(default)]
-    speaker: Option<SpeakerRole>,
-}
-
-fn messages(wire: Vec<CaseMessage>) -> Vec<EncoderMessage> {
-    wire.into_iter()
-        .map(|message| EncoderMessage {
-            id: message.id,
-            text: message.text,
-        })
-        .collect()
-}
-
-impl From<CaseInput> for EncoderInput {
-    fn from(wire: CaseInput) -> Self {
-        Self {
-            turn: wire.turn,
-            messages: messages(wire.messages),
-            context: wire
-                .context
-                .into_iter()
-                .map(|turn| EncoderTurn {
-                    turn: turn.turn,
-                    messages: messages(turn.messages),
-                    speaker: turn.speaker,
-                })
-                .collect(),
-            following: Vec::new(),
-            register: EncoderRegister::Live,
-            language: wire.language,
-            speaker: wire.speaker,
-        }
-    }
+    input: WireInput,
 }
 
 /// Opens a stopped vault as `dreamer grant` does: the writer lease refuses a

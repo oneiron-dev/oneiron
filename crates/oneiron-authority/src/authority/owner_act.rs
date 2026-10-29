@@ -90,10 +90,12 @@ pub enum OwnerActKind {
     GrantTravel,
     /// A vault-wide policy setting the owner changed: the dreamer's wake
     /// policy or the inference defaults (Engine 10-19 02:4x). Its `target`
-    /// names the setting, its `seen` the setting as it stood.
+    /// names the setting, its `seen` the setting's live acts
+    /// (`PolicySettingSet`, FIX 4624), whose `prior` keeps the setting as
+    /// it stood.
     PolicySetting,
-    /// A whole-vault export the owner made (Engine 10-19 02:4x). It changes
-    /// nothing, so its `seen` is zero.
+    /// A whole-vault export the owner made (Engine 10-19 02:4x; `ExportAct`,
+    /// FIX 4624). It changes nothing, so its `seen` is zero.
     Export,
     /// The owner's pick of the vault's home node (`HomeNodePick`; DOOR-101
     /// PR2a). Its `seen` is over the vault's live picks.
@@ -121,6 +123,11 @@ pub enum OwnerActKind {
     /// ([`OWNER_KEY_ENROLLMENT_SEEN`]): fresh keys only. No Grant line names
     /// it: an agent never enrols an owner key.
     OwnerKeyEnrollment,
+    /// One agent's free-time policy set or cleared (`PolicySettingSet`,
+    /// FIX 5660), by the owner or by an agent whose Grant names it. Its
+    /// `target` is the agent the policy is for and its `seen` that
+    /// agent's live acts.
+    FreeTimePolicy,
 }
 
 impl OwnerActKind {
@@ -145,6 +152,7 @@ impl OwnerActKind {
             Self::GrantMint => "grant_mint",
             Self::GrantRevoke => "grant_revoke",
             Self::OwnerKeyEnrollment => "owner_key_enrollment",
+            Self::FreeTimePolicy => "free_time_policy",
         }
     }
 
@@ -169,6 +177,7 @@ impl OwnerActKind {
             "grant_mint" => Self::GrantMint,
             "grant_revoke" => Self::GrantRevoke,
             "owner_key_enrollment" => Self::OwnerKeyEnrollment,
+            "free_time_policy" => Self::FreeTimePolicy,
             _ => return None,
         })
     }

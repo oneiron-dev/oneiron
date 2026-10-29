@@ -57,6 +57,10 @@ pub(crate) struct JudgeTrace {
     /// model gave every answer; `revision` adds the provider's own version.
     /// An executor is compared with this, never with the revision.
     pub(crate) model: Option<String>,
+    /// The receipt of each decision that gave `answers`, in order; empty when
+    /// no ladder was asked (FIX 447).
+    #[allow(dead_code, reason = "the amendment judgment row keeps them (FIX 447)")]
+    pub(crate) receipts: Vec<crate::llm::decision::DecisionReceipt>,
 }
 
 /// Generation beside a decided attribution: a short note for each answer that
@@ -174,6 +178,10 @@ impl AttributionDecisions<'_> {
                 .collect(),
             revision: revision.clone(),
             model,
+            receipts: decisions
+                .iter()
+                .map(|decision| decision.receipt.clone())
+                .collect(),
         };
         let mut answers = Vec::with_capacity(decisions.len());
         for decision in &decisions {
@@ -393,6 +401,7 @@ impl AttributionRules {
             ],
             revision: revision.clone(),
             model: None,
+            receipts: Vec::new(),
         };
         let attributed = verdict.map(|verdict| Attributed {
             answers: vec![HunkVerdict::certain(verdict); request.regions()],

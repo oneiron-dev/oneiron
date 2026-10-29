@@ -250,6 +250,9 @@ fn resume_in_txn(
         TurnProgramBound::OwnerNotLive => {
             return Err(not_resumed(crate::authority::OWNER_NOT_LIVE));
         }
+        TurnProgramBound::Withdrawn { reason } => {
+            return Err(not_resumed(reason));
+        }
     };
     if let Some(why) = vault.validate_program_resume_checkpoint_in_txn(
         &*wtxn,

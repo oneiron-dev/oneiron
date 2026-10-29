@@ -32,6 +32,13 @@ use super::files::read_whole;
 use super::identity::hex_decode;
 use super::log::{frame_hash, frame_name};
 
+mod drain;
+
+pub use self::drain::{
+    DRAIN_VERSION, DrainAck, DrainTicket, DrainToken, drain_operation_id, drain_origin,
+    drain_placement,
+};
+
 /// One lineage a target holds: a vault's custody in one namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lineage {

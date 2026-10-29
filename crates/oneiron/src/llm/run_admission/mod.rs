@@ -13,6 +13,7 @@
 //! that declares nothing is admitted to any bound offer, and only the run's
 //! own rules are enforced.
 mod admission;
+mod capture;
 mod declaration;
 mod gate;
 mod host;
@@ -20,14 +21,17 @@ mod job_maximum;
 mod media;
 mod media_job;
 mod permit;
+mod person_billing;
 mod receipt;
 mod resident;
+pub mod resident_doors;
 mod settle;
 mod wire;
 
 pub use admission::{
     RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
 };
+pub use capture::{capture_settlements, captured_sink};
 pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };
@@ -43,6 +47,10 @@ pub use job_maximum::{
 };
 pub use media::{MediaGate, MediaStreamLease};
 pub use permit::RunPermit;
+pub(crate) use person_billing::erase_billing_account_actor_in_txn;
+pub use person_billing::{
+    BillingAccountFiling, FiledBillingAccount, MAX_BILLING_ACCOUNT_BYTES, file_self_billing_account,
+};
 pub use receipt::{
     CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
     RunStreamUsage, RunTokenUsage, TeacherReport,

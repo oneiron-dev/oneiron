@@ -90,20 +90,29 @@ impl Memory<'_> {
         };
         let keep = self.keeps_lifecycle();
         // The revision's lifecycle is kept beside its proposal, in the
-        // proposal's transaction, under the id the proposal derives.
+        // proposal's transaction, under the id the proposal derives, with the
+        // gate's decision about it, as park_post does (FIX 5080).
         let mut receipt_ref = None;
-        let (proposal_ref, decision_ref) = self.persist_proposal_claim(
+        let mut decision_ref = None;
+        let proposal_ref = self.land_proposal_claim(
             TASK_BRIEF_PROPOSAL_PREDICATE,
             typed_value(&revision)?,
             self.actor(),
             now,
             crate::memory::facade_provenance("tasks.update"),
+            |_, _| Ok(()),
             |wtxn, proposal_ref| {
+                decision_ref = self.proposal_decision_ref_in(&*wtxn, proposal_ref)?;
                 if keep {
                     let mut proposed = lifecycle.clone();
                     proposed
                         .fields
                         .insert("proposal_ref".to_owned(), proposal_ref.to_hex());
+                    if let Some(decision_ref) = &decision_ref {
+                        proposed
+                            .fields
+                            .insert("decision_ref".to_owned(), decision_ref.clone());
+                    }
                     receipt_ref = Some(lifecycle_receipt::stamp_record_in(
                         self.vault(),
                         wtxn,
@@ -118,6 +127,11 @@ impl Memory<'_> {
         lifecycle
             .fields
             .insert("proposal_ref".to_owned(), proposal_ref.to_hex());
+        if let Some(decision_ref) = &decision_ref {
+            lifecycle
+                .fields
+                .insert("decision_ref".to_owned(), decision_ref.clone());
+        }
         Ok(TaskCallReceipt {
             handle: TaskHandle::Task { task_ref },
             related: vec![TaskHandle::Proposed { proposal_ref }],

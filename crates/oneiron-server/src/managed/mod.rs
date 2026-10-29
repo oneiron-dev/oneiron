@@ -69,7 +69,7 @@ pub(crate) use self::peer::UnixPeer;
 mod state_serve;
 pub(crate) use state_serve::{
     ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder, ManagedOwnerSession,
-    ManagedWidenHolder,
+    ManagedPersonHolder, ManagedWidenHolder,
 };
 mod vault_gates;
 #[cfg(target_os = "linux")]

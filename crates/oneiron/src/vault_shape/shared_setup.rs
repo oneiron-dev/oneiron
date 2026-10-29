@@ -131,7 +131,7 @@ fn founding_members(
         .iter()
         .enumerate()
         .filter_map(|(at, entry)| {
-            let (ShapeChange::Create, Some(ShapeRow::Member { member, role })) =
+            let (ShapeChange::Create, Some(ShapeRow::Member { member, role, .. })) =
                 (entry.item.change, &entry.item.after)
             else {
                 return None;

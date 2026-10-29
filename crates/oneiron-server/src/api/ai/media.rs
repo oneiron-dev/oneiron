@@ -15,13 +15,13 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use oneiron::llm::media::{
-    AiOperation, MediaJobState, MediaPart, MediaRequest, MediaResponse, MediaUsage, MediaVoice,
-    Modality,
+    AiOperation, MediaJobState, MediaPart, MediaReplayKey, MediaRequest, MediaResponse, MediaUsage,
+    MediaVoice, Modality,
 };
 use oneiron::task_verb::sdk::AiVoice;
 use oneiron::voice_cascade::media::BankVoiceBinding;
@@ -84,7 +84,13 @@ pub(super) async fn options(
             }
         }
     }
-    let listed = super::caller_options(&server, auth.is_owner_grade(), operation, &inputs);
+    let listed = super::caller_options(
+        &server,
+        auth.is_owner_grade(),
+        &super::granted_operations(&server, &auth),
+        operation,
+        &inputs,
+    );
     Json(serde_json::json!({
         "options": listed.options,
         "media_units_left": listed.media_units_left,
@@ -299,7 +305,8 @@ impl AiAnswer {
 }
 
 /// The owner's call of `operation`, [`prepare_media_call`]ed, each refusal
-/// under this wire's codes.
+/// under this wire's codes. An agent whose live Grant the owner minted names
+/// `operation` calls it as his, on his meter (FIX 3208).
 fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -307,14 +314,15 @@ fn admit(
     body: AiCallBody,
 ) -> Result<(MediaRequest, Option<RungVoices>), Response> {
     if !auth.is_owner_grade() {
-        return Err(refusal(
-            StatusCode::FORBIDDEN,
-            "owner_required",
-            "ai.* media calls are the owner's",
-        ));
-    }
-    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
-    if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        if !super::granted_operations(server, auth).contains(&operation) {
+            return Err(refusal(
+                StatusCode::FORBIDDEN,
+                "owner_required",
+                "ai.* media calls are the owner's",
+            ));
+        }
+    } else if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        // FIX 2222: an owner act; a hosted operator's root is refused, typed.
         return Err(error.into_response());
     }
     let decoded = |parts: Vec<WirePart>| {
@@ -510,22 +518,51 @@ pub(super) fn failure(error: &LlmError) -> Response {
         .into_response()
 }
 
+/// The replay key a call's `Idempotency-Key` header names (FIX 2962),
+/// inside its credential's own partition, for `request`. No header, or one
+/// that is not visible text, is no key: the call goes out as any call does.
+fn replay_key(
+    auth: &CoreAuth,
+    headers: &HeaderMap,
+    request: &MediaRequest,
+) -> Option<MediaReplayKey> {
+    let key = headers
+        .get(crate::idempotency::IDEMPOTENCY_KEY_HEADER)?
+        .to_str()
+        .ok()
+        .filter(|key| !key.is_empty())?;
+    MediaReplayKey::caller(auth.idempotency_principal(), key.to_owned(), request).ok()
+}
+
 /// The call's answer. A banked voice withdrawn or re-recorded while it
 /// rendered, on the rung that answered, is not handed back; nor is a call
 /// that found the voice withdrawn everywhere while it waited. A `/v1/ai`
 /// call is the owner's own, which no room launched, so it bills the vault
-/// owner (FIX 805).
+/// owner (FIX 805). A call its caller keyed answers a repeat under its key
+/// from its first answer, unpaid (FIX 2962); a call in a banked voice is
+/// never replayed.
 async fn answered(
     server: &SyncServer,
+    auth: &CoreAuth,
     request: MediaRequest,
     voices: Option<RungVoices>,
+    replay: Option<MediaReplayKey>,
 ) -> Response {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
-    let answer = match &voices {
-        Some(voices) => media.run_voiced(request, voices, None).await,
-        None => media.run(request, None).await,
-    };
+    // Its parts come inline, so a call in no banked voice reads no row
+    // (FIX 11311); a banked voice's person is not read here.
+    let sources = voices.is_none().then(Vec::new);
+    let answer = media
+        .run_replayed(
+            request,
+            voices.as_ref(),
+            None,
+            sources,
+            auth.principal_entity(),
+            replay,
+        )
+        .await;
     let withdrawn = || {
         refusal(
             StatusCode::CONFLICT,
@@ -570,10 +607,14 @@ macro_rules! media_verb {
         pub(super) async fn $name(
             auth: CoreAuth,
             State(server): State<Arc<SyncServer>>,
+            headers: HeaderMap,
             Json(body): Json<AiCallBody>,
         ) -> Response {
             match admit(&server, &auth, $operation, body) {
-                Ok((request, voices)) => answered(&server, request, voices).await,
+                Ok((request, voices)) => {
+                    let replay = replay_key(&auth, &headers, &request);
+                    answered(&server, &auth, request, voices, replay).await
+                }
                 Err(refused) => refused,
             }
         }
@@ -586,22 +627,32 @@ media_verb!(transcribe, AiOperation::Transcribe);
 media_verb!(embed, AiOperation::Embed);
 
 /// `ai.video`: the clip renders as a provider job; the answer is its ticket.
-/// The owner's own job, as [`answered`]'s call is, bills the vault owner.
+/// The owner's own job, as [`answered`]'s call is, bills the vault owner. A
+/// job its caller keyed answers a repeat under its key with the first's
+/// ticket, and nothing is sent again (FIX 2962).
 pub(super) async fn video(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: HeaderMap,
     Json(body): Json<AiCallBody>,
 ) -> Response {
     let request = match admit(&server, &auth, AiOperation::Video, body) {
         Ok((request, _)) => request,
         Err(refused) => return refused,
     };
+    let replay = replay_key(&auth, &headers, &request);
     // Its row is stamped with the caller as the actor (KS-2B2).
     match server
         .ai
         .model_runtime()
         .media()
-        .submit(request, None, auth.principal_entity())
+        .submit_replayed(
+            request,
+            None,
+            auth.principal_entity(),
+            Some(Vec::new()),
+            replay,
+        )
         .await
     {
         Ok(ticket) => (StatusCode::ACCEPTED, Json(ticket)).into_response(),
@@ -610,28 +661,35 @@ pub(super) async fn video(
 }
 
 /// Where a video job stands; a finished one answers with its clip on every
-/// poll until its caller deletes it.
+/// poll until its caller deletes it. An agent the owner's `ai.video` Grant
+/// admits reaches the jobs it asked for (FIX 3208).
 pub(super) async fn video_job(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(job): Path<String>,
 ) -> Response {
-    if !auth.is_owner_grade() {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "owner_required",
-            "video jobs are the owner's",
-        );
-    }
-    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
-    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
-        return error.into_response();
-    }
-    // A managed vault's attested owner reads while he is its live owner.
-    if let Err(error) = crate::api::scoped_auth::require_live_managed_owner(&server, &auth) {
-        return error.into_response();
-    }
-    match server.ai.model_runtime().media().poll(&job).await {
+    let media = server.ai.model_runtime().media();
+    let polled = if auth.is_owner_grade() {
+        // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+        if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+            return error.into_response();
+        }
+        // A managed vault's attested owner reads while he is its live owner.
+        if let Err(error) = crate::api::scoped_auth::require_live_managed_owner(&server, &auth) {
+            return error.into_response();
+        }
+        media.poll(&job).await
+    } else {
+        let Some(agent) = super::video_granted_agent(&server, &auth) else {
+            return refusal(
+                StatusCode::FORBIDDEN,
+                "owner_required",
+                "video jobs are the owner's",
+            );
+        };
+        media.poll_asked_by(agent, &job).await
+    };
+    match polled {
         Ok(MediaJobState::Done { response }) => Json(serde_json::json!({
             "state": "done",
             "answer": AiAnswer::new(response),
@@ -647,24 +705,30 @@ pub(super) async fn video_job(
     }
 }
 
-/// Stops a video job at its provider.
+/// Stops a video job at its provider, reaching a job as [`video_job`] does.
 pub(super) async fn cancel_video_job(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(job): Path<String>,
 ) -> Response {
-    if !auth.is_owner_grade() {
-        return refusal(
-            StatusCode::FORBIDDEN,
-            "owner_required",
-            "video jobs are the owner's",
-        );
-    }
-    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
-    if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
-        return error.into_response();
-    }
-    match server.ai.model_runtime().media().cancel(&job).await {
+    let media = server.ai.model_runtime().media();
+    let cancelled = if auth.is_owner_grade() {
+        // FIX 2222: an owner act; a hosted operator's root is refused, typed.
+        if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
+            return error.into_response();
+        }
+        media.cancel(&job).await
+    } else {
+        let Some(agent) = super::video_granted_agent(&server, &auth) else {
+            return refusal(
+                StatusCode::FORBIDDEN,
+                "owner_required",
+                "video jobs are the owner's",
+            );
+        };
+        media.cancel_asked_by(agent, &job).await
+    };
+    match cancelled {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => failure(&error),
     }

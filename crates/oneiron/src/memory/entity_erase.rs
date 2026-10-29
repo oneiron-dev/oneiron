@@ -17,7 +17,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::deletion::{DeleteEntityPreview, LegalHoldActorKind, LegalHoldTarget};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, LegalHoldNotice, LegalHoldState};
 use crate::federation::{ActExecution, PendingAuthorityAct, SharedVaultPreset};
 use crate::store::legal_hold::{self, HoldActor};
 use crate::write_envelope::WriteActor;
@@ -59,7 +59,7 @@ pub struct EraseOptions<'p> {
 }
 
 /// Why a record holding the same bytes was left in place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SameBytesHold {
     /// A shared vault's record whose writer is not the caller, or does not resolve: it needs
@@ -67,8 +67,9 @@ pub enum SameBytesHold {
     AnotherOwnersRecord,
     /// A legal hold names it. A GDPR request keeps it and erases the rest; its refusal and
     /// reason are in that hold's log, and where Oneiron hosts the bytes it is use-limited
-    /// (OF-470 C5, C6).
-    LegalHold,
+    /// (OF-470 C5, C6). `law_notice` is the visible host order's bound that keeps it
+    /// (FIX 5229, #3182), `None` for customer-only holds; a secret order never names one.
+    LegalHold { law_notice: Option<LegalHoldNotice> },
     /// Its erase is deferred, completion pending. Nothing more is said (OF-470 C2).
     CompletionPending,
     /// A shared vault with two or more Owners: every erase waits out the vault's `erase`
@@ -106,6 +107,10 @@ pub struct EntityEraseOutcome {
     /// The confirmed record's own `erase` act; execute it with
     /// [`Memory::execute_completed_entity_erase`] once its window runs out.
     pub first_act: Option<String>,
+    /// The law bound of the visible host order that keeps the confirmed record (FIX 5229,
+    /// #3182), as each held row's [`SameBytesHold::LegalHold`] names it. `None` when no
+    /// visible order keeps it: erased, vetoed, customer-only or secret-only.
+    pub first_law_notice: Option<LegalHoldNotice>,
     pub same_bytes: Vec<(EntityId, SameBytesOutcome)>,
 }
 
@@ -250,17 +255,25 @@ impl Memory<'_> {
                     .map_err(Into::into)
             })?
         };
+        // The confirmed record's visible bound, when a legal hold keeps it (FIX 5229).
+        let first_law_notice = kept.get(&preview.entity()).and_then(|hold| match hold {
+            SameBytesHold::LegalHold { law_notice } => law_notice.clone(),
+            _ => None,
+        });
         let same_bytes = plan
             .into_iter()
             .map(|planned| {
-                if let Some(&reason) = kept.get(&planned.holder) {
+                if let Some(reason) = kept.get(&planned.holder) {
                     let outcome = SameBytesOutcome::Held {
-                        reason,
+                        reason: reason.clone(),
                         act_id: None,
                     };
                     return (planned.holder, outcome);
                 }
-                let outcome = match (planned.hold, options.veto_starter.zip(shared_vault_id)) {
+                let outcome = match (
+                    planned.hold.clone(),
+                    options.veto_starter.zip(shared_vault_id),
+                ) {
                     (Some(reason), Some((starter, vault_id))) => {
                         match self.start_held_erase(starter, vault_id, &planned) {
                             Ok(act) => SameBytesOutcome::Held {
@@ -282,6 +295,7 @@ impl Memory<'_> {
         Ok(EntityEraseOutcome {
             first,
             first_act,
+            first_law_notice,
             same_bytes,
         })
     }
@@ -424,6 +438,8 @@ impl Memory<'_> {
     /// Of the records a GDPR request names, the ones a legal hold keeps (C5). Each one's
     /// refusal and reason go to its hold's log, and where Oneiron hosts the bytes it is kept
     /// under a use limit (C6). One only a secret order keeps reads as completion pending (C2).
+    /// A kept row names its visible host order's bound (FIX 5229), read in the split's own
+    /// write as the room erase's kept count does.
     fn keep_legally_held(
         &self,
         records: &[EntityId],
@@ -441,11 +457,12 @@ impl Memory<'_> {
             kept.into_iter()
                 .map(|record| {
                     let target = LegalHoldTarget::Record(record);
-                    let told = legal_hold::holds_on_in_txn(store, txn, &target)?
-                        .iter()
-                        .any(|hold| !hold.secret_at(now));
+                    let holds = legal_hold::holds_on_in_txn(store, txn, &target)?;
+                    let told = holds.iter().any(|hold| !hold.secret_at(now));
                     let hold = if told {
-                        SameBytesHold::LegalHold
+                        let law_notice =
+                            legal_hold::law_notice(&holds, now, LegalHoldState::RetainedForLaw);
+                        SameBytesHold::LegalHold { law_notice }
                     } else {
                         SameBytesHold::CompletionPending
                     };
@@ -646,10 +663,10 @@ impl Memory<'_> {
 
 impl SameBytesHold {
     /// The legal-hold log's reason code for a record a GDPR request kept.
-    const fn code(self) -> &'static str {
+    fn code(&self) -> &'static str {
         match self {
             Self::AnotherOwnersRecord => "another_owners_record",
-            Self::LegalHold => "privacy_erase_kept",
+            Self::LegalHold { .. } => "privacy_erase_kept",
             Self::CompletionPending => "completion_pending",
             Self::VetoWindow => "veto_window",
         }

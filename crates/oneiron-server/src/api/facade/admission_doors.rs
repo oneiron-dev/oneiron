@@ -37,14 +37,17 @@ impl Drop for Flight {
 /// Every admitted call still runs its original typed row. Owning the worker
 /// keeps it and its permit alive if the HTTP client stops waiting. The
 /// durable active fence prevents a second worker for the same intent even
-/// when the outer transport's in-memory invocation claim has gone away.
+/// when the outer transport's in-memory invocation claim has gone away. An
+/// owner's erase or revoke keeps the restriction-only clock in its detached
+/// worker too (FIX 11201).
 pub(crate) fn call_verb<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
     verb: &'a str,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Pin<Box<dyn Future<Output = Result<FacadeCallOutput, FacadeApiError>> + Send + 'a>> {
-    Box::pin(async move {
+    let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
+    Box::pin(super::clock_ingress::scoped(restrictive, async move {
         let named = call.invocation()?;
         // No receipt of an off-record sitting is ever kept. Session-bound
         // calls retain their original door and its own recording policy.
@@ -76,12 +79,12 @@ pub(crate) fn call_verb<'a>(
         );
         let fingerprint = blake3::Hash::from_bytes(fingerprint).to_hex().to_string();
         let (server, call, verb) = (Arc::clone(server), call.owned(), verb.to_owned());
-        tokio::spawn(async move {
+        tokio::spawn(super::clock_ingress::scoped(restrictive, async move {
             // The receipt and worker start inside the same detached task:
             // hanging up during the durable write cannot orphan an intent.
             let vault = Arc::clone(server.vault());
             let name = verb.clone();
-            let tracker = tokio::task::spawn_blocking(move || {
+            let tracker = super::clock_ingress::run_blocking(move || {
                 AdmissionTracker::start(vault, actor, class, invocation, &name, digest, fingerprint)
             })
             .await
@@ -105,8 +108,8 @@ pub(crate) fn call_verb<'a>(
             finish?;
             flight.settled = true;
             result
-        })
+        }))
         .await
         .map_err(|_| super::host_doors::support::internal("admission"))?
-    })
+    }))
 }

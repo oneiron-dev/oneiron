@@ -334,8 +334,6 @@ impl PolicyLimits {
             || self.glossary_max_terms > vault.glossary_max_terms
             || self.glossary_max_term_bytes > vault.glossary_max_term_bytes
             || self.stage_timeout_seconds > vault.stage_timeout_seconds
-            || self.cleanup.max_candidates_per_word > vault.cleanup.max_candidates_per_word
-            || self.cleanup.max_candidate_bytes > vault.cleanup.max_candidate_bytes
         {
             return Err("holder policy cannot widen the vault ceiling".into());
         }
@@ -366,7 +364,7 @@ impl PolicyLimits {
 
     fn validate_substrate(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Byte framing and maximum process lifetime are protocol ceilings;
-        // term/candidate counts and protected classes belong to policy data.
+        // term counts and protected classes belong to policy data.
         if self.glossary_max_bytes == 0
             || self.glossary_max_bytes > 1024 * 1024
             || self.glossary_max_terms == 0
@@ -374,10 +372,6 @@ impl PolicyLimits {
             || self.glossary_max_term_bytes > 1024 * 1024
             || self.stage_timeout_seconds == 0
             || self.stage_timeout_seconds > 7200
-            || self.cleanup.max_candidates_per_word == 0
-            || self.cleanup.max_candidates_per_word > 1024 * 1024
-            || self.cleanup.max_candidate_bytes == 0
-            || self.cleanup.max_candidate_bytes > 1024 * 1024
         {
             return Err("policy exceeds substrate ceiling".into());
         }

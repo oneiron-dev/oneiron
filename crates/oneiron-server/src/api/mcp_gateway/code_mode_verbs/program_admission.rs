@@ -26,6 +26,7 @@ use oneiron::attempt_queue::AttemptRecord;
 use oneiron::authority::InvocationSlipBinding;
 use oneiron::browser_library::{
     AdmissionCaller, CallerUnavailable, ProgramAdmissionJob, ProgramAdmissionOutcome,
+    SolvedRunEvidence, admission_readiness,
 };
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::HostSelfDispatcher;
@@ -66,7 +67,9 @@ impl JobCaller {
 impl RunGuests {
     /// Runs the admission job `job` (id `job_id`, leased as `leased`) as
     /// `caller`, its sources' caller as they stand now (CUA E8b): what it
-    /// came to. A caller that does not stand now acts on nothing.
+    /// came to. A caller that does not stand now acts on nothing, and only
+    /// once it stands is the proposal's readiness against `evidence` judged
+    /// (FIX 10720): a revocation surfaces first.
     pub(crate) fn admit_program(
         server: &Arc<SyncServer>,
         runtime: &tokio::runtime::Handle,
@@ -74,11 +77,15 @@ impl RunGuests {
         job_id: oneiron::EntityId,
         job: &ProgramAdmissionJob,
         caller: &AdmissionCaller,
+        evidence: &[SolvedRunEvidence],
     ) -> ProgramAdmissionOutcome {
         let caller = match established(server, job_id, caller) {
             Ok(caller) => caller,
             Err(cause) => return ProgramAdmissionOutcome::CredentialUnavailable { cause },
         };
+        if let Some(lacking) = admission_readiness(job, evidence) {
+            return lacking;
+        }
         let guests = Self {
             browser: RunBrowser::new(server, job_id),
             desktop: None,
@@ -494,6 +501,7 @@ fn connector(
         room_turn: None,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 

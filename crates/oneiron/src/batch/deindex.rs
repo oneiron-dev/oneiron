@@ -170,10 +170,13 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     // The shared physical tear is reached by facade deletes, public batch
     // deletes and lexical-hint cascades. Every one must erase claim decisions
     // and the pending tray before the entity bytes leave this transaction.
+    // A tear is a delete's: the claim's decision key stays for the restore
+    // window; an erase redacted and retired it before it tore (FIX 7955).
     store.redact_gate_decisions_for_claim_in_txn(
         wtxn,
         id.as_bytes(),
         store.clock.now_recorded_at(),
+        false,
     )?;
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     // A tear keeps body keys: an erase stages its retirements before it
@@ -185,6 +188,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::tagging::tear_in_txn(store, wtxn, id)?;
     crate::store::turn_missing::tear_in_txn(store, wtxn, id)?;
     crate::dreamer_wake::erase_in_txn(store, wtxn, id)?;
+    // Every hard tear takes the requests kept for the entity (FIX 6711);
+    // the actor scrub stays with erase.
+    crate::self_heal::blocked_reports::drop_blocked_source_steps_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache
         .lock()

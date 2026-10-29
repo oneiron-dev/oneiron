@@ -47,6 +47,17 @@ impl OwnerRecoveryAuthorization {
         }
     }
 
+    /// The person the signed handover names as its authorizer (FIX 5401):
+    /// the attested account owner; `None` for a host's own authorization,
+    /// which names no person.
+    #[must_use]
+    pub const fn authorizer(&self) -> Option<EntityId> {
+        match self {
+            Self::AccountOwner { holder, .. } => Some(*holder),
+            Self::SelfHostRoot { .. } | Self::StoppedSelfHost { .. } => None,
+        }
+    }
+
     /// Whether this authorization still holds in the recovering writer: a
     /// host root's action still holds on a self-hosted vault, and a stopped
     /// host's vault is self-hosted. An account owner's attestation was

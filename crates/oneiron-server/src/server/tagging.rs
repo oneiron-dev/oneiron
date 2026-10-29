@@ -87,12 +87,38 @@ impl SyncServer {
     async fn tag_forever(self: Arc<Self>, control: PassControl, mut stop: StopFuture) {
         // Subscribed before the first read, so a commit between it and the
         // first wait still wakes the loop.
-        let wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
+        let mut wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
         let Some(reconciler) = self.prepare_tagging(&control, &mut stop).await else {
             return;
         };
-        if let Some(coordinator) = Coordinator::new(self, reconciler, control, wake, stop) {
-            coordinator.run().await;
+        // A failed coordinator restarts after a backoff, doubling from 1 s
+        // to at most 60 s; a clean stop still stops it.
+        let mut backoff = FIRST_BACKOFF;
+        loop {
+            let Some(coordinator) = Coordinator::new(
+                Arc::clone(&self),
+                Arc::clone(&reconciler),
+                control.clone(),
+                wake,
+                stop,
+            ) else {
+                return;
+            };
+            let Some(mut pending) = coordinator.run().await else {
+                return;
+            };
+            tracing::warn!(
+                ?backoff,
+                "tagging coordinator failed; restarting after its backoff"
+            );
+            tokio::select! {
+                biased;
+                () = pending.as_mut() => return,
+                () = tokio::time::sleep(backoff) => {}
+            }
+            backoff = (backoff * 2).min(MAX_BACKOFF);
+            wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
+            stop = pending;
         }
     }
 

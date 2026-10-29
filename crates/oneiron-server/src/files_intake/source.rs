@@ -168,11 +168,10 @@ pub(crate) fn rescan(
             let read = super::files::read_files(folder, &files.exclude, &mut counts)?;
             (read.notes, read.name_only, read.facts)
         }
-        None => (
-            read_folder(folder, &mut counts)?,
-            Vec::new(),
-            HashMap::new(),
-        ),
+        None => {
+            let (notes, name_only) = read_folder(folder, &mut counts)?;
+            (notes, name_only, HashMap::new())
+        }
     };
     let mut warnings = crossed_rows(vault, &counts);
     // A part goes with its file.
@@ -253,6 +252,14 @@ pub(crate) fn rescan(
             original: None,
         });
     }
+    // The name-only files' bytes, taken before their rows land: keeping
+    // their originals needs no ledger row, naming them does (FIX 11276).
+    let mut name_only_originals = Vec::new();
+    for file in &mut name_only {
+        if let Some(original) = file.original.take() {
+            name_only_originals.push((file.path.clone(), original));
+        }
+    }
     let report = vault.rescan_folder_source(
         owner,
         FolderRescan {
@@ -268,21 +275,30 @@ pub(crate) fn rescan(
     )?;
     // The notes have landed: what keeping their originals meets is said
     // beside the report, never in place of it.
-    warnings.extend(keep_originals(vault, owner, source, &namespace, &notes));
+    warnings.extend(keep_originals(
+        vault,
+        owner,
+        source,
+        &namespace,
+        &notes,
+        &name_only_originals,
+    ));
     Ok((report, warnings))
 }
 
 /// Keeps the original of each file the rescan read whose note the ledger
-/// now holds (FIX 7779), and names it on that file's ledger rows, its parts'
-/// included. A file whose row already names the same bytes keeps no second
-/// copy. A file whose original cannot be kept or named still has its text
-/// imported: its rows name no original, and the warning counts it.
+/// now holds (FIX 7779), and of each name-only file whose bytes the walk
+/// read (FIX 11276), and names it on that file's ledger rows, a note's
+/// parts' included. A file whose row already names the same bytes keeps no
+/// second copy. A file whose original cannot be kept or named still has its
+/// text imported: its rows name no original, and the warning counts it.
 fn keep_originals(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
     source: &FolderSource,
     namespace: &str,
     notes: &[Note],
+    name_only: &[(String, oneiron::note::OriginalBytes)],
 ) -> Option<ImportWarning> {
     let unkept = |files: usize, error: &dyn std::fmt::Display| ImportWarning::OriginalsUnkept {
         files,
@@ -294,14 +310,23 @@ fn keep_originals(
             .map(|file| (file.path.clone(), file))
             .collect::<HashMap<_, _>>(),
         Err(error) => {
-            let read = notes.iter().filter(|note| note.original.is_some()).count();
+            let read =
+                notes.iter().filter(|note| note.original.is_some()).count() + name_only.len();
             return Some(unkept(read, &error));
         }
     };
     let mut kept: HashMap<&str, Option<FileOriginal>> = HashMap::new();
     let (mut failed, mut first_error) = (0, None);
-    for note in notes {
-        let (Some(original), Some(row)) = (&note.original, ledger.get(&note.path)) else {
+    let read = notes.iter().filter_map(|note| {
+        note.original
+            .as_ref()
+            .map(|original| (note.path.as_str(), original))
+    });
+    let held = name_only
+        .iter()
+        .map(|(path, original)| (path.as_str(), original));
+    for (path, original) in read.chain(held) {
+        let Some(row) = ledger.get(path) else {
             continue;
         };
         let hash = original.content_hash();
@@ -311,7 +336,7 @@ fn keep_originals(
             .filter(|kept| kept.content_hash == hash);
         let original = match same {
             Some(same) => Some(same.clone()),
-            None => match vault.keep_folder_file_original(owner, namespace, &note.path, original) {
+            None => match vault.keep_folder_file_original(owner, namespace, path, original) {
                 Ok(original) => Some(original),
                 Err(error) => {
                     failed += 1;
@@ -320,12 +345,17 @@ fn keep_originals(
                 }
             },
         };
-        kept.insert(note.path.as_str(), original);
+        kept.insert(path, original);
     }
-    let originals = notes
+    let mut originals = notes
         .iter()
         .filter_map(|note| Some((note.path.clone(), kept.get(note.file())?.clone())))
         .collect::<HashMap<_, _>>();
+    for (path, _) in name_only {
+        if let Some(original) = kept.get(path.as_str()) {
+            originals.insert(path.clone(), original.clone());
+        }
+    }
     if let Err(error) = vault.link_folder_file_originals(owner, &source.folder, &originals) {
         return Some(unkept(kept.len(), &error));
     }

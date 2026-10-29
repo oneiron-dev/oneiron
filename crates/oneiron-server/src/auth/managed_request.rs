@@ -292,6 +292,7 @@ impl CoreAuth {
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: Some(holder),
+            managed_person: None,
         }
     }
 
@@ -369,12 +370,14 @@ impl CoreAuth {
     /// judges its caller without awaiting, from the request's headers,
     /// extensions and path: the slip the request carries, else the owner
     /// managed ingress verified for it ([`Self::for_attested_owner`]), with
-    /// no header authenticated first. A request with neither is anonymous
-    /// and refused ([`Self::managed_caller`]): no host credential stands in
-    /// for a missing one. A slip beside another person's attestation is
-    /// refused. A managed vault's callers never reach the account-key door,
-    /// so it is the same one caller. `None` on any other vault, whose door
-    /// keeps its own header path.
+    /// no header authenticated first; with neither, at a member door, the
+    /// person a supervisor-signed person action names
+    /// ([`Self::for_attested_person`], FIX 1302). A request with none of
+    /// these is anonymous and refused ([`Self::managed_caller`]): no host
+    /// credential stands in for a missing one. A slip beside another
+    /// person's attestation is refused. A managed vault's callers never
+    /// reach the account-key door, so it is the same one caller. `None` on
+    /// any other vault, whose door keeps its own header path.
     pub(crate) fn for_managed_request(
         headers: &HeaderMap,
         extensions: &Extensions,
@@ -383,7 +386,13 @@ impl CoreAuth {
     ) -> Option<Result<Self, ApiError>> {
         server.managed_issuer.as_ref()?;
         let caller = match attested_owner(extensions, server) {
-            None => Self::for_server(headers, server),
+            // A member's own act at a member door his supervisor signed
+            // (FIX 1302 stage 1), where the request carries no slip and so
+            // would be anonymous: that person, and no one else.
+            None => match Self::for_attested_person(headers, extensions, path, server) {
+                Some(person) => Ok(person),
+                None => Self::for_server(headers, server),
+            },
             // The caller's own slip stays the caller, with its own bounds;
             // the attestation lends it nothing.
             Some(holder) if carries_caller_slip(headers) => Self::for_server(headers, server)

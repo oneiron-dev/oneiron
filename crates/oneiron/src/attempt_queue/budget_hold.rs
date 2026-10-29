@@ -93,6 +93,9 @@ impl AttemptQueue<'_> {
                 let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
                 vault.notify_attempt_budget_hold_in_txn(&mut savepoint, record.id, now)?;
                 savepoint.commit()?;
+                // FIX 3084: the committed notice joins this write's post-commit
+                // notification wake.
+                crate::batch::queue_notification_change(vault, wtxn);
                 Ok(())
             })();
             if let Err(error) = noticed {

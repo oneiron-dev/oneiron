@@ -131,10 +131,15 @@ impl Memory<'_> {
                 turn.terms.meet_clearance(fresh.as_ref());
                 turn.terms.get()
             }
-            None => RoomTerms {
-                clearance: crate::claim::meet_clearance(terms.clearance.as_ref(), fresh.as_ref()),
-                ..terms.clone()
-            },
+            None => {
+                let live = vault.room_live_speaker_entries_in(&txn, room)?;
+                let speakers = vault.live_speaker_clearance_in(&txn, &live)?;
+                let met = crate::claim::meet_clearance(terms.clearance.as_ref(), fresh.as_ref());
+                RoomTerms {
+                    clearance: crate::claim::meet_clearance(met.as_ref(), speakers.as_ref()),
+                    ..terms.clone()
+                }
+            }
         };
         if effective.clearance.is_none() {
             return Ok(true);
@@ -205,7 +210,17 @@ impl Memory<'_> {
         };
         Ok(match self.room_turn() {
             Some(turn) => turn.terms.meet(&now),
-            None => now,
+            None => {
+                let live = vault.room_live_speaker_entries_in(&txn, room)?;
+                let speakers = vault.live_speaker_clearance_in(&txn, &live)?;
+                RoomTerms {
+                    clearance: crate::claim::meet_clearance(
+                        now.clearance.as_ref(),
+                        speakers.as_ref(),
+                    ),
+                    ..now
+                }
+            }
         })
     }
 

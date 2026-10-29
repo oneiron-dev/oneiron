@@ -185,6 +185,30 @@ pub(crate) async fn vault_models_trials_run(
     )
 }
 
+/// `vault.models.trials.resend_arm`: the owner's resend of one arm of
+/// unknown outcome (FIX 10464); the next run sends it.
+pub(crate) async fn vault_models_trials_resend_arm(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ModelTrialArmRef,
+) -> Listed<ModelTrialView> {
+    let locality = auth.locality();
+    naming(
+        as_owner(
+            server,
+            auth,
+            "vault.models.trials.resend_arm",
+            move |server, owner| {
+                server
+                    .vault()
+                    .resend_model_trial_arm_as_owner(owner, input, locality)
+            },
+        )
+        .await,
+        trial_rows,
+    )
+}
+
 pub(crate) async fn vault_models_trials_complete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

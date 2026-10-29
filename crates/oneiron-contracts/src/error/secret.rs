@@ -63,6 +63,13 @@ pub enum SecretError {
     /// (owner ruling C2).
     #[error("a sealed file is withheld: the vault owner and a granted agent read it")]
     SealedFileWithheld,
+    /// A file this reader would get as a masked copy cannot be served
+    /// masked (OF-067 C, FIX 2475): the copy, or a file no mark covers,
+    /// still holds a key the write door's rules read, or a container in it
+    /// does not read whole. The owner and a granted agent read the file. The
+    /// reason is the scan's code and never holds secret bytes.
+    #[error("a masked copy of this file is withheld: {reason}")]
+    MaskedCopyWithheld { reason: &'static str },
     /// The credential-door dial no longer admits this door-bound T0/T1
     /// materialization. The reason never contains secret or manifest bytes.
     #[error("secret materialization refused by credential-door policy: {reason}")]
@@ -256,6 +263,7 @@ impl SecretError {
             Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
             Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
             Self::SealedFileWithheld => ErrorKind::SealedFileWithheld,
+            Self::MaskedCopyWithheld { .. } => ErrorKind::MaskedCopyWithheld,
             Self::SecretDoorPolicyRefused { .. } => ErrorKind::SecretDoorPolicyRefused,
             Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
             Self::SecretWiderThanManifest { .. } => ErrorKind::SecretWiderThanManifest,

@@ -2,12 +2,13 @@
 //! Keeps unbuffered secret input and output with their existing wipe scopes.
 //! Shared vault access and the vault-key reader's stdin helper stay in the parent.
 
+use super::secret_input::{TerminalRead, read_stdin_secret};
 use super::{
     Read, SecretClass, SecretRegisterArgs, SecretRotateArgs, SecretScanArgs, SecretScanSwitch,
-    SecretsCommand, Write, emit, io, local_owner, open_stopped_vault, open_vault, raw_stdin,
+    SecretsCommand, Write, emit, io, local_owner, open_stopped_vault, open_vault,
     resolve_serve_config,
 };
-use crate::owner::secrets;
+use crate::owner::{pending_custody, secret_bindings, secrets};
 
 pub fn secret_scan(args: SecretScanArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
@@ -31,15 +32,24 @@ const SECRET_VALUE_LIMIT: usize = 1 << 20;
 
 pub fn secrets(command: SecretsCommand) -> anyhow::Result<()> {
     // Only a door that takes a value reads stdin; revoke and reveal read
-    // nothing.
-    let value = || -> anyhow::Result<_> { read_secret_value(raw_stdin()?) };
+    // nothing. A terminal is asked for it with its echo off (FIX 1490).
+    let value =
+        |what: &str| read_stdin_secret(what, TerminalRead::ToEnd, |input| read_secret_value(input));
     match command {
-        SecretsCommand::Register(args) => emit(&register_secret(*args, &value()?)?),
-        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value()?)?),
+        SecretsCommand::Register(args) => {
+            emit(&register_secret(*args, &value("the secret value")?)?)
+        }
+        SecretsCommand::Rotate(args) => emit(&rotate_secret(*args, &value("the new value")?)?),
         SecretsCommand::Revoke(args) => revoke_secret(*args),
         SecretsCommand::Reveal(args) => reveal_secret(*args),
         SecretsCommand::Rewrap(args) => emit(&rewrap_secret(*args)?),
-        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(*args, &value()?)?),
+        SecretsCommand::AnchorSign(args) => emit(&sign_with_anchor(
+            *args,
+            &value("your recovery kit, one recovery code per line")?,
+        )?),
+        SecretsCommand::Bind(args) => emit(&bind_secret(*args)?),
+        SecretsCommand::Unbind(args) => emit(&unbind_secret(*args)?),
+        SecretsCommand::Pending(args) => pending_custody(*args),
     }
 }
 
@@ -155,6 +165,65 @@ fn rewrap_secret(args: crate::cli::SecretRewrapArgs) -> anyhow::Result<secrets::
     )?)
 }
 
+/// Binds a secret to an effector through the engine door `POST
+/// /v1/owner/secrets/bind` uses, as the local owner (FIX 2620). It reads
+/// nothing from stdin.
+fn bind_secret(args: crate::cli::SecretBindArgs) -> anyhow::Result<secret_bindings::BoundView> {
+    let request = oneiron::secret_custody::SecretBindRequest {
+        target: secret_bindings::target(args.secret.handle, args.secret.name)?,
+        effector: args.effector,
+        tier_ceiling: secret_bindings::rung(args.rung)?,
+        scopes: if args.scopes.is_empty() {
+            oneiron::secret_custody::SecretBindRequest::default_scopes()
+        } else {
+            args.scopes
+        },
+    };
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/bind --data -")?;
+    let owner = local_owner(&vault)?;
+    Ok(secret_bindings::bind(
+        &vault,
+        &owner,
+        oneiron::authority::ActSurface::ThisInstall,
+        &request,
+    )?)
+}
+
+/// Withdraws a secret's binding to one effector through the engine door
+/// `POST /v1/owner/secrets/unbind` uses, as the local owner (FIX 2620).
+/// Every other binding stays. It reads nothing from stdin.
+fn unbind_secret(args: crate::cli::SecretUnbindArgs) -> anyhow::Result<secret_bindings::BoundView> {
+    let target = secret_bindings::target(args.secret.handle, args.secret.name)?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "POST /v1/owner/secrets/unbind --data -")?;
+    let owner = local_owner(&vault)?;
+    Ok(secret_bindings::unbind(
+        &vault,
+        &owner,
+        oneiron::authority::ActSurface::ThisInstall,
+        &target,
+        &args.effector,
+    )?)
+}
+
+/// A restore's credentials pending on their source's evidence, by batch,
+/// with each batch's card, as `GET /v1/owner/secrets/custody/pending` lists
+/// them; with `--keep BATCH --confirm keep_without_source`, the owner's
+/// election that keeps the batch without its source, and its receipt
+/// (FIX 11158). It reads nothing from stdin.
+fn pending_custody(args: crate::cli::SecretPendingArgs) -> anyhow::Result<()> {
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_vault(&config, "GET /v1/owner/secrets/custody/pending")?;
+    let owner = local_owner(&vault)?;
+    match (args.keep, args.confirm) {
+        (Some(batch), Some(confirm)) => {
+            emit(&pending_custody::keep(&vault, &owner, &batch, &confirm)?)
+        }
+        _ => emit(&pending_custody::page(&vault, &owner)?),
+    }
+}
+
 /// Revokes a secret through the engine door `POST /v1/owner/secrets/revoke`
 /// uses, as the local owner (OF-422). It reads nothing from stdin.
 pub fn revoke_secret(args: crate::cli::SecretRevokeArgs) -> anyhow::Result<()> {
@@ -246,7 +315,8 @@ fn sign_with_anchor(
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_stopped_vault(
         &config,
-        "then run this again: the recovery kit is read on this machine and never sent to a server",
+        "then run this again to read the kit on this machine alone, or send it in that server's \
+         own call: `POST /v1/owner/secrets/anchor-sign`",
     )?;
     let owner = local_owner(&vault)?;
     let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {

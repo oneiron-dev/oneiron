@@ -1,12 +1,17 @@
-//! The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that
-//! pumps [`DreamerWakeDriver::run_wake_pass`] — the starter motor the engine
-//! deliberately does not own.
+//! The wake-pass supervisor (ONE-1683): the loop that pumps
+//! [`DreamerWakeDriver::run_wake_pass`] — the starter motor the engine
+//! deliberately does not own. This file declares the supervisor's modules and
+//! re-exports its API; the loop is `loop.rs`, its one arbitration point
+//! `arbiter.rs`, the owed-pass debt and backoff `retry.rs`, and the wave
+//! quanta `wave_lane.rs`.
 //!
 //! Shape (all acceptance-pinned):
 //!
-//! * ONE biased select composes the loop: shutdown beats a ready tick, and
-//!   the tick source itself resolves deadline-vs-push priority (deadline
-//!   wins — see [`HybridTick`](crate::HybridTick)).
+//! * ONE arbiter composes the loop (`arbiter::next_supervisor_event`):
+//!   shutdown beats everything, then fresh source ticks, due owed retries
+//!   and wave quanta take turns in a fixed rotation, so no lane pins another.
+//!   The tick source resolves deadline-vs-push order itself (see
+//!   [`HybridTick`](crate::HybridTick)).
 //! * A `tokio::sync::Semaphore(1)` serializes passes: a second tick arriving
 //!   mid-pass can never start a second pass (share the gate across
 //!   supervisors over one vault via [`WakeSupervisor::with_pass_gate`]).
@@ -25,9 +30,10 @@
 //!   `abort_budget_reservation`.
 //! * No actor framework, no attempt-worker crate, no heartbeat: the loop only
 //!   ever wakes for a [`Tick`] (an attempt-queue deadline read or an
-//!   authenticated push) — plus a bounded one-shot delay after a FAILED
-//!   pass, which defers consuming the next already-signalled tick rather
-//!   than generating wakeups of its own.
+//!   authenticated push), an owed retry coming due, or wave work. A pass that
+//!   fails or admits nothing leaves its tick owed, due again after that
+//!   tick's own capped backoff (`retry`), while fresh ticks and wave work
+//!   keep their turns.
 
 mod arbiter;
 mod attachment;

@@ -276,10 +276,11 @@ impl RestoreDestination {
             .and_then(|mirror| mirror.file_name().map(std::ffi::OsStr::to_owned))
             .ok_or(RestoreDestinationRefusal::NotFresh)?;
         // The key custody directory's name beside a vault, as the engine
-        // names it (`.<data directory>.key-custody`).
-        let mut custody = std::ffi::OsString::from(".");
-        custody.push(leaf);
-        custody.push(".key-custody");
+        // names it (FIX 6582).
+        let custody = oneiron::store::custody_container_path(&destination.path)
+            .ok()
+            .and_then(|custody| custody.file_name().map(std::ffi::OsStr::to_owned))
+            .ok_or(RestoreDestinationRefusal::NotFresh)?;
         for taken in [leaf, mirror.as_os_str(), custody.as_os_str()] {
             match rustix::fs::statat(&destination.parent, taken, AtFlags::SYMLINK_NOFOLLOW) {
                 Err(rustix::io::Errno::NOENT) => {}

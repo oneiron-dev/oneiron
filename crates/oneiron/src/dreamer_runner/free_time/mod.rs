@@ -52,7 +52,8 @@ pub use self::doors::{
     FreeTimeCyclesRequest, FreeTimeItemReceiptView, FreeTimeItemView, FreeTimeLabelSpend,
     FreeTimeNoteView, FreeTimePolicyRequest, FreeTimePolicyRow, FreeTimePolicySetRequest,
     FreeTimePolicyState, FreeTimePolicyView, FreeTimeSpendView, free_time_cycle_as_owner,
-    free_time_cycles_as_owner, free_time_policy_as_owner, free_time_policy_set_as_owner,
+    free_time_cycles_as_owner, free_time_policy_as_owner, free_time_policy_set_as,
+    free_time_policy_set_as_owner,
 };
 pub(crate) use self::erase::erase_free_time_actor_in_txn;
 #[cfg(feature = "sync")]

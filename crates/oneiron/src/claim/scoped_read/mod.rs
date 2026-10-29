@@ -143,6 +143,7 @@ pub(crate) use admission::ScopedDiaryCandidates;
 mod retrieval_loop;
 mod search;
 mod visibility;
+pub(crate) use visibility::Admitted;
 
 #[cfg(test)]
 mod slip_tests;

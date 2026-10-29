@@ -235,8 +235,11 @@ impl<'k> KeyWatch<'k> {
     fn cleared(&self, text: &[u8], runs: &[(usize, usize)], marked: &[u64]) -> usize {
         let mut cleared = text.len().saturating_sub(self.reach);
         let mut cuts: Vec<Option<RunCuts>> = runs.iter().map(|_| None).collect();
+        // A run followed only by whitespace to the chunk's end may still
+        // bridge across it once the next chunk arrives (FIX 8560), so it is
+        // held like an open run; an empty tail is the open run itself.
         if let Some((last, &(start, stop))) = runs.iter().enumerate().next_back()
-            && stop == text.len()
+            && text[stop..].iter().all(u8::is_ascii_whitespace)
             && escaped(&text[start..stop])
         {
             let open = self.run_cuts(&text[start..stop], true);

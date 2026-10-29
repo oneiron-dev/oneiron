@@ -36,10 +36,12 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use oneiron::memory::{MemoryError, WitnessReceipt};
 use oneiron::off_record::{OffRecordSession, OffRecordSessionRecord, OffRecordTalk};
+use oneiron::share_travel::effective_copy_refs;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
-    OffRecordRoomExport as Export, OffRecordRoomExportTurn as ExportTurn,
-    OffRecordRoomNotice as Notice, OffRecordRoomRequest as Stretch, OffRecordRoomSaved as Saved,
+    OffRecordRoomExport as Export, OffRecordRoomExportRequest as ExportRequest,
+    OffRecordRoomExportTurn as ExportTurn, OffRecordRoomNotice as Notice,
+    OffRecordRoomRequest as Stretch, OffRecordRoomSaved as Saved,
     OffRecordRoomStartRequest as Start, OffRecordRoomSuggestion as Suggestion,
     OffRecordRoomView as Room, OffRecordRoomWitnessRequest as Witness,
 };
@@ -112,7 +114,7 @@ async fn save_from_here(
 async fn export(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Stretch>, JsonRejection>,
+    payload: Result<Json<ExportRequest>, JsonRejection>,
 ) -> Result<impl IntoResponse, EnvelopedApiError> {
     let export = room_export(&server, &auth, json(payload)?).await?;
     Ok((
@@ -185,7 +187,7 @@ fn room_view(record: OffRecordSessionRecord, session_ref: &str) -> Room {
 
 fn export_view(talk: OffRecordTalk, session_ref: &str, exported_at: u64) -> Export {
     Export {
-        session_ref: session_ref.to_owned(),
+        session_ref: Some(session_ref.to_owned()),
         room: talk.room.map(hex),
         exported_at: rfc3339_secs(exported_at),
         turns: talk
@@ -196,9 +198,10 @@ fn export_view(talk: OffRecordTalk, session_ref: &str, exported_at: u64) -> Expo
                 speaker: turn.speaker.map(hex),
                 occurred_at: rfc3339_secs(turn.occurred_at),
                 saved: turn.saved,
-                messages: turn.messages,
+                messages: turn.messages.into_iter().map(Into::into).collect(),
             })
             .collect(),
+        copy: None,
     }
 }
 
@@ -372,10 +375,12 @@ pub(crate) async fn room_save_from_here(
     Ok(view)
 }
 
+/// The caller's own copy of the talk they could see: as the room holds it,
+/// or without its vault refs when they ask for that (FIX 1199).
 pub(crate) async fn room_export(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    request: Stretch,
+    request: ExportRequest,
 ) -> Result<Export, ApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
@@ -393,7 +398,8 @@ pub(crate) async fn room_export(
                 ErrorKind::OffRecordPromoteUnauthenticated => ApiError::unauthorized(),
                 _ => engine_error(error, &request.session_ref),
             })?;
-        Ok(export_view(talk, &request.session_ref, unix_seconds_now()))
+        Ok(export_view(talk, &request.session_ref, unix_seconds_now())
+            .with_refs(effective_copy_refs(request.travel.as_ref())))
     })
     .await?;
     Ok(export)

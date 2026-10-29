@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use super::cycle::{FreeTimeCycle, FreeTimeCycleState};
 use super::policy::{
-    FREE_TIME_WHEN_UNSET, FreeTimePolicy, FreeTimePolicyInput, FreeTimeSchedule, FreeTimeSplit,
-    UnsetFreeTimePolicy, effective_policy,
+    FREE_TIME_WHEN_UNSET, FreeTimeAuthority, FreeTimePolicy, FreeTimePolicyInput, FreeTimeSchedule,
+    FreeTimeSplit, UnsetFreeTimePolicy, effective_policy,
 };
 use super::receipt::{
     FreeTimeFloor, FreeTimeItemOutcome, FreeTimeItemReceipt, free_time_floor, receipts_in_txn,
@@ -28,6 +28,7 @@ use super::{CYCLE, FreeTimeKind, POLICY};
 use crate::agent_dispatch::SpendScopeId;
 use crate::agent_dispatch::budget_doors::RunRungSettlement;
 use crate::attempt_queue::AttemptId;
+use crate::authority::ActAuthority;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::owner_read_page_limit;
 use crate::entity_id::bytes_to_hex_lower;
@@ -351,7 +352,10 @@ pub fn free_time_policy_as_owner(
 
 /// Sets, or with no policy clears, one agent's free-time policy as the owner,
 /// at the revision the owner read. A clear ends the agent's open cycle and
-/// it goes back to its nightly dreaming.
+/// it goes back to its nightly dreaming. A set, and the row a clear leaves
+/// as its witness, record `surface`, where the owner's say-so reached this
+/// install as its host verified it (FIX 5721): audit only, never an
+/// admission condition.
 ///
 /// # Errors
 /// A malformed agent id or policy, a proof that does not hold here, an
@@ -360,19 +364,44 @@ pub fn free_time_policy_as_owner(
 pub fn free_time_policy_set_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: crate::authority::ActSurface,
+    input: &FreeTimePolicySetRequest,
+) -> Result<FreeTimePolicyView> {
+    set_policy_as(vault, FreeTimeAuthority::Owner(owner, Some(surface)), input)
+}
+
+/// Sets, or with no policy clears, one agent's free-time policy as
+/// `authority` (FIX 5660): the owner's own proof, or an agent's act its live
+/// Grant names (the `free_time_policy_set` verb), any set or clear of any
+/// agent's policy, its Grant checked again in the write. Either is signed as
+/// the act it is, an agent's naming its Grant.
+///
+/// # Errors
+/// As [`free_time_policy_set_as_owner`]; an authority refusal when the
+/// agent's Grant no longer names the act.
+pub fn free_time_policy_set_as(
+    vault: &Vault,
+    authority: &ActAuthority,
+    input: &FreeTimePolicySetRequest,
+) -> Result<FreeTimePolicyView> {
+    set_policy_as(vault, authority.into(), input)
+}
+
+fn set_policy_as(
+    vault: &Vault,
+    authority: FreeTimeAuthority<'_>,
     input: &FreeTimePolicySetRequest,
 ) -> Result<FreeTimePolicyView> {
     let agent = entity("agent", &input.agent)?;
     let row = match &input.policy {
-        Some(policy) => Some(vault.set_free_time_policy(
-            owner,
-            None,
+        Some(policy) => Some(vault.set_free_time_policy_as(
+            authority,
             agent,
             input.expected_revision,
             policy.clone(),
         )?),
         None => {
-            vault.clear_free_time_policy(owner, agent, input.expected_revision)?;
+            vault.clear_free_time_policy_as(authority, agent, input.expected_revision)?;
             None
         }
     };

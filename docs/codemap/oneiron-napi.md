@@ -15,12 +15,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/expression_preference.rs` | src | s | 4 struct · 3 fn | NapiExpressionPreferenceInput, NapiExpressionPreferenceReceipt, NapiExpressionPreferenceWinner, NapiExpressionPreferences | JS bindings for the typed `companion.expression.*` doors |
 | `src/facade/boundary.rs` | src | s | 10 crate-vis | — | JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling |
 | `src/facade/bridge.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
-| `src/facade/client.rs` | src | m | 4 struct · 12 fn | NapiHostRootProfile, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
+| `src/facade/client.rs` | src | m | 4 struct · 13 fn | NapiHostRootProfile, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
 | `src/facade/client/embedded_engine.rs` | src | m | 6 struct · 13 fn | NapiEngineHeader, NapiEngineOptions, NapiEngineReply, NapiEngineRequest, NativeEngine, NativeEngineConnection | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
-| `src/facade/client/generated/agent_verbs.rs` | src | generated | 1162 fn | — | — |
+| `src/facade/client/generated/agent_verbs.rs` | src | generated | 1187 fn | — | — |
 | `src/facade/convert.rs` | src | m | 20 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
-| `src/facade/dtos.rs` | src | L | 60 struct · 1 crate-vis | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +52 | All napi(object) DTO structs for the actor-scoped surface |
+| `src/facade/dtos.rs` | src | L | 61 struct · 2 crate-vis | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +53 | All napi(object) DTO structs for the actor-scoped surface |
 | `src/facade/dtos/read_scope.rs` | src | s | 3 struct | NapiReadReceipt, NapiReadScope, NapiRecallScope | The recall scope a caller asks for and the read receipt every read returns, as napi objects |
+| `src/facade/dtos/witness_assertions.rs` | src | s | 1 struct · 1 crate-vis | NapiWitnessAssertions | A witnessed reply's typed record assertions (OF-063, FIX 10261), as a napi object, and its one lowering onto… |
 | `src/facade/input_error.rs` | src | s | 2 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
 | `src/facade/js_json.rs` | src | s | 1 crate-vis | — | JSON values from JavaScript, read as the typed decode behind them reads them (FIX 2884, 4804) |
 | `src/facade/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |

@@ -359,6 +359,73 @@ pub(super) fn drop_witness_in_txn(
     Ok(())
 }
 
+/// A re-delivered capture's refresh of the binding an ended job dropped
+/// (FIX 10717), in the row's own scope only: witness and digest stand again.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn refresh_witness_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    caller: &SavedBrowserCaller,
+) -> Result<()> {
+    let Some(witness) = caller.witness.clone() else {
+        return Ok(());
+    };
+    let Some(mut kept) = AUTHORITY.get(&vault.store, wtxn, id)? else {
+        return Ok(());
+    };
+    if kept.scope != caller.scope {
+        return Ok(());
+    }
+    kept.witness_digest = caller.witness_digest;
+    kept.witness = Some(witness);
+    AUTHORITY.put(vault, wtxn, id, &kept)
+}
+
+/// A restored evidence claim's re-index (FIX 10514): its group ref and
+/// generation come back; authority only for a credential-less capture.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn reindex_restored_source_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, id)? else {
+        return Ok(());
+    };
+    let Some(raw) = vault.get_raw_in(wtxn, id)? else {
+        return Ok(());
+    };
+    let Some(evidence) = evidence_of(entity_type, &raw) else {
+        return Ok(());
+    };
+    let key = evidence.group();
+    let row = GroupRef {
+        run_id: evidence.run_id,
+        captured_at_ms: evidence.captured_at_ms,
+    };
+    GROUP.put(vault, wtxn, &(key.digest(), *id), &row)?;
+    if evidence.scope.authority.is_none() {
+        let caller = SavedBrowserCaller {
+            scope: evidence.scope.clone(),
+            group: key.digest(),
+            run_id: evidence.run_id,
+            call_id: evidence.call_id,
+            credential: None,
+            witness_digest: None,
+            witness: None,
+        };
+        AUTHORITY.put(vault, wtxn, id, &caller)?;
+    }
+    bump_dirty_in_txn(vault, wtxn, &key)
+}
+
 /// Erasing `actor` from the solved-run index (CUA E8a): each evidence it
 /// was captured under loses its source authority and its group ref, so no
 /// work is induced or admitted for it; its claims go with their own erase.

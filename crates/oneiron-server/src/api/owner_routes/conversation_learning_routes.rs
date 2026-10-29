@@ -34,7 +34,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::get;
 use oneiron::authority::{ConversationLearningView, ConversationTrainingView};
@@ -47,7 +47,7 @@ use oneiron::world_keys::PolicyRevision;
 use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
 use super::{OwnerReply, blocking};
 use crate::api::body_spool::OwnerJsonBody;
@@ -200,11 +200,12 @@ async fn view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<SetLearning>,
 ) -> OwnerReply<LearningReply> {
     let person = holder(&auth, &server, LEARNING_ACTS)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<LearningReply> {
         let seen = seen_revision(body.seen.as_deref())?;
@@ -237,11 +238,12 @@ async fn own_view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owne
 async fn set_own(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<SetOwn>,
 ) -> OwnerReply<OwnReply> {
     let person = holder(&auth, &server, LEARNING_ACTS)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<OwnReply> {
         let seen = seen_revision(body.seen.as_deref())?;

@@ -9,6 +9,10 @@ side_tables! {
     IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN: VaultMeta b"m:identity_topology_zero_head_seen" Raw;
     /// Idle publication delay. Key: ().
     ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
+    /// FIX 9970: a TURN whose landing could not record its program wake, and why, written in
+    /// that landing's commit and cleared when a later landing of the turn evaluates its wake.
+    /// Key: id16(turn).
+    MEMORY_TURN_WAKE_UNPERSISTED: VaultMeta b"memory:turn_wake_unpersisted:v1:" Named Engine;
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored;
@@ -363,6 +367,10 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
+    /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
+    /// 3332). Key: id16 (PERSON).
+    PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
+        => crate::llm::run_admission::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
     PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3

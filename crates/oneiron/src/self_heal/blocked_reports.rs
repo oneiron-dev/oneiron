@@ -28,7 +28,8 @@ mod source;
 pub(crate) use source::{
     BlockedRunHost, BlockedRunRequest, RunWorlds, SentRequest, bind_step_claim_in_txn,
     blocked_capture_owners, blocked_capture_scan, blocked_source_in, capture_durable_step,
-    erase_blocked_source_actor_in_txn, remove_step_sources_in_txn, step_sources_in,
+    drop_blocked_source_steps_in_txn, erase_blocked_source_actor_in_txn,
+    remove_step_sources_in_txn, step_sources_in,
 };
 
 /// Reports waiting for the Coach. Key: the receipt.

@@ -22,12 +22,17 @@ pub const SWEEP_CANDIDATE_TYPE: u8 = crate::registry::ENTITY_TYPE_PERSON;
 /// Saved-query ids read per page of the type index.
 const QUERY_PAGE: usize = 256;
 
-/// Every saved query a sweep evaluates: active, and Wake or Reactive. A
-/// Reactive query is swept too, as the backstop for what its change feed
-/// cannot see (a deleted claim's subject, an edge, the passage of time). A
-/// vault without the CRM pack has none.
+/// Every saved query a sweep evaluates: active, and Wake or Reactive, but no
+/// memory watch, which never matches a person. A Reactive query is swept too,
+/// as the backstop for what its change feed cannot see (a deleted claim's
+/// subject, an edge, the passage of time). A vault without the CRM pack has
+/// none.
 pub fn sweep_saved_queries(vault: &Vault) -> Result<Vec<SavedQueryRecord>> {
-    active_saved_queries(vault, |mode| mode != EvalMode::Manual)
+    let queries = active_saved_queries(vault, |mode| mode != EvalMode::Manual)?;
+    Ok(queries
+        .into_iter()
+        .filter(|record| !super::memory_watch::is_memory_watch_record(record))
+        .collect())
 }
 
 /// Every active Reactive saved query: those a claim write re-checks.
@@ -114,6 +119,20 @@ pub struct PersonChanges {
     /// Whether changes remain after `through`.
     pub more: bool,
     pub persons: BTreeSet<EntityId>,
+    /// The vault-clock second of the oldest change read that moved one of
+    /// `persons`: what a re-check of them answers (FIX 11250).
+    pub first_recorded_at: Option<u64>,
+}
+
+impl PersonChanges {
+    /// Notes that `change` moved `person`.
+    fn moved(&mut self, person: EntityId, change: &crate::ports::ChangeLogRecord) {
+        self.persons.insert(person);
+        self.first_recorded_at = Some(
+            self.first_recorded_at
+                .map_or(change.recorded_at, |at| at.min(change.recorded_at)),
+        );
+    }
 }
 
 /// The newest change in the vault's change log: where a Reactive reader
@@ -145,7 +164,7 @@ pub fn saved_query_changes_after(
             continue;
         };
         if header.entity_type == SWEEP_CANDIDATE_TYPE {
-            changes.persons.insert(change.entity);
+            changes.moved(change.entity, &change);
             continue;
         }
         if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
@@ -166,7 +185,7 @@ pub fn saved_query_changes_after(
             .and_then(|raw| EntityMetadataHeader::parse(&raw))
             .is_some_and(|header| header.entity_type == SWEEP_CANDIDATE_TYPE);
         if person {
-            changes.persons.insert(subject);
+            changes.moved(subject, &change);
         }
     }
     changes.more = rows.next().is_some();

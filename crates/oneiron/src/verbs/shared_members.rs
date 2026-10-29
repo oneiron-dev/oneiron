@@ -240,7 +240,10 @@ pub fn close_shared_erase_ask_as(
 #[serde(deny_unknown_fields)]
 pub struct GuestSlipMintRequest {
     pub grant_ref: EntityId,
-    pub holder_key: String,
+    /// The guest's key. An Ask guest's grant that kept the key their ask
+    /// carried binds that one, and this may be absent (FIX-LIST 1978).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder_key: Option<String>,
     pub expires_at: u64,
     /// The owner's cap on whom the slip may message (FIX 3899), signed into
     /// it: `parent`, `subtree`, `project` or `vault`. A guest runs in no
@@ -282,7 +285,7 @@ pub fn mint_guest_slip_as(
     issuer: &HostSlipIssuer,
     input: GuestSlipMintRequest,
 ) -> MemoryResult<GuestSlipMinted> {
-    let key = holder_key(&input.holder_key)?;
+    let key = input.holder_key.as_deref().map(holder_key).transpose()?;
     let slip = vault.mint_guest_slip(
         owner,
         issuer,

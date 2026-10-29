@@ -140,6 +140,12 @@ async fn freeze_gate(
                 }
             }
         }
+        // A person's own act at a member door (FIX 1302 stage 1), which the
+        // supervisor signed for a member who carries no slip of his own.
+        request = match verify_person_action(&state, request).await {
+            Ok(request) => request,
+            Err(refusal) => return refusal,
+        };
         // A request the supervisor attests is the vault owner's own
         // (`ManagedOwnerAction`), on every route whose body the buffer holds
         // (staged on the vault's disk past it, FIX 5619), and on every route
@@ -203,6 +209,9 @@ async fn freeze_gate(
         request
             .headers_mut()
             .remove(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER);
+        request
+            .headers_mut()
+            .remove(oneiron_vault_contract::MANAGED_PERSON_ACTION_HEADER);
         // A caller's own slip, its holder proof and its machine claim go on
         // unchanged: the child verifies them, spends the proof once, and the
         // caller stays itself (WILL-PLAN L14 row 01). Any other bearer
@@ -236,6 +245,68 @@ async fn freeze_gate(
     })
     .await
     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// A member door's person action (FIX 1302 stage 1): on a POST to a door a
+/// person action serves (`auth::managed_person_door`) that carries neither
+/// a caller's slip nor an owner attestation, the supervisor-signed
+/// `ManagedPersonAction` is verified against the per-spawn secret over the
+/// method, path, raw query, placing headers and exact body, and a verified
+/// one names its person as a request extension the credential reads. One
+/// that does not verify names no one: the request goes on as it came, as
+/// anonymous as before. The body is held up to the facade's own ceiling;
+/// `Err` answers one past it, as the facade would.
+async fn verify_person_action(state: &ManagedState, request: Request) -> Result<Request, Response> {
+    if request.method() != Method::POST
+        || crate::auth::managed_person_door(request.uri().path()).is_none()
+        || request
+            .headers()
+            .contains_key(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
+        || crate::auth::carries_caller_slip(request.headers())
+    {
+        return Ok(request);
+    }
+    let Some(assertion) = request
+        .headers()
+        .get(oneiron_vault_contract::MANAGED_PERSON_ACTION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|text| {
+            serde_json::from_str::<oneiron_vault_contract::ManagedPersonAction>(text).ok()
+        })
+    else {
+        return Ok(request);
+    };
+    let (parts, body) = request.into_parts();
+    let Ok(bytes) = to_bytes(body, oneiron::memory::caps::MAX_REMOTE_REQUEST_BYTES).await else {
+        return Err(StatusCode::PAYLOAD_TOO_LARGE.into_response());
+    };
+    let header = |name: &'static str| {
+        parts
+            .headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+    };
+    let verified = state.ledger.verify_person_action(
+        &assertion,
+        &oneiron_vault_contract::ManagedOwnerRequest {
+            method: parts.method.as_str(),
+            path: parts.uri.path(),
+            query: parts.uri.query().unwrap_or(""),
+            headers: oneiron_vault_contract::MANAGED_OWNER_BOUND_HEADERS.map(header),
+            body: &bytes,
+        },
+    );
+    let holder = oneiron::EntityId::from_hex(&assertion.holder_ref)
+        .ok()
+        .filter(|_| verified);
+    let mut request = Request::from_parts(parts, Body::from(bytes));
+    if let Some(holder) = holder {
+        request
+            .extensions_mut()
+            .insert(super::ManagedPersonHolder(holder));
+    }
+    Ok(request)
 }
 
 /// The answer to an owner attestation managed ingress could not verify on

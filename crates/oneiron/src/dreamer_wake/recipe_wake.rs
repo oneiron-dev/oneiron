@@ -1,20 +1,25 @@
 //! The wake policy's recipe lane (ARCH-0026 #wake). Each receipt runs its
 //! recipe's body over the input row the policy outbox holds for it, and the
-//! input leaves the outbox in the commit that does the recipe's work.
+//! input leaves the outbox in the commit that does the recipe's work. A
+//! stopped or deferred wake keeps its input and reports Park or Deferred,
+//! so the trigger is never lost.
 
 use rmpv::Value;
 
 use crate::Vault;
 use crate::dreamer_runner::{
-    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerRunnerStore,
+    DREAMER_RECIPE_WAKE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause, DreamerRunnerStore,
     EnqueueDreamerVaultCleanupAttempt,
 };
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 
+use super::deadline::WakeCancellation;
+use super::driver::{DREAMER_CANCELLED_PARK_REASON, DREAMER_PAUSED_PARK_REASON};
 use super::policy::{
     WakePolicyTrigger, WakeRecipe, take_wake_recipe_input_in_txn, wake_policy_input_covers,
 };
+use super::read_phase::{OnStale, ReadWrite, WakeStop};
 use super::scheduling::WakeTurnSubject;
 use super::types::{DreamerAttemptExecution, WakeAttemptContext, WakeTrigger};
 
@@ -40,7 +45,11 @@ pub(crate) fn execute(
     }
     let now = ctx.now_ms / 1_000;
     match trigger.recipe {
-        WakeRecipe::Continuous => continuous(ctx, attempt, &trigger, now)?,
+        WakeRecipe::Continuous => {
+            if let Some(execution) = continuous(ctx, attempt, &trigger, now)? {
+                return Ok(execution);
+            }
+        }
         WakeRecipe::Nightly => nightly(ctx.vault, attempt, &trigger, now)?,
         WakeRecipe::Weave => {
             ctx.vault.with_write_txn_grouped(|txn| {
@@ -52,25 +61,74 @@ pub(crate) fn execute(
             ctx.vault.store.notify_attempt_observers();
         }
     }
-    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    })
 }
 
 /// Continuous: the sieve reads what landed and a due window goes to the
 /// projector, through the turn producer's own door. A turn that came in by
 /// no turn door (one sync applied, say) is read here. The sieve then reads
-/// on while this pass has time; what is left waits for the next wake.
+/// on while this pass has time; what is left waits for the next wake. A
+/// stopped or deferred wake keeps its input and reports Park or Deferred,
+/// so the trigger is never lost.
 fn continuous(
     ctx: &WakeAttemptContext<'_>,
     attempt: &DreamerAdmittedAttempt,
     trigger: &WakePolicyTrigger,
     now: u64,
-) -> Result<()> {
+) -> Result<Option<DreamerAttemptExecution>> {
     let vault = ctx.vault;
     if !wake_policy_input_covers(vault, trigger)? {
-        return Ok(());
+        return Ok(None);
     }
-    vault.wake_dreamer_on_turn(WakeTurnSubject::Vault, now)?;
-    while !ctx.deadline.expired() && vault.sieve_pass(now)?.more {}
+    let stop = WakeStop::new(ctx.cancel);
+    // A retry may run as a new attempt row; its trigger is its input.
+    let input = attempt.status.payload.input.as_str().unwrap_or_default();
+    let trigger_key = *blake3::hash(input.as_bytes()).as_bytes();
+    let phases = &vault.active_wakes.read_phases;
+    let woke = vault.wake_dreamer_on_turn_until(
+        WakeTurnSubject::Vault,
+        now,
+        stop,
+        phases.on_stale(&trigger_key, now),
+    );
+    if matches!(woke, Ok(ReadWrite::Deferred)) {
+        phases.deferred(trigger_key, now);
+    } else {
+        phases.settled(&trigger_key);
+    }
+    match woke? {
+        ReadWrite::Written(_) => {}
+        ReadWrite::Stopped => {
+            let (reason, cause) = if ctx.cancel.is_some_and(WakeCancellation::is_paused) {
+                (
+                    DREAMER_PAUSED_PARK_REASON.to_owned(),
+                    DreamerParkCause::Paused,
+                )
+            } else {
+                (
+                    DREAMER_CANCELLED_PARK_REASON.to_owned(),
+                    DreamerParkCause::Cancelled,
+                )
+            };
+            return Ok(Some(DreamerAttemptExecution::Park { reason, cause }));
+        }
+        ReadWrite::Deferred => {
+            return Ok(Some(DreamerAttemptExecution::Deferred {
+                completed_units: 0,
+                retry_at: now.saturating_add(1),
+                step_hashes: Vec::new(),
+            }));
+        }
+    }
+    while !ctx.deadline.expired()
+        && matches!(
+            vault.sieve_pass_until(now, stop, OnStale::Defer, false)?,
+            ReadWrite::Written(commit) if commit.pass.more
+        )
+    {}
     vault.with_write_txn_grouped(|txn| {
         if take_wake_recipe_input_in_txn(vault, txn, trigger)?.is_some() {
             let policy = super::recipes::policy_in_txn(vault, txn)?;
@@ -96,7 +154,7 @@ fn continuous(
         Ok(())
     })?;
     vault.store.notify_attempt_observers();
-    Ok(())
+    Ok(None)
 }
 
 /// Nightly: the cadence wake registers the Timer wake's maintenance (the

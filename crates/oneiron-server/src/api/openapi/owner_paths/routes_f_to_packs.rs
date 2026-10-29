@@ -288,6 +288,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/legal-holds/lift-and-erase/shown-state",
+        summary: "What the one confirm over `records` (comma-separated 32-hex ids) shows now, with `claim_free_partition` when it also releases that partition (FIX 10400): its title and prompt, the records and each standing customer hold on them, read in one snapshot. A client sends it back as the confirm's `shown_state`.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/legal-holds/log",
         summary: "The owner-visible hold log, oldest first: ids, times and reason codes.",
         row: Some("vault.legal_holds.log"),

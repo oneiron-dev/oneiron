@@ -213,6 +213,11 @@ fn log_rejected(
     }
 }
 
+/// The row an attachment's carried reference refusal is receipted under (FIX
+/// 11439): the Dreamer's evidence-attachment door, which no verb-table row
+/// reaches, so the sealed consolidation write names it itself.
+const ATTACHMENT_REFUSAL_ROW: &str = "dreamer.attach_evidence";
+
 fn attach_evidence(
     vault: &Vault,
     run: &DreamerRunContext,
@@ -247,7 +252,11 @@ fn attach_evidence(
     let checker = checker
         .map(|checker| checker.admit_for_writes(&vault.store, run.agent_actor.entity_ref()))
         .transpose()?;
-    vault.with_write_txn_grouped(|txn| {
+    // A reference Deny rolls back with the write it refuses, so the denied
+    // slot's pointer is carried out of it and receipted after, outside it
+    // (FIX 11439).
+    let mut carried: Option<String> = None;
+    let outcome = vault.with_write_txn_grouped(|txn| {
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;
@@ -269,7 +278,7 @@ fn attach_evidence(
         let gate_body =
             gate_candidate.into_claim_body(&envelope, vault.default_facet_in_txn(txn)?)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-        crate::gate::check_claim_policy_for_write_with_record_with_reader(
+        crate::gate::check_claim_policy_for_write_with_record_with_reader_carrying_refusal(
             &vault.store,
             txn,
             &head,
@@ -291,6 +300,7 @@ fn attach_evidence(
             },
             &mut None,
             &reader,
+            &mut carried,
         )?;
         // The gate is not an authority-granting preflight: all materialization
         // below and its receipt share this transaction, including live pins.
@@ -307,7 +317,24 @@ fn attach_evidence(
             ));
         }
         Ok(())
-    })
+    });
+    match outcome {
+        Err(error) => {
+            // The refused write has rolled back; its carried refusal keeps
+            // its receipt on a small write of its own, and the caller still
+            // hears the refusal the transaction returned.
+            if let Some(field) = carried {
+                crate::gate::receipt_carried_reference_refusal(
+                    vault,
+                    run.agent_actor,
+                    ATTACHMENT_REFUSAL_ROW,
+                    field,
+                );
+            }
+            Err(error)
+        }
+        Ok(()) => Ok(()),
+    }
 }
 
 fn attach_ref(

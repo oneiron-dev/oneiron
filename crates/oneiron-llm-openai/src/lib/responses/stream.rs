@@ -184,6 +184,7 @@ impl<'a> OpenAiResponsesLlmStream<'a> {
                         usage,
                         finish_reason,
                         reply_assertions,
+                        token_scores: None,
                     });
                 }
                 Some(Ok(_)) => {}

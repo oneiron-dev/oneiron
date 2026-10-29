@@ -95,6 +95,7 @@ vaultFanoutSlots(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 selfBudget(input: unknown): unknown
 selfBudgetLand(input: unknown): unknown
+selfBillingAccountFile(input: unknown): unknown
 vaultBudgetsLeaseOpen(input: unknown): unknown
 vaultBudgetsLease(input: unknown): unknown
 vaultBudgetsLeaseTopUp(input: unknown): unknown
@@ -108,6 +109,8 @@ vaultBudgetsRsi(input: unknown): unknown
 vaultBudgetsRsiTopUp(input: unknown): unknown
 vaultBudgetsRsiHold(input: unknown): unknown
 vaultBudgetsRsiHoldResume(input: unknown): unknown
+vaultBudgetsResidentShares(input: unknown): unknown
+vaultBudgetsResidentSharesSet(input: unknown): unknown
 vaultRunnersSeatsQuotas(input: unknown): unknown
 vaultRunnersSeatsTopUp(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
@@ -362,6 +365,7 @@ vaultSharedPolicyGet(input: unknown): unknown
 vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
+vaultSharedPolicyChanges(input: unknown): unknown
 vaultFederationCoreferenceLink(input: unknown): unknown
 vaultFederationCoreferenceConfirm(input: unknown): unknown
 vaultFederationCoreferenceShareConsent(input: unknown): unknown
@@ -421,6 +425,10 @@ vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
+selfOffRecordResultsList(input: unknown): unknown
+selfOffRecordResultsRead(input: unknown): unknown
+selfOffRecordWaitsGet(input: unknown): unknown
+selfOffRecordWaitsAnswer(input: unknown): unknown
 vaultOffRecordRoomsStatus(input: unknown): unknown
 vaultOffRecordRoomsStart(input: unknown): unknown
 vaultOffRecordRoomsWitness(input: unknown): unknown
@@ -487,6 +495,9 @@ vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultRootsRequestsCancel(input: unknown): unknown
+vaultRootsRequestsCreate(input: unknown): unknown
+vaultRootsRequestsList(input: unknown): unknown
+vaultOwnerWorkGet(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
 vaultCleanupReview(input: unknown): unknown
 vaultCleanupDecide(input: unknown): unknown
@@ -494,6 +505,7 @@ vaultArchiveDeletePreview(input: unknown): unknown
 vaultArchiveDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
 vaultUsageEventsRemoveUndecodable(input: unknown): unknown
+vaultUsageRepairReceipts(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
 vaultLegalHoldsWiden(input: unknown): unknown
@@ -561,6 +573,11 @@ vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
 vaultSecretsLiftHistory(input: unknown): unknown
+vaultSecretsRegister(input: unknown): unknown
+vaultSecretsRotate(input: unknown): unknown
+vaultSecretsRewrap(input: unknown): unknown
+vaultSecretsCustodyGet(input: unknown): unknown
+vaultSecretsCustodySubmit(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
@@ -575,6 +592,7 @@ vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
+vaultLensesExportPack(input: unknown): unknown
 vaultLensesSelect(input: unknown): unknown
 vaultLensesResolve(input: unknown): unknown
 vaultLensesResultSetAction(input: unknown): unknown
@@ -762,6 +780,7 @@ vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
 vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
+vaultTasksCommWidenRevoke(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultRunsPause(input: unknown): unknown
 vaultRunsResume(input: unknown): unknown
@@ -834,6 +853,7 @@ vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
+vaultConversationsTurnRebind(input: unknown): unknown
 vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown
@@ -896,6 +916,7 @@ vaultModelsTrialsNominate(input: unknown): unknown
 vaultModelsTrialsGet(input: unknown): unknown
 vaultModelsTrialsApprove(input: unknown): unknown
 vaultModelsTrialsRun(input: unknown): unknown
+vaultModelsTrialsResendArm(input: unknown): unknown
 vaultModelsTrialsComplete(input: unknown): unknown
 vaultModelsBindingsPropose(input: unknown): unknown
 vaultModelsBindingsGet(input: unknown): unknown
@@ -916,6 +937,7 @@ aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
 aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
+aiAskImage(input: unknown): unknown
 aiVerdict(input: unknown): unknown
 vaultGraphAsk(input: unknown): unknown
 vaultGraphAdmit(input: unknown): unknown
@@ -924,6 +946,7 @@ vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
+vaultQuestionsOutcomeWindows(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
 vaultQuestionsOutcomes(input: unknown): unknown
@@ -934,6 +957,7 @@ vaultDecisionsBandsLearn(input: unknown): unknown
 vaultDecisionsBandsEnforce(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
 vaultDecisionsAsksClimb(input: unknown): unknown
+vaultDecisionsAsksConfirmGrant(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
@@ -1077,6 +1101,7 @@ vaultSieveLease(input: unknown): unknown
 vaultSieveLeaseRefill(input: unknown): unknown
 vaultFreeTimePolicyGet(input: unknown): unknown
 vaultFreeTimePolicySet(input: unknown): unknown
+vaultFreeTimePolicySetAs(input: unknown): unknown
 vaultFreeTimeCycles(input: unknown): unknown
 vaultFreeTimeCycle(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown
@@ -1207,6 +1232,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
+  exportTo(path: string, format: string | undefined): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */

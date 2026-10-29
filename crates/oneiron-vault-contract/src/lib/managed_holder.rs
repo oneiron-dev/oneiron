@@ -1,5 +1,7 @@
-//! Host-attested account actions: one managed widen request, and one request
-//! the vault owner makes in person ([`ManagedOwnerAction`]).
+//! Host-attested account actions: one managed widen request, one request
+//! the vault owner makes in person ([`ManagedOwnerAction`]), and one request
+//! another person of the vault makes in person at a member door
+//! ([`ManagedPersonAction`], FIX 1302).
 //!
 //! Only the supervisor, after account authentication and its power check,
 //! signs these. The vault child has the per-spawn secret but never infers
@@ -228,7 +230,20 @@ impl ManagedOwnerTranscript {
         head: &ManagedOwnerHead<'_>,
         body_len: u64,
     ) -> Self {
-        let mut key = blake3::derive_key(OWNER_DOMAIN, spawn_token.expose().as_bytes());
+        Self::begin(OWNER_DOMAIN, spawn_token, vault, holder_ref, head, body_len)
+    }
+
+    /// [`Self::new`] under the key `domain` derives from the spawn token:
+    /// the owner's, or a person's ([`ManagedPersonAction`]).
+    fn begin(
+        domain: &str,
+        spawn_token: &TokenHex,
+        vault: &str,
+        holder_ref: &str,
+        head: &ManagedOwnerHead<'_>,
+        body_len: u64,
+    ) -> Self {
+        let mut key = blake3::derive_key(domain, spawn_token.expose().as_bytes());
         let mut hasher = blake3::Hasher::new_keyed(&key);
         key.zeroize();
         let [room_turn, invocation, session] = head.headers;
@@ -350,17 +365,69 @@ impl ManagedOwnerAction {
 
     /// Whether the holder is 32 and the MAC 64 lowercase hex characters.
     fn well_formed(&self) -> bool {
-        self.holder_ref.len() == 32
-            && self
-                .holder_ref
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            && self.mac.len() == 64
-            && self
-                .mac
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        action_well_formed(&self.holder_ref, &self.mac)
     }
+}
+
+const PERSON_DOMAIN: &str = "oneiron/managed-account-person/v1";
+
+/// The header a supervisor sends a [`ManagedPersonAction`] in.
+pub const MANAGED_PERSON_ACTION_HEADER: &str = "x-oneiron-managed-person-action";
+
+/// A host assertion that one request is a person's own act at a member door
+/// of a shared vault (FIX 1302): tied to one vault, the authenticated
+/// holder, the method, path and query, the headers that place the call, and
+/// the exact body, under its own key, so it never stands in for a
+/// [`ManagedOwnerAction`] or a [`ManagedWidenAction`]. The vault names the
+/// holder as the request's person only on this assertion, and only at the
+/// member doors it serves that way; its own roster and Grant checks then
+/// judge that person. It never makes the holder an owner.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManagedPersonAction {
+    pub holder_ref: String,
+    pub mac: String,
+}
+
+impl ManagedPersonAction {
+    /// Called by the supervisor ONLY after it authenticates the named human
+    /// account, on that person's own direct request (never an agent's or a
+    /// delegated key's).
+    pub fn sign_after_account_auth(
+        spawn_token: &TokenHex,
+        vault: &str,
+        holder_ref: &str,
+        request: &ManagedOwnerRequest<'_>,
+    ) -> Self {
+        Self {
+            holder_ref: holder_ref.to_owned(),
+            mac: sign_request(PERSON_DOMAIN, spawn_token, vault, holder_ref, request),
+        }
+    }
+
+    /// Refuse a forwarded/caller-chosen header unless the supervisor signed
+    /// this exact request for this vault and this holder.
+    pub fn verify(
+        &self,
+        spawn_token: &TokenHex,
+        vault: &str,
+        request: &ManagedOwnerRequest<'_>,
+    ) -> bool {
+        if !action_well_formed(&self.holder_ref, &self.mac) {
+            return false;
+        }
+        let expected = sign_request(PERSON_DOMAIN, spawn_token, vault, &self.holder_ref, request);
+        bool::from(self.mac.as_bytes().ct_eq(expected.as_bytes()))
+    }
+}
+
+/// Whether an action's holder is 32 and its MAC 64 lowercase hex characters.
+fn action_well_formed(holder_ref: &str, mac: &str) -> bool {
+    let lower_hex = |text: &str| {
+        text.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    holder_ref.len() == 32 && lower_hex(holder_ref) && mac.len() == 64 && lower_hex(mac)
 }
 
 /// The MAC over a whole request: its transcript, fed the body at once.
@@ -370,7 +437,19 @@ fn sign_owner(
     holder: &str,
     request: &ManagedOwnerRequest<'_>,
 ) -> String {
-    let mut transcript = ManagedOwnerTranscript::new(
+    sign_request(OWNER_DOMAIN, token, vault, holder, request)
+}
+
+/// [`sign_owner`] under the key `domain` derives.
+fn sign_request(
+    domain: &str,
+    token: &TokenHex,
+    vault: &str,
+    holder: &str,
+    request: &ManagedOwnerRequest<'_>,
+) -> String {
+    let mut transcript = ManagedOwnerTranscript::begin(
+        domain,
         token,
         vault,
         holder,

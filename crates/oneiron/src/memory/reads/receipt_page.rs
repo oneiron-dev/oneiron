@@ -12,7 +12,9 @@ use super::family_receipt;
 use crate::entity_id::EntityId;
 use crate::memory::support::hex_string;
 use crate::memory::{Memory, MemoryError, MemoryReceipt, MemoryResult};
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition};
+use crate::receipt::{
+    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition,
+};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::verbs::{VAULT_RECEIPTS_PAGE_MAX, VaultReceiptsPage};
@@ -98,6 +100,15 @@ fn family_query(limit: usize, kinds: &[String]) -> MemoryResult<ReceiptQuery> {
     Ok(query)
 }
 
+/// The row a family receipt names for a credential-bound reader: its
+/// trigger's entity id (32 hex after any `<kind>:` prefixes), as the
+/// off-device screen reads it. `None` when it names none: pure metadata,
+/// which stays.
+fn trigger_row_of(receipt: &ReceiptRecord) -> Option<EntityId> {
+    let hex = receipt.trigger_ref.as_deref()?.trim().rsplit(':').next()?;
+    EntityId::from_hex(hex).ok()
+}
+
 impl Memory<'_> {
     /// Lists gate decision receipts. A caller off this device sees none about
     /// a device-local claim, and none takes a place in its page.
@@ -116,7 +127,9 @@ impl Memory<'_> {
     /// none that names a device-local row, judged on its family's explicit
     /// rows (its trigger, a hook run's reads, a share's parties) before any
     /// takes a place in its page, which refills past them (FIX 1119, FIX
-    /// 1120). An unknown kind is refused.
+    /// 1120). A handle bound to a read credential sees only the receipts
+    /// whose trigger row that credential reads, judged before the page cut
+    /// with the same refill, and pure metadata. An unknown kind is refused.
     pub fn receipts_of_kinds(
         &self,
         limit: usize,
@@ -125,11 +138,47 @@ impl Memory<'_> {
         if kinds.is_empty() {
             return self.receipts(limit);
         }
-        let query = family_query(limit, kinds)?;
-        let mut receipts = self.vault.receipts_for_caller(query, &self.destination)?;
+        // A credential cut refills past withheld receipts like the off-device
+        // one (FIX 9955): an unbound handle keeps its single fetch.
+        let mut fetch = limit;
+        let mut kept = loop {
+            let query = family_query(fetch, kinds)?;
+            let receipts = self.vault.receipts_for_caller(query, &self.destination)?;
+            let exhausted = receipts.len() < fetch;
+            let filtered = self.credential_kept_receipts(receipts)?;
+            if filtered.len() >= limit || exhausted || fetch >= MAX_RECEIPT_QUERY_SCAN {
+                break filtered;
+            }
+            fetch = fetch.max(1).saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN);
+        };
+        kept.truncate(limit);
         // A world's name on the owner's own share receipt is his (FIX 5493).
-        crate::share_travel::screen_owner_notice_fields(self, &mut receipts);
-        Ok(receipts.into_iter().map(family_receipt).collect())
+        crate::share_travel::screen_owner_notice_fields(self, &mut kept);
+        Ok(kept.into_iter().map(family_receipt).collect())
+    }
+
+    /// `receipts` cut to what this handle's credential reads, before any page
+    /// cut (OF-172 D2): a receipt whose trigger names a row the lane
+    /// withholds takes no page place, and pure metadata stays. An unbound
+    /// handle keeps them all, in one lane read over all named rows.
+    fn credential_kept_receipts(
+        &self,
+        receipts: Vec<ReceiptRecord>,
+    ) -> MemoryResult<Vec<ReceiptRecord>> {
+        if receipts.is_empty() {
+            return Ok(receipts);
+        }
+        let ids: Vec<EntityId> = receipts.iter().filter_map(trigger_row_of).collect();
+        if ids.is_empty() {
+            return Ok(receipts);
+        }
+        let Some(readable) = self.credential_readable_ids(&ids)? else {
+            return Ok(receipts);
+        };
+        Ok(receipts
+            .into_iter()
+            .filter(|receipt| trigger_row_of(receipt).is_none_or(|id| readable.contains(&id)))
+            .collect())
     }
 
     /// `vault.receipts` a page at a time: [`Self::receipts_of_kinds`]'s
@@ -196,8 +245,11 @@ impl Memory<'_> {
     /// The family's receipts of `kinds` after `after`, and the next page's
     /// cursor. A pass reads only receipts no newer than the cursor, and
     /// reads again past those at the cursor's own time it already served. A
-    /// read the work cap cut short ends its page at the last receipt it
-    /// walked, kept or withheld, so a page that kept none still moves on.
+    /// handle bound to a read credential sees only the receipts whose
+    /// trigger row that credential reads, cut before the page cut with the
+    /// same refill, and pure metadata. A read the work cap cut short ends
+    /// its page at the last receipt it walked, kept or withheld, so a page
+    /// that kept none still moves on.
     fn family_page(
         &self,
         kinds: &[String],
@@ -226,10 +278,31 @@ impl Memory<'_> {
                 .filter(|record| cursor.as_ref().is_none_or(|cursor| cursor.precedes(record)))
                 .collect();
             let passed = read_count - after_cursor.len();
-            if after_cursor.len() > page || cut.is_some() || read_count < fetch || passed == 0 {
-                break (after_cursor, cut);
+            // A credential-bound reader sees only the rows its read lane
+            // admits (OF-172 D2), before the page cut: a withheld receipt
+            // takes no page place, and the fetch refills past it.
+            let after_len = after_cursor.len();
+            let kept = self.credential_kept_receipts(after_cursor)?;
+            let withheld = after_len - kept.len();
+            if kept.len() > page
+                || cut.is_some()
+                || read_count < fetch
+                || (passed == 0 && withheld == 0)
+            {
+                break (kept, cut);
             }
-            fetch = page.saturating_add(1).saturating_add(passed);
+            if fetch >= MAX_RECEIPT_QUERY_SCAN {
+                break (kept, cut);
+            }
+            fetch = if withheld == 0 {
+                page.saturating_add(1)
+                    .saturating_add(passed)
+                    .min(MAX_RECEIPT_QUERY_SCAN)
+            } else {
+                // Double past many withheld in few passes (cf. the off-device
+                // refill growth).
+                fetch.max(1).saturating_mul(2).min(MAX_RECEIPT_QUERY_SCAN)
+            };
         };
         let more = records.len() > page;
         records.truncate(page);
@@ -256,7 +329,9 @@ impl Memory<'_> {
 
     /// Up to `wanted` gate decisions before `before` (from the newest when
     /// `None`) this caller reads: off this device, none about a device-local
-    /// claim takes a place, and the read refills past it.
+    /// claim takes a place, and a handle bound to a read credential sees
+    /// only the decisions whose claim that credential reads, each row by its
+    /// claim id with pure metadata staying; the read refills past either.
     fn gate_records_before(
         &self,
         mut before: Option<GateDecisionId>,
@@ -267,9 +342,32 @@ impl Memory<'_> {
             let page = self.vault.store.gate_decisions_page(before, wanted)?;
             let exhausted = page.len() < wanted;
             before = page.last().map(|record| record.decision_id);
+            // A credential-bound reader sees only the rows its read lane
+            // admits (OF-172 D2), judged in one lane read per page before any
+            // count. An unbound handle parses nothing here, as before.
+            let readable = if self.read_proof.is_none() || page.is_empty() {
+                None
+            } else {
+                let ids: Vec<EntityId> = page
+                    .iter()
+                    .filter_map(|record| EntityId::from_bytes(record.claim_id?).ok())
+                    .collect();
+                if ids.is_empty() {
+                    None
+                } else {
+                    self.credential_readable_ids(&ids)?
+                }
+            };
             for record in page {
                 if records.len() == wanted {
                     break;
+                }
+                // A claim id that does not parse is withheld from such a
+                // reader, never an error.
+                if let (Some(id), Some(readable)) = (record.claim_id, &readable)
+                    && !EntityId::from_bytes(id).is_ok_and(|id| readable.contains(&id))
+                {
+                    continue;
                 }
                 let kept = self.destination.is_off_device()
                     && match record.claim_id {

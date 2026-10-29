@@ -109,6 +109,7 @@ pub(crate) use self::cloud_registration::{
 };
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
+pub use self::control::input::{CustodyInputBinding, seal_custody_input};
 #[cfg(feature = "sync")]
 pub(crate) use self::control::input::{
     RelayedInput, WitnessPart, held_input_in_txn, held_inputs, held_witness_in_txn, held_witnesses,
@@ -143,8 +144,9 @@ pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
-    KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberStep, filled, holds_masked_keys_in_txn,
-    masked_file_in_txn, put_masked_file_in_txn, sighted_bytes_in_txn,
+    KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberStep, PlaceHandles, filled,
+    filled_with, holds_masked_keys_in_txn, masked_copy_withheld, masked_file_in_txn,
+    put_masked_file_in_txn, sighted_bytes_in_txn,
 };
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,

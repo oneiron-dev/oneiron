@@ -171,6 +171,11 @@ pub(crate) struct BackupOutcome {
     pub(crate) checkpoint_id: String,
     /// Older backups deleted to honour `keep`; none while a legal hold stands.
     pub(crate) pruned: Vec<String>,
+    /// Why a hosted vault's backup carries none of its host-order legal
+    /// holds, for its host to alert on (FIX 6598); absent where it carries
+    /// them or the vault is self-hosted. Nothing of any hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) host_holds_unavailable: Option<oneiron::recovery::checkpoint::HostHoldsUnavailable>,
 }
 
 /// Takes one backup of `vault` and prunes older ones beyond `plan.keep`. The
@@ -200,6 +205,8 @@ pub(crate) fn take_as(
             "the backup landed; what it covered was not recorded, so the next check reads changed"
         );
     }
+    // FIX 9522: with an HTTP anchor this stages custody locally and returns; the
+    // background publisher does the anchor reads and advances.
     custody::publish_after_take(vault, plan);
     let bytes = std::fs::metadata(&produced.path)?.len();
     let pruned = prune(vault, plan, Some(&produced.file))?;
@@ -253,6 +260,17 @@ pub(crate) fn list(plan: &BackupPlan) -> anyhow::Result<Vec<BackupRecord>> {
     Ok(records)
 }
 
+/// [`list`], and the backups among them a managed handoff pin keeps pending
+/// for a stage ack (FIX 6335), oldest first: retention's excess past `keep`
+/// whose ack does not name the file held here. The pin still keeps every one.
+pub(crate) fn list_with_pending(
+    plan: &BackupPlan,
+) -> anyhow::Result<(Vec<BackupRecord>, Vec<BackupRecord>)> {
+    let records = list(plan)?;
+    let pending = handoff::handoff_pending(plan, &records);
+    Ok((records, pending))
+}
+
 /// Digits a sequence number is padded to, so names also sort in order.
 const SEQUENCE_WIDTH: usize = 10;
 
@@ -285,6 +303,9 @@ pub(crate) fn prune(
         return Ok(Vec::new());
     }
     checkpoint_fact::sweep(vault, plan);
+    // FIX 7607: stage acks whose artifact is gone go with the prune; pinned
+    // acks whose artifact exists stay.
+    handoff::sweep_orphan_stage_acks(plan);
     let records: Vec<_> = list(plan)?
         .into_iter()
         .filter(|record| Some(record.file.as_str()) != spared)

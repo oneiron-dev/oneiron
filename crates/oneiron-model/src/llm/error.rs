@@ -32,6 +32,7 @@ impl LlmError {
                 RetryableLlmError::ServerError
                     | RetryableLlmError::Timeout
                     | RetryableLlmError::StreamCut
+                    | RetryableLlmError::TransportFault(_)
             ) | Self::Fatal(FatalLlmError::EmptyResponse)
         )
     }
@@ -135,6 +136,112 @@ pub enum RetryableLlmError {
     Timeout,
     #[error("stream cut")]
     StreamCut,
+    /// A cut whose transport named its cause (FIX 10403): retried, rested
+    /// and parked exactly as [`Self::StreamCut`] is; the cause is for the
+    /// result row and receipt that carry the error.
+    #[error("stream cut ({0})")]
+    TransportFault(TransportFault),
+}
+
+/// What cut a call on its transport, as the transport typed it.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    thiserror::Error,
+    schemars::JsonSchema,
+)]
+#[error("{}{}: {detail}", .kind.as_str(), fault_stage(.stage.as_deref()))]
+pub struct TransportFault {
+    pub kind: TransportFaultKind,
+    /// Where on its side the transport was when it failed, when it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    /// The transport's own words for the fault.
+    pub detail: String,
+}
+
+/// The typed transport faults a cut call carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportFaultKind {
+    /// The call never left this side.
+    NotSent,
+    /// The I/O failed after the call went out: it may have run.
+    IoAfterSend,
+    /// The far end refused the call before anything ran.
+    Refused,
+    /// The far end sent a frame the call cannot take where it came.
+    UnexpectedFrame,
+    /// The far end ended the call with an error where no error reply fits.
+    EndedWithError,
+}
+
+impl TransportFaultKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotSent => "not_sent",
+            Self::IoAfterSend => "io_after_send",
+            Self::Refused => "refused",
+            Self::UnexpectedFrame => "unexpected_frame",
+            Self::EndedWithError => "ended_with_error",
+        }
+    }
+}
+
+/// The typed cuts a transport builds, one per [`TransportFaultKind`].
+impl RetryableLlmError {
+    /// The call never left this side: `stage` failed.
+    #[must_use]
+    pub fn not_sent(stage: &str, detail: impl Into<String>) -> Self {
+        Self::fault(TransportFaultKind::NotSent, Some(stage), detail.into())
+    }
+
+    /// The I/O failed at `stage` after the call went out: it may have run.
+    #[must_use]
+    pub fn io_after_send(stage: &str, detail: impl Into<String>) -> Self {
+        Self::fault(TransportFaultKind::IoAfterSend, Some(stage), detail.into())
+    }
+
+    /// The far end refused the call, with its `code`, before anything ran.
+    #[must_use]
+    pub fn refused(code: &str, message: &str) -> Self {
+        Self::fault(
+            TransportFaultKind::Refused,
+            None,
+            format!("{code}: {message}"),
+        )
+    }
+
+    /// The far end sent a frame the call cannot take where it came.
+    #[must_use]
+    pub fn unexpected_frame(detail: impl Into<String>) -> Self {
+        Self::fault(TransportFaultKind::UnexpectedFrame, None, detail.into())
+    }
+
+    /// The far end ended the call with an error where no error reply fits.
+    #[must_use]
+    pub fn ended_with_error(detail: impl Into<String>) -> Self {
+        Self::fault(TransportFaultKind::EndedWithError, None, detail.into())
+    }
+
+    fn fault(kind: TransportFaultKind, stage: Option<&str>, detail: String) -> Self {
+        Self::TransportFault(TransportFault {
+            kind,
+            stage: stage.map(str::to_owned),
+            detail,
+        })
+    }
+}
+
+/// A fault's stage as its message carries it, after its kind.
+fn fault_stage(stage: Option<&str>) -> String {
+    stage.map_or_else(String::new, |stage| format!(" at {stage}"))
 }
 
 /// A kept call's reason as its message carries it, after the hold itself.
@@ -175,6 +282,10 @@ impl SpentKind {
 pub enum FatalLlmError {
     #[error("invalid request")]
     InvalidRequest,
+    /// A request the provider refused, with its message: an HTTP 400's
+    /// error text, bounded.
+    #[error("invalid request: {message}")]
+    InvalidRequestDetail { message: String },
     #[error("authentication failed")]
     Auth,
     #[error("content filtered")]

@@ -31,6 +31,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     mode: McpSurfaceMode,
     request_id: &str,
     headers: &HeaderMap,
+    connection: &Extensions,
     locality: oneiron::claim::CallerLocality,
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
@@ -47,7 +48,7 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     // A narrower caller's own holder proof, for the home an opened device
     // asks (FIX 2905): the one this request was admitted on.
     let forwarded = (!auth.is_owner_grade())
-        .then(|| auth.forwarded_caller_proof(&proof_headers))
+        .then(|| auth.forwarded_caller_proof_admitted(&proof_headers, connection))
         .flatten();
     let mut context = registered_actor(
         server,
@@ -155,6 +156,7 @@ pub(super) async fn registered_actor(
         room_turn,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 

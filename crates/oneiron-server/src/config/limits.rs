@@ -143,6 +143,11 @@ pub struct LimitsConfig {
     /// A memory bound sized from the machine (an eighth of its memory), not
     /// a size cap: no reply is refused for its size.
     pub media_reply_bytes: u64,
+    /// Bytes the JSON replies a ladder's chat sends read whole may hold at
+    /// once (FIX 10626): charged as they arrive, never waited for, a
+    /// crossing recorded; the same machine share by default. No reply is
+    /// refused for its size.
+    pub chat_reply_bytes: u64,
     /// Bytes one note to the open feedback inbox may carry: a POST body, or
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
@@ -185,6 +190,7 @@ impl Default for LimitsConfig {
             live_documents: oneiron::live_rows::LiveRows::DEFAULT_LIVE_DOCUMENTS,
             retained_memory_bytes: memory_floor(),
             media_reply_bytes: memory_floor(),
+            chat_reply_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
             engine: EngineLimits::default(),
         }
@@ -253,6 +259,7 @@ impl LimitsConfig {
             live_documents,
             retained_memory_bytes,
             media_reply_bytes,
+            chat_reply_bytes,
             feedback_inbox_bytes,
             keyed_filter_json_bytes,
             code_result_inline_bytes,
@@ -413,6 +420,7 @@ impl LimitsConfig {
         set(&mut self.live_documents, live_documents);
         set(&mut self.retained_memory_bytes, retained_memory_bytes);
         set(&mut self.media_reply_bytes, media_reply_bytes);
+        set(&mut self.chat_reply_bytes, chat_reply_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
@@ -650,6 +658,7 @@ impl LimitsConfig {
             ("live_documents", self.live_documents as u64),
             ("retained_memory_bytes", self.retained_memory_bytes),
             ("media_reply_bytes", self.media_reply_bytes),
+            ("chat_reply_bytes", self.chat_reply_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
         ] {
             if value == 0 {
@@ -722,6 +731,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) live_documents: Option<usize>,
     pub(super) retained_memory_bytes: Option<u64>,
     pub(super) media_reply_bytes: Option<u64>,
+    pub(super) chat_reply_bytes: Option<u64>,
     pub(super) feedback_inbox_bytes: Option<u64>,
     pub(super) keyed_filter_json_bytes: Option<u64>,
     pub(super) code_result_inline_bytes: Option<u64>,

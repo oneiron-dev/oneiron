@@ -15,6 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 mod git_push;
+mod guest_key;
 mod repo_bounds;
 
 pub(crate) use git_push::git_push_scope;
@@ -335,6 +336,10 @@ pub struct FederationGrantGuestPayload {
     pub asker_ref: EntityId,
     /// Exact fact entities disclosed to this guest.
     pub disclosed_refs: BTreeSet<EntityId>,
+    /// The public key the guest generated on their own device, as the ask
+    /// that minted this grant carried it (FIX-LIST 1978): the key the
+    /// owner's slip mint binds. `None` when the ask carried none.
+    pub holder_key: Option<[u8; 32]>,
 }
 
 impl FederationGrantGuestPayload {
@@ -446,6 +451,7 @@ impl FederationGrant {
                 person_ref,
                 asker_ref,
                 disclosed_refs,
+                holder_key: None,
             }),
             owner_agent: false,
             repo_bounds: None,
@@ -454,6 +460,18 @@ impl FederationGrant {
         };
         grant.validate()?;
         Ok(grant)
+    }
+
+    /// This ask guest grant, keeping `holder_key`, the public key the guest
+    /// generated on their own device that the ask carried (FIX-LIST 1978).
+    /// `None` leaves the grant as it is; a grant with no guest payload has no
+    /// guest to key and stays as it is too.
+    #[must_use]
+    pub fn with_guest_holder_key(mut self, holder_key: Option<[u8; 32]>) -> Self {
+        if let (Some(guest), Some(key)) = (self.guest.as_mut(), holder_key) {
+            guest.holder_key = Some(key);
+        }
+        self
     }
 
     /// Mints a one-hop delegate attenuated from an administrative `parent`.
@@ -803,7 +821,7 @@ fn decode_scope(value: &Value) -> Result<FederationGrantScope> {
 }
 
 fn encode_guest_payload(guest: &FederationGrantGuestPayload) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(GUEST_SCOPE_KEYS[0]),
             Value::from(guest.person_ref.to_hex()),
@@ -822,13 +840,17 @@ fn encode_guest_payload(guest: &FederationGrantGuestPayload) -> Value {
                     .collect(),
             ),
         ),
-    ])
+    ];
+    entries.extend(guest_key::entry(guest));
+    Value::Map(entries)
 }
 
 fn decode_guest_payload(value: &Value) -> Result<FederationGrantGuestPayload> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
+    let (entries, holder_key) = guest_key::split(entries)?;
+    let entries = entries.as_slice();
     validate_scope_keys(entries, &GUEST_SCOPE_KEYS)?;
     let person_ref = decode_canonical_entity_ref(required_value(entries, GUEST_SCOPE_KEYS[0])?)?;
     let asker_ref = decode_canonical_entity_ref(required_value(entries, GUEST_SCOPE_KEYS[1])?)?;
@@ -848,6 +870,7 @@ fn decode_guest_payload(value: &Value) -> Result<FederationGrantGuestPayload> {
         person_ref,
         asker_ref,
         disclosed_refs,
+        holder_key,
     })
 }
 

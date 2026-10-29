@@ -6,7 +6,9 @@
 //!
 //! Nothing here opens a sealed frame or holds a key: the engine keeps its keys,
 //! keystore, chain, sealing, image and custody, and calls this module for the
-//! clear bytes around them.
+//! clear bytes around them. The one exception is a hosted checkpoint's
+//! host-private member ([`seal_host_holds`], FIX 6598), sealed to the host's
+//! own recipient, which the host's restore worker opens with this codec.
 //!
 //! A host proving what it holds reads an artifact once with [`inspect_backup`]
 //! (every byte hashed and counted, its clear parts kept) and checks the
@@ -20,6 +22,7 @@
 
 mod checkpoint_fact;
 mod commitment;
+mod host_holds;
 mod inspect;
 mod prelude;
 mod wire;
@@ -33,6 +36,11 @@ pub use self::commitment::{
     CHECKPOINT_SIGNATURE_EPOCH, CHECKPOINT_SIGNATURE_SUITE, COMMITMENT_VERSION,
     COMMITMENT_VERSION_V1, CheckpointSigner, Commitment, CustodyRef, ED25519_KEY_ID,
     MAX_SIGNED_FRAME, SLHDSA_KEY_ID, commitment_digest, verify_commitment_signature,
+};
+pub use self::host_holds::{
+    HOST_HOLDS_AEAD, HOST_HOLDS_BINDING_LEN, HOST_HOLDS_DOMAIN, HOST_HOLDS_KEM, HOST_HOLDS_MAGIC,
+    HOST_HOLDS_SEAL_EPOCH, HOST_HOLDS_VERSION, HostHoldsBinding, SealedHostHolds,
+    host_holds_recipient_id, open_host_holds_family, open_host_holds_key, seal_host_holds,
 };
 pub use self::inspect::{
     ARTIFACT_SEAL_EPOCH, ARTIFACT_SEAL_SUITE, BackupEvidence, BackupTailEvidence, IMAGE_STREAM,

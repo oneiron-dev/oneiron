@@ -279,9 +279,25 @@ pub struct PolicyModelConfig {
     /// What the relay does when the hosted pass could not reach a safeguard
     /// model. Defaults to [`HostedOutagePolicy::Halt`].
     pub hosted_outage_policy: HostedOutagePolicy,
+    /// The time the safeguard read has, from its call's start to its answer,
+    /// its notes included (FIX 1203). `None` is the engine's default,
+    /// [`SAFEGUARD_READ_BUDGET`](super::decide::SAFEGUARD_READ_BUDGET).
+    pub safeguard_read_budget: Option<std::time::Duration>,
+    /// The host ladder's paired question, lent to the safeguard's generated
+    /// read (FIX 2436): each read asks it beside its own questions, and the
+    /// receipts keep its reading. `None` asks none.
+    pub safeguard_paired: Option<crate::llm::decision::DecisionQuestion>,
 }
 
 impl PolicyModelConfig {
+    /// The safeguard read's time ([`Self::safeguard_read_budget`]), the
+    /// engine's default when the host set none.
+    pub(super) fn read_budget(&self) -> std::time::Duration {
+        self.safeguard_read_budget
+            .filter(|budget| !budget.is_zero())
+            .unwrap_or(super::decide::SAFEGUARD_READ_BUDGET)
+    }
+
     pub(super) fn decisions(&self, plane: PolicyPlane) -> Option<&super::PolicyDecisions> {
         match plane {
             PolicyPlane::OwnerPolicy => self.owner_decisions.as_deref(),

@@ -14,6 +14,8 @@ mod codec;
 // their run's captured route (an `ExecutorStorage` method, no export).
 mod compaction_step;
 mod execute;
+// FIX 465, FIX 2245: a durable step's media call, by its attempt.
+mod media_step;
 pub mod public;
 mod schema;
 mod schema_guard;
@@ -68,7 +70,7 @@ pub(crate) use self::step_only::{
 };
 
 pub(crate) use self::settled::{
-    CallerSettledStep, committed_steps_in_txn, settled_step_for_caller,
+    CallerSettledStep, committed_steps_in_txn, settled_step_for_caller, settled_step_usage_in_txn,
 };
 pub(crate) use self::step_claim::{
     deindex_dreamer_step_claim, forget_step_memo, index_dreamer_step_claim_for_put,

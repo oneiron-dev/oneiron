@@ -39,6 +39,16 @@ pub(crate) async fn handle_mcp_request(
                 resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
                     .await?
                     .toward(peer);
+            // The generated-UI profile the client declares (FIX 7969),
+            // answered back as negotiated (`null`: none this build reads).
+            // This endpoint keeps no session: each call names its profile
+            // again in `_meta.clientCapabilities`.
+            let declared = super::super::client_surface::declared_surface(
+                request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("capabilities")),
+            );
             // It states the credential's scope, so it is released as every
             // result is (DEC-0005).
             let result = json!({
@@ -49,6 +59,10 @@ pub(crate) async fn handle_mcp_request(
                 },
                 "capabilities": {
                     "tools": { "listChanged": false },
+                    "experimental": {
+                        (super::super::client_surface::MCP_GENERATED_UI_CAPABILITY):
+                            super::super::client_surface::initialize_capability(declared.as_ref()),
+                    },
                 },
                 "surfaceMode": mode.as_str(),
                 "executeCodeAdmitted": matches!(mode, McpSurfaceMode::Primary)
@@ -88,6 +102,23 @@ pub(crate) async fn handle_mcp_request(
             }))
         }
         "tools/call" => {
+            // The owner's clock repair whose caller its own writer judges,
+            // before any caller here reads the clock (FIX 11190, FIX 11202).
+            if let Some(caller) = super::clock_repair_call::deferred_caller(
+                server,
+                headers,
+                connection,
+                request.params.as_ref(),
+            ) {
+                return super::clock_repair_call::repair_call(
+                    server,
+                    mode,
+                    request.params,
+                    raw_arguments,
+                    caller,
+                )
+                .await;
+            }
             // A stale owner sign-in's booking tool call is his (FIX 5327).
             let actor = super::booking_call::resolve_tool_caller(
                 mode,
@@ -142,6 +173,7 @@ pub(crate) async fn handle_mcp_request(
                     let actor = McpCallContext {
                         invocation: params.invocation()?,
                         hook_ask: params.hook_ask()?,
+                        client_surface: params.client_surface(),
                         ..actor.clone()
                     };
                     let args =

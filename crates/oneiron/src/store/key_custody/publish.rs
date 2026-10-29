@@ -340,6 +340,17 @@ impl Store {
         targets.extend(retried.iter().map(|target| target as &dyn CustodyTarget));
         let specs: Vec<TargetSpec> = targets.iter().map(|target| target.spec()).collect();
         let set = journal.register(&specs)?;
+        // A member the owner drained takes no head, nor one a begun drain
+        // fences: no stale publish lands (FIX 5843, ruled 10-20).
+        let mut publishing = Vec::with_capacity(targets.len());
+        for target in targets {
+            let id = target.spec().id().clone();
+            if set.holds(&id) && !journal.drain_fenced(&id)? {
+                publishing.push(target);
+            }
+        }
+        let targets = publishing;
+        let specs: Vec<TargetSpec> = targets.iter().map(|target| target.spec()).collect();
         journal.reconcile()?;
         for outbox in outboxes {
             outbox.take_in(journal);
@@ -628,6 +639,10 @@ impl Store {
             return Ok(None);
         }
         let set = journal.register(std::slice::from_ref(spec))?;
+        // A drained or drain-fenced member takes no batch (FIX 5843).
+        if !set.holds(spec.id()) || journal.drain_fenced(spec.id())? {
+            return Ok(None);
+        }
         journal.reconcile()?;
         let acks = journal.acks()?;
         let reseal = recipients.data_key.is_some() && journal.root_only(spec.id());

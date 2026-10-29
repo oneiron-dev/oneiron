@@ -16,6 +16,7 @@ use oneiron::failure_signals::HeldFailureSignalBatchView;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{self, ConnectorCallApproveOnceRequest, EmptyRequest};
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -31,7 +32,7 @@ async fn as_owner<T: Send + 'static>(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || act(server.vault(), &owner))
+    let answer = clock_ingress::run_blocking(move || act(server.vault(), &owner))
         .await
         .unwrap_or_else(|_| Err(internal(verb)));
     // Grants and their receipts live in side tables, not entity rows.
@@ -124,7 +125,7 @@ pub(crate) async fn vault_consent_failure_signals_held(
     };
     let server = Arc::clone(server);
     let read =
-        tokio::task::spawn_blocking(move || server.vault().held_failure_signal_batch(&owner)).await;
+        clock_ingress::run_blocking(move || server.vault().held_failure_signal_batch(&owner)).await;
     match read {
         Ok(Ok((view, worlds))) => (Ok(view), worlds),
         Ok(Err(error)) => (Err(error), Vec::new()),

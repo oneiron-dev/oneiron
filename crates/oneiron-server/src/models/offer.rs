@@ -144,18 +144,40 @@ pub(super) fn clone_connector(
     provider: &ProviderConfig,
     name: &str,
 ) -> anyhow::Result<PaidConnector> {
+    service_connector(provider, name, "voice-clone")
+}
+
+/// The paid connector provider `name`'s realtime voice sessions are
+/// admitted as (FIX 462): its realtime protocol at its origin, so no chat or
+/// media permit starts a session nor the reverse. One unit is one token the
+/// session reports.
+pub(super) fn realtime_connector(
+    provider: &ProviderConfig,
+    name: &str,
+) -> anyhow::Result<PaidConnector> {
+    service_connector(provider, name, "voice-realtime")
+}
+
+/// The paid connector of `service` on provider `name`: `service`'s protocol
+/// at the provider's origin, paid and keyed as its offers are, each unit
+/// one token.
+fn service_connector(
+    provider: &ProviderConfig,
+    name: &str,
+    service: &str,
+) -> anyhow::Result<PaidConnector> {
     let origin = reqwest::Url::parse(&provider.base_url)?
         .origin()
         .ascii_serialization();
-    let route = OfferRoute::new(format!("{}-voice-clone", adapter(provider.kind)), origin)
-        .map_err(|error| anyhow::anyhow!("voice clone route: {error}"))?;
+    let route = OfferRoute::new(format!("{}-{service}", adapter(provider.kind)), origin)
+        .map_err(|error| anyhow::anyhow!("{service} route: {error}"))?;
     let (custody, credential_binding) = match (&provider.key_secret, &provider.key_env) {
         (Some(secret), _) => (KeyCustody::T0, Some(format!("secret:{secret}"))),
         (None, Some(env)) => (KeyCustody::T1, Some(format!("env:{env}"))),
         (None, None) => (KeyCustody::Keyless, None),
     };
     Ok(PaidConnector {
-        connector: format!("voice-clone:{name}"),
+        connector: format!("{service}:{name}"),
         route,
         locality: provider.locality,
         payer: provider.payer,

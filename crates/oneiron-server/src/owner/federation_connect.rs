@@ -6,7 +6,7 @@
 //! Before offering or accepting, each owner mints the guest grant its side's
 //! pact governs (FIX 3016).
 
-use oneiron::authority::{AuthorityKey, ConnectOffer, FederationPactGesture};
+use oneiron::authority::{AuthorityKey, ConnectOffer, FederationPactGesture, ScopeOpeningKey};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
 use oneiron::federation::{FederationDirectionScope, FederationPactScope};
@@ -45,6 +45,7 @@ fn offer_json(offer: &ConnectOffer) -> Offer {
         scope: offer.pact_scope.clone(),
         signer: key_hex(&offer.gesture.signer),
         signature: hex(&offer.gesture.signature),
+        key: hex(offer.scope_key.expose()),
     }
 }
 
@@ -59,6 +60,7 @@ fn parse_offer(offer: &Offer) -> OwnerResult<ConnectOffer> {
             signer: AuthorityKey::Ed25519(hex_field("offer.signer", &offer.signer)?),
             signature: hex_field::<64>("offer.signature", &offer.signature)?.to_vec(),
         },
+        scope_key: ScopeOpeningKey::from_bytes(hex_field("offer.key", &offer.key)?),
     })
 }
 
@@ -208,6 +210,7 @@ fn rescope_json(offered: &oneiron::authority::ConnectRescopeOffer) -> RescopeOff
         scope: offer.scope,
         signer: offer.signer,
         signature: offer.signature,
+        key: offer.key,
     }
 }
 
@@ -248,6 +251,7 @@ pub(crate) fn rescope_accept(
             scope: offer.scope.clone(),
             signer: offer.signer.clone(),
             signature: offer.signature.clone(),
+            key: offer.key.clone(),
         })?,
     };
     let (state, counter) = with_issuer(server, |issuer| {

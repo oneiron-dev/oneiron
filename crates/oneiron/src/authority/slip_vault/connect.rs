@@ -21,6 +21,40 @@ use crate::federation::{
     FederationDirectionScope, FederationPactScope, encode_federation_pact_scope, is_guest_slice,
     require_connect_grant_in_txn, require_one_connect_per_peer,
 };
+use crate::store::grant_scope_custody;
+
+/// A pact epoch's scope opening key as an offer carries it (FIX 7907,
+/// 7958): the secret its scope commitment is keyed by, carried between the
+/// two hosts outside every signed record and logged nowhere. Each side's
+/// custody holds it from its owner's accept until the pact is revoked. It
+/// prints redacted.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ScopeOpeningKey(zeroize::Zeroizing<[u8; 32]>);
+
+impl ScopeOpeningKey {
+    /// The key whose 32 bytes are `bytes`, as an offer's carrier read it.
+    #[must_use]
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(zeroize::Zeroizing::new(bytes))
+    }
+
+    /// Its 32 bytes, for the offer's carrier.
+    #[must_use]
+    pub fn expose(&self) -> &[u8; 32] {
+        &self.0
+    }
+
+    /// A fresh key for a new pact epoch.
+    pub(super) fn fresh() -> Result<Self> {
+        Ok(Self(grant_scope_custody::new_scope_key()?))
+    }
+}
+
+impl std::fmt::Debug for ScopeOpeningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ScopeOpeningKey(..)")
+    }
+}
 
 /// One host's signed half of a Connect: the terms both owners approve, and
 /// that host's gesture over them. The other vault's owner accepts it with
@@ -39,6 +73,9 @@ pub struct ConnectOffer {
     pub pact_scope: FederationPactScope,
     /// The signing host's gesture over the pact transcript.
     pub gesture: FederationPactGesture,
+    /// The scope opening key the commitment is keyed by, outside the
+    /// gesture's transcript (FIX 7907, 7958).
+    pub scope_key: ScopeOpeningKey,
 }
 
 impl HostSlipIssuer {
@@ -67,13 +104,15 @@ impl HostSlipIssuer {
 }
 
 /// The Connect action for `grant_ref` with `peer_vault_id` over these terms:
-/// epoch 1 and the scope pair's keyed digest, with no gesture yet.
+/// epoch 1 and the scope pair's digest keyed by `scope_key`, with no gesture
+/// yet.
 fn connect_action(
     grant_ref: EntityId,
     peer_vault_id: AuthorityVaultId,
     pact_id: [u8; 32],
     pact_nonce: [u8; 16],
     pact_scope: FederationPactScope,
+    scope_key: &ScopeOpeningKey,
 ) -> Result<FederationLifecycleAction> {
     let canonical = encode_federation_pact_scope(&pact_scope)?;
     Ok(FederationLifecycleAction {
@@ -82,13 +121,49 @@ fn connect_action(
         grant_ref,
         peer_vault_id,
         pact_epoch: 1,
-        scope_digest: Some(federation_scope_digest(&pact_nonce, &canonical)),
+        scope_digest: Some(federation_scope_digest(
+            scope_key.expose(),
+            &pact_nonce,
+            &canonical,
+        )),
         pact_scope: Some(pact_scope),
         effective_scope: None,
         gesture: None,
         successor_vault_id: None,
         pact_nonce,
     })
+}
+
+/// The intake check of a peer's half (FIX 7907, 7958): `action`'s digest,
+/// derived here from the opening key, nonce and canonical scope the offer
+/// carries, must be the one `offer`'s gesture signs. The key's holder
+/// checks the scope-to-digest binding once, before anything is admitted.
+pub(super) fn require_offer_signs(
+    action: &FederationLifecycleAction,
+    offer: &ConnectOffer,
+    local: &AuthorityVaultId,
+) -> Result<()> {
+    let digest = action.scope_digest.ok_or_else(invalid_authority)?;
+    let transcript = crate::authority::federation_pact_transcript(
+        action.kind,
+        &action.pact_id,
+        local,
+        &offer.from_vault,
+        action.pact_epoch,
+        &digest,
+        None,
+        &action.pact_nonce,
+    )?;
+    let signature = crate::authority::AuthoritySignature {
+        suite: offer.gesture.signer.suite(),
+        public_key: offer.gesture.signer.clone(),
+        signature: offer.gesture.signature.clone(),
+    };
+    if crate::authority::verify_authority_signature(&signature, &transcript) {
+        Ok(())
+    } else {
+        Err(invalid_authority())
+    }
 }
 
 /// This vault's id, once `issuer` is its live host root.
@@ -113,11 +188,13 @@ fn require_peer_slice(inbound: &FederationDirectionScope) -> Result<()> {
     }
 }
 
-/// Signs this host's half of `action` as an offer to its peer.
+/// Signs this host's half of `action` as an offer to its peer, carrying the
+/// opening key `scope_key` its commitment is keyed by.
 pub(super) fn offer_for(
     issuer: &HostSlipIssuer,
     action: &FederationLifecycleAction,
     local: AuthorityVaultId,
+    scope_key: &ScopeOpeningKey,
 ) -> Result<ConnectOffer> {
     Ok(ConnectOffer {
         from_vault: local,
@@ -126,6 +203,7 @@ pub(super) fn offer_for(
         pact_nonce: action.pact_nonce,
         pact_scope: action.pact_scope.clone().ok_or_else(invalid_authority)?,
         gesture: issuer.sign_pact_gesture(action, &local)?,
+        scope_key: scope_key.clone(),
     })
 }
 
@@ -178,14 +256,16 @@ impl Vault {
         };
         let mut pact_nonce = [0u8; 16];
         OsRng.fill_bytes(&mut pact_nonce);
+        let scope_key = ScopeOpeningKey::fresh()?;
         let action = connect_action(
             grant_ref,
             peer_vault_id,
             random_slip_id(),
             pact_nonce,
             pact_scope,
+            &scope_key,
         )?;
-        offer_for(issuer, &action, local)
+        offer_for(issuer, &action, local, &scope_key)
     }
 
     /// Accepts the peer host's half of a Connect, approved by `owner`: logs
@@ -228,9 +308,11 @@ impl Vault {
                 offer.pact_id,
                 offer.pact_nonce,
                 offer.pact_scope.clone(),
+                &offer.scope_key,
             )?;
+            require_offer_signs(&action, offer, &local)?;
             action.gesture = Some(offer.gesture.clone());
-            let counter = offer_for(issuer, &action, local)?;
+            let counter = offer_for(issuer, &action, local, &offer.scope_key)?;
             let logged = fold.federation_pacts.get(&offer.pact_id).filter(|pact| {
                 pact.grant_ref == grant_ref
                     && pact.peer_vault_id == offer.from_vault
@@ -247,6 +329,16 @@ impl Vault {
                 .get(&offer.pact_id)
                 .cloned()
                 .ok_or_else(invalid_authority)?;
+            // The opening key enters custody with the Connect it keys, once
+            // the fold admitted it.
+            grant_scope_custody::install_scope_key(
+                &self.store,
+                txn,
+                &grant_ref,
+                &offer.pact_id,
+                1,
+                offer.scope_key.expose(),
+            )?;
             Ok((pact, counter))
         })
     }

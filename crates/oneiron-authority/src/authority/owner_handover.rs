@@ -33,7 +33,7 @@ const RETIRED_OWN_DEVICE_GRANTS_KEY: &str = "retired_own_device_grants";
 /// How many grant ids one list carries: none caps it (CALLS `FIX 5765
 /// handover evidence`).
 pub const HANDOVER_ID_LIST_LIMIT: Option<usize> = None;
-const OPTIONAL_KEYS: [&str; 4] = ["to", "from_keeps", "act", "proof"];
+const OPTIONAL_KEYS: [&str; 5] = ["to", "from_keeps", "act", "proof", "authorizer"];
 /// A proof digest is a BLAKE3 hash, lowercase hex.
 const PROOF_HEX_LEN: usize = 64;
 
@@ -87,6 +87,10 @@ pub struct OwnerHandover {
     /// A proof-of-control handover's BLAKE3 (lowercase hex) of the proof of
     /// organization control the host judged; never the proof itself.
     pub proof: Option<String>,
+    /// Who authorized the handover when the writer holds a person for it:
+    /// the attested account owner of a managed vault's proof-of-control
+    /// recovery (FIX 5401). `None` for every other cause and authorization.
+    pub authorizer: Option<EntityId>,
     /// The execution receipt's id.
     pub receipt: String,
     /// Every grant id the change rewrote, minted or deleted: the successor's
@@ -157,7 +161,7 @@ impl OwnerHandover {
 }
 
 /// Canonical field order: kind, shared_vault, cause, from, then `to`,
-/// `from_keeps`, `act` and `proof` when present, then receipt, then the
+/// `from_keeps`, `act`, `proof` and `authorizer` when present, then receipt, then the
 /// affected and the retired grant ids, each an array of lowercase hex ids.
 pub(super) fn owner_handover_value(handover: &OwnerHandover) -> Value {
     let mut entries = vec![
@@ -183,6 +187,9 @@ pub(super) fn owner_handover_value(handover: &OwnerHandover) -> Value {
     }
     if let Some(proof) = &handover.proof {
         entries.push((Value::from("proof"), Value::from(proof.as_str())));
+    }
+    if let Some(authorizer) = handover.authorizer {
+        entries.push((Value::from("authorizer"), Value::from(authorizer.to_hex())));
     }
     entries.push((
         Value::from("receipt"),
@@ -218,6 +225,7 @@ pub(super) fn decode_owner_handover(entries: &[(Value, Value)]) -> Result<Author
         "from_keeps",
         "act",
         "proof",
+        "authorizer",
         "receipt",
         AFFECTED_GRANTS_KEY,
         RETIRED_OWN_DEVICE_GRANTS_KEY,
@@ -260,6 +268,9 @@ pub(super) fn decode_owner_handover(entries: &[(Value, Value)]) -> Result<Author
             .transpose()?,
         act: present("act").then(|| text("act")).transpose()?,
         proof: present("proof").then(|| text("proof")).transpose()?,
+        authorizer: present("authorizer")
+            .then(|| id("authorizer"))
+            .transpose()?,
         receipt: text("receipt")?,
         affected_grants: ids(AFFECTED_GRANTS_KEY)?,
         retired_own_device_grants: ids(RETIRED_OWN_DEVICE_GRANTS_KEY)?,

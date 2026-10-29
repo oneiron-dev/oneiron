@@ -155,7 +155,7 @@ pub use request::{
 };
 pub use verdict::{
     HostedPlaneAttestation, PolicyClassifyDecision, PolicyClassifyVerdict, PolicyConfidence,
-    PolicyHedgeBucket, PolicyPassAudit, PolicySkipReason, PolicyVerdictCategory,
+    PolicyHedgeBucket, PolicyPassAudit, PolicyReadError, PolicySkipReason, PolicyVerdictCategory,
 };
 
 #[cfg(test)]

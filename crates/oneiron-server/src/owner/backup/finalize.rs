@@ -186,6 +186,12 @@ impl Produced {
     /// What `take` answers for this backup: its `bytes`, and the older ones
     /// `pruned` deleted.
     pub(crate) fn into_outcome(self, bytes: u64, pruned: Vec<String>) -> BackupOutcome {
+        let host_holds_unavailable = match self.receipt.host_holds {
+            oneiron::recovery::checkpoint::HostHoldsAvailability::Unavailable(reason) => {
+                Some(reason)
+            }
+            _ => None,
+        };
         BackupOutcome {
             backup: BackupRecord {
                 file: self.file,
@@ -197,6 +203,7 @@ impl Produced {
             },
             checkpoint_id: self.receipt.image_digest,
             pruned,
+            host_holds_unavailable,
         }
     }
 }
@@ -212,19 +219,28 @@ pub(crate) fn guard_attempt(plan: &BackupPlan, attempt: &str) -> std::io::Result
 /// is not there is lifted already; one that will not go is logged, and the
 /// label reads as changed until the next backup lifts it.
 pub(crate) fn lift_guard(plan: &BackupPlan) {
-    match std::fs::remove_file(plan.dir.join(guard_name(&plan.label))) {
+    let guard = plan.dir.join(guard_name(&plan.label));
+    match std::fs::remove_file(&guard) {
         Ok(()) => {
             // Unsynced, a crash brings the guard back: changed, never
             // covered.
             let _ = sync_dir(&plan.dir);
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => tracing::warn!(
-            reason = "backup_attempt_guard_stuck",
-            error = %error,
-            "a failed backup attempt's guard did not lift; the vault reads as changed until the \
-             next backup"
-        ),
+        Err(error) => {
+            // FIX 6802: a stuck guard's mtime is refreshed, so the managed
+            // pass paces on it for the hour instead of backing up every tick.
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&guard)
+                .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+            tracing::warn!(
+                reason = "backup_attempt_guard_stuck",
+                error = %error,
+                "a failed backup attempt's guard did not lift; the vault reads as changed until \
+                 the next backup"
+            );
+        }
     }
 }
 

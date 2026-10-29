@@ -362,6 +362,28 @@ impl Vault {
             None,
         )
     }
+    /// [`Self::join_member_in_txn`] with the window visible from `from`, at
+    /// or before the join `at`: a speaker handoff's boundary (FIX 3634).
+    pub(super) fn join_member_from_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        person: EntityId,
+        actor: WriteActor,
+        at: u64,
+        from: u64,
+    ) -> Result<()> {
+        self.change_membership_in_txn(
+            txn,
+            conversation,
+            person,
+            actor,
+            at,
+            MembershipAction::Join,
+            None,
+            Some(from),
+        )
+    }
     #[expect(
         clippy::too_many_arguments,
         reason = "atomic membership operation with audit and visibility axes"
@@ -414,10 +436,16 @@ impl Vault {
                 if !members.insert(person) {
                     return Err(state("member already joined"));
                 }
-                Some(match history.unwrap_or_default() {
-                    HistoryChoice::Share => 0,
-                    HistoryChoice::None => at,
-                    HistoryChoice::Inherit => {
+                Some(match (from, history.unwrap_or_default()) {
+                    // A speaker handoff's boundary (FIX 3634): the join time,
+                    // or an earlier entry's cut carried into the window.
+                    (Some(from), _) if from <= at => from,
+                    (Some(_), _) => {
+                        return Err(state("a window is visible from its join at the latest"));
+                    }
+                    (None, HistoryChoice::Share) => 0,
+                    (None, HistoryChoice::None) => at,
+                    (None, HistoryChoice::Inherit) => {
                         if body.shares_history() {
                             0
                         } else {

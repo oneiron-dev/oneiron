@@ -35,7 +35,10 @@ impl ResidentLend<'_> {
         let resident = binding.agent;
         let available = AgentDispatcher::new(self.vault).available_units(&binding.spend_scope)?;
         if available == 0 {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let own = match own_dreaming_slot(self.vault, resident)? {
             Some(slot) => served_slot_model(self.vault, self.runtime, &slot)?,
@@ -50,7 +53,10 @@ impl ResidentLend<'_> {
             ),
             None => {
                 let Some(ladder) = self.weaver_ladder else {
-                    return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                    return Ok(DreamerAttemptExecution::Completed {
+                        completed_units: 0,
+                        step_hashes: Vec::new(),
+                    });
                 };
                 (
                     self.weaver.model.clone(),

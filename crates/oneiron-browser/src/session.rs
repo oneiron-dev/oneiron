@@ -77,6 +77,7 @@ mod demonstration;
 mod draft;
 mod fresh;
 mod guest;
+mod held;
 mod lifecycle;
 mod press;
 mod request;
@@ -88,6 +89,7 @@ mod trail;
 
 pub use fresh::FreshGuest;
 pub use guest::{BrowserGuestStarter, StartedGuest};
+pub use held::{HeldPress, PressNeed};
 pub use press::PressGrants;
 pub use solved::{CapturedSolvedSpan, SOLVED_PAST_PRESS, SolvedSnapshotGap};
 
@@ -113,11 +115,11 @@ use crate::{
     ImageOutput, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
     NoWriter, Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode,
-    ProposeInput, ProposeOutput, Rebound, ReceiptEvidenceSink, ReplayAction, RoutineDecider, Row,
-    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody, SecretKind, SelectInput,
-    SendPolicy, StepStop, StoragePhase, SwitchEngineInput, SwitchEngineOutput, TabSwitch, Takeover,
-    TakeoverRecord, TextProvenance, TypeInput, TypeOperand, ViewInput, WaitForInput, WaitForOutput,
-    WorkflowLibrary, ZoomInput, site_of,
+    ProposeInput, ProposeOutput, Rebound, ReceiptEvidenceSink, ReceiptOutcome, ReplayAction,
+    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SecretCustody,
+    SecretKind, SelectInput, SendPolicy, StepStop, StoragePhase, SwitchEngineInput,
+    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TextProvenance, TypeInput,
+    TypeOperand, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -192,6 +194,9 @@ pub struct BrowserSession {
     stop_pending: Option<u64>,
     /// The effect class whose press refused the effect verb running now.
     press_refused: Option<String>,
+    /// The act the last refused press held, and the one press an owner's
+    /// answer armed (FIX 10423).
+    held: held::Holds,
     /// The grants' policy as last read, the person's approved batches and
     /// the sends batch presses paid (FIX 4613, 4615).
     presses: PressBook,
@@ -254,6 +259,7 @@ struct Left {
     rebound: Option<Rebound>,
     fact: Option<ActionFact>,
     unread: Option<String>,
+    outcome: Option<ReceiptOutcome>,
 }
 
 fn no_library() -> BrowserError {
@@ -376,10 +382,8 @@ impl BrowserSession {
         let source = self.source();
         // A send on a payment step is a payment (FIX 8009).
         let class = effect_class_on(&target.row.name, source.url.as_deref());
-        let press = match class {
-            Some(class) => self.press_for(class, &target.row)?,
-            None => PressMode::None,
-        };
+        let page = source.url.as_deref();
+        let press = self.press_or_hold("click", &input, class, Some(&target.row), page)?;
         let action = ReplayAction::Click {
             locator: target.row.locator.clone(),
         };
@@ -412,10 +416,7 @@ impl BrowserSession {
         let class = row
             .as_ref()
             .and_then(|row| effect_class_on(&row.name, page));
-        let press = match (class, &row) {
-            (Some(class), Some(row)) => self.press_for(class, row)?,
-            _ => PressMode::None,
-        };
+        let press = self.press_or_hold("click_at", &input, class, row.as_ref(), page)?;
         let base = Base::of(input.base);
         self.acted = Some(Acted {
             action: None,

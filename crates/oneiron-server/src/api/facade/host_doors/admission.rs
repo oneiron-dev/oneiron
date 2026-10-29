@@ -583,6 +583,11 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
+        | "vault.shared.policy.changes"
+        | "vault.roots.requests.create"
+        | "vault.roots.requests.list"
+        | "vault.owner_work.get"
+        | "vault.tasks.comm_widen.revoke"
         | "vault.notes.history_purge"
         | "vault.notes.history_purge_execute"
         | "vault.notes.history_purge_receipts"
@@ -598,7 +603,12 @@ pub(in crate::api::facade) fn door_admits(
         | "ai.voice.usage"
         | "ai.voice.tool"
         | "ai.voice.end"
-        | "ai.voice.close" => owner_proof(auth, server, verb).map(drop),
+        | "ai.voice.close"
+        | "vault.secrets.register"
+        | "vault.secrets.rotate"
+        | "vault.secrets.rewrap"
+        | "vault.secrets.custody.get"
+        | "vault.secrets.custody.submit" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -684,7 +694,11 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.off_record.recall"
         | "vault.off_record.notes.create"
         | "vault.off_record.claims.upsert"
-        | "self.off_record.execute" => {
+        | "self.off_record.execute"
+        | "self.off_record.results.list"
+        | "self.off_record.results.read"
+        | "self.off_record.waits.get"
+        | "self.off_record.waits.answer" => {
             crate::api::facade::off_record_doors::off_record_admits(server, auth, verb)
         }
         "vault.off_record.rooms.start"

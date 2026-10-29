@@ -74,7 +74,10 @@ fn bind(
     };
     operation["requestBody"] =
         json!({"required": true, "content": {"application/json": {"schema": body}}});
-    let Some(responses) = operation.get_mut("responses").and_then(Value::as_object_mut) else {
+    let Some(responses) = operation
+        .get_mut("responses")
+        .and_then(Value::as_object_mut)
+    else {
         return;
     };
     responses.insert(

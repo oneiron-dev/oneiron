@@ -390,9 +390,8 @@ impl Vault {
     /// Enumeration runs over `identity_topology_events_in_txn` — the one
     /// surface the fold, the receipt projection and any rebuild share — and is
     /// therefore complete. The public receipt query is not a substitute: it
-    /// visits only the newest `MAX_RECEIPT_QUERY_SCAN` rows of the family, so a
-    /// rebuild driven from it would delete a whole projection and refold a
-    /// suffix of its history.
+    /// projects these events as receipts, so a rebuild driven from it would
+    /// fold rendered receipts instead of the events the live fold saw.
     pub(super) fn resolution_events_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,

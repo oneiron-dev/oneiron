@@ -9,11 +9,12 @@ use crate::temporal::TimeRange;
 use ed25519_dalek::Signer;
 use std::collections::BTreeSet;
 
+mod backup_signer;
 mod connect;
 mod connect_lifecycle;
 pub use connect_lifecycle::ConnectRescopeOffer;
 mod courtesy;
-pub use connect::ConnectOffer;
+pub use connect::{ConnectOffer, ScopeOpeningKey};
 mod issuer_custody;
 mod issuer_seed;
 pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};
@@ -386,7 +387,13 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
+        let id = self.store.env.info().last_txn_id + 1;
         txn.commit()?;
+        // Without a delegation's support receipt the commit wrote only replay
+        // rows and the clock floors, which change no Dreamer input (FIX 11568).
+        if verified.claims().delegation.is_none() {
+            self.diagnostics().replay_only_commits.note(id);
+        }
         Ok(verified)
     }
     /// [`Self::admit_capability_slip_request`] in the caller's writer.

@@ -147,6 +147,16 @@ pub enum Purpose {
     /// owner binds the key's ref in `key_id`; content binds the caller's associated
     /// data, transit the target machine and session.
     ErasableKey = 26,
+    /// One piece of a checkpoint's host-private member (FIX 6598): the
+    /// host-order legal-hold family, sealed under that member's fresh key.
+    /// The owner binds the member's binding digest, the piece's index and the
+    /// piece count in `key_id`, the host recipient as the recipient, and the
+    /// binding again inside the plaintext.
+    CheckpointHostOrderHolds = 27,
+    /// The member key of one checkpoint's host-private member, sealed to the
+    /// host's hybrid recipient (FIX 6598). The owner binds the member's
+    /// binding digest in `key_id` and the binding again inside the plaintext.
+    CheckpointHostOrderHoldsKey = 28,
 }
 
 impl Purpose {
@@ -178,6 +188,8 @@ impl Purpose {
             24 => Self::CheckpointPayload,
             25 => Self::InferenceSnapshotChunk,
             26 => Self::ErasableKey,
+            27 => Self::CheckpointHostOrderHolds,
+            28 => Self::CheckpointHostOrderHoldsKey,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

@@ -1,11 +1,14 @@
 //! The voice wire's media ops (OF-410). One admitted UDS connection carries
 //! the sibling's audio side beside the transcript ops. In: microphone audio
 //! (`pcm`, STANDARD base64 of whole PCM16LE samples, at most ~12 KiB raw per
-//! frame), `cut`, `speaking`, `roster_changed` and `drained`. Out: spoken
+//! frame), `cut`, `speaking`, `roster_changed`, `speakers` (diarized segment
+//! embeddings, matched into the hello's roster), `depart` (the owner retires
+//! one speaker of it) and `drained`. Out: spoken
 //! audio (`pcm`, mono PCM16LE in frames under the wire's limit),
 //! `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice`,
 //! `memories` (what a turn's memories read found, heard and withheld, its
-//! narrowing receipts split across numbered frames) and `session_ended`.
+//! narrowing receipts split across numbered frames), `roster` and `departed`
+//! (the receipts of `speakers` and `depart`) and `session_ended`.
 //! Generations go by their epoch value. Spoken audio is
 //! checked against the session again when it is dequeued for the wire, so a
 //! stopped generation's audio never goes out; `flush` tells the sibling to

@@ -15,7 +15,11 @@
 //! is retried once as the responder's approval of that alternative (FIX
 //! 5753).
 
+// The read door to a Dreamer attempt's decided candidates (FIX 11306).
+mod candidate_decisions;
 mod decision_context;
+
+pub use candidate_decisions::DreamerDecidedCandidateView;
 
 use std::cell::Cell;
 

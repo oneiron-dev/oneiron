@@ -11,8 +11,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib.rs` | src | s | 1 struct · 1 fn · 2 re-export | GeminiBackend | Gemini wire adapter |
+| `src/lib.rs` | src | s | 1 struct · 2 fn · 2 re-export | GeminiBackend | Gemini wire adapter |
 | `src/media.rs` | src | m | 2 struct · 1 enum · 1 trait · 1 fn · 1 type | GeminiMediaBackend, GeminiMediaHttpRequest, GeminiMediaHttpResponse, GeminiMediaTransport | Gemini API media wires for the `ai.*` calls past text |
+| `src/media/clip_length.rs` | src | s | 1 crate-vis | — | A Veo clip's length as the clip states it (FIX 1816): the operation names none, so its MP4 movie header… |
 | `src/media/prepare.rs` | src | s | 6 crate-vis | — | The Gemini media calls' pure builders (FIX 8612, FIX 8613): every check a call's send makes on its own… |
 | `src/stream.rs` | src | s | 5 crate-vis | — | Gemini typed stream decoding |
 | `src/tests.rs` | test | s | — | — | Decoder checks over provider-shaped replies |

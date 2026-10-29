@@ -2,6 +2,7 @@
 //! Entry: `self_call_request_value`.
 //! The request child owns request encoding; `code_run::types` owns call and outcome types.
 
+mod observations;
 mod request;
 mod session_hooks;
 
@@ -28,6 +29,7 @@ use super::types::{
 use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
+pub(crate) use self::observations::agent_verb_observations_of;
 pub(super) use self::request::self_call_request_value;
 
 fn context_spec_json(spec: &ContextSpec) -> Result<String> {
@@ -95,6 +97,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                     Value::Array(rows.iter().copied().map(entity_id_value).collect()),
                 ));
             }
+            observations::keep_observations(&mut entries, &answer.observations)?;
             request_map(entries)
         }
         SelfDispatchOutcome::Failed(result) => request_map(vec![
@@ -296,6 +299,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 .ok()
                 .map(|rows| decode_array(rows, entity_value))
                 .transpose()?,
+            observations: observations::decode_observations(entries)?,
         })),
         "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,
@@ -354,6 +358,11 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
     }
 }
 
+/// The key [`word_refusal`] writes a refused row's own reason codes under
+/// (FIX 7398), apart from the outcome's own `reason_codes`; the outcome's
+/// decoder reads past it.
+const ROW_REASON_CODES: &str = "row_reason_codes";
+
 /// Writes a refused row's own words onto its recorded `denied` outcome,
 /// beside the code; the outcome's decoder reads past them.
 pub(super) fn word_refusal(outcome: &mut Value, words: &AgentVerbRefusalWords) {
@@ -369,6 +378,18 @@ pub(super) fn word_refusal(outcome: &mut Value, words: &AgentVerbRefusalWords) {
                     .collect(),
             ),
         ));
+        if !words.reason_codes.is_empty() {
+            entries.push((
+                Value::from(ROW_REASON_CODES),
+                Value::Array(
+                    words
+                        .reason_codes
+                        .iter()
+                        .map(|code| Value::from(code.as_str()))
+                        .collect(),
+                ),
+            ));
+        }
     }
 }
 
@@ -389,6 +410,9 @@ pub(super) fn refusal_words(outcome: &Value) -> Option<AgentVerbRefusalWords> {
         code: text("outcome")?,
         message: text("message")?,
         suggestions: map_get(entries, "suggestions").and_then(str_array).ok()?,
+        reason_codes: map_get(entries, ROW_REASON_CODES)
+            .and_then(str_array)
+            .unwrap_or_default(),
     })
 }
 

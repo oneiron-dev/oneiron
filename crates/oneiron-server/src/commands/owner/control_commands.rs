@@ -500,12 +500,20 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
 /// The owner's ask guests (OF-232) on a stopped vault; `serve` answers the
 /// same at `/v1/owner/guests/revoke`. A revoke signs each pact disconnect
 /// with the host's own key, the config's auth secret `serve` signs with; a
-/// config without one has no host key, and the revoke refuses.
+/// config without one has no host key, and the revoke refuses. With
+/// `--peer`, or a `peer` a verb hook put in its input, the committed revoke
+/// queues the route's courtesy-delete asks with the same key (FIX 4185); an
+/// ask that does not queue never undoes the revoke.
 pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
     use crate::cli::GuestsCommand;
+    use crate::owner::courtesy_delete::CourtesySender;
+    use crate::owner::guest_revoke;
     match command {
         GuestsCommand::Revoke(args) => {
             let grant = hold_id_arg(&args.grant_ref)?;
+            // A peer the owner typed that the ask would refuse is refused
+            // before anything runs, as on the route (FIX 4186).
+            guest_revoke::check_peer(args.peer.as_deref())?;
             let config = resolve_serve_config(&args.serve)?;
             let vault = open_vault(&config, "POST /v1/owner/guests/revoke --data -")?;
             let owner = local_owner(&vault)?;
@@ -528,11 +536,24 @@ pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
                 "vault.guests.revoke",
                 oneiron::task_verb::sdk::GuestRevokeRequest {
                     grant_ref: grant,
-                    peer: None,
+                    peer: args.peer,
                 },
                 |request: oneiron::task_verb::sdk::GuestRevokeRequest| {
                     let outcome = vault.revoke_guest_access(&owner, &issuer, request.grant_ref)?;
-                    Ok(oneiron::receipt::project_guest_revoke(outcome))
+                    let mut revoked = oneiron::receipt::project_guest_revoke(outcome);
+                    // The hook's final input names the peer, as the route
+                    // reads it.
+                    let sender = CourtesySender {
+                        vault: &vault,
+                        issuer: Some(&issuer),
+                    };
+                    guest_revoke::queue_courtesy_deletes_with(
+                        &sender,
+                        &owner,
+                        request.peer.as_deref(),
+                        &mut revoked,
+                    );
+                    Ok(revoked)
                 },
             )?;
             emit(&answer)

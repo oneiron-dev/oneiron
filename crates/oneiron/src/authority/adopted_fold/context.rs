@@ -86,6 +86,8 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
             | AuthorityOp::AgentGrantAct(_)
+            | AuthorityOp::PolicySettingSet(_)
+            | AuthorityOp::ExportAct(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)

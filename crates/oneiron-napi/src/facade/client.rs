@@ -11,7 +11,8 @@ use super::convert::{
 };
 use super::dtos::{
     NapiClaimInput, NapiCommitReceipt, NapiMemoryPack, NapiQueryAffect, NapiRecallMedia,
-    NapiRecallScope, NapiWitnessMessage, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiRecallScope, NapiWitnessAssertions, NapiWitnessMessage, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 use super::input_error::witness_input_error;
 use super::js_json::js_json;
@@ -53,6 +54,9 @@ pub struct NapiWitnessTurnInput {
     /// AGENT_DEF ids), edited later through `vault.rooms.thread_audience`;
     /// omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
+    /// The records this reply names as cited or created (OF-063), judged by
+    /// the engine under the writer's own read; omitted ⇒ it asserts nothing.
+    pub assertions: Option<NapiWitnessAssertions>,
 }
 
 impl NapiWitnessTurnInput {
@@ -68,6 +72,7 @@ impl NapiWitnessTurnInput {
             messages: self.messages,
             occurred_at,
             thread_audience: self.thread_audience,
+            assertions: self.assertions,
         })
         .map_err(witness_input_error)
     }
@@ -301,6 +306,31 @@ impl NativeClient {
             .map_err(facade_error)?;
         serde_json::to_value(reply).map_err(lens_frame_unencoded)
     }
+
+    /// Exports the whole vault into the file at `path`, owner only, as
+    /// `vault.export` does: `format` is `archive` (the default) or `okf`.
+    /// The file is created or truncated; the answer is the archive's
+    /// format, length and BLAKE3. Over a server the archive streams
+    /// through a kept transfer, so no ceiling on a reply applies to it.
+    #[napi]
+    pub fn export_to(
+        &self,
+        path: String,
+        format: Option<String>,
+    ) -> napi::Result<serde_json::Value> {
+        let file = std::fs::File::create(&path).map_err(|error| {
+            facade_error(oneiron::MemoryError::new(
+                oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                format!("could not create the export file {path:?}: {error}"),
+                &["Check that the export path's parent directory exists and is writable."],
+            ))
+        })?;
+        let receipt = self
+            .inner
+            .vault_export_to(format.as_deref(), file)
+            .map_err(facade_error)?;
+        serde_json::to_value(receipt).map_err(export_unencoded)
+    }
 }
 
 /// What an embedded open takes from JavaScript. The device class is the one
@@ -333,6 +363,11 @@ fn open_options(
 /// A lens-frame reply that would not encode back to its wire JSON.
 fn lens_frame_unencoded(error: serde_json::Error) -> napi::Error {
     boundary_error(format!("could not encode the lens frame reply: {error}"))
+}
+
+/// An export receipt that would not encode back to its wire JSON.
+fn export_unencoded(error: serde_json::Error) -> napi::Error {
+    boundary_error(format!("could not encode the export receipt: {error}"))
 }
 
 #[path = "client/generated/agent_verbs.rs"]

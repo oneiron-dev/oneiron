@@ -473,9 +473,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         // read through this lane.
         let mut served = None;
         if entity_type == ENTITY_TYPE_ASSET {
-            let asset =
-                crate::memory::hydrated_asset(&self.scoped_read, id, reader, None, &mut |_| true)
-                    .map_err(|error| engine_failure(method, &error))?;
+            let lane = &self.scoped_read;
+            let asset = crate::memory::hydrated_asset(lane, id, reader, None, &mut |_| true, None)
+                .map_err(|error| engine_failure(method, &error))?;
             narrowing.restrict_with(&asset.receipt);
             served = match asset.value {
                 crate::memory::HydratedAsset::Served { body, text, form } => {

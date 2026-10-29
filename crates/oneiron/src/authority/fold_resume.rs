@@ -305,7 +305,9 @@ impl Once {
 /// policy choice or a home pick (each only the vault's choices of its kind),
 /// a person's conversation training choice (only that person's choices), a
 /// machine's home candidacy (only that machine's declarations), an owner's
-/// agent Grant act (it moves no fold state, FIX 5628), an owner
+/// agent Grant act (it moves no fold state, FIX 5628), a setting's act (only
+/// its target's acts) or an export act (it moves no state but its own
+/// refusal, FIX 4624), an owner
 /// work request, result or cancel (each judges only its own work), a world
 /// key record (it fills only its own key's slots, or is refused as a no-op,
 /// FIX 4881), a frontier join (it moves no state, FIX 7908), a machine's
@@ -348,6 +350,8 @@ pub(super) fn admits_past(
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::AgentGrantAct(_)
+        | AuthorityOp::PolicySettingSet(_)
+        | AuthorityOp::ExportAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)

@@ -209,7 +209,9 @@ impl Safeguard for HostSafeguard<'_> {
         let policy = Arc::clone(self.policy);
         self.verdicts.push(Box::pin(async move {
             let generation = request.generation();
-            let outcome = request.enforce_with_budget(&policy, backend.as_ref(), &budget).await;
+            let outcome = request
+                .enforce_with_budget(&policy, backend.as_ref(), &budget)
+                .await;
             Verdict {
                 generation,
                 outcome,

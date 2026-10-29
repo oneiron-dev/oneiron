@@ -77,6 +77,7 @@ impl DispatchClaim {
                 self.shared.room_freed([self.work]);
                 let _ = reply.send(EncoderAttempt {
                     execution: None,
+                    panicked: false,
                     result: Err(error),
                 });
                 return Completion { answer: completion };
@@ -133,6 +134,7 @@ impl Completion {
 fn closed() -> EncoderAttempt {
     EncoderAttempt {
         execution: None,
+        panicked: false,
         result: Err(failure(DISPATCH_TOOL, "the oneironer dispatcher closed")),
     }
 }

@@ -9,6 +9,8 @@ mod board_setup;
 mod booking_call;
 mod call_meta;
 mod claimed_release;
+mod client_surface;
+mod clock_repair_call;
 mod code_mode_verbs;
 mod device_release;
 mod envelope;
@@ -36,7 +38,8 @@ use self::admission::{
     mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_tasks_section,
     mcp_validated_call_args,
 };
-pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup};
+pub(crate) use self::board_observations::run_session_reads;
+pub(crate) use self::board_setup::{McpBoardOmissions, execute_mcp_setup, ride_run_carrier};
 use self::board_setup::{
     McpBoardState, McpCarrierPolicy, mcp_board_frame_error, mcp_board_verb_error,
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
@@ -70,7 +73,7 @@ pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
 pub(crate) use self::facade_refusals::mcp_facade_error;
 pub(crate) use self::tasks_response::{
-    execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_api_error,
-    mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
+    execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_agent_verb_input,
+    mcp_api_error, mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
 };
 use super::hex_bytes;

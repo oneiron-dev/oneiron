@@ -64,8 +64,9 @@ pub(super) enum FreshTick {
     /// Run it: nothing owes it, or the owed pass that does is due.
     Run(OwedPass),
     /// An owed pass already holds this tick and falls due only at this
-    /// instant. The source redelivered owed work (a due HybridTick deadline
-    /// re-surfaces on every read), so its next read waits until then.
+    /// instant. A redelivered deadline (a due HybridTick deadline re-surfaces
+    /// on every read) rests its source's deadline lane until then; a push
+    /// was consumed by its read (FIX 11403).
     Owed(Instant),
 }
 

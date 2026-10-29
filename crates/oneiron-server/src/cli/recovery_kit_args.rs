@@ -1,12 +1,15 @@
 //! Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped
 //! vault (OF-173), and the data-key kit's issue (FIX 4532). Pieces go in and
 //! out through owner-only files, and the passphrase comes from stdin or
-//! `--secret-file`; none is ever an argument.
+//! `--secret-file`; none is ever an argument. `pad-access`, `upkeep`,
+//! `roots`, `pin` and `anchor` ask a running server instead (FIX 4564, 4953,
+//! 4955, 4956), with the credential `oneiron api` reads.
 
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
 
+use super::VaultUnlockArgs;
 use crate::config::ServeArgs;
 
 /// A stopped vault's world recovery kit.
@@ -27,6 +30,119 @@ pub enum RecoveryKitCommand {
     Confirm(Box<RecoveryKitConfirmArgs>),
     /// Restore this vault's world keys from the kit, on this machine.
     Restore(Box<RecoveryKitRestoreArgs>),
+    /// On a running server: the kit grants a machine (this install when
+    /// `--machine` names none) every pad object the home keeps, through the
+    /// server's home connection or on the home itself. Prints what was
+    /// offered, what is usable here and what stays pending.
+    PadAccess(Box<RecoveryKitPadAccessArgs>),
+    /// On a running server: the last sealed bundle relay its upkeep finished,
+    /// with the pad access and erases still pending, the last that failed,
+    /// and the last kit grant it answered, or that none was seen yet.
+    Upkeep(Box<RunningServerArgs>),
+    /// On a running server: the root it pins, a page of the foreign roots it
+    /// sees, the root a pin awaits, and its machine.
+    Roots(Box<RecoveryKitRootsArgs>),
+    /// On a running server: pin a root from the fingerprint one of your
+    /// machines that pins it shows.
+    Pin(Box<RecoveryKitPinArgs>),
+    /// On a running server: the kit marks a machine yours, from its
+    /// enrolment request and the code it shows.
+    Anchor(Box<RecoveryKitAnchorArgs>),
+}
+
+/// The running server a command asks, and the credential it asks with, as
+/// `oneiron api` reads them.
+#[derive(Args, Clone, Debug)]
+pub struct RunningServerArgs {
+    /// The server's origin. Kit material goes only to `https://`, or to
+    /// `http://` on this machine.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
+    pub url: String,
+
+    /// Environment variable holding the owner's credential.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    /// Environment variable with the Ed25519 binding seed for a slip.
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct RecoveryKitPadAccessArgs {
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
+
+    /// The machine to grant, by its 32-hex id; this install when none.
+    #[arg(long, value_name = "MACHINE")]
+    pub machine: Option<String>,
+
+    /// The install the kit is for, by its 32-hex id: the server asked. Read
+    /// from the server when none; it proves itself before reading the kit.
+    #[arg(long, value_name = "MACHINE")]
+    pub target: Option<String>,
+
+    #[command(flatten)]
+    pub server: RunningServerArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct RecoveryKitRootsArgs {
+    /// The `next` the page before printed: the last foreign root it showed.
+    #[arg(long, value_name = "HEX", value_parser = root_id)]
+    pub after: Option<[u8; 32]>,
+
+    /// Foreign roots on one page; the server's default when none.
+    #[arg(long)]
+    pub limit: Option<usize>,
+
+    #[command(flatten)]
+    pub server: RunningServerArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct RecoveryKitPinArgs {
+    /// The root's fingerprint, 64 hex digits, read on one of your machines
+    /// that pins it.
+    #[arg(long, value_name = "HEX", value_parser = root_id)]
+    pub root: [u8; 32],
+
+    #[command(flatten)]
+    pub server: RunningServerArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct RecoveryKitAnchorArgs {
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
+
+    /// The machine's enrolment request, a JSON file as `POST
+    /// /v1/pairing/redeem` takes it under `machine`.
+    #[arg(long, value_name = "FILE")]
+    pub enrolment: PathBuf,
+
+    /// The request code the new machine shows: 26 characters. Not needed
+    /// when the enrolment is the server's own.
+    #[arg(long, value_name = "CODE")]
+    pub code: Option<String>,
+
+    /// The root fingerprint, 64 hex digits, read on one of your machines that
+    /// pins it: it vouches for a kit opened with one piece.
+    #[arg(long, value_name = "HEX", value_parser = root_id, conflicts_with = "confirm_root")]
+    pub fingerprint: Option<[u8; 32]>,
+
+    /// Go ahead with a kit the server cannot verify: the root id, 64 hex
+    /// digits, its refusal showed.
+    #[arg(long, value_name = "HEX", value_parser = root_id)]
+    pub confirm_root: Option<[u8; 32]>,
+
+    /// The install the kit is for, by its 32-hex id; read from the server
+    /// when none.
+    #[arg(long, value_name = "MACHINE")]
+    pub target: Option<String>,
+
+    #[command(flatten)]
+    pub server: RunningServerArgs,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -82,6 +198,11 @@ pub struct RecoveryKitConfirmArgs {
     /// yours under the new root, by its 32-hex id. Repeat for each.
     #[arg(long, value_name = "MACHINE")]
     pub carry: Vec<String>,
+
+    /// How the vault key unlocks, so confirm can replace its world-kit wrap
+    /// (FIX 2201): this install's keystore by default.
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
 
     #[command(flatten)]
     pub serve: ServeArgs,

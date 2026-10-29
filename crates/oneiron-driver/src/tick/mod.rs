@@ -10,8 +10,9 @@
 //!   whose producer handles are TYPED by role: a [`HintPusher`] is
 //!   structurally unable to inject a wake-class tick — H-S4).
 //!
-//! [`HybridTick`] selects over both with deadline priority: when a deadline
-//! and a push are ready in the same poll, the deadline wins. Push bursts
+//! [`HybridTick`] selects over both, the lanes taking turns (FIX 11403): a
+//! buffered push runs before a due deadline, and after a push a due deadline
+//! goes first. Push bursts
 //! coalesce (capacity 1 per wake lane and plain-hint slot; session hints
 //! ride an uncapped ORDERED queue that coalesces only adjacent Activity hints
 //! arriving within the configured idle floor — lifecycle causality is never
@@ -30,6 +31,7 @@ mod queue;
 mod timer;
 
 pub use self::hybrid::HybridTick;
+pub(crate) use self::hybrid::wait_for_change;
 pub use self::model::{
     ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, Tick, TickSource, WakeSignal,
 };

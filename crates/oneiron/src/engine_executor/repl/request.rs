@@ -186,6 +186,7 @@ impl EngineNativeExecutor<'_> {
             // The step's type feedback, the host's own words beside its
             // console, as it stands now: never inside the console (FIX 8277).
             messages.extend(self.step_feedback_message(record, seq as u64));
+            messages.extend(self.step_board_frames_message(record, seq as u64));
             if let Some(output) = resumed.get(&(seq as u64)) {
                 messages.push(self.resumed_reply_message(record, seq as u64, output)?);
             }

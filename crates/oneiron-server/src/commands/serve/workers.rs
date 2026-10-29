@@ -85,8 +85,15 @@ pub(crate) async fn start_desktop_workers(
     if !config.hooks {
         sync_server.vault().suppress_verb_hooks();
     }
-    let (sync_server, ai) =
-        crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
+    // The owner's own Dreamer pause works on a plain host too, held in
+    // memory (FIX 11573); managed serve installs its reap freeze instead.
+    let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
+        sync_server,
+        config.models.as_ref(),
+        device,
+        Some(crate::ai_host::DreamerControl::local()),
+    )
+    .await;
     let sync_server = Arc::new(sync_server);
     // A managed vault's attested owner's queued work is judged by this
     // server's check, installed before any worker takes it up (FIX 11090).

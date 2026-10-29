@@ -20,7 +20,11 @@ impl ConsolidationExecutor<'_> {
         // (FIX 3861), as one away at preparation does.
         let resources = match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
             Err(error) if super::super::residency::waits_on_residency(&error) => {
-                return Ok(super::super::residency::residency_deferral(ctx.now_ms, 0));
+                return Ok(super::super::residency::residency_deferral(
+                    ctx.now_ms,
+                    0,
+                    Vec::new(),
+                ));
             }
             resources => resources?,
         };
@@ -37,11 +41,15 @@ impl ConsolidationExecutor<'_> {
             )
             .await
         {
-            Ok(PartitionRun::Completed { .. } | PartitionRun::Held { .. })
-                if ctx.deadline.expired() =>
-            {
+            // A finished partition lands while its landing window is still
+            // open, even past the pass ceiling (FIX 11570): its model steps
+            // are done, so there is nothing left to checkpoint for. It
+            // checkpoints only once that window has closed.
+            Ok(PartitionRun::Completed { .. }) if ctx.deadline.landing_closed() => {
                 Ok(charges.checkpoint())
             }
+            // A held partition still checkpoints past the ceiling, as today.
+            Ok(PartitionRun::Held { .. }) if ctx.deadline.expired() => Ok(charges.checkpoint()),
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
             // A refused extraction, a refused citation (FIX 7274) among
             // them, retries as the same try after its retry delay (FIX 7218,
@@ -60,6 +68,7 @@ impl ConsolidationExecutor<'_> {
                 }
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 })
             }
             Ok(PartitionRun::Held {
@@ -75,6 +84,7 @@ impl ConsolidationExecutor<'_> {
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: charges.units,
                     retry_at: retry_at_ms.div_ceil(1_000),
+                    step_hashes: charges.step_hashes.clone(),
                 })
             }
             // The step layer already parked the trapped attempt; Park it for resume

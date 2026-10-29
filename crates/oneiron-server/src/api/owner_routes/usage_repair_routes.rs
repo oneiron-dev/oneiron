@@ -1,26 +1,27 @@
 //! `/v1/owner/usage/events/undecodable`: the stored usage events of this
 //! server's metering scope, every billing owner's rows in its vault (FIX
 //! 7035), that no longer decode, and `/remove` to remove one the owner
-//! reviewed, by the hash of its bytes (FIX 6476). One such row holds every
+//! reviewed, by the hash of its bytes (FIX 6476). `/v1/owner/usage/repair/receipts`
+//! reads the receipts those removals kept (FIX 7036). One such row holds every
 //! offer check of the vault at unclassified; every other one stays counted
-//! as before. Each route runs its `vault.usage.events.*` row's verb hooks
+//! as before. Each route runs its `vault.usage.*` row's verb hooks
 //! once around the engine writer the SDK and MCP doors reach, which
 //! revalidates the owner's proof in the write itself; the writer's refusal
 //! of his authority answers 403, and a reviewed row that changed or decodes
 //! now names which in the conflict's `state` (FIX 7038). A removal's receipt
 //! records where his request reached this install
-//! (`machine_routes::act_surface`).
+//! (`machine_routes::act_surface_admitted`).
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::edge::EdgeActorClass;
 use oneiron::memory::usage_repair::{
-    UsageRepairListRequest, UsageRepairRemoveRequest, UsageRepairVerb,
+    UsageRepairListRequest, UsageRepairReceiptsRequest, UsageRepairRemoveRequest, UsageRepairVerb,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use serde_json::Value;
@@ -37,6 +38,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/usage/events/undecodable", get(list))
         .route("/usage/events/undecodable/remove", post(remove))
+        .route("/usage/repair/receipts", get(receipts))
 }
 
 /// `GET /v1/owner/usage/events/undecodable`: every stored usage event of this
@@ -78,11 +80,13 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<UsageRepairRemoveRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let scope = metered(&server)?;
     let response = blocking(move || {
@@ -111,6 +115,38 @@ async fn remove(
             },
         );
         Ok(removed.map_err(|error| repair_error(error, answered)))
+    })
+    .await??;
+    Ok(Json(response))
+}
+
+/// `GET /v1/owner/usage/repair/receipts`: every receipt a removal kept
+/// for this server's metering scope, in key order, as its write kept it; a
+/// kept row that no longer decodes is counted in `undecodable`, never read
+/// as a receipt (FIX 11302).
+async fn receipts(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let scope = metered(&server)?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        let memory = vault.memory(actor, EdgeActorClass::Human);
+        let mut answered = None;
+        let receipts = hooked_row(
+            vault,
+            actor,
+            UsageRepairVerb::Receipts.name(),
+            UsageRepairReceiptsRequest::default(),
+            |_| {
+                server
+                    .usage_ledger
+                    .list_repair_receipts(&memory, Some(&owner), Some(&scope))
+                    .map_err(|error| {
+                        answered = Answered::of(&error);
+                        memory_refusal(error)
+                    })
+            },
+        );
+        Ok(receipts.map_err(|error| repair_error(error, answered)))
     })
     .await??;
     Ok(Json(response))

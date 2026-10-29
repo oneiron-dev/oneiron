@@ -39,6 +39,8 @@ mod host_re_root;
 pub use self::host_re_root::host_re_root;
 mod host_recover_owner;
 pub use self::host_recover_owner::host_recover_shared_owner;
+mod token_operator;
+pub use self::token_operator::{TokenOperatorArgs, token_operator};
 
 pub use self::api::api;
 mod mcp_bridge;

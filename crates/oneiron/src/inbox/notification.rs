@@ -276,7 +276,10 @@ impl Vault {
     }
 
     /// Writes `body` under `id` at this vault's recorded-at time, which it
-    /// returns. The occurred range is the event's own time.
+    /// returns. The occurred range is the event's own time. The live queries
+    /// that follow notifications wake once `txn` commits (FIX 3084): its
+    /// owner sends the signal then, and a raw-transaction owner sends it
+    /// after its own commit.
     pub(crate) fn put_notification_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -297,6 +300,7 @@ impl Vault {
                 &bytes,
             )
             .apply(txn)?;
+        crate::batch::queue_notification_change(self, txn);
         Ok(learned_at)
     }
 

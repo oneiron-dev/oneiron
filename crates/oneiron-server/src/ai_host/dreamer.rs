@@ -45,6 +45,7 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 mod claim_authoring;
 mod compaction_check;
 mod free_time;
+mod pause;
 mod request_sources;
 mod run_log;
 mod urgent_digest;
@@ -122,6 +123,11 @@ pub(crate) struct DreamerControl {
     /// The freeze's current epoch: `true` once frozen, and kept `true` by
     /// that epoch after a thaw, which starts the next and closes it.
     pub(crate) pause: Arc<dyn Fn() -> tokio::sync::watch::Receiver<bool> + Send + Sync>,
+    /// Sets the owner's own pause cause (`POST /dreamer/pause`): no new
+    /// pass starts, and the running attempt parks at its next boundary.
+    pub(crate) set_owner_pause: Arc<dyn Fn(bool) + Send + Sync>,
+    /// Reads the owner's own pause cause (not the managed freeze).
+    pub(crate) read_owner_pause: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 /// The host's control over each Dreamer pass, its home-timer pump and its
@@ -1337,7 +1343,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 // Without the host's instruction no resident dreams tonight.
                 None => {
                     unserved = Some(oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND);
-                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    Ok(DreamerAttemptExecution::Completed {
+                        completed_units: 0,
+                        step_hashes: Vec::new(),
+                    })
                 }
             }
         } else if attempt.status.payload.attempt_type
@@ -1351,7 +1360,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 None => {
                     unserved =
                         Some(oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND);
-                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    Ok(DreamerAttemptExecution::Completed {
+                        completed_units: 0,
+                        step_hashes: Vec::new(),
+                    })
                 }
             }
         } else if attempt.status.payload.attempt_type
@@ -1400,8 +1412,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 "a resident's attempt ended unserved: the host lends no resident instruction"
             );
         }
+        let one_writer_reads = ctx.vault.dreamer_one_writer_reads();
         self.status.update(|status| {
             status.dreamer.state = WorkState::Waiting;
+            status.dreamer_one_writer_reads = one_writer_reads;
             match &outcome {
                 Ok(DreamerAttemptExecution::Completed { .. }) => match unserved {
                     Some(kind) => {

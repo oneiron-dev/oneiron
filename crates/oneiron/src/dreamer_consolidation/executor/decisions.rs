@@ -249,6 +249,7 @@ impl ConsolidationExecutor<'_> {
         evidence: &[EntityId],
         state: &serde_json::Value,
         labels: &CallLabelMap,
+        sources: Option<Vec<EntityId>>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<Vec<KeptDecision>>> {
         let vault = step_ctx.vault;
@@ -279,7 +280,8 @@ impl ConsolidationExecutor<'_> {
                     evidence,
                     state,
                     ceiling: VERDICT_CEILING,
-                    sources: None,
+                    // Each pack passes the rows it rendered (FIX 11526).
+                    sources,
                 },
                 questions,
                 labels,
@@ -369,7 +371,7 @@ pub(super) struct ConflictRows {
 impl ConflictRows {
     pub(super) fn of(
         identity: &ConflictIdentity,
-        members: &[&PromotionCandidate],
+        members: &[&super::super::evidence::VerifiedCandidate],
         priors: &[super::super::PriorHead],
     ) -> Result<Self> {
         let priors = priors

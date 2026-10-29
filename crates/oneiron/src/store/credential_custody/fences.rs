@@ -122,14 +122,15 @@ impl CredentialFences {
     /// The source evidence a pending credential restore retakes now
     /// (FIX-LIST 10671 (a), CALLS `KS-6 erase Keep source evidence`): the
     /// fences and erase debt of the vault at `binding`'s root, read again
-    /// through the read-only door, with `binding`'s retired value keys.
-    /// `None`, warned, when it does not read, holds no vault, or holds
+    /// through the read-only door, or through the served handle where this
+    /// process serves that vault (FIX 11157), with `binding`'s retired value
+    /// keys. `None`, warned, when it does not read, holds no vault, or holds
     /// another lineage's: none of these says whether an erase reached a
     /// credential, so each stays pending.
     pub(crate) fn retake_source(binding: &CustodyBinding) -> Option<Self> {
         let prefixes = [FENCES.decl().prefix, retirement_prefix(), binding_key()];
-        let rows = match crate::store::read_existing_vault_meta(binding.root(), &prefixes) {
-            Ok(read) => read.rows,
+        let rows = match source_rows(binding.root(), &prefixes) {
+            Ok(rows) => rows,
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -307,4 +308,38 @@ impl Store {
             }
         }
     }
+}
+
+/// The `vault_meta` rows under `prefixes` of the source vault at `root`,
+/// read through the read-only door; where the door refuses the root as one
+/// this process holds open, through the handle this process serves it with
+/// (FIX 11157). A root open here that no server holds refuses as before.
+fn source_rows(root: &Path, prefixes: &[&[u8]]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let error = match crate::store::read_existing_vault_meta(root, prefixes) {
+        Ok(read) => return Ok(read.rows),
+        Err(error) => error,
+    };
+    let served = match &error {
+        Error::Store(StoreError::VaultRootPreflight {
+            problem: VaultRootProblem::DuplicateOpenRoot { open_path },
+            ..
+        }) => crate::store::served_vault_at(open_path),
+        _ => None,
+    };
+    let Some(vault) = served else {
+        return Err(error);
+    };
+    let env = &vault.store.env;
+    let txn = env.read_txn()?;
+    let vault_meta = env
+        .open_database::<Bytes, Bytes>(&txn, Some("vault_meta"))?
+        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+    let mut rows = Vec::new();
+    for prefix in prefixes {
+        for row in vault_meta.prefix_iter(&txn, prefix)? {
+            let (key, value) = row?;
+            rows.push((key.to_vec(), value.to_vec()));
+        }
+    }
+    Ok(rows)
 }

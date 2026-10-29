@@ -32,6 +32,7 @@ mod doctor;
 mod recovery_commands;
 mod recovery_kit;
 mod secret_commands;
+mod secret_input;
 mod transfer_commands;
 mod vault_key;
 pub use self::control_commands::{

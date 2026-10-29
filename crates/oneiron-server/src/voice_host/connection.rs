@@ -11,6 +11,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use oneiron::claim::ScopedReadReceipt;
+use oneiron::error::RecordError;
 use oneiron::policy_model::PolicyEnforcementAction;
 use oneiron::speculative::SpeculativeFireDecision;
 use oneiron::store::GateSystemNoticeRecord;
@@ -19,6 +20,7 @@ use oneiron::voice_cascade::{
     AsrUpdate, Brain, CascadeControl, ControlEvent, GenerationEpoch, RetrievalContext,
     TtsSeamClient, TurnMemories,
 };
+use oneiron::voice_identity::VoiceSegmentEmbeddingInput;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -66,6 +68,15 @@ enum Request {
     Drained {
         generation: u64,
     },
+    /// Diarized segment embeddings the sibling heard, matched into the
+    /// hello's voice roster (FIX 3344).
+    Speakers {
+        segments: Vec<VoiceSegmentEmbeddingInput>,
+    },
+    /// The owner's departure act for one speaker of the roster (FIX 1522).
+    Depart {
+        speaker_key: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -88,6 +99,18 @@ enum Response {
     Closed,
     Error {
         code: &'static str,
+    },
+    /// A `speakers` op's receipt: the roster's revision after the run.
+    Roster {
+        revision: u64,
+    },
+    /// A `depart` op's receipt: the roster's revision after the act (none
+    /// for a roster not stored yet), and how many of the speaker's segments
+    /// left it.
+    Departed {
+        speaker_key: String,
+        revision: Option<u64>,
+        removed_segments: usize,
     },
     /// Spoken mono PCM16LE, STANDARD base64.
     Pcm {
@@ -413,6 +436,32 @@ impl VoiceHost {
                                 }
                                 continue;
                             }
+                            // The roster moves, and the call's audience is read again as
+                            // `roster_changed` reads it (FIX 3344, 1522).
+                            Ok(Request::Speakers { segments }) => match bridge.as_deref_mut().filter(|_| wire.is_some()) {
+                                Some(bridge) => match self.match_speakers(segments) {
+                                    Ok(roster) => {
+                                        self.media_in(VoiceMediaIn::RosterChanged, bridge, outputs);
+                                        Response::Roster { revision: roster.roster_revision }
+                                    }
+                                    Err(error) => response_error(&error),
+                                },
+                                None => Response::Error { code: "invalid_request" },
+                            },
+                            Ok(Request::Depart { speaker_key }) => match bridge.as_deref_mut().filter(|_| wire.is_some()) {
+                                Some(bridge) => match self.depart_speaker(&speaker_key) {
+                                    Ok(departure) => {
+                                        self.media_in(VoiceMediaIn::RosterChanged, bridge, outputs);
+                                        Response::Departed {
+                                            speaker_key,
+                                            revision: departure.roster_revision,
+                                            removed_segments: departure.removed_segments,
+                                        }
+                                    }
+                                    Err(error) => response_error(&error),
+                                },
+                                None => Response::Error { code: "invalid_request" },
+                            },
                             Ok(media) => match (bridge.as_deref_mut(), wire.is_some(), media_input(media)) {
                                 (Some(bridge), true, Some(input)) => {
                                     self.media_in(input, bridge, outputs);
@@ -449,8 +498,24 @@ impl VoiceHost {
                                     // Refs remain non-authoritative. The existing brain must
                                     // use ordinary disclosure/tool gates when resolving them.
                                     // Submission is synchronous, outside the session lock.
-                                    outputs.brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
-                                    Response::Final { handle, revision, context: request.retrieval }
+                                    // A room held on its live call holds this turn alone:
+                                    // the turn answers with the hold, and the call goes
+                                    // on. Any other start error ends the call.
+                                    match outputs.brain.start(&request) {
+                                        Ok(()) => Response::Final {
+                                            handle,
+                                            revision,
+                                            context: request.retrieval,
+                                        },
+                                        Err(oneiron::Error::Record(
+                                            RecordError::RoomLiveSpeakersIncomplete(_),
+                                        )) => Response::Error {
+                                            code: "room_live_speakers_incomplete",
+                                        },
+                                        Err(_) => {
+                                            return Err(io::Error::other("brain submission failed"));
+                                        }
+                                    }
                                 } else {
                                     Response::Error { code: "stopped" }
                                 }

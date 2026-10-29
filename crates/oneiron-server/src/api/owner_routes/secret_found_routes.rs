@@ -20,7 +20,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::secret_custody::{FoundKeyCard, FoundKeyCursor, FoundKeyNotice, FoundKeySettled};
@@ -249,15 +249,17 @@ async fn grant(
 /// `POST /v1/owner/secrets/found/not-a-secret` with `{"handle"}`: the owner
 /// overrules the scan for that key in its record. Its revoke records where
 /// his request reached this install, as this request proves it
-/// (`machine_routes::act_surface`): audit only (FIX 4650).
+/// (`machine_routes::act_surface_admitted`): audit only (FIX 4650).
 async fn not_a_secret(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<FoundKey>,
 ) -> OwnerReply<SettledView> {
     let owner = owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<SettledView> {
         Ok(server

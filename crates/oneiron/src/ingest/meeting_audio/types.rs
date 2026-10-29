@@ -118,8 +118,6 @@ impl BatchDefault {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CleanupPolicy {
-    pub max_candidates_per_word: usize,
-    pub max_candidate_bytes: usize,
     pub language_rules: BTreeMap<String, LanguageCorrectionRules>,
 }
 

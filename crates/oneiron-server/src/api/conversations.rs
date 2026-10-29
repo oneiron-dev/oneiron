@@ -333,23 +333,27 @@ pub(crate) async fn create_core_conversation(
     // credential binds one that writes as this actor, else through the
     // row's own Vault door as the actor the request bound, held to the
     // credential's write lane (FIX 10781).
-    let receipt =
-        match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
-            Some(bound) if actor.is_none_or(|actor| actor == bound.writes_as()) => {
-                let row = AgentVerb::VaultConversationsCreate;
-                let key =
-                    super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
-                let output = super::facade::action_routes::execute_facade_row(
-                    &server, headers, extensions, bound, row, &input, key,
-                )
-                .await?;
-                entity_receipt(output)?
-            }
-            _ => {
-                let lane = super::facade::host_doors::core_write_lane(&server.vault, &auth)?;
-                server.vault.write_core_conversation(&input, actor, &lane)?
-            }
-        };
+    let receipt = match super::facade::action_routes::rest_action_bound(
+        &server,
+        &auth,
+        &headers,
+        &extensions,
+        &input,
+    )? {
+        Some(bound) if actor.is_none_or(|actor| actor == bound.writes_as()) => {
+            let row = AgentVerb::VaultConversationsCreate;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let output = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            entity_receipt(output)?
+        }
+        _ => {
+            let lane = super::facade::host_doors::core_write_lane(&server.vault, &auth)?;
+            server.vault.write_core_conversation(&input, actor, &lane)?
+        }
+    };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = if members {
         project_core_entity(&server.vault, &id, View::Full)?.0
@@ -468,20 +472,24 @@ pub(crate) async fn create_core_conversation_turn(
     // OF-181: `vault.conversations.turns.create`, as an action when the
     // credential binds one, else through the row's own door. Either lands
     // the turn on the vault once.
-    let receipt =
-        match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
-            Some(bound) => {
-                let row = AgentVerb::VaultConversationsTurnsCreate;
-                let key =
-                    super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
-                let output = super::facade::action_routes::execute_facade_row(
-                    &server, headers, extensions, bound, row, &input, key,
-                )
-                .await?;
-                entity_receipt(output)?
-            }
-            None => super::facade::host_doors::write_core_turn(&server, &auth, input).await?,
-        };
+    let receipt = match super::facade::action_routes::rest_action_bound(
+        &server,
+        &auth,
+        &headers,
+        &extensions,
+        &input,
+    )? {
+        Some(bound) => {
+            let row = AgentVerb::VaultConversationsTurnsCreate;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let output = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            entity_receipt(output)?
+        }
+        None => super::facade::host_doors::write_core_turn(&server, &auth, input).await?,
+    };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = projection::project_entity_parts(
         &id,
@@ -544,6 +552,7 @@ pub(crate) async fn get_core_turn(
         item["reply_strip"] = strip.map_or(Value::Null, |strip| {
             serde_json::json!({
                 "record": strip.record.to_hex(), "revision": strip.revision,
+                "target": strip.target,
                 "text": strip.text, "stale": strip.stale, "withheld": strip.withheld,
             })
         });

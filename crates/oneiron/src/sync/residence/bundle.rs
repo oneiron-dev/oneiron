@@ -25,12 +25,14 @@
 //! objects, so an erase made on it sweeps them.
 
 mod commit_receipt;
+mod local_access;
 mod order;
 mod pad_objects;
 mod publication;
 mod refill;
 
 pub use self::commit_receipt::{SealedBundleCommitReceipt, sealed_bundle_commit_receipt};
+pub use self::local_access::grant_local_sealed_pad_access_with_kit;
 pub(super) use self::pad_objects::served_index;
 pub use self::pad_objects::{
     BundlePartRead, PadObjectUnavailable, SealedBundleIndex, sealed_bundle_index,

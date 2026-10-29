@@ -23,8 +23,11 @@ mod connector_reach;
 mod grant;
 mod group;
 mod live;
+mod live_source;
 mod manifest;
+mod manifest_json;
 mod member;
+mod outbound_reach;
 mod plan;
 mod reach;
 mod retire;
@@ -33,6 +36,8 @@ mod seed;
 mod shared_setup;
 mod skill;
 mod visibility;
+mod wire;
+mod world_facet;
 
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
@@ -119,12 +124,22 @@ pub enum ShapeRow {
     Member {
         member: String,
         role: ShapeMemberRole,
+        /// The invitation the person has not answered yet, by id (FIX
+        /// 2573): the live read names an invited person a member at the
+        /// role it offers, pending, until they accept and the row turns
+        /// live. A seed need not state it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pending_invitation: Option<String>,
     },
     /// A world (ARCH-0022), by name. A missing world is created.
     World { name: String },
     /// A facet (ARCH-0022): a named mask a person (entity id hex) wears.
     /// A mask grants nothing; a missing one is created.
     Facet { person: String, name: String },
+    /// A facet inside a world (FIX 2297): a named scope the world, by the
+    /// name its row reads, holds and no one wears. It grants nothing; a
+    /// missing one is created.
+    WorldFacet { world: String, name: String },
     /// An installed pack, by name, optionally pinned to a version.
     Pack {
         name: String,
@@ -169,9 +184,20 @@ pub enum ShapeRow {
     },
     /// A policy manifest (DEC-0005), by entity id hex, with its exact
     /// MessagePack body as hex. Every change waits for the owner's word.
-    Manifest { manifest_ref: String, body: String },
+    /// `json` is the same body as a document (FIX 2760): the live read
+    /// carries it wherever it writes back to exactly those bytes, and a seed
+    /// row may state the body by it alone. The hex is the authority when a
+    /// row states both.
+    Manifest {
+        manifest_ref: String,
+        #[serde(default)]
+        body: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        json: Option<serde_json::Value>,
+    },
     /// A sync declaration: whether one entity kind is on the wire. A shape
-    /// can propose a federation; it never effects one.
+    /// can propose a federation; it never effects one. Apply records it as
+    /// the kind's wire declaration (FIX 2300).
     Sync { entity_kind: String, on_wire: bool },
     /// Removal, stated: the named structure leaves. Always a widening,
     /// receipted and stamped, never automatic.
@@ -186,6 +212,7 @@ pub enum ShapeTarget {
     Member { member: String },
     World { name: String },
     Facet { person: String, name: String },
+    WorldFacet { world: String, name: String },
     Pack { name: String },
     Actor { agent_id: String },
     Skill { skill_id: String },
@@ -203,7 +230,7 @@ impl ShapeTarget {
             Self::Shared => 0,
             Self::Member { .. } => 1,
             Self::World { .. } => 2,
-            Self::Facet { .. } => 3,
+            Self::Facet { .. } | Self::WorldFacet { .. } => 3,
             Self::Pack { .. } => 4,
             Self::Actor { .. } => 5,
             Self::Skill { .. } => 6,
@@ -222,6 +249,7 @@ impl ShapeTarget {
             Self::Member { .. } => "member",
             Self::World { .. } => "world",
             Self::Facet { .. } => "facet",
+            Self::WorldFacet { .. } => "world_facet",
             Self::Pack { .. } => "pack",
             Self::Actor { .. } => "actor",
             Self::Skill { .. } => "skill",
@@ -247,6 +275,7 @@ impl ShapeTarget {
             Self::Member { member } => vec![member.as_str()],
             Self::World { name } | Self::Pack { name } => vec![name.as_str()],
             Self::Facet { person, name } => vec![person.as_str(), name.as_str()],
+            Self::WorldFacet { world, name } => vec![world.as_str(), name.as_str()],
             Self::Actor { agent_id } => vec![agent_id.as_str()],
             Self::Skill { skill_id } => vec![skill_id.as_str()],
             Self::Channel { channel, address } => vec![channel.as_str(), address.as_str()],
@@ -270,6 +299,10 @@ impl ShapeRow {
             Self::World { name } => ShapeTarget::World { name: name.clone() },
             Self::Facet { person, name } => ShapeTarget::Facet {
                 person: person.clone(),
+                name: name.clone(),
+            },
+            Self::WorldFacet { world, name } => ShapeTarget::WorldFacet {
+                world: world.clone(),
                 name: name.clone(),
             },
             Self::Pack { name, .. } => ShapeTarget::Pack { name: name.clone() },
@@ -336,6 +369,16 @@ impl ShapeRow {
             (Self::Pack { version: None, .. }, Self::Pack { .. })
             | (Self::Skill { version: None, .. }, Self::Skill { .. })
             | (Self::Channel { .. }, Self::Channel { .. }) => true,
+            // An invited person is the member the invitation names, at its
+            // role, whether or not they have accepted yet.
+            (
+                Self::Member { member, role, .. },
+                Self::Member {
+                    member: have,
+                    role: at,
+                    ..
+                },
+            ) => member == have && role == at,
             // One reference is one bound: a grant read by it is the grant.
             (Self::Grant { .. }, Self::Grant { .. }) => self.target() == live.target(),
             // The vault stores a manifest as its install door completes it.

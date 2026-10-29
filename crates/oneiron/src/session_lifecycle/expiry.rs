@@ -112,4 +112,20 @@ impl Vault {
             lifetime_ceiling_secs: policy.session_lifetime_ceiling_seconds(),
         })
     }
+
+    /// Changes after each commit that may have changed an admitted policy
+    /// manifest (FIX 11402). Subscribe before the first policy read; every
+    /// notification means "re-read the policy", never "a sitting is due".
+    pub fn subscribe_policy_manifest_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.store.policy_manifest_updates.subscribe()
+    }
+}
+
+impl crate::store::Store {
+    /// Only post-commit callers signal; the value carries no policy data.
+    pub(crate) fn notify_policy_manifest_changes(&self) {
+        self.policy_manifest_updates.send_modify(|generation| {
+            *generation = generation.wrapping_add(1);
+        });
+    }
 }

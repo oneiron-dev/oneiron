@@ -7,7 +7,8 @@
 //! Neural Engine, tens of seconds each; the OS caches that compile by path,
 //! so the path is the stable extraction, never a copy. Each function's
 //! description must be the row's: the same feature names, each a
-//! multi-array of the row's type and of its shape in that function.
+//! multi-array of the row's type and of its shape in that function, or a
+//! flexible shape consistent with it.
 //!
 //! Every model, configuration, array and provider is this thread's, held
 //! as a `Retained` and never sent: the worker that owns this set stays on
@@ -163,7 +164,9 @@ fn input_shape(inputs: &[TensorSpec], name: &str, tokens: usize) -> Result<Vec<u
 }
 
 /// Whether `feature` is a multi-array of `spec`'s type, of its shape in a
-/// function of `tokens`.
+/// function of `tokens`. An empty reported shape declares nothing and
+/// matches; a flexible dimension matches any size. Only an explicit,
+/// different shape mismatches.
 fn same(feature: &MLFeatureDescription, spec: &TensorSpec, tokens: usize) -> bool {
     // SAFETY: reads of a description the loaded model owns.
     let (kind, constraint) = unsafe { (feature.r#type(), feature.multiArrayConstraint()) };
@@ -172,10 +175,21 @@ fn same(feature: &MLFeatureDescription, spec: &TensorSpec, tokens: usize) -> boo
     };
     // SAFETY: reads of that constraint.
     let (dtype, shape) = unsafe { (constraint.dataType(), constraint.shape()) };
+    if kind != MLFeatureType::MultiArray || data_type(spec.dtype()) != Some(dtype) {
+        return false;
+    }
     let expected = resolved(spec, tokens);
-    kind == MLFeatureType::MultiArray
-        && data_type(spec.dtype()) == Some(dtype)
-        && arrays::sizes(&shape).is_some_and(|shape| shape == expected)
+    let reported: Vec<isize> = shape
+        .to_vec()
+        .iter()
+        .map(|number| number.as_isize())
+        .collect();
+    reported.is_empty()
+        || reported.len() == expected.len()
+            && reported
+                .iter()
+                .zip(&expected)
+                .all(|(&got, &want)| got < 0 || got as usize == want)
 }
 
 /// `spec`'s shape in a function of `tokens`: `L` is its tokens.

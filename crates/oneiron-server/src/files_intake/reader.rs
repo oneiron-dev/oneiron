@@ -13,8 +13,9 @@
 //!
 //! A PDF's note is the text of its pages, read from its bytes: no frontmatter
 //! and no links out, though a note's link can name it. A PDF with no text
-//! layer (a scan) reads as blank; one that is encrypted or does not parse is
-//! passed over and counted.
+//! layer (a scan) holds no text, and one that is encrypted or does not parse
+//! reads none: both are held by name, with the bytes the walk read (FIX
+//! 11276).
 //!
 //! A file of any size is read (rule 5). Text past the note bound lands in
 //! parts: the file's own note holds the first, and each next part is a note of
@@ -30,7 +31,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::ingest::{PdfText, pdf_text};
 use oneiron::limit_ask::EngineLimit;
-use oneiron::note::{ImportedNoteLink, ImportedNoteStanding, NameOnlyReason, OriginalBytes};
+use oneiron::note::{
+    FileFacts, ImportedNoteLink, ImportedNoteStanding, NameOnlyFile, NameOnlyReason, OriginalBytes,
+};
 use serde::Serialize;
 
 use super::ImportWarning;
@@ -196,9 +199,14 @@ pub(crate) fn crossed_rows(vault: &oneiron::Vault, counts: &NoteCounts) -> Vec<I
 }
 
 /// Every note under `folder`, in path order, a file past the note bound as
-/// its parts.
-pub(crate) fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Note>> {
+/// its parts, and the files held by name with the bytes the walk read (FIX
+/// 11276).
+pub(crate) fn read_folder(
+    folder: &Path,
+    counts: &mut NoteCounts,
+) -> anyhow::Result<(Vec<Note>, Vec<NameOnlyFile>)> {
     let mut notes = Vec::new();
+    let mut name_only = Vec::new();
     super::walk_notes(folder, &mut |shown, file| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
@@ -220,18 +228,29 @@ pub(crate) fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Res
             TextKind::Markdown
         };
         let bytes = read_all(file, shown)?;
-        // A file with no text is passed over, and counted.
-        read_text(
-            (path, PART_MARK),
+        // A file with no text is held by its name, with the bytes the walk
+        // read, kept as its original once its ledger row lands (FIX 11276).
+        if let Some((why, original)) = read_text(
+            (path.clone(), PART_MARK),
             bytes,
             written_at(&metadata),
             kind,
             counts,
             &mut notes,
-        );
+        ) {
+            name_only.push(NameOnlyFile {
+                path,
+                why,
+                facts: FileFacts {
+                    bytes: metadata.len(),
+                    modified_at: written_at(&metadata),
+                },
+                original: Some(original),
+            });
+        }
         Ok(())
     })?;
-    Ok(notes)
+    Ok((notes, name_only))
 }
 
 /// How a file's bytes hold its text.
@@ -269,7 +288,9 @@ pub(super) fn written_at(metadata: &std::fs::Metadata) -> u64 {
 
 /// The notes one file's `bytes` hold, pushed onto `notes` (a file past the
 /// note bound as its parts, each at `path` and `mark`), or why it holds
-/// none: no text, or none that reads.
+/// none with the bytes themselves: no text, or none that reads. The bytes
+/// are the file's original (FIX 7779): on its first part's note, or beside
+/// its name-only reason when it holds no text (FIX 11276).
 pub(super) fn read_text(
     (path, mark): (String, &str),
     bytes: Vec<u8>,
@@ -277,9 +298,13 @@ pub(super) fn read_text(
     kind: TextKind,
     counts: &mut NoteCounts,
     notes: &mut Vec<Note>,
-) -> Option<NameOnlyReason> {
+) -> Option<(NameOnlyReason, OriginalBytes)> {
     // The text is read from a copy: the bytes themselves are the file's
-    // original (FIX 7779).
+    // original, kept once the file's rows land.
+    let original_of = |bytes: Vec<u8>| OriginalBytes {
+        media_type: kind.media_type().to_owned(),
+        bytes,
+    };
     let (text, raw_hash) = match kind {
         // Bytes, never the lossy text read: a PDF is binary.
         TextKind::Pdf => match pdf_text(&bytes) {
@@ -287,7 +312,7 @@ pub(super) fn read_text(
                 if unread > 0 {
                     if text.trim().is_empty() {
                         counts.unreadable_pdf += 1;
-                        return Some(NameOnlyReason::Unreadable);
+                        return Some((NameOnlyReason::Unreadable, original_of(bytes)));
                     }
                     counts.partly_read_pdf += 1;
                 }
@@ -295,7 +320,7 @@ pub(super) fn read_text(
             }
             Err(_) => {
                 counts.unreadable_pdf += 1;
-                return Some(NameOnlyReason::Unreadable);
+                return Some((NameOnlyReason::Unreadable, original_of(bytes)));
             }
         },
         TextKind::Markdown => (
@@ -305,17 +330,15 @@ pub(super) fn read_text(
         ),
         TextKind::Plain => match String::from_utf8(bytes.clone()) {
             Ok(text) if !text.contains('\0') => (text, None),
-            _ => return Some(NameOnlyReason::NotText),
+            _ => return Some((NameOnlyReason::NotText, original_of(bytes))),
         },
     };
-    let mut original = Some(OriginalBytes {
-        media_type: kind.media_type().to_owned(),
-        bytes,
-    });
+    let original = original_of(bytes);
     if text.trim().is_empty() {
         counts.blank += 1;
-        return Some(NameOnlyReason::Empty);
+        return Some((NameOnlyReason::Empty, original));
     }
+    let mut original = Some(original);
     let (front, body) = if kind == TextKind::Markdown {
         markdown::split_frontmatter(&text)
     } else {

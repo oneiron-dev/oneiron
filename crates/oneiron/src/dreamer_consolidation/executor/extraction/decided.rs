@@ -24,13 +24,30 @@ const DECIDED: SideTable<([u8; 16], u64), DecidedCandidate, Named> =
 /// names the evidence the pack read, the candidate's turns among it.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DecidedCandidate {
+pub(crate) struct DecidedCandidate {
     #[serde(with = "crate::entity_id::serde_hex")]
-    subject: EntityId,
+    pub(crate) subject: EntityId,
     /// The listed claim the decisions bound it to; none when they bound none.
     #[serde(default, with = "crate::entity_id::serde_hex::optional")]
-    corrects: Option<EntityId>,
-    decisions: Vec<KeptDecision>,
+    pub(crate) corrects: Option<EntityId>,
+    pub(crate) decisions: Vec<KeptDecision>,
+}
+
+impl Vault {
+    /// Every candidate `attempt` decided a correction for (FIX 11306), each
+    /// with its position in the attempt's extraction, in that order, read in
+    /// `txn`. Unscoped: the read door judges who sees which.
+    pub(crate) fn decided_candidates_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+    ) -> Result<Vec<(u64, DecidedCandidate)>> {
+        Ok(DECIDED
+            .scan_from(&self.store, txn, attempt.as_bytes())?
+            .into_iter()
+            .map(|((_, position), row)| (position, row))
+            .collect())
+    }
 }
 
 /// Keeps every candidate of `parsed` whose correction was decided, at

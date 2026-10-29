@@ -47,6 +47,16 @@ pub(super) fn container(root: &Path) -> Result<PathBuf> {
     Ok(root.with_file_name(name))
 }
 
+/// The key custody directory the engine keeps beside the vault whose data
+/// directory is `data_dir` (`.<data directory>.key-custody`), for a host
+/// that must keep the name free or move it with the vault (FIX 6582).
+///
+/// # Errors
+/// A `data_dir` with no final component.
+pub fn custody_container_path(data_dir: &Path) -> Result<PathBuf> {
+    container(data_dir)
+}
+
 /// Whether a custody directory exists beside the vault at `root`. A binding
 /// another platform wrote names no root here, so none exists for it.
 pub(crate) fn custody_present(root: &Path) -> Result<bool> {

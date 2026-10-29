@@ -91,6 +91,13 @@ impl CustodyPlan {
         self.anchor_root.is_some() || self.anchor_url.is_some()
     }
 
+    /// Whether `vault` publishes to another install's door over HTTP
+    /// (FIX 9522): an anchor URL with no anchor root, which would win over
+    /// it for the anchor the pass uses.
+    fn http_anchored(&self) -> bool {
+        self.anchor_root.is_none() && self.anchor_url.is_some()
+    }
+
     /// The anchor `vault` publishes to: the root, refused inside the vault
     /// or its key custody, or the door, called with the plan's credentials.
     fn anchor(&self, vault: &oneiron::Vault) -> oneiron::Result<Option<Box<dyn AnchorStore>>> {
@@ -182,13 +189,19 @@ pub(crate) fn take_publishing(
 /// The pass right after a backup lands (FIX 5790), so no newest backup is
 /// left without its head beside it until the next tick. Never the backup's
 /// error. A member the outbox ships is left to the background pass, which
-/// this wakes: no outbox I/O rides the backup's response (FIX 5899).
+/// this wakes: no outbox I/O rides the backup's response (FIX 5899). With
+/// nonempty custody and an HTTP anchor, the anchor's reads and advances are
+/// left there too, and this wakes it: completion persists and stages locally
+/// (FIX 9522); a mounted anchor stays synchronous.
 pub(super) fn publish_after_take(vault: &oneiron::Vault, plan: &BackupPlan) {
-    let status = publish(vault, plan, false);
+    // FIX 9522: nonempty custody over an HTTP anchor stages locally here;
+    // the background publisher does the anchor reads and advances.
+    let deferred = plan.custody.http_anchored() && custody_status(vault).state != CUSTODY_NONE;
+    let status = publish(vault, plan, false, !deferred);
     if status.state != CUSTODY_PUBLISHED {
         log_pass(&status, plan.custody.anchored());
     }
-    if plan.custody.outbox.is_some() {
+    if plan.custody.outbox.is_some() || deferred {
         plan.custody.wake.notify_one();
     }
 }
@@ -210,13 +223,27 @@ fn not_run(error: &oneiron::Error, what: &str) -> CustodyStatus {
 
 /// One publication pass of `vault`'s custody to `plan`'s directory, every
 /// registered and declared member, and its anchor; a member the outbox
-/// ships only when `ship` (the background pass). A fault in the local
-/// custody is the status's detail here, never the caller's error; an
-/// anchor that cannot be used leaves the anchor step pending with why.
-fn publish(vault: &oneiron::Vault, plan: &BackupPlan, ship: bool) -> CustodyStatus {
-    let (anchor, unusable) = match plan.custody.anchor(vault) {
-        Ok(anchor) => (anchor, None),
-        Err(error) => (None, Some(error.to_string())),
+/// ships only when `ship` (the background pass). When `http_anchor` is false
+/// an HTTP anchor's reads and advances are left to the background pass
+/// (FIX 9522); a mounted root is always used. A fault in the local custody is
+/// the status's detail here, never the caller's error; an anchor that cannot
+/// be used leaves the anchor step pending with why.
+fn publish(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    ship: bool,
+    http_anchor: bool,
+) -> CustodyStatus {
+    // FIX 9522: a backup's own pass stages locally and leaves an HTTP
+    // anchor to the background publisher.
+    let skip_http = !http_anchor && plan.custody.http_anchored();
+    let (anchor, unusable) = if skip_http {
+        (None, None)
+    } else {
+        match plan.custody.anchor(vault) {
+            Ok(anchor) => (anchor, None),
+            Err(error) => (None, Some(error.to_string())),
+        }
     };
     // The head and log frames land in the backups' directory: claimed on the
     // floors its backups claim, before a byte is written (FIX 5858).
@@ -361,7 +388,8 @@ impl SyncServer {
                         vault.finish_redaction_erases_logged();
                         return status;
                     }
-                    publish(vault, &host.backups, true)
+                    // FIX 9522: the background pass does the HTTP anchor reads and advances.
+                    publish(vault, &host.backups, true, true)
                 })
                 .await;
                 match pass {

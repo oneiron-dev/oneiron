@@ -554,7 +554,7 @@ impl Vault {
 
     pub(crate) fn read_agent_definition_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<AgentDefinition> {
         let raw = self

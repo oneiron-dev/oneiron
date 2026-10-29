@@ -263,6 +263,21 @@ impl<'a> DreamerWakeDriver<'a> {
         // An owner Stop's owed abandon is retried once due, on every wake
         // host, with a program runtime bound or none (FIX 7352).
         self.store.recover_owed_stop_abandons(now);
+        // A crash between a paid wake call and its settle leaves the spend
+        // owed; charge it from the step's terminal usage before any attempt
+        // is admitted (FIX 11450). A reconcile that fails is logged and never
+        // stops the pass.
+        match super::owed::reconcile_owed_calls(self.vault, now) {
+            Ok((charged, dropped)) => {
+                tracing::debug!(charged, dropped, "reconciled owed wake calls");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "owed wake calls were not reconciled this pass"
+                );
+            }
+        }
         crate::human_task::run_human_followups_on_wake(self.vault, now)?;
         self.vault.retry_pending_ask_soft_confirms(usize::MAX)?;
         // PEOPLE `about`: a person whose facts moved queues its lines anew.
@@ -402,6 +417,12 @@ impl<'a> DreamerWakeDriver<'a> {
             // The runner line this attempt reserved on: the pass's, or the
             // line the host routed it to.
             let line = admitted.reservation.budget_id.clone();
+            // The line an owed wake call of this attempt charges (FIX 11450).
+            if let Some(wake) = self.deadline.wake_ref() {
+                self.vault
+                    .active_wakes
+                    .record_attempt_line(wake, attempt_id, &line);
+            }
 
             // ONE-1896 §3, quota/budget rung, at the ONE boundary where this
             // pass both holds a leased attempt and can still act: the wake
@@ -489,6 +510,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at: input.now.saturating_add(1),
+                    step_hashes: Vec::new(),
                 })
             } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
                 reason,
@@ -514,11 +536,13 @@ impl<'a> DreamerWakeDriver<'a> {
                     retry_at: input
                         .now
                         .saturating_add(crate::dreamer_consolidation::RESIDENCY_RETRY_SECS),
+                    step_hashes: Vec::new(),
                 })
             } else {
                 let mut ctx = WakeAttemptContext {
                     vault: self.vault,
                     deadline: &self.deadline,
+                    cancel: Some(cancel),
                     budget_id: &line,
                     now_ms: input.now.saturating_mul(1_000),
                     prepared_wake: Some(prepared_wake),
@@ -548,7 +572,10 @@ impl<'a> DreamerWakeDriver<'a> {
                         == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
                     {
                         crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
-                        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                        Ok(DreamerAttemptExecution::Completed {
+                            completed_units: 0,
+                            step_hashes: Vec::new(),
+                        })
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
                     {

@@ -281,7 +281,10 @@ impl<E> CommitmentWakeExecutor<'_, E> {
                 agent_actor,
             },
         )?;
-        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+        Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        })
     }
 }
 
@@ -298,7 +301,10 @@ fn skip_completion(
         run = %event.idempotency_key(),
         "commitment wake attempt completed without a proposal"
     );
-    DreamerAttemptExecution::Completed { completed_units: 0 }
+    DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    }
 }
 
 /// Everything the proposal write needs, gathered so the writer stays one

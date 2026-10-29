@@ -11,7 +11,10 @@
 //!
 //! Export is never gated: the row and the notices are written after the
 //! copy is made, in a write of their own, and whatever they meet is logged
-//! and never withholds the copy.
+//! and never withholds the copy. An owner's export that carries his act is
+//! also signed in that write as an `ExportAct` every machine he admits
+//! folds and checks (FIX 4624), on the same terms: a record that cannot be
+//! signed is logged, and the copy and its row stand.
 
 use serde::{Deserialize, Serialize};
 
@@ -228,6 +231,17 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
             exporter,
             export,
         );
+        // The signed record goes last, after the row and the notices.
+        if let Some(act) = receipt.act {
+            vault.record_export_act_op_in_txn(
+                txn,
+                act,
+                export,
+                &receipt.format,
+                receipt.bytes,
+                receipt.digest.as_deref(),
+            );
+        }
         Ok(())
     });
     if let Err(error) = written {

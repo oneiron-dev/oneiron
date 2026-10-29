@@ -407,6 +407,7 @@ pub(super) fn classify_amendment_traced(
                 answers: Vec::new(),
                 revision: None,
                 model: None,
+                receipts: Vec::new(),
             };
             let answers = vec![
                 HunkVerdict {
@@ -444,6 +445,7 @@ pub(super) fn classify_amendment_traced(
                 ],
                 revision: None,
                 model: None,
+                receipts: Vec::new(),
             };
             Ok((Some(settled_split(class, &request, &masses)?), trace))
         }

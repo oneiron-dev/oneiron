@@ -11,11 +11,14 @@
 //! The line is the vault's own ([`ModelHostBudgets`]): a media call reads on
 //! the line of the runtime that runs it, and holds its replies' bytes until
 //! its answer leaves the adapter ([`holding_replies`]): across the encoded
-//! reply and its decode. A read no media call scopes (a health probe) keeps
-//! its bytes on the reply it returns, on a line of the row's default of its
-//! own: no process-wide line paces it. These lines book the encoded bytes a
-//! reply holds: a decode's copies and a parsed JSON tree are the call's, and
-//! not booked here.
+//! reply and its decode, whose decoded answer is charged beside them at that
+//! boundary (FIX 10626). A chat call a ladder sends reads its JSON reply on
+//! the vault's chat-reply line, `limits.chat_reply_bytes`
+//! ([`holding_chat_replies`]), until the call ends: charged as it arrives,
+//! never waited for, a crossing recorded. A read no call scopes (a
+//! health probe) keeps its bytes on the reply it returns, on a line of the
+//! row's default of its own: no process-wide line paces it. A parsed JSON
+//! tree is the call's, and not booked here.
 
 use std::cell::RefCell;
 use std::future::Future;
@@ -23,30 +26,47 @@ use std::time::Duration;
 
 use crate::byte_line::HeldBytes;
 
-use super::super::host_budgets::{MediaReplyLine, ModelHostBudgets};
+use super::super::host_budgets::{ModelHostBudgets, ReplyLine};
 use super::HttpFailure;
 
 /// The room a reply that declares no length takes before its first byte;
 /// past it, it is charged as it grows.
 const FIRST_ROOM: usize = 64 * 1024;
 
-/// The media call a task runs: the budgets of the runtime it runs on, and
-/// the bytes of every reply read for it.
-struct MediaCall {
+/// Which of the vault's reply lines a call reads on.
+#[derive(Clone, Copy)]
+enum Replies {
+    Media,
+    Chat,
+}
+
+/// The model call a task runs: the budgets of the runtime it runs on, the
+/// line its replies are read on, and the bytes of every reply read for it.
+struct ReplyCall {
     budgets: ModelHostBudgets,
+    replies: Replies,
     held: RefCell<Vec<HeldBytes>>,
 }
 
 tokio::task_local! {
-    static CALL: MediaCall;
+    static CALL: ReplyCall;
 }
 
-/// The budgets of the media call this task runs; for a read no call
-/// scopes, budgets of its own at the rows' defaults, their crossings logged
-/// and not kept.
-fn call_budgets() -> ModelHostBudgets {
-    CALL.try_with(|call| call.budgets.clone())
-        .unwrap_or_else(|_| ModelHostBudgets::unhosted())
+impl Replies {
+    fn line(self, budgets: &ModelHostBudgets) -> &ReplyLine {
+        match self {
+            Self::Media => budgets.media_line(),
+            Self::Chat => budgets.chat_line(),
+        }
+    }
+}
+
+/// The budgets of the call this task runs and the line it reads on; for a
+/// read no call scopes, the media line of budgets of its own at the rows'
+/// defaults, their crossings logged and not kept.
+fn call_budgets() -> (ModelHostBudgets, Replies) {
+    CALL.try_with(|call| (call.budgets.clone(), call.replies))
+        .unwrap_or_else(|_| (ModelHostBudgets::unhosted(), Replies::Media))
 }
 
 /// Runs `call`, one media rung's call on the runtime whose budgets are
@@ -56,8 +76,24 @@ pub(in crate::models) async fn holding_replies<F: Future>(
     budgets: &ModelHostBudgets,
     call: F,
 ) -> F::Output {
-    let scope = MediaCall {
+    holding(budgets, Replies::Media, call).await
+}
+
+/// Runs `call`, one chat rung's send on the runtime whose budgets are
+/// `budgets`, holding the bytes of every JSON reply read whole for it on
+/// that runtime's chat-reply line until it ends (FIX 10626). They are
+/// charged as they arrive and never wait for room.
+pub(in crate::models) async fn holding_chat_replies<F: Future>(
+    budgets: &ModelHostBudgets,
+    call: F,
+) -> F::Output {
+    holding(budgets, Replies::Chat, call).await
+}
+
+async fn holding<F: Future>(budgets: &ModelHostBudgets, replies: Replies, call: F) -> F::Output {
+    let scope = ReplyCall {
         budgets: budgets.clone(),
+        replies,
         held: RefCell::new(Vec::new()),
     };
     CALL.scope(scope, call).await
@@ -70,21 +106,22 @@ pub(in crate::models) struct ReplyBytes {
     _held: Option<HeldBytes>,
 }
 
-/// Reads `response`'s body whole on the media-reply line of the call that
-/// reads it.
+/// Reads `response`'s body whole on the reply line of the call that reads
+/// it.
 pub(in crate::models) async fn read_booked(
     mut response: reqwest::Response,
 ) -> Result<(Vec<u8>, ReplyBytes), HttpFailure> {
-    let budgets = call_budgets();
-    let MediaReplyLine { line, questions } = budgets.media_line();
+    let (budgets, replies) = call_budgets();
+    let ReplyLine { line, questions } = replies.line(&budgets);
     let first = response
         .content_length()
         .and_then(|length| usize::try_from(length).ok())
         .unwrap_or(FIRST_ROOM);
-    // Only a call that holds nothing yet waits its turn: one that holds a
-    // reply already is charged, so no wait closes a cycle.
+    // Only a media call that holds nothing yet waits its turn: one that
+    // holds a reply already is charged, so no wait closes a cycle, and a
+    // chat reply is charged, never waited for.
     let waits = CALL
-        .try_with(|call| call.held.borrow().is_empty())
+        .try_with(|call| matches!(call.replies, Replies::Media) && call.held.borrow().is_empty())
         .unwrap_or(true);
     let mut held = if waits {
         line.reserve_alone(first, Duration::MAX, questions).await
@@ -111,9 +148,9 @@ pub(in crate::models) async fn read_booked(
     Ok((body, keep(held)))
 }
 
-/// Reads `response`'s body whole, however large (FIX 9321): on the media
-/// call's line when one reads it, else grown by fallible allocation as its
-/// bytes arrive, on no line. No size refuses it; only a real allocation
+/// Reads `response`'s body whole, however large (FIX 9321): on the line of
+/// the media or chat call that reads it, else grown by fallible allocation
+/// as its bytes arrive, on no line. No size refuses it; only a real allocation
 /// failure ends the read, as [`HttpFailure::OutOfMemory`].
 pub(in crate::models) async fn read_whole(
     mut response: reqwest::Response,
@@ -131,11 +168,11 @@ pub(in crate::models) async fn read_whole(
 }
 
 /// Charges `bytes` a reply already holds, read whole by another transport
-/// (the credential broker's), on the line of the call that reads it: kept
-/// as a read reply's are.
+/// (the credential broker's), or a decoded answer's (FIX 10626), on the line
+/// of the call that reads it: kept as a read reply's are.
 pub(in crate::models) fn charge_read(bytes: usize) -> ReplyBytes {
-    let budgets = call_budgets();
-    let MediaReplyLine { line, questions } = budgets.media_line();
+    let (budgets, replies) = call_budgets();
+    let ReplyLine { line, questions } = replies.line(&budgets);
     let mut held = line.empty();
     line.charge(&mut held, bytes, questions);
     keep(held)
@@ -153,8 +190,8 @@ fn out_of_memory(held: usize) -> HttpFailure {
     HttpFailure::OutOfMemory
 }
 
-/// Hands `held` to the media call this task runs, if one does; else the
-/// reply keeps it.
+/// Hands `held` to the call this task runs, if one does; else the reply
+/// keeps it.
 fn keep(held: HeldBytes) -> ReplyBytes {
     let mut held = Some(held);
     let _ = CALL.try_with(|call| {

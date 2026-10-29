@@ -119,6 +119,7 @@ impl DesktopSession {
             secrets: Secrets::default(),
             typed: HashMap::new(),
             polling: false,
+            view: None,
         })
     }
 

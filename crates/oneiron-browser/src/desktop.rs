@@ -183,6 +183,9 @@ pub struct DesktopSession {
     /// A settle poll's read is under way: its secrets are masked, never
     /// held.
     polling: bool,
+    /// Where the rows of the last read no poll took stood, as one hash
+    /// (FIX 10430).
+    view: Option<[u8; 32]>,
 }
 
 /// A window: its owner's pid and its X window id.

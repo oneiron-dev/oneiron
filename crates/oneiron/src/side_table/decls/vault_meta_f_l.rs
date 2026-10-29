@@ -471,6 +471,11 @@ side_tables! {
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored;
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
+    /// The loaded native Oneironer bundle's receipt at its bind: stack and
+    /// checkpoint, label count and per-artifact hashes. Key: string (slot).
+    LLM_ONEIRONER_BUNDLE_RECEIPT: VaultMeta b"llm:oneironer_bundle_receipt:v1:" Named;
+    /// A non-holder's inert inference-defaults replacement (FIX 8211). Key: id16(proposal).
+    LLM_PURPOSE_DEFAULT_PROPOSAL: VaultMeta b"llm:purpose_default_proposal:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model

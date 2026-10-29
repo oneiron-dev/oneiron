@@ -304,6 +304,10 @@ fn hourly(
     // unpinned (FIX 10712).
     let signer = vault.checkpoint_signer().ok();
     let last = finalize::accepted_marker_with_pins(plan, signer.as_ref().map(std::slice::from_ref));
+    // FIX 6802: None while a failed-attempt guard stands paces on the
+    // guard's mtime below, as a recent guard does; a stuck guard's failed
+    // lift refreshes it, so it never yields a backup every tick.
+    let guard_ms = finalize::attempt_guard_ms(plan);
     if let Some(last) = &last {
         if vault
             .backup_watermark()
@@ -315,10 +319,7 @@ fn hourly(
             return Decision::Recent;
         }
     }
-    if unrecorded
-        .max(finalize::attempt_guard_ms(plan))
-        .is_some_and(within)
-    {
+    if unrecorded.max(guard_ms).is_some_and(within) {
         Decision::UnrecordedRecent
     } else if last.is_some() {
         Decision::Changed

@@ -180,6 +180,7 @@ impl<H: LabelClassifier> DecisionSeat for LocalDecisionSeat<H> {
                 person_row: None,
                 rule: None,
                 asked: None,
+                state_cut: None,
             },
         })
     }

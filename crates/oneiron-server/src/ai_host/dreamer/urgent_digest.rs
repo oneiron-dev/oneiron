@@ -146,7 +146,10 @@ pub(super) async fn assess_waiting_harm(
             code = "digest_harm_basis_moved",
             "an urgent digest question's basis moved; its new basis is asked anew"
         );
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     let budget = Duration::from_millis(ctx.deadline.remaining_ms());
     let decision = tokio::task::spawn_blocking(move || {
@@ -166,5 +169,8 @@ pub(super) async fn assess_waiting_harm(
     .map_err(|_| oneiron::Error::InvalidConfig("the urgent digest judge panicked".into()))??;
     ctx.vault
         .request_urgent_proactivity_digest(attempt, decision, now)?;
-    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    })
 }

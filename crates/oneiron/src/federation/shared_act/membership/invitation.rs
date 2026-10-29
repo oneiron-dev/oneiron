@@ -115,6 +115,33 @@ impl Vault {
         Ok(invitations)
     }
 
+    /// Every pending invitation into `vault_id` unexpired at `now`, whoever
+    /// it admits (FIX 2573): the vault's own read of who is invited, beside
+    /// each person's read of their own.
+    pub(crate) fn pending_shared_invitations_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        now: u64,
+    ) -> Result<Vec<SharedInvitation>> {
+        let mut pending = Vec::new();
+        for row in self
+            .store
+            .vault_meta
+            .prefix_iter(txn, &key(INVITATION_PREFIX, ""))?
+        {
+            let (_, raw) = row?;
+            let invitation: SharedInvitation = decode(&raw)?;
+            if invitation.vault_id == vault_id
+                && invitation.state == SharedInvitationState::Pending
+                && now < invitation.expires_at
+            {
+                pending.push(invitation);
+            }
+        }
+        Ok(pending)
+    }
+
     /// Whether `invitee`'s invitation `id` is pending and unexpired at `now`:
     /// an invitation-bound slip (FIX 1925) stands only while it is.
     pub(crate) fn shared_invitation_pending_in_txn(

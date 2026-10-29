@@ -592,12 +592,26 @@ impl CdpDriver {
     /// secrets are found on the tree's own candidates and held before any
     /// row is built (`secrets`, FIX 8028); its rows are built through them.
     pub(super) fn capture(&mut self) -> Result<Capture, BrowserError> {
+        self.capture_read(true)
+    }
+
+    /// [`Self::capture`], its DOM read only `with_dom` (`capture_dom_policy`,
+    /// FIX 6965): a wait's poll whose rows no answer returns reads the tree
+    /// alone, and the capture whose rows it returns reads the DOM, as every
+    /// other capture does. Without the DOM read, the rows' DOM fields are
+    /// gaps and its secrets are those the tree and the session's custody
+    /// show.
+    pub(super) fn capture_read(&mut self, with_dom: bool) -> Result<Capture, BrowserError> {
         let mut tries = 0;
         let (documents, ax, candidates, dom) = loop {
             let before = self.documents()?;
             let ax = self.ax_nodes()?;
             let candidates = outline::lines(&ax, &Masks::default());
-            let dom = self.read_dom(&candidates);
+            let dom = if with_dom {
+                self.read_dom(&candidates)
+            } else {
+                row_metadata::DomRead::Failed
+            };
             let after = self.documents()?;
             tries += 1;
             if before == after {

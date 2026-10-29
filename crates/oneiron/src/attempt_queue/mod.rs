@@ -23,6 +23,7 @@ mod executor;
 mod fanout_hold;
 mod observe;
 mod payload_erase;
+mod payload_rebind;
 mod ports;
 mod read_set;
 mod result;

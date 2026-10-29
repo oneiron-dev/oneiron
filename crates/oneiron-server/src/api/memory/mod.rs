@@ -302,13 +302,16 @@ pub(crate) struct CoreMemoryWatchResponse {
     watched: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     query_ref: Option<String>,
+    /// How the evaluator's last wake of the watch went (FIX 11250).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    health: Option<watch::CoreMemoryWatchHealth>,
 }
 
 mod owner_delete;
 mod watch;
 pub(crate) use self::watch::{
     __path_core_memory_watch_disable, __path_core_memory_watch_enable,
-    __path_core_memory_watch_read,
+    __path_core_memory_watch_read, CoreMemoryWatchHealth,
 };
 pub(super) use self::watch::{
     core_memory_watch_disable, core_memory_watch_enable, core_memory_watch_read,

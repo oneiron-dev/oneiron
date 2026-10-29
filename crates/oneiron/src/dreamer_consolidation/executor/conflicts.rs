@@ -77,6 +77,10 @@ impl ConsolidationExecutor<'_> {
                 candidate.proposal.supersedes = conflict.prior_head;
                 for member in &members[1..] {
                     join_decisions(&mut candidate.proposal.decisions, &member.decisions);
+                    candidate.sources = crate::skill_optimize::union_source_rows([
+                        candidate.sources.take(),
+                        member.sources.clone(),
+                    ]);
                 }
                 let answer = ResolvedConflictOutput::of_first_try(
                     ctx.vault,
@@ -115,7 +119,7 @@ impl ConsolidationExecutor<'_> {
                     &step_ctx,
                     ctx.deadline,
                     conflict,
-                    &member_data,
+                    &members,
                     &prior_heads,
                     resources,
                     charges,

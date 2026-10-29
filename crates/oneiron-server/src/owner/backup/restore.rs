@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oneiron::VaultPageSeal;
-use oneiron::recovery::checkpoint::{CheckpointKey, CustodyRecovery, SideRestoreSource};
+use oneiron::recovery::checkpoint::{
+    CheckpointKey, CustodyRecovery, HostOrderHolds, SideRestoreSource,
+};
 use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
@@ -376,6 +378,9 @@ pub(crate) fn restore_fresh(
     custody: &CustodyRecovery<'_>,
     finish: impl FnOnce(&oneiron::Vault) -> oneiron::Result<()>,
 ) -> anyhow::Result<(oneiron::Vault, RestoredFresh)> {
+    // An owner's key carries no host-order family: the engine's `finish`
+    // argument for one is always none here (FIX 6817).
+    let finish = |vault: &oneiron::Vault, _: Option<&HostOrderHolds>| finish(vault);
     let path = std::path::absolute(vault_path)?;
     anyhow::ensure!(
         !path.join("data.mdb").exists(),

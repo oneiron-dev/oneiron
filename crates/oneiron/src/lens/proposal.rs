@@ -344,7 +344,7 @@ impl Memory<'_> {
 /// Whether `key` reads under a credential narrowed to some worlds or facets,
 /// or asked for some worlds only: a reader `vault.lenses.list` serves a
 /// filtered projection.
-fn reads_narrowed(key: &ScopedReadActorKey) -> bool {
+pub(super) fn reads_narrowed(key: &ScopedReadActorKey) -> bool {
     key.has_world_ceiling()
         || key.asked_world_ceiling().is_some()
         || key

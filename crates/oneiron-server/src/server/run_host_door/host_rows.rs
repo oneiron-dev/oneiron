@@ -6,11 +6,12 @@ use super::{
     AdmittedRenderer, AgentVerb, AiOperation, AiOptions, AiOptionsRequest, AiVerdictRequest, Arc,
     BTreeSet, DecisionRung, EntityId, GraphAskOutcome, GraphAskRequest, HeldImage, HostUnitDecider,
     LadderGraphAnswerer, Memory, MemoryError, MemoryResult, Modality, QuestionAnswersRequest,
-    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionPauseRequest,
-    QuestionPaused, QuestionReadRequest, RenderRefusal, RunAdmission, SyncServer, TaskWaveRequest,
-    Value, WriteActor, agent_lane, create_question, decode, edit_question, encode,
-    inside_host_dial, internal, on_caller_payer, owners, pause_question, question_answers,
-    read_question, resume_held_wave, run_graph_ask_receipted, run_verdict, schedule_backfill,
+    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
+    QuestionOutcomeWindowsRequest, QuestionPauseRequest, QuestionPaused, QuestionReadRequest,
+    RenderRefusal, RunAdmission, SyncServer, TaskWaveRequest, Value, WriteActor, agent_lane,
+    closed_outcome_windows, create_question, decode, edit_question, encode, inside_host_dial,
+    internal, on_caller_payer, owners, pause_question, question_answers, read_question,
+    resume_held_wave, run_graph_ask_receipted, run_verdict, schedule_backfill,
     select_graph_units_by_type, wave_plan, wave_receipt,
 };
 
@@ -144,6 +145,10 @@ pub(super) fn host_row(
                 request.version,
             )?)
         }
+        AgentVerb::VaultQuestionsOutcomeWindows => {
+            let request: QuestionOutcomeWindowsRequest = decode(input)?;
+            encode(closed_outcome_windows(vault, principal, request.id)?)
+        }
         AgentVerb::VaultQuestionsAnswers => {
             let request: QuestionAnswersRequest = decode(input)?;
             encode(question_answers(vault, principal, &request)?)
@@ -178,7 +183,7 @@ pub(super) fn host_row(
             );
             encode(crate::slide_render::rendered(preview, renderer)?)
         }
-        AgentVerb::AiOptions => encode(ai_options(server, line, decode(input)?)?),
+        AgentVerb::AiOptions => encode(ai_options(server, principal, line, decode(input)?)?),
         // The run's own speech, on the line its entry spends on (FIX 3194).
         AgentVerb::AiSpeech => {
             let line = line.ok_or_else(|| internal(verb))?;
@@ -220,16 +225,80 @@ pub(super) fn host_row(
         // The agent's own handle; a connector call under its grant and gate.
         AgentVerb::SelfUse => encode(crate::api::self_use_as(server, memory, decode(input)?)?),
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
-        _ => Err(owners(verb, "ai.* media calls are the owner's")),
+        _ => match granted_media(server, principal, verb) {
+            Some(operation) => granted_media_row(server, principal, line, verb, operation, input),
+            None => Err(owners(verb, "ai.* media calls are the owner's")),
+        },
+    }
+}
+
+/// The `ai.*` media operation `verb` calls when a live Grant the owner
+/// minted the run's agent `agent` names it (FIX 3208), else `None`: the
+/// verb stays the owner's. A Grant that cannot be read names none.
+fn granted_media(server: &SyncServer, agent: EntityId, verb: AgentVerb) -> Option<AiOperation> {
+    let operation = match verb {
+        AgentVerb::AiImage => AiOperation::Image,
+        AgentVerb::AiTranscribe => AiOperation::Transcribe,
+        AgentVerb::AiEmbed => AiOperation::Embed,
+        AgentVerb::AiVideo | AgentVerb::AiVideoPoll | AgentVerb::AiVideoCancel => {
+            AiOperation::Video
+        }
+        _ => return None,
+    };
+    server
+        .vault()
+        .agent_ai_operations(agent)
+        .ok()?
+        .contains(operation.as_str())
+        .then_some(operation)
+}
+
+/// One `ai.*` media row the owner's Grant admits the run's agent `agent`
+/// for (FIX 3208), on `line`, the line its entry spends on, as its own
+/// `ai.speech` is: its call, its video job from submit to end, and the poll
+/// and cancel of the jobs its own run submitted there.
+fn granted_media_row(
+    server: &SyncServer,
+    agent: EntityId,
+    line: Option<&RunAdmission>,
+    verb: AgentVerb,
+    operation: AiOperation,
+    input: Value,
+) -> MemoryResult<Value> {
+    let line = line.ok_or_else(|| internal(verb))?;
+    let runtime = tokio::runtime::Handle::current();
+    match verb {
+        AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_for_run(
+            server,
+            line,
+            decode(input)?,
+            Some(agent),
+        ))?),
+        AgentVerb::AiVideoPoll => encode(runtime.block_on(crate::api::ai_video_poll_for_run(
+            server,
+            line,
+            decode(input)?,
+        ))?),
+        AgentVerb::AiVideoCancel => encode(runtime.block_on(
+            crate::api::ai_video_cancel_for_run(server, line, decode(input)?),
+        )?),
+        _ => encode(runtime.block_on(crate::api::ai_media_for_run(
+            server,
+            line,
+            operation,
+            decode(input)?,
+        ))?),
     }
 }
 
 /// `ai.options` from the host's model runtime: the rows the agent could call
-/// now (FIX 2942). Its `ai.speech` alone is admitted, on `line`, so it lists
-/// the speech rows, with what that line has left (FIX 3194); every other
-/// `ai.*` call door is the owner's and refuses the agent.
+/// now (FIX 2942). Its `ai.speech` is admitted, on `line`, so it lists the
+/// speech rows, with what that line has left (FIX 3194), and so are the
+/// media operations a live Grant the owner minted `agent` names (FIX 3208);
+/// every other `ai.*` call door is the owner's and refuses the agent.
 fn ai_options(
     server: &SyncServer,
+    agent: EntityId,
     line: Option<&RunAdmission>,
     request: AiOptionsRequest,
 ) -> MemoryResult<AiOptions> {
@@ -254,7 +323,23 @@ fn ai_options(
         })
         .collect::<MemoryResult<BTreeSet<_>>>()?;
     let left = line.map(|line| line.read().remaining_units);
-    let listed = crate::api::ai::run_options(server, left, operation, &inputs);
+    // Text is the raw routes', which a run never reaches; a run with no
+    // line calls no granted row.
+    let granted: BTreeSet<AiOperation> = server
+        .vault()
+        .agent_ai_operations(agent)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|name| AiOperation::parse(name))
+        .filter(|operation| *operation != AiOperation::Text)
+        .collect();
+    let listed = if granted.is_empty() || line.is_none() {
+        crate::api::ai::run_options(server, left, operation, &inputs)
+    } else {
+        crate::api::ai::line_options(server, left, operation, &inputs, |row_operation| {
+            row_operation == AiOperation::Speech || granted.contains(&row_operation)
+        })
+    };
     let options = listed
         .options
         .into_iter()

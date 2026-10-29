@@ -1,6 +1,6 @@
 //! Bounded wire tokens shared by every other lens concern.
 //!
-//! `lens_token_type!` and the nine newtypes it generates stay in this one file:
+//! `lens_token_type!` and the newtypes it generates stay in this one file:
 //! the macro is only ever invoked here, so the generated surface is readable in
 //! place. [`LensHandleRef`]/[`LensHandleRole`] live here too because lens nodes
 //! ([`super::atom`], [`super::generated_ui`]) and the host mediation chokepoint
@@ -90,6 +90,12 @@ lens_token_type!(SelfUiControlId, "self.ui control id");
 lens_token_type!(SelfUiActionId, "self.ui action id", true);
 lens_token_type!(SelfUiOptionValue, "self.ui option value");
 lens_token_type!(SelfUiStateKey, "self.ui state key");
+lens_token_type!(GeneratedUiCatalogName, "generated-ui catalog name", true);
+lens_token_type!(
+    GeneratedUiComponentName,
+    "generated-ui component name",
+    true
+);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

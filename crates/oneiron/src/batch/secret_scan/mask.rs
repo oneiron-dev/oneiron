@@ -21,8 +21,11 @@
 
 pub(super) mod admit;
 pub(super) mod carrier;
+// An escaped key's span (FIX 1369).
+mod escaped_span;
 mod file_plane;
 pub(super) mod known_marks;
+mod known_note;
 pub(super) mod retained_repo;
 pub(super) mod side_row;
 pub(super) mod spool;
@@ -43,7 +46,10 @@ use super::container::{
     walk_members,
 };
 use super::shapes::{self, Door, HANDLE_OPEN};
-use super::{REASON_PRIVATE_KEY, provider_token_spans, scan_batch_ops, secret_scan_error};
+use super::{
+    REASON_MNEMONIC, REASON_PRIVATE_KEY, SecretScanMode, provider_token_spans, scan_batch_ops,
+    secret_scan_error, secret_scan_mode_in_txn,
+};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -57,6 +63,7 @@ use crate::secret_custody::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::write_envelope::ClaimCandidate;
 use wipe::{PlanOps, PlanTree, PlanValues, replace_wiped};
 
 const REASON_BLOCKLIST: &str = "gate.secret_scan.blocklist";
@@ -98,7 +105,10 @@ pub(crate) fn mask_origin_in_txn(
 
 /// The batch door with mask on write. `masks` is false for a replayed batch,
 /// which keeps the plain door: a hit refuses it, save in a file marked
-/// before. `at` stamps each custody record the batch mints.
+/// before. `at` stamps each custody record the batch mints. It also returns
+/// each MACHINE claim candidate the minted pass rewrote with its pre-mask
+/// body, in op order, so the candidate apply can renew its proof over what
+/// is stored (FIX 11356); a replayed batch reports none.
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's own apply parts, its origin and its time"
@@ -112,7 +122,7 @@ pub(in crate::batch) fn mask_batch_ops(
     text_index_trusted: bool,
     masks: bool,
     at: u64,
-) -> Result<MaskedFiles> {
+) -> Result<(MaskedFiles, Vec<(EntityId, ClaimCandidate)>)> {
     // A value custody already holds keeps its own handle wherever it comes
     // back, shape or none (OF-560 C). A replayed batch reads only what it
     // wrote before.
@@ -122,15 +132,18 @@ pub(in crate::batch) fn mask_batch_ops(
         None
     };
     let refusal = match scan_batch_ops(store, &*wtxn, ops) {
-        Ok(()) if known.is_none() => return Ok(MaskedFiles::default()),
+        Ok(()) if known.is_none() => return Ok((MaskedFiles::default(), Vec::new())),
         Ok(()) => None,
         Err(refusal) => Some(refusal),
     };
     // A value the owner ruled no secret in a record is no hit there.
     let kept = KeptValues::for_records_in_txn(store, &*wtxn, ops.iter().filter_map(op_record))?;
     if known.is_none() && !kept.is_empty() && scan_screened(store, wtxn, &kept, ops).is_ok() {
-        return Ok(MaskedFiles::default());
+        return Ok((MaskedFiles::default(), Vec::new()));
     }
+    // The owner's switch, read once: when it is off the plan places known
+    // values only and mints nothing (FIX 8644).
+    let known_only = secret_scan_mode_in_txn(store, &*wtxn)? == SecretScanMode::Off;
     // The plan's copy, and every value it finds, are wiped however the
     // plan ends (FIX 1101).
     let mut planned = PlanOps::of(ops);
@@ -139,11 +152,12 @@ pub(in crate::batch) fn mask_batch_ops(
         mints: masks,
         kept,
         known: known.clone(),
+        known_only,
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;
     if plan.found.is_empty() && plan.file_ids.is_empty() && !plan.placed_known {
-        return refusal.map_or_else(|| Ok(MaskedFiles::default()), Err);
+        return refusal.map_or_else(|| Ok((MaskedFiles::default(), Vec::new())), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
     scan_screened(store, wtxn, &plan.kept, &planned)?;
@@ -152,7 +166,7 @@ pub(in crate::batch) fn mask_batch_ops(
     let files = std::mem::take(&mut plan.files);
     let masked = MaskedFiles(std::mem::take(&mut plan.file_ids));
     if !masks {
-        return Ok(masked);
+        return Ok((masked, Vec::new()));
     }
     let write = CustodyWrite {
         store,
@@ -161,16 +175,21 @@ pub(in crate::batch) fn mask_batch_ops(
         text_index_trusted,
     };
     let minted = plan.mint(&write, wtxn, at)?;
+    // A known value in a file names that file in the found-key notice (FIX 2780).
+    known_note::note_known_file_keys_in_txn(store, wtxn, &files, at)?;
     put_file_marks_in_txn(store, wtxn, files, &minted, at)?;
-    Masker {
+    // The minted pass places the same values the plan did (FIX 8644).
+    let mut minted_pass = Masker {
         handles: minted.map(|(handle, _)| handle),
         minted: true,
         kept,
         known,
+        known_only,
         ..Masker::default()
-    }
-    .mask_ops(ops)?;
-    Ok(masked)
+    };
+    minted_pass.mask_ops(ops)?;
+    let masked_claims = std::mem::take(&mut minted_pass.masked_claims);
+    Ok((masked, masked_claims))
 }
 
 /// Records each file `files` marks: each key's span, in the file's bytes or
@@ -313,6 +332,8 @@ fn offset(at: usize) -> Result<u64> {
 struct FoundFile {
     hash: [u8; 32],
     keys: Vec<FileKey>,
+    /// The ASSET put that carried it, for the found-key notice (FIX 2780).
+    record: EntityId,
 }
 
 /// One key a plan found in a file: the member that holds it (none for the
@@ -359,6 +380,8 @@ struct Masker {
     found: Vec<Found>,
     minted: bool,
     mints: bool,
+    /// The switch is off: place known values only, mint nothing (FIX 8644).
+    known_only: bool,
     /// Each file's key places by its bytes' hash: marked before, or by this
     /// plan.
     marked: HashMap<[u8; 32], KeyPlaces>,
@@ -377,6 +400,10 @@ struct Masker {
     placed_known: bool,
     /// Where a tracked pass put each handle, by the text it masked (FIX 6144).
     traced: Option<text::TextReplacements>,
+    /// Each MACHINE claim candidate the minted pass rewrote, with its
+    /// pre-mask body, in op order: the candidate apply renews its proof
+    /// over what is stored (FIX 11356). A plan pass never fills it.
+    masked_claims: Vec<(EntityId, ClaimCandidate)>,
 }
 
 impl Masker {
@@ -416,10 +443,24 @@ impl Masker {
                         replace_wiped(data, masked);
                     }
                 }
-                BatchOp::ClaimCandidate { id, candidate, .. } => {
+                BatchOp::ClaimCandidate {
+                    id,
+                    candidate,
+                    envelope,
+                    ..
+                } => {
                     self.at = Some((*id, "claim".to_owned()));
+                    // The minted pass only: a plan rewrites a copy. Only a
+                    // MACHINE candidate can need its proof renewed.
+                    let before = (self.minted && envelope.machine_signature().is_some())
+                        .then(|| (**candidate).clone());
                     for value in candidate.values_mut() {
                         self.mask_value(value)?;
+                    }
+                    if let Some(before) = before
+                        && **candidate != before
+                    {
+                        self.masked_claims.push((*id, before));
                     }
                 }
                 BatchOp::Text { id, fields } => {
@@ -443,7 +484,7 @@ impl Masker {
         let hash = *blake3::hash(data).as_bytes();
         if let Some(places) = self.marked.get(&hash).cloned() {
             self.file_ids.push(id);
-            let places = self.remark_known(data, hash, places)?;
+            let places = self.remark_known(data, hash, id, places)?;
             return masked_copy(data, &places).map(Some);
         }
         // A sealed file is stored as it is and left unmarked.
@@ -470,7 +511,11 @@ impl Masker {
         let copy = masked_copy(data, &places)?;
         self.marked.insert(hash, places);
         self.file_ids.push(id);
-        self.files.push(FoundFile { hash, keys });
+        self.files.push(FoundFile {
+            hash,
+            keys,
+            record: id,
+        });
         Ok(Some(copy))
     }
 
@@ -482,6 +527,7 @@ impl Masker {
         &mut self,
         data: &[u8],
         hash: [u8; 32],
+        record: EntityId,
         places: KeyPlaces,
     ) -> Result<KeyPlaces> {
         let Some(known) = self.known.clone().filter(|_| self.mints) else {
@@ -514,7 +560,7 @@ impl Masker {
             }
         }
         self.marked.insert(hash, united.clone());
-        self.files.push(FoundFile { hash, keys });
+        self.files.push(FoundFile { hash, keys, record });
         Ok(united)
     }
 
@@ -534,23 +580,39 @@ impl Masker {
             None => Vec::new(),
         };
         let mut placed = Vec::new();
-        let mut spans = file_spans(leaf);
-        // A value a structured reading places (a credential field), wherever
-        // its bytes sit in the leaf.
-        let mut fields = Masker {
-            mints: true,
-            at: self.at.clone(),
-            ..Masker::default()
-        };
-        fields.mask_body(leaf)?;
-        for found in fields.found {
-            spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
+        // The switch is off: no shape span and no structured-field value are
+        // discovered, and nothing is minted (FIX 8644).
+        let mut spans = Vec::new();
+        if !self.known_only {
+            spans = file_spans(leaf);
+            // A value a structured reading places (a credential field), wherever
+            // its bytes sit in the leaf.
+            let mut fields = Masker {
+                mints: true,
+                at: self.at.clone(),
+                ..Masker::default()
+            };
+            fields.mask_body(leaf)?;
+            for found in fields.found {
+                let mut hits: Vec<Range<usize>> = occurrences(leaf, &found.value).collect();
+                // A value the leaf holds escaped (a PEM block's `\n`) is
+                // placed at its escaped form (FIX 1369).
+                if hits.is_empty() {
+                    hits = escaped_span::escaped_occurrences(leaf, &found.value);
+                }
+                spans.extend(hits.into_iter().map(|span| (span, found.reason)));
+            }
         }
         for (span, reason) in merged(spans) {
             if known
                 .iter()
                 .any(|(held, _)| held.start < span.end && span.start < held.end)
             {
+                continue;
+            }
+            // A value the owner ruled no secret in the record is left as
+            // written, whatever rule placed its span (FIX 8646).
+            if self.is_kept(&leaf[span.clone()]) {
                 continue;
             }
             let value = Zeroizing::new(
@@ -690,7 +752,13 @@ impl Masker {
         if self.is_kept(&secret) {
             return Ok(false);
         }
-        let handle = match self.known_whole(&secret) {
+        let known = self.known_whole(&secret);
+        // The switch is off: a structured-field value no record holds whole
+        // stays as written (FIX 8644).
+        if self.known_only && known.is_none() {
+            return Ok(false);
+        }
+        let handle = match known {
             Some(handle) => {
                 self.placed_known = true;
                 handle
@@ -822,8 +890,7 @@ fn credential_member(key: &Value, member: &Value) -> bool {
 
 /// The spans of `text` the write door's text rules place, merged where they
 /// meet, in order: a private-key block, a blocklist entry, a provider key
-/// token, and an assigned value under a credential name. A recovery phrase is
-/// not placed.
+/// token, an assigned value under a credential name, and a recovery phrase.
 fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
     let spans: Vec<(Range<usize>, &'static str)> = shapes::private_key_block_spans(text)
         .into_iter()
@@ -838,6 +905,12 @@ fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
             shapes::assignment_spans(text)
                 .into_iter()
                 .map(|span| (span, REASON_SENSITIVE_ENV)),
+        )
+        // A recovery phrase takes one span per phrase (FIX 1099).
+        .chain(
+            shapes::mnemonic_spans(text)
+                .into_iter()
+                .map(|span| (span, REASON_MNEMONIC)),
         )
         .collect();
     merged(spans)

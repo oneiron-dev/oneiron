@@ -6,7 +6,7 @@ use super::support::map_value;
 use super::{
     HubPackage, HubPin, HubRef, HubSyncDisposition, MarketplaceFit, MarketplaceFitDecision,
     MarketplaceFitEvaluator, PREDICATE_SKILL_HUB_PROVENANCE, SkillHubAdapter, SkillScanReceipt,
-    package_codec::invalid,
+    TrackedHubRef, package_codec::invalid,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, TimeRange, Vault, error::Result};
@@ -47,6 +47,16 @@ pub(super) fn check_expected_skill(
         )));
     }
     Ok(())
+}
+
+/// The pin naming `version` itself (FIX 2665): a full commit id pins that
+/// commit, anything else the tag of that name.
+fn named_version_pin(version: &str) -> HubPin {
+    if matches!(version.len(), 40 | 64) && version.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        HubPin::Commit(version.to_owned())
+    } else {
+        HubPin::Tag(version.to_owned())
+    }
 }
 
 /// One package already fetched, handed to an import door as its adapter's
@@ -251,7 +261,10 @@ impl Vault {
     /// [`Self::sync_skill_from_hub_ref`] for a caller that names the version
     /// it asked for (FIX 10202): the refetched package's id and version are
     /// checked before the ref is marked seen or the skill moves, and the
-    /// sync applies that same package. A mismatch writes nothing.
+    /// sync applies that same package. A mismatch writes nothing. When what
+    /// the ref names now is another version, the same ref pinned at the
+    /// named one is fetched instead (FIX 2665), and the sync still runs
+    /// under the ref's stored policy.
     pub(crate) fn sync_skill_from_hub_ref_expecting(
         &self,
         owner: &AuthenticatedOwner,
@@ -272,20 +285,25 @@ impl Vault {
             HubPin::Commit(commit) => Some(commit.as_str()),
             _ => None,
         };
-        let (package, revision) = match self.hub_ref_fetch(&tracked, fallback)? {
-            RefFetch::Git(adapter, _) => (
-                adapter.fetch_package(&tracked.hub_ref)?,
-                adapter.resolved_commit().to_owned(),
-            ),
-            RefFetch::Http(adapter, _) => {
-                let package = adapter.fetch_package(&tracked.hub_ref)?;
-                let revision = package.content_hash()?.to_hex();
-                (package, revision)
-            }
-        };
+        let (mut package, mut revision) = self.fetch_tracked_package(&tracked, fallback)?;
         let current = self
             .get_skill_record(entity)?
             .ok_or_else(|| invalid("the skill has no record"))?;
+        if check_expected_skill(&package.record, &current.skill_id, Some(version)).is_err() {
+            // The named version, fetched by name; a hub that has none of
+            // that name leaves the mismatch as it was.
+            let named = TrackedHubRef {
+                hub_ref: HubRef::new(
+                    tracked.hub_ref.hub_id,
+                    tracked.hub_ref.ref_string.clone(),
+                    named_version_pin(version),
+                )?,
+                ..tracked.clone()
+            };
+            if let Ok(found) = self.fetch_tracked_package(&named, None) {
+                (package, revision) = found;
+            }
+        }
         check_expected_skill(&package.record, &current.skill_id, Some(version))?;
         self.mark_hub_ref(&tracked, &revision, false)?;
         let at = self.now_recorded_at();
@@ -301,5 +319,24 @@ impl Vault {
             self.mark_hub_ref(&tracked, &revision, true)?;
         }
         Ok(disposition)
+    }
+
+    /// The package `tracked` names now, and the revision it resolved to.
+    fn fetch_tracked_package(
+        &self,
+        tracked: &TrackedHubRef,
+        fallback: Option<&str>,
+    ) -> Result<(HubPackage, String)> {
+        match self.hub_ref_fetch(tracked, fallback)? {
+            RefFetch::Git(adapter, _) => Ok((
+                adapter.fetch_package(&tracked.hub_ref)?,
+                adapter.resolved_commit().to_owned(),
+            )),
+            RefFetch::Http(adapter, _) => {
+                let package = adapter.fetch_package(&tracked.hub_ref)?;
+                let revision = package.content_hash()?.to_hex();
+                Ok((package, revision))
+            }
+        }
     }
 }

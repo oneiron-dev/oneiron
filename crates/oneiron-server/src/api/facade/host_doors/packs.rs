@@ -16,6 +16,7 @@ use oneiron::task_verb::sdk::{
 };
 
 use super::support::{Listed, MaybeListed, hex_rows, internal, naming, owner_proof};
+use crate::api::clock_ingress;
 use crate::auth::CoreAuth;
 use crate::builtin_host::HostConnectionChecks;
 use crate::server::SyncServer;
@@ -30,7 +31,7 @@ pub(super) async fn vault_packs_put_answer(
 ) -> MemoryResult<PackPutReceipt> {
     let owner = owner_proof(auth, server, "vault.packs.put")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::put_pack_as_owner(server.vault(), &owner, input)
     })
     .await
@@ -62,7 +63,7 @@ pub(super) async fn vault_packs_remove_answer(
 ) -> MemoryResult<oneiron::skill_hub::pack_catalog::PackInstallReceipt> {
     let owner = owner_proof(auth, server, "vault.packs.remove")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::remove_pack_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -91,7 +92,7 @@ pub(super) async fn vault_connectors_subscriptions_put_answer(
 ) -> MemoryResult<oneiron::connector_key::ChannelMessageSubscription> {
     let owner = owner_proof(auth, server, "vault.connectors.subscriptions.put")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::subscribe_channel_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -126,7 +127,7 @@ pub(super) async fn vault_connectors_subscriptions_list_answer(
 ) -> MemoryResult<ChannelSubscriptions> {
     let owner = owner_proof(auth, server, "vault.connectors.subscriptions.list")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::channel_subscriptions_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -161,7 +162,7 @@ pub(super) async fn vault_connectors_subscriptions_revoke_answer(
 ) -> MemoryResult<ChannelSubscriptionRevoked> {
     let owner = owner_proof(auth, server, "vault.connectors.subscriptions.revoke")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         oneiron::task_verb::sdk::revoke_channel_subscription_as_owner(
             server.vault(),
             &owner,
@@ -220,7 +221,7 @@ pub(super) async fn setup_listing(
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let answer = act(&server, &owner);
         let rows = match &answer {
             Ok(receipt) => Some(setup_rows(&receipt.setup)),
@@ -263,7 +264,7 @@ pub(super) async fn vault_lenses_activate_answer(
 ) -> MemoryResult<LensActivationReceipt> {
     let owner = owner_proof(auth, server, "vault.lenses.activate")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || server.vault().activate_lens(&owner, input))
+    clock_ingress::run_blocking(move || server.vault().activate_lens(&owner, input))
         .await
         .map_err(|_| internal("vault.lenses.activate"))?
 }
@@ -290,7 +291,7 @@ pub(super) async fn vault_lenses_deactivate_answer(
 ) -> MemoryResult<LensActivationReceipt> {
     let owner = owner_proof(auth, server, "vault.lenses.deactivate")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || server.vault().deactivate_lens(&owner, input))
+    clock_ingress::run_blocking(move || server.vault().deactivate_lens(&owner, input))
         .await
         .map_err(|_| internal("vault.lenses.deactivate"))?
 }

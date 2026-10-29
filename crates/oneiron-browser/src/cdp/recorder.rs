@@ -5,10 +5,13 @@
 //! The reader only checks and queues: it checks the binding's exact name
 //! and the session's owner, parses the event, and has the one classifier
 //! check a text it carries again (FIX 8028) before it is queued: a value
-//! the classifier calls secret is dropped there, never kept or hashed. It
-//! never calls the browser, which would wait for a reply only the reader
-//! itself routes. The driver drains the queue at each verb's edge and at
-//! the stop.
+//! the classifier calls secret is dropped there, never kept or hashed. A
+//! tab's move within its top-level document (a history move, a fragment)
+//! queues a document cue of its own, as a load's does (FIX 10429). Each cue
+//! carries its tab's top-level commits as it is queued, so the host matches
+//! it only against reads of the same document (FIX 9412). It never calls
+//! the browser, which would wait for a reply only the reader itself routes.
+//! The driver drains the queue at each verb's edge and at the stop.
 
 use super::Pipe;
 use crate::BrowserError;
@@ -16,7 +19,7 @@ use crate::SecretKind;
 use crate::secret_fields::{FieldFacts, SECRET_MARK, classify};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 /// The isolated world the recorder's listeners run in.
@@ -56,7 +59,8 @@ pub(crate) struct Owner {
 #[derive(Deserialize)]
 pub(crate) struct Cue {
     /// `doc`, `click`, `edit`, `commit`, `select`, `key`, `submit`, `drag`,
-    /// `file`; the host adds `lost` and `uncovered`.
+    /// `file`; the host adds `lost`, `uncovered` and `nav` (a move within
+    /// the tab's top-level document, FIX 10429).
     pub(crate) k: String,
     /// The sending document's URL, and whether it is its tab's top one.
     #[serde(default)]
@@ -84,12 +88,18 @@ pub(crate) struct Cue {
     /// The tab it came from, set by the host.
     #[serde(skip)]
     pub(crate) tab: String,
+    /// Its tab's top-level commits when it was queued, set by the host
+    /// (`Pipe::top_commits`, FIX 9412).
+    #[serde(skip)]
+    pub(crate) commits: u64,
 }
 
 /// What the page showed of an act's target before the act: its role and
 /// accessible name as the page computes them, its input type and
-/// autocomplete tokens, its description, and its place among the targets of
-/// its document with the same role and name (`[at, of]`).
+/// autocomplete tokens, its description, its place among the targets of
+/// its document with the same role and name (`[at, of]`), and its named
+/// ancestor scopes, outermost first, each a role and name as an outline's
+/// locator names them (FIX 9411).
 #[derive(Deserialize)]
 pub(crate) struct Descriptor {
     #[serde(default)]
@@ -104,6 +114,8 @@ pub(crate) struct Descriptor {
     pub(crate) ds: String,
     #[serde(default)]
     pub(crate) i: Option<(usize, usize)>,
+    #[serde(default)]
+    pub(crate) sc: Vec<(String, String)>,
 }
 
 /// A key going down, as the page saw it.
@@ -137,6 +149,7 @@ impl Cue {
             o: None,
             key: None,
             tab: tab.to_owned(),
+            commits: 0,
         }
     }
 
@@ -146,7 +159,8 @@ impl Cue {
     /// reads as `[secret]`; a select's option that is one is dropped.
     fn scrub(&mut self) {
         if let Some(d) = self.d.as_mut() {
-            for text in [&mut d.n, &mut d.ds] {
+            let scopes = d.sc.iter_mut().map(|(_, name)| name);
+            for text in [&mut d.n, &mut d.ds].into_iter().chain(scopes) {
                 if value_secret(text.as_str()).is_some() {
                     SECRET_MARK.clone_into(text);
                 }
@@ -219,12 +233,19 @@ impl Attached {
 }
 
 impl Pipe {
-    /// Queues one event a recording's page sent; anything else passes.
+    /// Queues one event a recording's page sent, or a document cue for a
+    /// tab's move within its top-level document; anything else passes.
     /// Called on the reader: it parses, checks and queues only.
     pub(super) fn note_recording(&self, event: &Value) {
-        if event["method"].as_str() != Some("Runtime.bindingCalled") {
-            return;
+        match event["method"].as_str() {
+            Some("Runtime.bindingCalled") => self.note_cue(event),
+            Some("Page.navigatedWithinDocument") => self.note_moved(event),
+            _ => {}
         }
+    }
+
+    /// Queues one event a recording's page sent.
+    fn note_cue(&self, event: &Value) {
         let Some(name) = event.pointer("/params/name").and_then(Value::as_str) else {
             return;
         };
@@ -247,7 +268,37 @@ impl Pipe {
         };
         let mut cue = parsed.unwrap_or_else(|| Cue::marker("lost", &owner.tab, ""));
         owner.tab.clone_into(&mut cue.tab);
+        cue.commits = self.top_commits(&owner.tab);
         cue.scrub();
+        live.queue.push(cue);
+    }
+
+    /// Queues a document cue for a move within a listened tab's top-level
+    /// document (FIX 10429): a same-document navigation loads no document,
+    /// so its page sends none. Its main frame's id is its tab's.
+    fn note_moved(&self, event: &Value) {
+        let (Some(session), Some(frame), Some(url)) = (
+            event["sessionId"].as_str(),
+            event.pointer("/params/frameId").and_then(Value::as_str),
+            event.pointer("/params/url").and_then(Value::as_str),
+        ) else {
+            return;
+        };
+        let Ok(mut live) = self.recorder.lock() else {
+            return;
+        };
+        let Some(live) = live.as_mut() else {
+            return;
+        };
+        let Some(owner) = live.sessions.get(session) else {
+            return;
+        };
+        if owner.target != owner.tab || owner.tab != frame {
+            return;
+        }
+        let mut cue = Cue::marker("nav", &owner.tab, url);
+        cue.top = true;
+        cue.commits = self.top_commits(&owner.tab);
         live.queue.push(cue);
     }
 
@@ -303,6 +354,41 @@ impl Pipe {
         }
     }
 
+    /// Whether the running recording listens on `target`.
+    pub(crate) fn recording_listens(&self, target: &str) -> bool {
+        self.recorder.lock().is_ok_and(|held| {
+            held.as_ref()
+                .is_some_and(|live| live.sessions.values().any(|owner| owner.target == target))
+        })
+    }
+
+    /// Listens on every out-of-process frame already attached under a
+    /// session the running recording listens on, the frames nested in one
+    /// too, parents first (FIX 9410): a frame that existed before the start
+    /// is recorded on its own session, as one attached after it is. A frame
+    /// whose recorder cannot be installed is named uncovered.
+    pub(crate) fn record_frames(&self, deadline: Instant) {
+        let mut tried = HashSet::new();
+        loop {
+            let ready: Vec<(String, String, String)> = self
+                .frame_sessions()
+                .into_iter()
+                .filter(|(session, _, _)| !tried.contains(session))
+                .filter_map(|(session, parent, frame)| {
+                    let tab = self.recording_tab(&parent)?;
+                    Some((session, frame, tab))
+                })
+                .collect();
+            if ready.is_empty() {
+                return;
+            }
+            for (session, frame, tab) in ready {
+                self.record_on(&session, &frame, &tab, deadline);
+                tried.insert(session);
+            }
+        }
+    }
+
     /// The tab a session the recording listens on belongs to.
     fn recording_tab(&self, session: &str) -> Option<String> {
         let held = self.recorder.lock().ok()?;
@@ -328,7 +414,10 @@ impl Pipe {
 
     /// Listens on a page or frame the browser just attached, paused at its
     /// start, before it runs (the attach worker, off the reader). A frame
-    /// whose page the recording does not listen on is named uncovered.
+    /// under a page the browser attached that the recording does not yet
+    /// listen on (a popup attached before the start) has that page listened
+    /// on first (FIX 9410); one whose page no session of the recording
+    /// reaches is named uncovered.
     pub(super) fn record_attached(&self, session: &str, attached: &Attached, deadline: Instant) {
         if !self.recording() {
             return;
@@ -336,10 +425,13 @@ impl Pipe {
         match attached.kind.as_str() {
             "page" => self.record_on(session, &attached.target, &attached.target, deadline),
             "iframe" => {
-                let tab = attached
-                    .parent
-                    .as_deref()
-                    .and_then(|parent| self.recording_tab(parent));
+                let tab = attached.parent.as_deref().and_then(|parent| {
+                    self.recording_tab(parent).or_else(|| {
+                        let page = self.page_target(parent)?;
+                        self.record_on(parent, &page, &page, deadline);
+                        self.recording_tab(parent)
+                    })
+                });
                 let lost = (String::new(), attached.url.clone());
                 match tab {
                     Some(tab) => self.record_on(session, &attached.target, &tab, deadline),

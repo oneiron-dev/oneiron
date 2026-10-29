@@ -192,8 +192,9 @@ impl OwnServerTransport for MeshLlmTransport {
         let guard = AbortOnDrop(task.abort_handle());
         Box::pin(async move {
             let _guard = guard;
-            task.await
-                .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
+            task.await.unwrap_or_else(|error| {
+                Err(RetryableLlmError::io_after_send("generate", error.to_string()).into())
+            })
         })
     }
 
@@ -417,7 +418,14 @@ impl Leg {
                     if !flowed {
                         return Err("broke before its first event".to_owned());
                     }
-                    room.hand(Err(RetryableLlmError::StreamCut.into()), None);
+                    room.hand(
+                        Err(RetryableLlmError::io_after_send(
+                            "stream",
+                            "broke after its first event",
+                        )
+                        .into()),
+                        None,
+                    );
                     return Ok(());
                 };
                 let (mut room, mut booking, last) = (Some(room), Some(booking), events.len());
@@ -566,8 +574,9 @@ impl OwnServerTransport for MeshPeerTransport {
         let guard = AbortOnDrop(task.abort_handle());
         Box::pin(async move {
             let _guard = guard;
-            task.await
-                .unwrap_or_else(|_| Err(RetryableLlmError::StreamCut.into()))
+            task.await.unwrap_or_else(|error| {
+                Err(RetryableLlmError::io_after_send("generate", error.to_string()).into())
+            })
         })
     }
 

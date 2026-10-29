@@ -186,7 +186,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
                 connector = %wake.event.connector,
                 "connector wake delivered with no responder installed"
             );
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         };
         // The pass hands the reply off and settles at once: it spent nothing,
         // and the job carries the model spend and the send's outcome.
@@ -201,6 +204,9 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
                 );
             }
         }
-        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+        Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        })
     }
 }

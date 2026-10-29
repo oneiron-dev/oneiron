@@ -67,7 +67,7 @@ impl ConsolidationExecutor<'_> {
         step_ctx: &DurableStepContext<'_>,
         pass: &WakePassDeadline,
         conflict: &ConflictSet,
-        members: &[&PromotionCandidate],
+        members: &[&super::super::evidence::VerifiedCandidate],
         prior_heads: &[super::super::PriorHead],
         resources: &BranchResources<'_>,
         charges: &mut StepChargeTally,
@@ -94,6 +94,7 @@ impl ConsolidationExecutor<'_> {
         let rows = ConflictRows::of(&conflict.identity, members, prior_heads)?;
         let pages = rows.pages();
         let mut resolutions = Vec::with_capacity(pages.len());
+        let mut page_sources: Vec<Option<Vec<EntityId>>> = Vec::with_capacity(pages.len());
         let mut groups = Vec::new();
         let mut decisions = Vec::new();
         for (page, shown) in pages.iter().enumerate() {
@@ -109,10 +110,12 @@ impl ConsolidationExecutor<'_> {
             let questions = self.conflict_questions(&rows.ids(shown), across, part, &mut labels)?;
             let state = rows.state(shown, part, &mut labels);
             measure_state(step_ctx.vault, &state);
+            let sources = conflict_sources(members, &evidence, &labels);
+            page_sources.push(sources.clone());
             let Some(decided) = self
                 .decide(
                     step_ctx, pass, resources, &to, key, &questions, &evidence, &state, &labels,
-                    charges,
+                    sources, charges,
                 )
                 .await?
             else {
@@ -139,7 +142,17 @@ impl ConsolidationExecutor<'_> {
             paged => {
                 let Some((chosen, finals)) = self
                     .final_resolution(
-                        step_ctx, pass, resources, &to, key, &evidence, &rows, paged, charges,
+                        step_ctx,
+                        pass,
+                        resources,
+                        &to,
+                        key,
+                        &evidence,
+                        &rows,
+                        members,
+                        paged,
+                        &page_sources,
+                        charges,
                     )
                     .await?
                 else {
@@ -163,9 +176,21 @@ impl ConsolidationExecutor<'_> {
                 |shortlist: &[EntityId], _: &[DecisionQuestion], labels: &mut CallLabelMap| {
                     rows.state(&rows.indexes(shortlist), StatePart::Final, labels)
                 };
+            let sources_for = |_: &[EntityId], labels: &CallLabelMap| {
+                conflict_sources(members, &evidence, labels)
+            };
             let Some((chosen, finals)) = self
                 .choose_identity(
-                    step_ctx, pass, resources, &to, key, &evidence, &choice, &groups, &state,
+                    step_ctx,
+                    pass,
+                    resources,
+                    &to,
+                    key,
+                    &evidence,
+                    &choice,
+                    &groups,
+                    &state,
+                    &sources_for,
                     charges,
                 )
                 .await?
@@ -199,7 +224,9 @@ impl ConsolidationExecutor<'_> {
         key: EntityId,
         evidence: &[EntityId],
         rows: &ConflictRows,
+        members: &[&super::super::evidence::VerifiedCandidate],
         read: &[Option<String>],
+        page_sources: &[Option<Vec<EntityId>>],
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<FinalResolution>> {
         let mut options: Vec<String> = Vec::new();
@@ -221,9 +248,16 @@ impl ConsolidationExecutor<'_> {
             fields.insert("page_answers".to_owned(), serde_json::json!(read));
         }
         measure_state(step_ctx.vault, &state);
+        // The final read renders earlier pages' answers: each was read
+        // from its page's rows, so the read sends under their union too.
+        let sources = crate::skill_optimize::union_source_rows(
+            std::iter::once(conflict_sources(members, evidence, &labels))
+                .chain(page_sources.iter().cloned()),
+        );
         let Some(decided) = self
             .decide(
-                step_ctx, pass, resources, to, key, &questions, evidence, &state, &labels, charges,
+                step_ctx, pass, resources, to, key, &questions, evidence, &state, &labels, sources,
+                charges,
             )
             .await?
         else {
@@ -438,6 +472,32 @@ impl ConsolidationExecutor<'_> {
         labels.bind_request(&mut request, None);
         Ok(request)
     }
+}
+
+/// The rows one conflict read sends under (FIX 11526): every member's
+/// extraction rows (a superset of the members a page shows), the pack's
+/// evidence, and the stored rows its labels name, never a candidate's
+/// unwritten claim id. `None` when a member's rows are not known.
+fn conflict_sources(
+    members: &[&super::super::evidence::VerifiedCandidate],
+    evidence: &[EntityId],
+    labels: &CallLabelMap,
+) -> Option<Vec<EntityId>> {
+    let stored: Vec<EntityId> = evidence
+        .iter()
+        .copied()
+        .chain(
+            labels
+                .rows()
+                .filter(|id| !members.iter().any(|member| member.claim_id == *id)),
+        )
+        .collect();
+    crate::skill_optimize::union_source_rows(
+        members
+            .iter()
+            .map(|member| member.sources.clone())
+            .chain(std::iter::once(Some(stored))),
+    )
 }
 
 /// The non-null `value` a resolved-value reply names, if any.

@@ -380,6 +380,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     step_hash,
                     &response.usage,
                 ) {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
                     return Ok(Called::Exit(charges.park_on_error(&error)));
                 }
                 response
@@ -456,7 +459,9 @@ pub(super) fn store_exit(
 ) -> DreamerAttemptExecution {
     match error {
         Error::ConcurrentWrite(_) => compose_again(charges, now_ms),
-        error if waits_on_residency(error) => residency_deferral(now_ms, charges.units),
+        error if waits_on_residency(error) => {
+            residency_deferral(now_ms, charges.units, charges.step_hashes.clone())
+        }
         error => charges.park_on_error(error),
     }
 }

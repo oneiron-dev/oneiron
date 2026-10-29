@@ -98,7 +98,8 @@ impl ConsolidationExecutor<'_> {
     /// The candidates one child's `scope` can take from `response`, before
     /// the claim each corrects is decided, and how many it cannot. Its
     /// labels, quotes and declared people bind through `ctx`, its call's
-    /// own map. Decode never fails the partition over one candidate: one it
+    /// own map. Each keeps `sources`, the rows of the call that produced
+    /// it. Decode never fails the partition over one candidate: one it
     /// cannot take (a candidate breaking a rule such as the evidence rules,
     /// or one in a reply stored before the step checked candidates) is not
     /// written, and is counted.
@@ -107,6 +108,7 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         scope: &'s crate::llm::Scope,
         ctx: ReplyContext<'_>,
+        sources: &[EntityId],
     ) -> Result<(Vec<ParsedCandidate<'s>>, usize)> {
         let items = extraction_reply(response)?.candidates;
         let items = items.as_slice();
@@ -125,7 +127,10 @@ impl ConsolidationExecutor<'_> {
         let mut skipped = 0_usize;
         for item in items {
             match parse_candidate(item, ctx, scope) {
-                Ok(candidate) => parsed.push(candidate),
+                Ok(mut candidate) => {
+                    candidate.sources = sources.to_vec();
+                    parsed.push(candidate);
+                }
                 Err(reason) => {
                     skipped += 1;
                     tracing::warn!(
@@ -202,6 +207,15 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
     evidence_turn_refs: Vec<EntityId>,
     project: EntityId,
     prospective_queries: Vec<String>,
+    /// The rows of the extraction call that produced it (FIX 11526).
+    sources: Vec<EntityId>,
+}
+
+impl ParsedCandidate<'_> {
+    /// The rows of the extraction call that produced it.
+    pub(in crate::dreamer_consolidation) fn sources(&self) -> &[EntityId] {
+        &self.sources
+    }
 }
 
 /// One parsed candidate as the branch takes it, or why it is not written.
@@ -239,9 +253,11 @@ fn build_resolved(
     attempt_id: crate::attempt_queue::AttemptId,
     now_ms: u64,
 ) -> Result<super::super::evidence::ExtractedCandidate> {
+    let sources = Some(parsed.sources().to_vec());
     let (proposal, locators) =
         resolve_proposal(parsed, corrects, decisions, partition, attempt_id, now_ms)?;
-    let extracted = super::super::evidence::ExtractedCandidate::new(proposal, locators)?;
+    let extracted =
+        super::super::evidence::ExtractedCandidate::new(proposal, locators)?.with_sources(sources);
     // Only a head the listing shows is a correction target.
     Ok(match corrects {
         Some(prior) => extracted.correcting(prior.claim_id),

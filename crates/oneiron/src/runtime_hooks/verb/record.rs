@@ -5,8 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::runtime_hooks::HookBudgetOverrun;
 use crate::runtime_hooks::store::{self, HookReadPin, HookRunRef, RunKey};
+use crate::runtime_hooks::{HookBudgetOverrun, HookPreparation};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::HookPhase;
 use crate::{EntityId, Result};
@@ -29,12 +29,27 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     pub(in crate::runtime_hooks) invocation: InvocationId,
     pub(in crate::runtime_hooks) phase: HookPhase,
     pub(in crate::runtime_hooks) verb: String,
-    /// The exact input the body saw; `None` past the pin bound.
+    /// The exact input the body saw, as its grant showed it (FIX 10084);
+    /// `None` past the pin bound.
     pub(in crate::runtime_hooks) input_json: Option<String>,
     pub(in crate::runtime_hooks) input_hash: String,
+    /// The rows whose content that input showed: a replay runs it again only
+    /// while the hook's current grant still shows each of them.
+    #[serde(default, with = "crate::serialize::entity_ref::sequence")]
+    pub(in crate::runtime_hooks) dependencies: Vec<EntityId>,
+    /// The input also showed content whose rows no host names: a replay runs
+    /// it again only under the grant it was built under ([`Self::grant`]).
+    #[serde(default)]
+    pub(in crate::runtime_hooks) unattributed: bool,
+    /// The digest of the grant the input was built under.
+    #[serde(default)]
+    pub(in crate::runtime_hooks) grant: String,
+    /// How the body was prepared before it ran (FIX 9208).
+    #[serde(default)]
+    pub(in crate::runtime_hooks) preparation: Option<HookPreparation>,
     pub(in crate::runtime_hooks) reads: Vec<HookReadPin>,
-    /// The outcome the body returned, as it returned it; `None` when it
-    /// returned none or past the outcome bound.
+    /// The outcome the body returned, whole, as it returned it; `None` when
+    /// it returned none.
     pub(in crate::runtime_hooks) outcome_json: Option<String>,
     /// The outcome kind, or `refused` or `failed`, as the receipt tells it.
     pub(in crate::runtime_hooks) outcome: String,

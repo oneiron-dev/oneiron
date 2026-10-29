@@ -226,6 +226,7 @@ impl Vault {
                         from_keeps: keeps.map(|role| role.as_str().to_owned()),
                         act: Some(act.id.clone()),
                         proof: None,
+                        authorizer: None,
                         receipt: receipt_id.clone(),
                         affected_grants,
                         retired_own_device_grants,
@@ -255,6 +256,7 @@ impl Vault {
             effect,
             summary,
             authority_entry,
+            None,
             now,
         )?;
         let delivery = match (&receipt.export, archive) {

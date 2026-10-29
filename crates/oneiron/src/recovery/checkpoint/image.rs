@@ -38,6 +38,15 @@ pub(super) struct CheckpointImage {
     /// as the artifact opens (OF-570 (e)); never in an image.
     #[serde(skip)]
     pub(super) checkpoint_sequence: Option<u64>,
+    /// A hosted vault's host-order legal holds, sealed to its host's
+    /// recipient (FIX 6598): host-private, never a canonical row and never
+    /// the owner's to open (`host_holds`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) host_holds: Option<super::host_holds::HostHoldsMember>,
+    /// The snapshot id its artifact's verified commitment signs, set as the
+    /// artifact opens; never in an image.
+    #[serde(skip)]
+    pub(super) snapshot: Option<[u8; 32]>,
 }
 
 impl CheckpointImage {
@@ -88,6 +97,7 @@ pub(super) fn decode_image(
     let mut image: CheckpointImage =
         rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     image.checkpoint_sequence = Some(opened.sequence);
+    image.snapshot = Some(opened.snapshot);
     if image.version != IMAGE_VERSION
         || image.created_at != opened.created_at
         || !carried_bodies::matches_artifact(&image, &opened.bodies.list())

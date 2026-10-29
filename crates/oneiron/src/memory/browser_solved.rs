@@ -18,6 +18,7 @@ use crate::authority::InvocationSlipBinding;
 use crate::browser_library::{
     SOLVED_RUN_PREDICATE, SavedBrowserCaller, SolvedCaptureGap, SolvedCaptureReceipt,
     SolvedRunCapture, SolvedRunEvidence, SolvedRunScope, index_capture_in_txn,
+    refresh_witness_in_txn,
 };
 use crate::{ClaimApprovalStatus, ClaimCandidate, ClaimSubject, Error, TimeRange};
 
@@ -86,6 +87,7 @@ impl Memory<'_> {
         let now = self.vault.store.clock.now_recorded_at();
         bound.with_verified_actor_write_txn(|txn| {
             if self.vault.get_raw_in(txn, &evidence.id)?.is_some() {
+                refresh_witness_in_txn(self.vault, txn, &evidence.id, &caller)?;
                 return Ok(SolvedCaptureReceipt::Captured {
                     id: evidence.id,
                     group,

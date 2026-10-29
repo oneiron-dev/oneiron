@@ -62,8 +62,11 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// its body (FIX 5765). 15: an image keeps the fold state at each covered row
 /// off its frontier as replay evidence (FIX 3007), carries the bodies of home
 /// candidacies, federation lifecycle acts and residence rows (FIX 3004, 3005,
-/// 5412), and the fold keeps each valid residence directive (FIX 5412).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 15;
+/// 5412), and the fold keeps each valid residence directive (FIX 5412). 16:
+/// the fold keeps each setting's signed acts, the refused export acts and
+/// each agent-carried act's Grant, and an image carries the bodies of both
+/// ops (FIX 4624, FIX 5660).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 16;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
@@ -83,7 +86,10 @@ pub use archive::{
     authority_archive_id,
 };
 pub(super) use archive::{local_archive_custodian_in_txn, local_archive_manifest};
-pub(super) use replay::{AUTHORITY_REPLAY_OVERFLOW, ReplayEvidence, ReplayPoint, parents_first_of};
+pub(super) use replay::{
+    AUTHORITY_REPLAY_OVERFLOW, AUTHORITY_RESIDENCE_BODY_OVERFLOW, ReplayEvidence, ReplayPoint,
+    parents_first_of,
+};
 pub use row::AuthorityCheckpointRow;
 use row::shape_row;
 
@@ -180,6 +186,14 @@ pub struct AuthorityCheckpointV2 {
     /// The fold state at each covered row off the frontier, or the explicit
     /// mark that the image keeps none (FIX 3007, [`ReplayEvidence`]).
     pub(super) replay: ReplayEvidence,
+    /// Whether the image dropped its residence directive and result bodies
+    /// to fit the size cap (FIX 11400,
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`]): true where [`Self::within_cap`]
+    /// dropped them, as before #4095 carried them, so a fold past it asks
+    /// for that history as at fold 14. False, and omitted from the encoding,
+    /// where the image keeps them.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) residence_overflow: bool,
     pub(super) aggregate: CheckpointAggregate,
     pub(super) safety: CheckpointSafety,
     pub unresolved: AuthorityCheckpointUnresolved,
@@ -306,14 +320,41 @@ impl AuthorityCheckpointV2 {
 
     /// `self` as it encodes, its replay evidence dropped for
     /// [`AUTHORITY_REPLAY_OVERFLOW`] where the image would otherwise pass
-    /// the size cap (CALLS AUTHORITY_REPLAY_OVERFLOW).
+    /// the size cap (CALLS AUTHORITY_REPLAY_OVERFLOW), then its residence
+    /// directive and result bodies dropped for
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] where it still would (FIX
+    /// 11400, CALLS AUTHORITY_RESIDENCE_BODY_OVERFLOW). An image that fits
+    /// keeps both; where both fallbacks still pass the cap the caller
+    /// refuses as today, with no new refusal here.
     pub(super) fn within_cap(mut self) -> Result<Self> {
         let size = rmp_serde::to_vec_named(&self)
             .map_err(|_| refused("checkpoint image does not encode"))?
             .len();
-        if size + AUTHORITY_CHECKPOINT_V2_DOMAIN.len() > AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
-            self.replay = AUTHORITY_REPLAY_OVERFLOW;
+        if size + AUTHORITY_CHECKPOINT_V2_DOMAIN.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
+            return Ok(self);
         }
+        self.replay = AUTHORITY_REPLAY_OVERFLOW;
+        let size = rmp_serde::to_vec_named(&self)
+            .map_err(|_| refused("checkpoint image does not encode"))?
+            .len();
+        if size + AUTHORITY_CHECKPOINT_V2_DOMAIN.len() <= AUTHORITY_CHECKPOINT_V2_MAX_BYTES {
+            return Ok(self);
+        }
+        for row in self.rows.values_mut() {
+            let is_residence = row.body.as_ref().is_some_and(|body| {
+                decode_authority_log_entry_body(body).is_ok_and(|entry| {
+                    matches!(
+                        entry.op,
+                        AuthorityOp::ResidenceDirective(_) | AuthorityOp::ResidenceResult(_)
+                    )
+                })
+            });
+            if is_residence {
+                row.body = None;
+                row.body_required = false;
+            }
+        }
+        self.residence_overflow = AUTHORITY_RESIDENCE_BODY_OVERFLOW;
         Ok(self)
     }
 
@@ -341,7 +382,9 @@ impl AuthorityCheckpointV2 {
     /// Covered, frontier and rows: sorted, unique, ancestor-closed from the
     /// genesis, each body present exactly where its summary requires one
     /// (the genesis always does), and each carried body the row it
-    /// summarizes.
+    /// summarizes. A residence row dropped for
+    /// [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] requires and carries none, as
+    /// before #4095 carried them (FIX 11400).
     fn shape_rows(&self) -> Result<()> {
         if !ascending(&self.covered)
             || !ascending(&self.frontier)
@@ -581,7 +624,9 @@ impl Vault {
 
     /// [`Vault::build_authority_checkpoint_v2_in_txn`] folded under `posture`
     /// and, with `only`, of the held rows it names alone: the image a root
-    /// rebuilds another host's from, to check it (FIX 4882).
+    /// rebuilds another host's from, to check it (FIX 4882). Its residence
+    /// bodies fall back for [`AUTHORITY_RESIDENCE_BODY_OVERFLOW`] where it
+    /// would otherwise pass the cap (FIX 11400).
     pub(super) fn build_authority_checkpoint_v2_as_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -722,6 +767,7 @@ impl Vault {
             rows,
             per_parent,
             replay,
+            residence_overflow: false,
             aggregate: CheckpointAggregate {
                 posture,
                 peers,

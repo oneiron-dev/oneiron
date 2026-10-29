@@ -1,7 +1,7 @@
 //! One turn's read: a whole read from its rows, a read that goes on where
 //! the text bound stopped it, and the spans each segment queues.
 
-use super::chunks::{self, Chunk, ChunkRef, TurnChunks, chunk_text_in_txn, turn_chunks_in_txn};
+use super::chunks::{self, Chunk, ChunkRef, TurnChunks};
 use super::rules::{self, Carry};
 use super::{
     CONTINUE, NameSource, QUEUE, READ, RULES_VERSION, Read, Reader, Resume, SPANS, SievePass,
@@ -28,7 +28,7 @@ struct ChunkText<'a> {
     text: &'a str,
 }
 
-impl Reader {
+impl Reader<'_> {
     /// Reads `turn` whole from its rows: a reading of the same words from
     /// the same name source writes nothing, or goes on where the text bound
     /// stopped it; a new one replaces the turn's spans. A turn that reads
@@ -49,7 +49,8 @@ impl Reader {
         if crate::tagging::tagged_messages_absent_in_txn(store, txn, turn)? {
             return Ok(Read::Deferred);
         }
-        let Some(TurnChunks { chunks, withheld }) = turn_chunks_in_txn(vault, txn, turn)? else {
+        let Some(TurnChunks { chunks, withheld }) = self.texts.turn_chunks(vault, txn, turn)?
+        else {
             pass.spans_retired += retire_in_txn(store, txn, turn)?;
             return Ok(Read::Gone);
         };
@@ -69,7 +70,7 @@ impl Reader {
         let (tags, hashed) = if chunks.is_empty() {
             (None, 0)
         } else {
-            crate::tagging::current_tags_in_txn(vault, txn, turn)?
+            self.texts.current_tags(vault, txn, turn)?
         };
         self.charge(hashed);
         let names = tags.as_ref().map_or(
@@ -194,7 +195,9 @@ impl Reader {
         let mut next = None;
         for (index, chunk) in held.iter().enumerate().skip(from.chunk) {
             let (at, carry) = from.within(index);
-            let text = chunk_text_in_txn(vault, txn, turn, &chunk.source)?
+            let text = self
+                .texts
+                .chunk_text(vault, txn, turn, &chunk.source)?
                 .filter(|text| text.len() as u64 == chunk.len && text.is_char_boundary(at));
             let Some(text) = text else {
                 return self.read_in_txn(vault, txn, turn, pass);

@@ -598,7 +598,8 @@ impl Vault {
             task,
             type_ref,
             decisions,
-        )?;
+        )
+        .map_err(|unrouted| unrouted.reason)?;
         let (chosen, effort) = (routed.chosen, routed.effort);
         let reason = notes.reason(task, &chosen.model, routed.line, effort, routed.fitness)?;
         if reason.trim().is_empty() {
@@ -677,7 +678,8 @@ impl Vault {
             task,
             type_ref,
             decisions,
-        )?;
+        )
+        .map_err(|unrouted| unrouted.reason)?;
         let (chosen, effort) = (routed.chosen, routed.effort);
         request.model = chosen.model.clone();
         request.envelope.locality = chosen.locality;

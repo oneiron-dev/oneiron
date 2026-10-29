@@ -15,13 +15,14 @@
 //! assembled ([`super::arc_reduce`]) and landed, its completion proven in
 //! the landing writer: nothing lands in part.
 
+use super::super::residency::spent_or_deferred;
 use super::super::step_charge::StepChargeTally;
 use super::super::support::invalid_consolidation;
 use super::arc_chunks::{
     MemberText, context_cells, halve, member_texts, observation_parts, opened_member, plan_groups,
     ranges_cost, resume_members,
 };
-use super::arc_compose::owe;
+use super::arc_compose::{owe, owe_bare};
 use super::arc_evidence::ArcView;
 use super::arc_output::arc_schema;
 use super::arc_reduce::{Landing, Observed, observations};
@@ -224,7 +225,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         ) else {
             return Err(invalid_consolidation("an arc composes from its sittings"));
         };
-        let (params_hash, memo) = self.arc_work_identity(plan, evidence, instruction, window)?;
+        let (params_hash, memo) = match self.arc_work_identity(plan, evidence, instruction, window)
+        {
+            Ok(identity) => identity,
+            Err(error) => return spent_or_deferred(error, ctx, &charges),
+        };
         // The same composition in parts already stands: nothing is asked.
         match ctx.vault.reuse_composed_scope_summary(
             attempt_id,
@@ -237,13 +242,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(true) => {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
             Ok(false) => {}
             Err(error) => return Ok(store_exit(&error, &charges, ctx.now_ms)),
         }
         let schema = arc_schema();
-        let frame = frame_tokens(plan, instruction, &schema)?;
+        let frame = match frame_tokens(plan, instruction, &schema) {
+            Ok(frame) => frame,
+            Err(error) => return spent_or_deferred(error, ctx, &charges),
+        };
         let too_small = ArcPendingCause::WindowTooSmall {
             window,
             frame_tokens: frame,
@@ -251,8 +260,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let Some(room) = window.checked_sub(frame).filter(|room| *room > 0) else {
             return owe(ctx, plan, too_small, &charges);
         };
-        let mut members = member_texts(plan, view, arc_member_kinds(arc, &view.claim_ids))?;
-        let pins = ArcPins::of(plan, evidence, &memo, &params_hash, window)?;
+        let mut members = match member_texts(plan, view, arc_member_kinds(arc, &view.claim_ids)) {
+            Ok(members) => members,
+            Err(error) => return spent_or_deferred(error, ctx, &charges),
+        };
+        let pins = match ArcPins::of(plan, evidence, &memo, &params_hash, window) {
+            Ok(pins) => pins,
+            Err(error) => return spent_or_deferred(error, ctx, &charges),
+        };
         let work = match ctx.vault.arc_work_id(plan, &memo) {
             Ok(work) => work,
             Err(error) => return Ok(store_exit(&error, &charges, ctx.now_ms)),
@@ -262,10 +277,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Err(error) => return Ok(store_exit(&error, &charges, ctx.now_ms)),
         };
         let resumed = match stored {
-            Some(stored) => resume_members(&stored, &pins, &members, view)?.map(|opened| {
-                members.extend(opened);
-                stored
-            }),
+            Some(stored) => match resume_members(&stored, &pins, &members, view) {
+                Ok(resumed) => resumed.map(|opened| {
+                    members.extend(opened);
+                    stored
+                }),
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            },
             None => None,
         };
         let manifest = match resumed {
@@ -276,7 +294,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 manifest
             }
             None => {
-                let Some(groups) = plan_groups(&members, view, room)? else {
+                let groups = match plan_groups(&members, view, room) {
+                    Ok(groups) => groups,
+                    Err(error) => return spent_or_deferred(error, ctx, &charges),
+                };
+                let Some(groups) = groups else {
                     return owe(ctx, plan, too_small, &charges);
                 };
                 let manifest = ArcManifest {
@@ -343,21 +365,26 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     .unwrap_or_else(|| ArcChildRow::fresh(Vec::new()));
                 match self
                     .run_child(&mut run, ctx, &step_ctx, position, &mut row)
-                    .await?
+                    .await
                 {
-                    ChildStep::Done => {
+                    Ok(ChildStep::Done) => {
                         rows.insert(id, row);
                         position += 1;
                     }
-                    ChildStep::Split(parts) => rows.extend(parts),
-                    ChildStep::Exit(execution) => return Ok(execution),
+                    Ok(ChildStep::Split(parts)) => rows.extend(parts),
+                    Ok(ChildStep::Exit(execution)) => return Ok(execution),
+                    Err(error) => return spent_or_deferred(error, ctx, &run.charges),
                 }
             }
-            let (part, step) =
-                match self.land_arc_work(ctx, attempt_id, &run, &rows, (params_hash, memo))? {
-                    Landing::Exit(execution) => return Ok(execution),
-                    Landing::Recompose { part, step } => (part, step),
-                };
+            let landed = match self.land_arc_work(ctx, attempt_id, &run, &rows, (params_hash, memo))
+            {
+                Ok(landed) => landed,
+                Err(error) => return spent_or_deferred(error, ctx, &run.charges),
+            };
+            let (part, step) = match landed {
+                Landing::Exit(execution) => return Ok(execution),
+                Landing::Recompose { part, step } => (part, step),
+            };
             // A settled step that no longer reads back (FIX 8288): only that
             // part composes again, from that step; the rest stand.
             let (Some(at), Some(row)) = (
@@ -367,7 +394,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     .position(|child| child.id == part),
                 rows.get_mut(&part),
             ) else {
-                return Err(invalid_consolidation("an arc's part has no record"));
+                return spent_or_deferred(
+                    invalid_consolidation("an arc's part has no record"),
+                    ctx,
+                    &run.charges,
+                );
             };
             if let Some(exit) = run.reset_part(ctx, part, row, (step, None)) {
                 return Ok(exit);
@@ -576,7 +607,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 let cause = ArcPendingCause::SourceUnavailable {
                     handle: turn.to_hex(),
                 };
-                return Ok(Opening::Exit(owe(ctx, run.plan, cause, &run.charges)?));
+                return Ok(Opening::Exit(owe_bare(ctx, run.plan, cause, &run.charges)?));
             }
             Err(error) => return Ok(Opening::Exit(store_exit(&error, &run.charges, ctx.now_ms))),
         };
@@ -630,7 +661,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             .and_then(|child| halve(&child.ranges, &run.members));
         let Some((first, second)) = halves else {
             let cause = run.too_small();
-            return Ok(ChildStep::Exit(owe(ctx, run.plan, cause, &run.charges)?));
+            return Ok(ChildStep::Exit(owe_bare(
+                ctx,
+                run.plan,
+                cause,
+                &run.charges,
+            )?));
         };
         let ids = [
             run.manifest.next_child,

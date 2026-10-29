@@ -421,6 +421,53 @@ pub(super) fn attach_verb_feedback(
     result
 }
 
+/// A verb-table row's feedback, held out of its action outcome: the row's
+/// output rides string-encoded in its outcome, as a bridge step's does.
+pub(super) struct HeldActionFeedback {
+    recorded: String,
+    held: HeldVerbFeedback,
+}
+
+/// Takes the feedback out of the row output `verb`'s action outcome
+/// carries, before its answer is released: the owner's read of one step's
+/// feedback, a run's history, or a session-bound run's entry. `None` when
+/// the outcome carries no row output, or none with feedback in it.
+pub(super) fn hold_action_feedback(verb: &str, output: &mut Value) -> Option<HeldActionFeedback> {
+    let Value::String(text) = output.pointer_mut("/outcome/output")? else {
+        return None;
+    };
+    let mut value: Value = serde_json::from_str(text.as_str()).ok()?;
+    let held = hold_verb_feedback(verb, &mut value)?;
+    let recorded = std::mem::replace(text, value.to_string());
+    Some(HeldActionFeedback { recorded, held })
+}
+
+/// An `invoke_action` answer, released, with its row's held feedback back
+/// in its outcome, as it was recorded or with the feedback its release
+/// holds withheld.
+pub(super) fn attach_action_feedback(
+    server: &SyncServer,
+    actor: &McpCallContext,
+    rows: Option<&[EntityId]>,
+    held: Option<HeldActionFeedback>,
+    mut result: Value,
+) -> Value {
+    let Some(action) = held else {
+        return result;
+    };
+    let (output, withheld) = action.held.0.release(server, actor, rows);
+    let text = if withheld {
+        output.to_string()
+    } else {
+        action.recorded
+    };
+    if let Some(slot) = result.pointer_mut("/structuredContent/output/outcome/output") {
+        *slot = Value::String(text);
+    }
+    sync_content(&mut result);
+    result
+}
+
 /// A failed run's refusal, released as it is (`mcp_release_error`, by
 /// `rows`, those the run served before it failed), then the feedback its
 /// steps kept before it failed released apart beside it (FIX 10389): read

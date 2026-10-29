@@ -181,6 +181,22 @@ fn standing(item: &ShapePlanCardItem) -> (LensStatus, String) {
             LensStatus::Proposed,
             "waits for your word in the widen inbox".to_owned(),
         ),
+        Some(ShapeItemState::FileRefused { reason }) => (
+            LensStatus::Proposed,
+            format!("waits for your word; filing refused: {reason}"),
+        ),
+        Some(ShapeItemState::Held {
+            approval_digest, ..
+        }) => (
+            LensStatus::Proposed,
+            format!("the release waits for your approve-once press on {approval_digest}"),
+        ),
+        Some(ShapeItemState::HeldProvision {
+            approval_digest, ..
+        }) => (
+            LensStatus::Proposed,
+            format!("the provision waits for your approve-once press on {approval_digest}"),
+        ),
         Some(ShapeItemState::Ceremony) => (LensStatus::Proposed, "goes to its ceremony".to_owned()),
         Some(ShapeItemState::NoDoor) => (LensStatus::Missing, "no door yet".to_owned()),
         Some(ShapeItemState::Refused { reason }) => {

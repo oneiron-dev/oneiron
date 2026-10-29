@@ -17,10 +17,57 @@ pub trait SelfDispatcher {
 /// are released by the rows that produced them. A door always lists them;
 /// `None` is only an answer recorded with no set, which no caller off this
 /// device is released.
+///
+/// Beside them come the observations the door delivered with the answer
+/// (FIX 2135): frames queued on the run's own board connection, drained once
+/// the answer succeeded. They are no part of the verb's output, and each
+/// keeps the rows it was derived from, never mixed into the answer's own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentVerbAnswer {
     pub output: serde_json::Value,
     pub rows: Option<Vec<EntityId>>,
+    pub observations: Vec<RunObservation>,
+}
+
+impl AgentVerbAnswer {
+    /// An answer of `output`, served from `rows`, with no observation
+    /// beside it.
+    #[must_use]
+    pub fn new(output: serde_json::Value, rows: Option<Vec<EntityId>>) -> Self {
+        Self {
+            output,
+            rows,
+            observations: Vec::new(),
+        }
+    }
+
+    /// The rows a run that read this answer is released by: the answer's
+    /// own and every observation's (DEC-0005). `None` when the answer was
+    /// recorded with no row set.
+    #[must_use]
+    pub fn released_rows(&self) -> Option<Vec<EntityId>> {
+        let mut rows = self.rows.clone()?;
+        rows.extend(
+            self.observations
+                .iter()
+                .flat_map(|observation| observation.rows.iter().copied()),
+        );
+        Some(rows)
+    }
+}
+
+/// One frame a run's host door delivered beside a verb's answer (FIX 2135):
+/// queued on the run's own board STREAM connection and drained, never
+/// waited for, once the answer succeeded. The connection and the frame's
+/// epoch and kind name it; `rows` are the rows it was derived from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunObservation {
+    /// The run's board connection the frame was queued on.
+    pub connection: String,
+    /// The frame, as the connection's STREAM carries it.
+    pub frame: crate::context_board::BoardStreamFrame,
+    /// The rows the frame was derived from.
+    pub rows: Vec<EntityId>,
 }
 
 /// A verb call the bound door refused or could not run, as the guest sees it:
@@ -39,6 +86,9 @@ pub struct AgentVerbRefusalWords {
     pub code: String,
     pub message: String,
     pub suggestions: Vec<String>,
+    /// The refusal's stable reason codes, as its route typed them (FIX
+    /// 7398); empty when it named none.
+    pub reason_codes: Vec<String>,
 }
 
 /// The refusal a verb call gets from a run whose host binds no verb door.

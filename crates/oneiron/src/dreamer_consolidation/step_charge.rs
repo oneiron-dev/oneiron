@@ -60,6 +60,13 @@ impl StepChargeTally {
     /// fallback (OF-305). A Retry's memo goes too (FIX 7431): a site's check
     /// refuses such a fallback inside its step, so only one stored before
     /// that check reaches here.
+    ///
+    /// The step's paid receipt goes with its memo, and this park pins none
+    /// for it, so the call the resumed attempt asks again charges its own
+    /// usage to the wake ledger's settlement (FIX 2851); the fallback's units
+    /// stay in this park's spend. The receipt goes first: a crash between the
+    /// two writes replays the fallback's memo and charges it again, never
+    /// leaves the re-asked call unpaid.
     pub(super) fn park_on_fallback(
         &self,
         vault: &Vault,
@@ -69,13 +76,27 @@ impl StepChargeTally {
         response: &LlmResponse,
     ) -> Result<DreamerAttemptExecution> {
         let cause = DreamerParkCause::of_response(response);
-        if matches!(
+        if !matches!(
             cause,
             DreamerParkCause::ProviderUnavailable | DreamerParkCause::Retry
         ) {
-            crate::llm::forget_step_memo(vault, attempt_id, &step_hash)?;
+            return Ok(self.park_for(reason, cause));
         }
-        Ok(self.park_for(reason, cause))
+        vault.with_write_txn(|wtxn| {
+            DreamerRunnerStore::new(vault).forget_step_charge_in_txn(wtxn, attempt_id, &step_hash)
+        })?;
+        crate::llm::forget_step_memo(vault, attempt_id, &step_hash)?;
+        Ok(DreamerAttemptExecution::ParkWithSpend {
+            reason: reason.to_owned(),
+            cause,
+            completed_units: self.units,
+            step_hashes: self
+                .step_hashes
+                .iter()
+                .copied()
+                .filter(|hash| *hash != step_hash)
+                .collect(),
+        })
     }
 
     /// Parks Retry on a memoized reply to the step `step_hash` that its site
@@ -143,7 +164,7 @@ impl StepChargeTally {
 }
 
 /// The units one call's `usage` charges.
-fn usage_units(usage: &LlmUsage) -> u64 {
+pub(crate) fn usage_units(usage: &LlmUsage) -> u64 {
     usage.input.total.saturating_add(usage.output.total)
 }
 

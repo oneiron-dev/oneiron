@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use super::support::hex_string;
 use super::{Memory, MemoryError, MemoryResult, parse_job_ref};
 use crate::dreamer_wake::{
-    WAKE_OBSERVATION_PAGE_MAX, WakeCallState, WakeObservation, WakeObservationCursor,
-    WakeObservationRequest, WakeObservationSelector, WakeObservedCall, WakeObservedCheckpoint,
-    WakeObservedGeneration, WakeRef,
+    ClaimAuthoringFallback, WAKE_OBSERVATION_PAGE_MAX, WakeCallState, WakeObservation,
+    WakeObservationCursor, WakeObservationRequest, WakeObservationSelector, WakeObservedCall,
+    WakeObservedCheckpoint, WakeObservedGeneration, WakeRef,
 };
 use crate::entity_id::EntityId;
 use crate::llm::BudgetLeaseState;
@@ -98,6 +98,18 @@ pub struct DreamerWakeEndView {
     pub elapsed_ms: u64,
     /// Why it stopped; absent when it returned an error.
     pub stop: Option<String>,
+    /// Why its claims were authored single-pass under a promoted default,
+    /// when they were.
+    pub claim_authoring_fallback: Option<DreamerWakeClaimAuthoringFallbackView>,
+}
+
+/// Why a pass authored its claims single-pass under a promoted default, in
+/// wire shapes: campaign roots as 32 hex, in root order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DreamerWakeClaimAuthoringFallbackView {
+    /// Several bound campaigns carry the default; none is chosen for the host.
+    AmbiguousCampaigns { roots: Vec<String> },
 }
 
 /// One attempt generation a pass admitted, with the Checkpoint park that
@@ -331,6 +343,15 @@ fn wake_view(observation: WakeObservation) -> DreamerWakeView {
                 unix_ms: end.unix_ms,
                 elapsed_ms: end.elapsed_ms,
                 stop: end.stop.clone(),
+                claim_authoring_fallback: end.claim_authoring_fallback.as_ref().map(|fallback| {
+                    let ClaimAuthoringFallback::AmbiguousCampaigns { roots } = fallback;
+                    DreamerWakeClaimAuthoringFallbackView::AmbiguousCampaigns {
+                        roots: roots
+                            .iter()
+                            .map(|root| hex_string(root.as_bytes()))
+                            .collect(),
+                    }
+                }),
             }),
         },
         generation: observation.generation.as_ref().map(generation_view),

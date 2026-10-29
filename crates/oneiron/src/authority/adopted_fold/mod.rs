@@ -455,13 +455,23 @@ fn successor_replay(
 /// as it was (a world key record among them, FIX 4881), no row a sequence
 /// floor refuses, none signed by a
 /// retired key, none a covered row names, and no withdrawal on a frontier
-/// row the image holds rejected (only older states could judge it). Some
-/// with the log's confirms once the tail's joined them; None otherwise.
+/// row the image holds rejected (only older states could judge it). None for
+/// a residence result past an image that dropped its residence bodies for
+/// [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`], as at
+/// fold 14 (FIX 11400). Some with the log's confirms once the tail's joined
+/// them; None otherwise.
 fn tail_folds_past(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
     log: AdoptedTail<'_>,
 ) -> Option<ConfirmKeys> {
+    if image.residence_overflow
+        && tail
+            .values()
+            .any(|entry| matches!(entry.op, AuthorityOp::ResidenceResult(_)))
+    {
+        return None;
+    }
     let mut confirms = (
         image.safety.confirm_ids.clone(),
         image.safety.confirm_nonces.clone(),

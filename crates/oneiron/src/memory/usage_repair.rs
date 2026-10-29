@@ -6,7 +6,8 @@
 //! which admits its caller there first: a live owner of this vault by his
 //! own proof, or an agent by its own live Grant from a live owner that names
 //! the verb. The right to list never admits a removal, and a host's
-//! operator root alone acts as nobody (FIX 2222).
+//! operator root alone acts as nobody (FIX 2222). The receipts each removal
+//! kept are read under the same admission, by their own verb (FIX 7036).
 
 use serde::{Deserialize, Serialize};
 
@@ -135,12 +136,31 @@ pub struct UsageRepairReceipt {
     pub recorded_at: u64,
 }
 
-/// The two usage repair verbs, each its own right: a Grant that lists one
-/// never admits the other.
+/// `vault.usage.repair.receipts`'s input: none. The server lists the
+/// receipts of its own metering scope, never one a caller names (FIX 7036).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UsageRepairReceiptsRequest {}
+
+/// `vault.usage.repair.receipts`'s answer (FIX 7036): every receipt a
+/// removal kept for the metering scope, in key order, as its write kept it;
+/// none is capped or dropped. A kept receipt row that no longer decodes is
+/// counted in `undecodable`, never read as a receipt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UsageRepairReceiptList {
+    pub receipts: Vec<UsageRepairReceipt>,
+    pub undecodable: u64,
+}
+
+/// The usage repair verbs, each its own right: a Grant that lists one never
+/// admits another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UsageRepairVerb {
     List,
     Remove,
+    /// The read of the receipts removals kept (FIX 7036).
+    Receipts,
 }
 
 impl UsageRepairVerb {
@@ -150,6 +170,7 @@ impl UsageRepairVerb {
         match self {
             Self::List => "vault.usage.events.undecodable",
             Self::Remove => "vault.usage.events.remove_undecodable",
+            Self::Receipts => "vault.usage.repair.receipts",
         }
     }
 }

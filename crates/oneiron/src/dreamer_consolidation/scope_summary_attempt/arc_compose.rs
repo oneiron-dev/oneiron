@@ -15,7 +15,7 @@
 //! parts ([`super::arc_children`]), never written smaller. A sitting's owed
 //! summary or a TURN that does not open leaves it owed, typed on its row.
 
-use super::super::residency::{residency_deferral, waits_on_residency};
+use super::super::residency::{residency_deferral, spent_or_deferred, waits_on_residency};
 use super::super::step_charge::StepChargeTally;
 use super::super::support::invalid_consolidation;
 use super::arc_evidence::ArcView;
@@ -66,7 +66,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         }
         // Sittings with no line in the Arc's scope leave nothing to write.
         let Some(first) = evidence.covers.first().copied() else {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         };
         let schema = arc_schema();
         let params = serde_json::to_vec(&(instruction, self.model.as_str(), &schema, ARC_DOMAIN))
@@ -82,10 +85,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             &memo,
             &params_hash,
         ) {
-            Ok(true) => return Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            Ok(true) => {
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
+            }
             Ok(false) => {}
             Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0));
+                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
             }
             Err(error) => return Err(error),
         }
@@ -111,23 +119,49 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         let mut opened = view.opened.clone();
         let mut words = String::new();
         let lines = loop {
-            let user = arc_input(plan, view, &words)?;
-            if let Some(window) = self.session_window(ctx.vault)
-                && framed_tokens(instruction, &user, &schema)? > window
-            {
-                return self
-                    .compose_arc_work(attempt, ctx, plan, evidence, instruction, (window, charges))
-                    .await;
+            let user = match arc_input(plan, view, &words) {
+                Ok(user) => user,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            if let Some(window) = self.session_window(ctx.vault) {
+                let framed = match framed_tokens(instruction, &user, &schema) {
+                    Ok(framed) => framed,
+                    Err(error) => return spent_or_deferred(error, ctx, &charges),
+                };
+                if framed > window {
+                    return self
+                        .compose_arc_work(
+                            attempt,
+                            ctx,
+                            plan,
+                            evidence,
+                            instruction,
+                            (window, charges),
+                        )
+                        .await;
+                }
             }
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
             }
-            let mut request =
-                self.summary_request(ctx.vault, evidence, schema.clone(), instruction, user)?;
+            let mut request = match self.summary_request(
+                ctx.vault,
+                evidence,
+                schema.clone(),
+                instruction,
+                user,
+            ) {
+                Ok(request) => request,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
             view.labels.bind_request(&mut request, None);
-            let step_hash = request
-                .canonical_hash()
-                .map_err(|_| invalid_consolidation("summary request did not hash"))?;
+            let Ok(step_hash) = request.canonical_hash() else {
+                return spent_or_deferred(
+                    invalid_consolidation("summary request did not hash"),
+                    ctx,
+                    &charges,
+                );
+            };
             let check_labels = view.labels.clone();
             let check_opened = opened.clone();
             let check_inherited = view.inherited.clone();
@@ -141,10 +175,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let outcome =
                 call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
             let response = match outcome {
-                Ok(StepOutcome::Finished { response, .. }) => {
+                Ok(StepOutcome::Finished {
+                    response, memoized, ..
+                }) => {
                     if let Err(error) =
                         charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
                     {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
                         return Ok(charges.park_on_error(&error));
                     }
                     response
@@ -195,7 +234,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 }
                 Err(Error::ConcurrentWrite(_)) => return Ok(compose_again(&charges, ctx.now_ms)),
                 Err(error) if waits_on_residency(&error) => {
-                    return Ok(residency_deferral(ctx.now_ms, charges.units));
+                    return Ok(residency_deferral(
+                        ctx.now_ms,
+                        charges.units,
+                        charges.step_hashes.clone(),
+                    ));
                 }
                 Err(error) => return Ok(charges.park_on_error(&error)),
             }
@@ -223,11 +266,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
-            Err(error) if waits_on_residency(&error) => {
-                Ok(residency_deferral(ctx.now_ms, charges.units))
-            }
+            Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
+                ctx.now_ms,
+                charges.units,
+                charges.step_hashes.clone(),
+            )),
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
         }
     }
@@ -241,9 +287,26 @@ pub(super) fn owe(
     cause: ArcPendingCause,
     charges: &StepChargeTally,
 ) -> Result<DreamerAttemptExecution> {
+    match owe_bare(ctx, plan, cause, charges) {
+        Ok(owed) => Ok(owed),
+        Err(error) => spent_or_deferred(error, ctx, charges),
+    }
+}
+
+/// [`owe`] without the spend handover, for the errors an outer wrap
+/// already hands over: [`super::arc_children`] hands its whole run over
+/// where its child returns, so a handover here would charge the same
+/// spend twice (FIX 11560).
+pub(super) fn owe_bare(
+    ctx: &WakeAttemptContext<'_>,
+    plan: &ScopeSummaryPlan,
+    cause: ArcPendingCause,
+    charges: &StepChargeTally,
+) -> Result<DreamerAttemptExecution> {
     ctx.vault.record_arc_pending(&plan.input, cause)?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }
 

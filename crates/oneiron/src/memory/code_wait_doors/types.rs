@@ -132,6 +132,25 @@ pub struct CodeWaitConsumptionView {
     pub ledger: Option<CodeWaitLedgerLinks>,
 }
 
+/// The browser act a press held (FIX 10423), as its run's session froze
+/// it: the act, the row it resolved to and the page it began on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CodeWaitBrowserAction {
+    /// The verb row of the held act: `self.browser.click` or
+    /// `self.browser.click_at`.
+    pub act: String,
+    /// The effect class the row's name marks on its page.
+    pub class: String,
+    pub role: String,
+    pub name: String,
+    pub locator: String,
+    /// The page the act began on.
+    pub page: Option<String>,
+    /// Why its grant gave no press: `per_send`, or `batch_spent` for a
+    /// reviewed batch whose sends were spent.
+    pub press: String,
+}
+
 /// One sealed code consent wait with its answer, settlement and replay
 /// consumption, each a separate fact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -141,9 +160,12 @@ pub struct CodeWaitReceiptView {
     pub state: CodeWaitState,
     /// The verb row the held effect is.
     pub verb: String,
-    /// The catalog name and tool of the held connector call.
+    /// The catalog name and tool of the held connector call; empty for a
+    /// held browser act, which `browser` names.
     pub connector: String,
     pub tool: String,
+    /// The held browser act, when the effect is one.
+    pub browser: Option<CodeWaitBrowserAction>,
     /// The hold the effect's own gate reported.
     pub hold_reasons: Vec<String>,
     /// The ask an answer's word stands on, once it is open.

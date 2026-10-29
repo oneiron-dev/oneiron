@@ -218,6 +218,12 @@ impl SyncServer {
         )));
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
+        // FIX 8335: no run-bound record outlives a restart, so a host that
+        // stopped mid-run leaves none behind. A failure is logged; the
+        // records stay as they were.
+        if let Err(error) = vault.erase_all_run_secrets() {
+            tracing::warn!(%error, "run-bound secrets left by the last run of the host did not clear");
+        }
         // FIX 3837: no connector's live exchange outlives a restart, so the
         // rounds of questions kept on its calls' rows stand with their
         // delivery uncertain.
@@ -236,6 +242,9 @@ impl SyncServer {
                 wait: config.limits.queue_wait(),
             },
         ));
+        // Another vault of this process reads this one through this handle
+        // (FIX 11157): the read-only door refuses a root held open here.
+        vault.register_served();
         Ok(Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),

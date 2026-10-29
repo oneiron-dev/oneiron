@@ -317,7 +317,12 @@ impl ServerProbeAuthor<'_> {
         // The owner's space move, which no room launched, bills the owner.
         let response = self
             .runtime
-            .block_on(self.server.ai.model_runtime().media().run(request, None))
+            .block_on(self.server.ai.model_runtime().media().run(
+                request,
+                None,
+                // The audio is read from the document's own rows (FIX 11311).
+                document.source_rows.map(<[oneiron::EntityId]>::to_vec),
+            ))
             .map_err(|error| {
                 Error::InvalidConfig(format!("space probe transcription failed: {error}"))
             })?;

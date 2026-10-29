@@ -18,33 +18,47 @@
 //!   newer request on it; one it answered first keeps that answer, and the
 //!   cancel says it came too late. Nothing is undone.
 //!
-//! Each answer is the request's owner work receipt (`owner_work_routes`),
+//! - `GET /roots` is the roots this install sees (`Vault::owner_root_view`,
+//!   FIX 4955): the one it pins, a page of the foreign roots with how many
+//!   machines each admits, and `next` to read the page after, the root a pin
+//!   awaits, and this install's machine.
+//! - `POST /roots/pin` pins a root here from the fingerprint the owner
+//!   carried (`Vault::pin_owner_root`): the change `request_root_change`
+//!   answers is this install's own to make. No kit; the other changes made
+//!   here carry one (`recovery_kit_target_routes`).
+//!
+//! Each request answer is the request's owner work receipt (`owner_work_routes`),
 //! polled at `GET /v1/owner/owner-work/{request}`. Where he spoke from is
-//! the request's own (`machine_routes::act_surface`): audit only. The cancel
+//! the request's own (`machine_routes::act_surface_admitted`): audit only. The cancel
 //! runs its `vault.roots.requests.cancel` row's verb hooks once around the
 //! one engine operation, as the facade and MCP doors do (OF-580, FIX 5599).
 
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{Query, State};
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{RecoveryRootId, RootChange};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::owner_work_routes::{OwnerWorkView, request_entry};
+use super::recovery_kit_target_routes::RepinView;
 use super::{OwnerReply, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/roots", get(roots))
+        .route("/roots/pin", post(pin))
         .route("/roots/requests", get(pending).post(request))
         .route("/roots/requests/cancel", post(cancel))
 }
@@ -142,11 +156,12 @@ struct PendingRootRequest {
 async fn request(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<RootRequest>,
 ) -> OwnerReply<OwnerWorkView> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<OwnerWorkView> {
         let target = entity_id("target", &body.target)?;
@@ -170,11 +185,12 @@ async fn request(
 async fn cancel(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<CancelRootRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let receipt = blocking(move || {
         hooked_row(
@@ -216,4 +232,133 @@ async fn pending(
     })
     .await?;
     Ok(Json(pending))
+}
+
+/// A page of foreign roots when the caller names no `limit` (CALLS "4955
+/// local root routes"): the caller may ask for more; `next` reads on.
+const ROOT_PAGE_DEFAULT: usize = 100;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RootsQuery {
+    /// The last foreign root of the page before, 64 hex: its `next`.
+    #[serde(default)]
+    after: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// A foreign root this install sees and never trusts, and how many live
+/// machines its anchor admits.
+#[derive(Debug, Serialize)]
+struct ForeignRootWire {
+    root: String,
+    machines: usize,
+}
+
+/// The root a pin awaits, and whether it has arrived: pinning it again then
+/// finishes.
+#[derive(Debug, Serialize)]
+struct AwaitedRootWire {
+    root: String,
+    arrived: bool,
+}
+
+/// `GET /v1/owner/roots`'s answer.
+#[derive(Debug, Serialize)]
+struct RootsView {
+    /// This install's machine, 32 hex: the `target` its kit calls name.
+    machine: Option<String>,
+    /// The root this install pins, 64 hex.
+    pinned: Option<String>,
+    /// One page of foreign roots, by id.
+    foreign: Vec<ForeignRootWire>,
+    /// The `after` of the next page; none on the last.
+    next: Option<String>,
+    /// Every foreign root that admits a machine, across all pages.
+    foreign_total: u64,
+    /// Foreign roots that admit no machine.
+    inert_foreign: u64,
+    awaiting: Option<AwaitedRootWire>,
+}
+
+/// `GET /v1/owner/roots`: the roots this install sees, one page of foreign
+/// roots at a time after `after`, ascending by id.
+async fn roots(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<RootsQuery>, QueryRejection>,
+) -> OwnerReply<RootsView> {
+    owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let view = blocking(move || -> OwnerResult<RootsView> {
+        let after = query
+            .after
+            .as_deref()
+            .map(|after| parse_revision("after", after).map(RecoveryRootId))
+            .transpose()?;
+        let limit = query.limit.unwrap_or(ROOT_PAGE_DEFAULT).max(1);
+        let vault = server.vault();
+        let mut view = vault.owner_root_view(after, limit.saturating_add(1))?;
+        let more = view.foreign.len() > limit;
+        while view.foreign.len() > limit {
+            view.foreign.pop_last();
+        }
+        let next = more
+            .then(|| {
+                view.foreign
+                    .last_key_value()
+                    .map(|(root, _)| revision_hex(&root.0))
+            })
+            .flatten();
+        Ok(RootsView {
+            machine: vault.local_machine()?.map(|machine| machine.id.to_hex()),
+            pinned: view.pinned.map(|root| revision_hex(&root.0)),
+            foreign: view
+                .foreign
+                .iter()
+                .map(|(root, machines)| ForeignRootWire {
+                    root: revision_hex(&root.0),
+                    machines: *machines,
+                })
+                .collect(),
+            next,
+            foreign_total: view.foreign_total,
+            inert_foreign: view.inert_foreign,
+            awaiting: view.awaiting.map(|awaited| AwaitedRootWire {
+                root: revision_hex(&awaited.root.0),
+                arrived: awaited.arrived,
+            }),
+        })
+    })
+    .await?;
+    Ok(Json(view))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinRoot {
+    /// The root's fingerprint, 64 hex, read on one of the owner's machines
+    /// that pins it.
+    root: String,
+}
+
+/// `POST /v1/owner/roots/pin`: pins the root on this install and re-wraps
+/// the keys this machine may still read under it. A root this install does
+/// not store yet, or one this machine is not mine under yet, is awaited: the
+/// answer names it, and `GET /roots` says when it has arrived.
+async fn pin(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<PinRoot>,
+) -> OwnerReply<RepinView> {
+    let owner = owner(&auth, &server)?;
+    let body = payload.read(&server).await?;
+    let report = blocking(move || -> OwnerResult<RepinView> {
+        let root = RecoveryRootId(parse_revision("root", &body.root)?);
+        let report = server.vault().pin_owner_root(&owner, root)?;
+        Ok(RepinView::from(&report))
+    })
+    .await?;
+    Ok(Json(report))
 }

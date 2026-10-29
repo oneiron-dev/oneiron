@@ -309,21 +309,19 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             CampaignHomeNodeAdmission::NotHomeNode(designation) => {
                 Ok(CampaignEnrollmentClaim::NotHomeNode(designation))
             }
-            CampaignHomeNodeAdmission::Designated(_) => self
-                .vault
-                .with_write_txn_grouped(|txn| {
-                    crate::ports::JobQueue::port_job_claim(
-                        self.vault,
-                        txn,
-                        Some(CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND),
-                        ClaimAttempt { lease_owner, now },
-                    )
-                })
+            // `claim_kind` wakes observers only when it claims, so an empty
+            // claim never self-wakes the pump (ONE-2100).
+            CampaignHomeNodeAdmission::Designated(_) => AttemptQueue::new(self.vault)
+                .claim_kind(
+                    CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND,
+                    ClaimAttempt { lease_owner, now },
+                )
                 .map(CampaignEnrollmentClaim::Queue),
         }
     }
 
-    /// Executes one claimed attempt: the membership consequence leg.
+    /// Executes one claimed attempt: the membership consequence leg, an
+    /// entry's enrollment or an exit's leaving (FIX 2635).
     ///
     /// Outward firing is deliberately a SECOND leg
     /// (`run_enrollment_outbound_leg`): a crash between the cohort write and
@@ -358,11 +356,10 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         // dead work in the review queue instead of dropping it. A spent
         // entry's due pause wake is the one exception to the evidence check:
         // it re-enters through a fresh evaluation in `spent_entry`, so
-        // evidence that moved during the pause is read there (FIX 9662).
-        if event.transition != MembershipTransition::Entered {
-            return Ok(EnrollmentExecution::SkippedStale);
-        }
-        if !self.spent_entry_wakes(&event, now)
+        // evidence that moved during the pause is read there (FIX 9662). An
+        // exit is stale once its entity matches again (FIX 2635).
+        let exit = event.transition == MembershipTransition::Exited;
+        if (exit || !self.spent_entry_wakes(&event, now))
             && !self.evidence_still_holds(evaluator, &event, now).await?
         {
             return Ok(EnrollmentExecution::SkippedStale);
@@ -384,16 +381,38 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             return Ok(refused);
         }
         let membership_event = event.membership_event();
+        let state = if exit {
+            CampaignMemberState::Exited
+        } else {
+            CampaignMemberState::Enrolled
+        };
         let plan = MembershipWritePlan {
-            value: derived_member_value(
-                &membership_event,
-                CampaignMemberState::Enrolled,
-                vec![step.member_channel()],
-            ),
+            value: derived_member_value(&membership_event, state, vec![step.member_channel()]),
             event: membership_event,
         };
+        let committed = commit_membership_plan(self.vault, &plan, now)?;
+        if exit {
+            // The member leaves (`campaign.member` exit, FIX 2635): an exit
+            // owes nothing outward, and its replay wakes no saved pause.
+            return Ok(match committed {
+                MembershipCommitOutcome::Applied | MembershipCommitOutcome::RecordedOnly => {
+                    EnrollmentExecution::Applied {
+                        outbound_intent: None,
+                    }
+                }
+                MembershipCommitOutcome::AlreadyApplied => EnrollmentExecution::AlreadyApplied {
+                    outbound_intent: None,
+                },
+                MembershipCommitOutcome::DeferredUntil { until } => {
+                    EnrollmentExecution::DeferredUntil { until }
+                }
+                MembershipCommitOutcome::RejectedStaleEpoch { current_epoch } => {
+                    EnrollmentExecution::RejectedStaleEpoch { current_epoch }
+                }
+            });
+        }
         let outbound_intent = enrollment_intent_id(&event, &step)?;
-        Ok(match commit_membership_plan(self.vault, &plan, now)? {
+        Ok(match committed {
             MembershipCommitOutcome::Applied => EnrollmentExecution::Applied { outbound_intent },
             // The event landed on a membership whose own state holds: nothing
             // is owed outward (FIX 9664).
@@ -498,7 +517,8 @@ impl<'a> CampaignEnrollmentRunner<'a> {
 
     /// Re-derives the saved-query result under the query's OWN owner actor and
     /// the evaluator's current grants, and reports whether the persisted event
-    /// still describes reality.
+    /// still describes reality. With no judge bound, evidence that moved
+    /// reads as stale instead of failing, so the next wake re-detects it.
     async fn evidence_still_holds(
         &self,
         evaluator: &SavedQueryEvaluator<'_>,
@@ -507,7 +527,7 @@ impl<'a> CampaignEnrollmentRunner<'a> {
     ) -> Result<bool> {
         let record = read_saved_query(self.vault, event.owner_actor, event.query_ref)?
             .ok_or(Error::EntityNotFound)?;
-        let outcome = evaluator
+        let outcome = match evaluator
             .evaluate_entity(&EvaluationRequest {
                 query_ref: event.query_ref,
                 campaign_ref: event.campaign_ref,
@@ -517,9 +537,25 @@ impl<'a> CampaignEnrollmentRunner<'a> {
                 valid_at: event.valid_at,
                 detected_at: now,
             })
-            .await?;
-        Ok(outcome.decision.verdict == MatchVerdict::Match
-            && outcome.evidence_hash == event.evidence_hash)
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(Error::InvalidConfig(message))
+                if message.contains("judge requires an injected backend") =>
+            {
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(match event.transition {
+            MembershipTransition::Entered => {
+                outcome.decision.verdict == MatchVerdict::Match
+                    && outcome.evidence_hash == event.evidence_hash
+            }
+            // An exit holds while its entity still does not match, whatever
+            // evidence the non-match reads now (FIX 2635).
+            MembershipTransition::Exited => outcome.decision.verdict != MatchVerdict::Match,
+        })
     }
 }
 

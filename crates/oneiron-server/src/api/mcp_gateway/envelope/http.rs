@@ -193,7 +193,17 @@ pub(super) async fn mcp_endpoint(
     // request (OF-580): a second call naming it for the same call waits for
     // this one's reply and gets it, under its own id; one naming it for
     // another call is refused at once.
-    let claim = match mcp_named_invocation(&request) {
+    // The owner's clock repair whose caller its own writer judges claims no
+    // invocation: resolving the claim's owner reads the clock it repairs
+    // (FIX 11202).
+    let deferred_repair = super::clock_repair_call::deferred_caller(
+        &server,
+        &headers,
+        &connection,
+        request.params.as_ref(),
+    )
+    .is_some();
+    let claim = match mcp_named_invocation(&request).filter(|_| !deferred_repair) {
         None => None,
         Some(invocation) => {
             // A held socket's owner is judged before anything is claimed or

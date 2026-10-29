@@ -64,11 +64,15 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
             .map_err(|_| Error::InvariantViolation("the lift sweep's carriers outgrew a byte"))?;
         for (key, value) in &rows {
             page.read += 1;
+            // A repo-mutation row reads by its own door (FIX 2890).
             let found = match super::retained::hit(vault, txn, decl, key, value)? {
                 Some(found) => found,
-                None => match write_payload_hit(value) {
-                    None => super::loro_blocks::hit(vault, txn, decl, key, value)?,
-                    raw => raw,
+                None => match super::repo_rows::hit(vault, txn, decl, key, value)? {
+                    Some(found) => found,
+                    None => match write_payload_hit(value) {
+                        None => super::loro_blocks::hit(vault, txn, decl, key, value)?,
+                        raw => raw,
+                    },
                 },
             };
             if found.is_some() {
@@ -92,6 +96,10 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     if let Some(done) = super::retained::lift(vault, txn, decl, row_key)? {
+        return Ok(done);
+    }
+    // A repo-mutation row marks by its own door (FIX 2890).
+    if let Some(done) = super::repo_rows::lift(vault, txn, decl, row_key)? {
         return Ok(done);
     }
     let row = match decl.db {

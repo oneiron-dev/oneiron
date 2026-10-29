@@ -28,7 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/inference_worker/drive.rs` | src | m | 1 crate-vis | — | A managed worker's driver: its install, and each incarnation's launch, qualification, service, drain and… |
 | `src/supervisor/loop.rs` | src | m | 2 struct · 6 fn | WakeSupervisor, WakeSupervisorReport | The supervisor loop: one arbiter over fresh ticks, owed retries and wave quanta (see `arbiter`), at most one… |
 | `src/supervisor/loop_tests.rs` | test | L | — | — | Loop, panic-containment, shutdown, and redrive acceptance tests |
-| `src/supervisor/mod.rs` | src | s | 9 re-export | — | The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps… |
+| `src/supervisor/mod.rs` | src | s | 9 re-export | — | The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter… |
 | `src/supervisor/pass.rs` | src | s | 5 crate-vis | — | Single wake-pass assembly and engine delegation |
 | `src/supervisor/program_factory.rs` | src | s | 1 struct · 1 fn | ProgramExecutorFactory | The turn program runtime around a host's executor factory (DOOR-141 PR2) |
 | `src/supervisor/retry.rs` | src | s | 13 crate-vis | — | What a pass's outcome leaves owed, and the debt of owed passes (FIX 8601) |
@@ -37,8 +37,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/tests/attachment.rs` | test | s | — | — | The generic pass-attachment seam: asked after the pass meter, refusal is pre-admission, and a linked host… |
 | `src/supervisor/tests/mod.rs` | test | m | 12 crate-vis | — | Shared fixtures for the supervisor test suites |
 | `src/supervisor/wave_lane.rs` | src | s | 5 crate-vis | — | The wave lane's quantum: the vault's operational pump limits, resolved afresh, one bounded pump step, and… |
-| `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn | HybridTick | Hybrid tick: biased deadline-versus-push select with deadline priority and session-hint sidecar delegation |
-| `src/tick/mod.rs` | src | s | 1 type · 5 re-export · 2 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |
+| `src/tick/hybrid.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | HybridTick | Hybrid tick: deadline and push lanes taking turns, a deadline rest that leaves pushes flowing, and… |
+| `src/tick/mod.rs` | src | s | 1 type · 5 re-export · 3 crate-vis | — | Tick sources: what wakes the supervisor (ONE-1684) |
 | `src/tick/model.rs` | src | s | 4 struct · 2 enum · 2 trait · 3 crate-vis | ArmedLane, CommitmentDeadline, DeadlineSource, HintSignal, SessionHintCarrier, Tick, TickSource, WakeSignal | Public tick vocabulary: tick enum, deadline and signal types, session-hint carrier, and the tick and… |
 | `src/tick/policy.rs` | src | s | 1 struct · 1 fn · 1 type | WakePolicyTicks | One cancellable quiet sleep per tick source, driven by the vault's row policy |
 | `src/tick/push.rs` | src | m | 3 struct · 1 enum · 8 fn · 3 crate-vis | HintPusher, PushTick, TickPushError, WakePusher | Push lane: coalescing mailbox state, push error, receiver, and role-typed producer handles |

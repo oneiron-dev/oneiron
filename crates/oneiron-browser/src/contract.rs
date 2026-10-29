@@ -153,6 +153,14 @@ pub trait BrowserDriver: Send {
         None
     }
 
+    /// What the driver's last read of its window showed of its rows'
+    /// places, as one hash, where it tells (`desktop_scroll_proof_policy`,
+    /// FIX 10430): two reads that differ show rows that moved, as a scroll
+    /// that moved the view does. None elsewhere, which proves no move.
+    fn view_fingerprint(&self) -> Option<[u8; 32]> {
+        None
+    }
+
     /// Withdraws the newest no-progress stop the driver's history noted
     /// (FIX 8507): the run's final checks met after all. A driver that
     /// keeps no history withdraws nothing.
@@ -455,6 +463,10 @@ pub trait BrowserDriver: Send {
             match outcome {
                 Ok(observation) => {
                     output.completed += 1;
+                    // The step's effect is kept; the page read after it,
+                    // its own whole answer where it is one (FIX 8509), may
+                    // show it the last of a run that changed nothing.
+                    let unchanged = monitor.after(self, counts, observation.as_ref());
                     let mut acted = None;
                     if let Some(observation) = observation {
                         if let Some(receipt) = &observation.receipt {
@@ -463,9 +475,7 @@ pub trait BrowserDriver: Send {
                         }
                         output.observation = Some(observation);
                     }
-                    // The step's effect is kept; the page read after it
-                    // may show it the last of a run that changed nothing.
-                    if let Some(page) = monitor.after(self, counts) {
+                    if let Some(page) = unchanged {
                         self.note_stop(progress::no_progress(name, acted));
                         return Ok(progress::handed_up(output, index, page, started));
                     }

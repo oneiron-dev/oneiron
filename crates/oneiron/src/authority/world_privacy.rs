@@ -610,6 +610,7 @@ pub(super) fn live_edits_by(fold: &AuthorityFold, machine: EntityId) -> Vec<Auth
         ))
         .chain(fold.conversation_training.live_choices_by(machine))
         .chain(fold.conversation_training_vault.live_choices_by(machine))
+        .chain(fold.policy_settings.live_choices_by(machine))
         .chain(super::machine_profile::live_answers_by(fold, machine))
         .chain(super::owner_work::pending_carried_by(fold, machine))
         .collect()

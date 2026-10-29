@@ -18,11 +18,15 @@ use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::{MachineWriteSignature, WriteEnvelope};
 use crate::{EntityId, HostingPrivacyPosture, Vault};
 
-use super::{
-    ActorBindingStatus, AuthorityKey, AuthorityOp, AuthorityTier, HostSlipIssuer, ROLE_AGENT,
-};
+use super::{ActorBindingStatus, AuthorityKey, AuthorityTier, HostSlipIssuer, ROLE_AGENT};
 
+mod after_mask;
+// FIX 11241: the host history handoff's causal anchor.
+mod history_anchor;
 mod successor;
+
+pub(crate) use after_mask::resign_machine_claim_after_mask_in_txn;
+pub(crate) use history_anchor::machine_history_host_context;
 
 const DOMAIN: &[u8] = b"oneiron/machine-claim/v1";
 const SIGNATURE_KEY: &str = "machine_signature";
@@ -567,86 +571,6 @@ pub(crate) fn machine_history_authority_descends(
 /// (OF-469 slice E, CALLS: OF-469 slice E covered descent proof).
 fn covered_endpoint_stands(image: &super::AuthorityCheckpointV2, hash: &[u8; 32]) -> bool {
     image.rows.contains_key(hash) && image.fold().valid_entries.contains(hash)
-}
-
-/// One current, fold-verified authority head for scoped history signatures.
-/// Fail closed if the root is absent, conflicted or its signer is revoked.
-pub(crate) fn machine_history_host_context(
-    store: &Store,
-    posture: HostingPrivacyPosture,
-    txn: &heed::RoTxn<'_>,
-    signer: &AuthorityKey,
-) -> Result<([u8; 32], [u8; 32])> {
-    let fold = super::authority_view_readonly_for_store_in_txn(store, posture, txn)?;
-    let vault_id = fold.vault_id.ok_or_else(denied)?;
-    if fold.vault_root_is_conflicted()
-        || !fold
-            .roster
-            .get(signer)
-            .is_some_and(|root| !root.revoked && root.roles & super::ROLE_OWNER != 0)
-    {
-        return Err(denied());
-    }
-    // A successor root has no authored sequence yet: its trust event is the
-    // predecessor-signed ReRoot, not an arbitrary lexicographically maximal
-    // concurrent head. Pin that exact causal ancestor for history handoff.
-    let mut re_roots = Vec::new();
-    let mut authored_heads = Vec::new();
-    for id in
-        store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
-    {
-        let id = id?;
-        let raw = EntityStoreRead::port_entity_raw(store, txn, &id)?
-            .ok_or(Error::CorruptedIndex("authority head row"))?;
-        let entry = super::decode_authority_log_entry_body(
-            raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
-                .ok_or(Error::CorruptedIndex("authority head header"))?,
-        )?;
-        let hash = super::authority_entry_hash(&entry)?;
-        if !fold.valid_entries.contains(&hash) {
-            continue;
-        }
-        if matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *signer) {
-            re_roots.push(hash);
-        }
-        if fold.append_heads.contains(&hash) && entry.signer_key() == signer {
-            authored_heads.push(hash);
-        }
-    }
-    // On a vault that adopted a checkpoint image, the covered rows count as
-    // well (OF-469, slice E): a covered ReRoot to `signer` by the body the
-    // image carries, a covered head `signer` authored by the row's summary,
-    // each only while the current fold holds it valid, and each once, stored
-    // or not. Never the image's frontier or its latest sequence.
-    if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(store, txn)? {
-        for (hash, row) in evidence.rows() {
-            if !fold.valid_entries.contains(hash) {
-                continue;
-            }
-            if !re_roots.contains(hash)
-                && evidence.body(hash).is_some_and(|entry| {
-                    matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *signer)
-                })
-            {
-                re_roots.push(*hash);
-            }
-            if !authored_heads.contains(hash)
-                && fold.append_heads.contains(hash)
-                && row.signer == *signer
-            {
-                authored_heads.push(*hash);
-            }
-        }
-    }
-    let head = match re_roots.as_slice() {
-        [head] => *head,
-        [] => match authored_heads.as_slice() {
-            [head] => *head,
-            _ => return Err(denied()),
-        },
-        _ => return Err(denied()),
-    };
-    Ok((vault_id, head))
 }
 
 /// Replay checks origin only, while the local writer must also have an active

@@ -1,8 +1,12 @@
 //! The live arrangement read as a shape: every setup-plane row the vault
 //! holds now, under the names a seed declares. Entity-backed rows and the
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
+use super::channel::ShapeChannelProvision;
+use super::live_source::{LiveSkill, UnlanedChannel, channel_holding};
+use super::manifest_json::manifest_json;
 use super::reach::{ReachActor, ReachRows, ReachSender};
 use super::seed::hex;
+use super::world_facet::withhold_facets_of_hidden_worlds;
 use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::channel_identity::{
@@ -15,8 +19,7 @@ use crate::gate::manifest_authenticity::manifest_is_quarantined;
 use crate::ports::{EdgeDirection, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CONNECTOR_KEY,
-    ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORLD,
 };
 use crate::skill::{SkillLifecycle, decode_skill_record};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -102,7 +105,7 @@ pub(super) fn world_name(body: &[u8]) -> Option<String> {
 }
 
 /// A FACET body's name: its `label` leaf. A person's substrate and a
-/// persona scenario carry none, so they are not named masks.
+/// persona scenario carry none; live names those by id.
 pub(super) fn facet_name(body: &[u8]) -> Option<String> {
     text_leaf(body, &["label"])
 }
@@ -193,8 +196,9 @@ impl Vault {
     /// The live setup plane, keeping an entity-backed row only when
     /// `visible` admits its entity. Base reality and received worlds are not
     /// this vault's arrangement, so they are not rows, and neither is a
-    /// retired skill or channel identity, an unnamed mask, or a quarantined
-    /// manifest. A world with no name is named by its id.
+    /// retired skill, a requested (unbound) or retired channel identity, or
+    /// a quarantined manifest. A world or mask with no name is named by its
+    /// id.
     pub(super) fn read_live_shape(
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -205,11 +209,14 @@ impl Vault {
     /// [`Self::read_live_shape`], listing in `sources` the rows it stands
     /// on: each entity a kept row is read from once `visible` admits it (a
     /// name's later duplicates too), each installed pack's source beside its
-    /// load, and, whatever `visible` admits, every row the policy frontier
+    /// load, each skill's hub provenance claim its source is read from, and,
+    /// whatever `visible` admits, every row the policy frontier
     /// and the reach line are read from (the stored manifests the frontier
     /// folds, every roster actor, each sending identity with its fact heads,
-    /// every connector key the join reads). Grants, the shared vault and its
-    /// members are authority state, so they list no row of their own.
+    /// every connector key and standing outbound grant the join reads).
+    /// Standing consent grants, the shared vault and its
+    /// members are authority state, and a kind's wire declaration is a
+    /// setting, so they list no row of their own.
     pub(super) fn read_live_shape_into(
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -217,6 +224,8 @@ impl Vault {
     ) -> Result<LiveShape> {
         let mut rows = Vec::new();
         let mut reach = ReachRows::default();
+        let mut skills: Vec<LiveSkill> = Vec::new();
+        let mut unlaned: Vec<UnlanedChannel> = Vec::new();
         let policy_frontier = {
             let txn = self.store.env.read_txn()?;
             let policy_frontier =
@@ -224,35 +233,35 @@ impl Vault {
             if sources.listing() {
                 sources.list_read(crate::gate::policy_manifest_contributors(&self.store, &txn));
             }
-            let base = crate::claim::base_world_id();
-            for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_WORLD)? {
-                if id == base || crate::entity_id::is_foreign_world_id_range(id) {
-                    continue;
-                }
-                let name = world_name(&body).unwrap_or_else(|| id.to_hex());
-                rows.push((ShapeRow::World { name }, Some(id)));
+            let worlds = self.local_worlds_in_txn(&txn)?;
+            for (id, name) in &worlds {
+                rows.push((ShapeRow::World { name: name.clone() }, Some(*id)));
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_FACET)? {
-                let Some(name) = facet_name(&body) else {
-                    continue;
-                };
-                // A mask is its wearer's: the one person whose has_facet
-                // edge reaches it.
+                let name = facet_name(&body).unwrap_or_else(|| id.to_hex());
+                // A mask is its wearer's: the one entity whose has_facet
+                // edge reaches it, of any kind.
                 let wearers = self.filtered_edge_peers(
                     &txn,
                     EdgeDirection::In,
                     &id,
                     EdgeKind::HasFacet,
-                    Some(ENTITY_TYPE_PERSON),
+                    None,
                 )?;
-                if let [person] = wearers.as_slice() {
+                if let [wearer] = wearers.as_slice() {
                     rows.push((
                         ShapeRow::Facet {
-                            person: person.to_hex(),
+                            person: wearer.to_hex(),
                             name,
                         },
                         Some(id),
                     ));
+                } else if wearers.is_empty()
+                    && let Some(world) = self.facet_world_in_txn(&txn, &id, &worlds)?
+                {
+                    // A facet no one wears, joined to one live world, is
+                    // that world's (FIX 2297).
+                    rows.push((ShapeRow::WorldFacet { world, name }, Some(id)));
                 }
             }
             if let Some(shared) = self.shared_vault_creation_in_txn(&txn)? {
@@ -263,16 +272,42 @@ impl Vault {
                     },
                     None,
                 ));
-                for (member, role) in self.shared_members_in_txn(&txn, shared.vault_id)? {
-                    if let Some(role) = ShapeMemberRole::of(role) {
+                let members = self.shared_members_in_txn(&txn, shared.vault_id)?;
+                for (member, role) in &members {
+                    if let Some(role) = ShapeMemberRole::of(*role) {
                         rows.push((
                             ShapeRow::Member {
                                 member: member.to_hex(),
                                 role,
+                                pending_invitation: None,
                             },
-                            Some(member),
+                            Some(*member),
                         ));
                     }
+                }
+                // An invited person reads as a member at the role offered,
+                // pending until they accept (FIX 2573).
+                let now = self.store.clock.peek_recorded_at();
+                for invitation in
+                    self.pending_shared_invitations_in_txn(&txn, shared.vault_id, now)?
+                {
+                    let (Ok(invitee), Some(role)) = (
+                        EntityId::from_hex(&invitation.invitee),
+                        ShapeMemberRole::of(invitation.role),
+                    ) else {
+                        continue;
+                    };
+                    if members.iter().any(|(member, _)| *member == invitee) {
+                        continue;
+                    }
+                    rows.push((
+                        ShapeRow::Member {
+                            member: invitation.invitee,
+                            role,
+                            pending_invitation: Some(invitation.id),
+                        },
+                        Some(invitee),
+                    ));
                 }
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_AGENT_DEF)? {
@@ -301,6 +336,9 @@ impl Vault {
                 ) {
                     continue;
                 }
+                // Its source is read once the grants that admit its
+                // publisher are (FIX 2668).
+                skills.push((rows.len(), id));
                 rows.push((
                     ShapeRow::Skill {
                         skill_id: record.skill_id,
@@ -314,7 +352,8 @@ impl Vault {
                 let identity = decode_channel_identity_body(&body)?;
                 if matches!(
                     identity.state(),
-                    ChannelIdentityState::Released
+                    ChannelIdentityState::Requested
+                        | ChannelIdentityState::Released
                         | ChannelIdentityState::Quarantine
                         | ChannelIdentityState::Tombstone
                 ) {
@@ -340,11 +379,28 @@ impl Vault {
                         may_send,
                     });
                 }
+                // The provision its body states (FIX 2668): an active body
+                // holds no lane, so the lifecycle ledger is read for it.
+                let provision = match (
+                    channel_holding(&identity, &reach.actors),
+                    identity.pending_fulfillment(),
+                ) {
+                    (Some((custody, binding)), Some(lane)) => Some(ShapeChannelProvision {
+                        custody,
+                        binding,
+                        fulfillment: lane.into(),
+                    }),
+                    (Some((custody, binding)), None) => {
+                        unlaned.push((rows.len(), id, custody, binding));
+                        None
+                    }
+                    (None, _) => None,
+                };
                 rows.push((
                     ShapeRow::Channel {
                         channel: identity.channel().to_owned(),
                         address: identity.address_or_handle().to_owned(),
-                        provision: None,
+                        provision,
                     },
                     Some(id),
                 ));
@@ -358,6 +414,7 @@ impl Vault {
                     ShapeRow::Manifest {
                         manifest_ref: id.to_hex(),
                         body: hex(&body),
+                        json: manifest_json(&body),
                     },
                     Some(id),
                 ));
@@ -372,7 +429,19 @@ impl Vault {
                     None,
                 ));
             }
+            // A kind's declared wire is a setting no entity backs (FIX 2300).
+            for (entity_kind, on_wire) in self.shape_wire_in_txn(&txn)? {
+                rows.push((
+                    ShapeRow::Sync {
+                        entity_kind,
+                        on_wire,
+                    },
+                    None,
+                ));
+            }
+            self.source_live_skills_in_txn(&txn, &mut rows, &skills, &reach.grants, sources)?;
             reach.connectors = self.reach_connectors_in_txn(&txn, None)?;
+            reach.outbound = self.reach_outbound_in_txn(&txn, &policy_frontier, sources)?;
             if sources.listing() {
                 // Every key the join reads: an actor's own key on a connector
                 // takes it out of a key bound to none (catalog keys are keys).
@@ -383,6 +452,7 @@ impl Vault {
             }
             policy_frontier
         };
+        self.lane_live_channels(&mut rows, unlaned)?;
         // The pack catalog checks each install against its live source in a
         // snapshot of its own, so it reads after this one has closed.
         for receipt in self.installed_packs()? {
@@ -420,6 +490,7 @@ impl Vault {
         for (row, _) in &kept {
             withheld.remove(&row.target());
         }
+        withhold_facets_of_hidden_worlds(&mut kept, &mut withheld);
         Ok(LiveShape {
             rows: kept,
             policy_frontier,

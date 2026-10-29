@@ -369,6 +369,7 @@ pub(crate) fn mark_retained_repo_blob_in_txn(
         let file = FoundFile {
             hash: raw_blake3,
             keys: marked,
+            record: origin,
         };
         put_file_marks_in_txn(store, wtxn, vec![file], &minted, at)?;
     }
@@ -502,8 +503,19 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&entry.to_be_bytes());
         }
         MemberStep::Gzip => out.push(1),
+        // FIX 2471: a tar entry and an xz payload.
+        MemberStep::Tar { entry } => {
+            out.push(4);
+            out.extend_from_slice(&entry.to_be_bytes());
+        }
+        MemberStep::Xz => out.push(5),
         MemberStep::PdfStream { object, generation } => {
             out.push(2);
+            out.extend_from_slice(&object.to_be_bytes());
+            out.extend_from_slice(&generation.to_be_bytes());
+        }
+        MemberStep::PdfStrings { object, generation } => {
+            out.push(3);
             out.extend_from_slice(&object.to_be_bytes());
             out.extend_from_slice(&generation.to_be_bytes());
         }
@@ -551,7 +563,14 @@ impl<'b> Spooled<'b> {
         Ok(match self.byte()? {
             0 => MemberStep::Zip { entry: self.u32()? },
             1 => MemberStep::Gzip,
+            // FIX 2471: a tar entry and an xz payload.
+            4 => MemberStep::Tar { entry: self.u32()? },
+            5 => MemberStep::Xz,
             2 => MemberStep::PdfStream {
+                object: self.u32()?,
+                generation: self.u16()?,
+            },
+            3 => MemberStep::PdfStrings {
                 object: self.u32()?,
                 generation: self.u16()?,
             },

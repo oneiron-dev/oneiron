@@ -74,10 +74,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             &memo,
             &params_hash,
         ) {
-            Ok(true) => return Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            Ok(true) => {
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
+            }
             Ok(false) => {}
             Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0));
+                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
             }
             Err(error) => return Err(error),
         }
@@ -154,10 +159,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let outcome =
                 call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
             let response = match outcome {
-                Ok(StepOutcome::Finished { response, .. }) => {
+                Ok(StepOutcome::Finished {
+                    response, memoized, ..
+                }) => {
                     if let Err(error) =
                         charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
                     {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
                         return Ok(charges.park_on_error(&error));
                     }
                     response
@@ -223,11 +233,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
-            Err(error) if waits_on_residency(&error) => {
-                Ok(residency_deferral(ctx.now_ms, charges.units))
-            }
+            Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
+                ctx.now_ms,
+                charges.units,
+                charges.step_hashes.clone(),
+            )),
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
         }
     }

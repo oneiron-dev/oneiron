@@ -44,15 +44,21 @@ impl ConsolidationExecutor<'_> {
                 return self.run_sieve_window_audit(attempt, ctx, window).await;
             }
         };
-        if let Some(completed_units) =
+        if let Some((completed_units, step_hashes)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units,
+                step_hashes,
+            });
         }
         if sieve::rung_superseded(ctx.vault, &input)?
             || (!input.audit && input.span.owed.is_empty())
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let Some(evidence) = sieve::rung_evidence(ctx.vault, &input)? else {
             // The source may be withheld temporarily. Keep the job and queue
@@ -63,6 +69,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
+                step_hashes: Vec::new(),
             });
         };
         let mut charges = StepChargeTally::default();
@@ -150,9 +157,12 @@ impl ConsolidationExecutor<'_> {
                 })
                 .await;
             // Every generation that finished is spent, whatever the rung's
-            // outcome.
+            // outcome. A tally the record cannot take settles with that
+            // error instead of leaving the attempt uncharged (FIX 11554).
             for (hash, usage) in &read.steps {
-                charges.record_terminal(ctx.vault, attempt_id, *hash, usage)?;
+                if let Err(error) = charges.record_terminal(ctx.vault, attempt_id, *hash, usage) {
+                    return super::residency::spent_or_deferred(error, ctx, &charges);
+                }
             }
             let decisions = match read.outcome {
                 Ok(SieveRungOutcome::Decided(decisions)) => decisions,
@@ -204,7 +214,11 @@ impl ConsolidationExecutor<'_> {
                 // receipts stay.
                 None => {
                     for (hash, _) in &read.steps {
-                        crate::llm::forget_step_memo(ctx.vault, attempt_id, hash)?;
+                        if let Err(error) =
+                            crate::llm::forget_step_memo(ctx.vault, attempt_id, hash)
+                        {
+                            return super::residency::spent_or_deferred(error, ctx, &charges);
+                        }
                     }
                     return Ok(charges.park_for(SIEVE_UNREAD, DreamerParkCause::Retry));
                 }
@@ -264,6 +278,7 @@ impl ConsolidationExecutor<'_> {
         ) {
             Ok(true) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Ok(false) => Ok(DreamerAttemptExecution::Deferred {
                 completed_units: charges.units,
@@ -271,6 +286,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(error) => Ok(charges.park_on_error(&error)),
         }

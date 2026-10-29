@@ -31,20 +31,23 @@ pub struct AuthorityCheckpointRow {
     /// Whether the image must carry the row's body: true exactly for a row
     /// whose kind a fold or a store door past the image reads whole
     /// ([`carries_body`]), whether or not the row folded valid. The genesis
-    /// always requires it.
+    /// always requires it. A residence row dropped for
+    /// [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] requires none, as before
+    /// #4095 carried them (FIX 11400).
     pub body_required: bool,
     /// The canonical signed body of a row a fold or a store door past the
     /// image reads whole (an approval, a binding, a confirm, a revocation, a
     /// handoff, an enrollment, the genesis, a root record, a machine profile,
     /// a world edit, a grant travel choice, a world-key record, an owner
     /// work request or result, or an owner handover); None for every other
-    /// row. Present exactly when `body_required`.
+    /// row. Present exactly when `body_required`. A residence row dropped for
+    /// [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] carries none (FIX 11400).
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
 }
 
-/// Whether an image carries the canonical signed body of a covered row of
-/// `op`'s kind: each row a fold past the image reads whole
+/// Whether a fitting image carries the canonical signed body of a covered
+/// row of `op`'s kind: each row a fold past the image reads whole
 /// ([`crate::authority::fold_resume::is_projected`]: an approval, a binding,
 /// a confirm, a device revocation, a handoff, a machine profile, a world-key
 /// record, an owner work request, result or cancel),
@@ -59,7 +62,8 @@ pub struct AuthorityCheckpointRow {
 /// fold under another pin or peer set judges again (a home candidacy, a
 /// federation lifecycle act; FIX 3004, 3005); and each residence directive
 /// and result, which a machine's directive reader reads past the image (FIX
-/// 5412).
+/// 5412). An image that would otherwise pass the cap drops its residence
+/// bodies for [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400).
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
@@ -76,6 +80,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::ConversationTrainingSet(_)
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::AgentGrantAct(_)
+                | AuthorityOp::PolicySettingSet(_)
+                | AuthorityOp::ExportAct(_)
                 | AuthorityOp::FrontierJoin(_)
                 | AuthorityOp::OwnerHandover(_)
                 | AuthorityOp::HomeCandidacy(_)
@@ -88,7 +94,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
 impl AuthorityCheckpointRow {
     /// The summary of covered row `entry`, whose stored canonical signed body
     /// is `body`: the one place a builder marks a row's body required and
-    /// carries it.
+    /// carries it. [`super::AuthorityCheckpointV2::within_cap`] may drop
+    /// residence bodies after (FIX 11400).
     pub(in crate::authority) fn of(entry: &AuthorityLogEntry, body: &[u8]) -> Self {
         let body_required = carries_body(&entry.op);
         Self {
@@ -105,7 +112,9 @@ impl AuthorityCheckpointRow {
 
 /// One covered row's summary, checked alone: its body is present exactly
 /// where it is marked required (FIX 2988), and a carried body is the row it
-/// summarizes.
+/// summarizes. A residence row dropped for
+/// [`super::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] requires and carries none,
+/// as before #4095 carried them (FIX 11400).
 pub(super) fn shape_row(hash: &AuthorityEntryHash, row: &AuthorityCheckpointRow) -> Result<()> {
     if row.body_required != row.body.is_some() {
         return Err(refused("checkpoint image row body presence"));

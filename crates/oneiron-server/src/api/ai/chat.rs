@@ -130,6 +130,10 @@ pub(super) struct ChatTurnRequest {
     history: Vec<HistoryLine>,
     /// The agent definition that answers; the seeded default otherwise.
     agent_ref: Option<String>,
+    /// A TURN of the conversation, by its 32-hex id, that this turn answers
+    /// in its thread: the turn and its reply land there, and a join filed
+    /// for that thread funds the reply (FIX 3572). The trunk otherwise.
+    reply_to: Option<String>,
     /// Answer with NDJSON lines as they come, deltas included; otherwise
     /// with the whole message once it is saved.
     #[serde(default)]

@@ -87,6 +87,7 @@ impl LlmEventBus {
                 usage: usage.clone(),
                 finish_reason: finish_reason.clone(),
                 reply_assertions: reply_assertions.clone(),
+                token_scores: None,
             }),
             _ => None,
         };

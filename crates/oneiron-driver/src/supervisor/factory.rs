@@ -535,6 +535,7 @@ impl ConsolidationExecutorFactory {
             let inner = PersonAboutExecutor::new(
                 inner,
                 narrative.backend,
+                narrative.sourced,
                 guard,
                 self.actor,
                 narrative.model.clone(),

@@ -32,8 +32,6 @@ const FORM_THUMBNAIL: &str = "thumbnail";
 const FORM_TEXT: &str = "text";
 const FORM_ASK: &str = "ask";
 const FORM_AUDIO: &str = "audio";
-/// The pull of an audio clip heard by a model answering a question about it.
-const PULL_ASK_AUDIO: &str = "ask_audio";
 const PICK_FULL: &str = "full";
 const PICK_DECLINED: &str = "declined";
 /// Every field a served-form receipt may hold.
@@ -96,6 +94,31 @@ impl PixelPull {
     }
 }
 
+/// An explicit fetch of an audio clip's bytes through its handle, after the read that
+/// served it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AudioPull {
+    /// The clip heard by a model answering a question about it, in place of the asking
+    /// agent.
+    AskAudio,
+}
+
+impl AudioPull {
+    /// The pull's name, as its receipt says it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AskAudio => "ask_audio",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        [Self::AskAudio]
+            .into_iter()
+            .find(|pull| pull.as_str() == value)
+    }
+}
+
 /// What one read served of one ASSET, or one pull of its pixels. These are
 /// the only facts a door hands the served-form write
 /// ([`crate::claim::ScopedRead::commit_served_forms`]).
@@ -110,9 +133,9 @@ pub struct ServedForm {
     /// What the host's per-image pick answered, when one ran: `true` asked
     /// for the full image (or was unsure), `false` declined it.
     pick: Option<bool>,
-    /// An audio clip's bytes, pulled for a model answering a question about
-    /// them in place of the asking agent: no image rung, pull or pick.
-    audio: bool,
+    /// The audio clip's pull, for one heard by a model answering a question
+    /// about it in place of the asking agent: no image rung, pull or pick.
+    audio_pull: Option<AudioPull>,
 }
 
 impl ServedForm {
@@ -123,7 +146,7 @@ impl ServedForm {
             asset_text,
             pull: None,
             pick: None,
-            audio: false,
+            audio_pull: None,
         }
     }
 
@@ -166,7 +189,7 @@ impl ServedForm {
             asset_text: None,
             pull: Some(pull),
             pick: None,
-            audio: false,
+            audio_pull: None,
         }
     }
 
@@ -180,14 +203,14 @@ impl ServedForm {
             asset_text: None,
             pull: None,
             pick: None,
-            audio: true,
+            audio_pull: Some(AudioPull::AskAudio),
         }
     }
 
     /// This serving, after the host's pick answered `full`.
     #[must_use]
     pub const fn picked(mut self, full: bool) -> Self {
-        if self.pull.is_none() && !self.audio {
+        if self.pull.is_none() && self.audio_pull.is_none() {
             self.pick = Some(full);
         }
         self
@@ -217,7 +240,7 @@ pub(super) fn served_form_receipt(
     fields.insert(FIELD_ASSET_REF.to_owned(), served.asset.to_hex());
     let form = match served.rung {
         ServedRung::Audio => FORM_AUDIO,
-        ServedRung::Full if served.audio => FORM_AUDIO,
+        ServedRung::Full if served.audio_pull.is_some() => FORM_AUDIO,
         ServedRung::Full => FORM_IMAGE,
         ServedRung::Thumbnail => FORM_THUMBNAIL,
         ServedRung::Description => FORM_TEXT,
@@ -230,8 +253,8 @@ pub(super) fn served_form_receipt(
     if let Some(pull) = served.pull {
         fields.insert(FIELD_PULL.to_owned(), pull.as_str().to_owned());
     }
-    if served.audio {
-        fields.insert(FIELD_PULL.to_owned(), PULL_ASK_AUDIO.to_owned());
+    if let Some(pull) = served.audio_pull {
+        fields.insert(FIELD_PULL.to_owned(), pull.as_str().to_owned());
     }
     if let Some(full) = served.pick {
         let pick = if full { PICK_FULL } else { PICK_DECLINED };
@@ -246,7 +269,7 @@ pub(super) fn served_form_receipt(
         occurred_at: at,
         actor: Some(holder.actor_ref().to_owned()),
         on_behalf_of: None,
-        outcome: if served.pull.is_some() || served.audio {
+        outcome: if served.pull.is_some() || served.audio_pull.is_some() {
             OUTCOME_PULLED
         } else {
             OUTCOME_SERVED
@@ -275,7 +298,7 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
         && receipt.receipt_id == receipt_id(id)
         && match pull {
             None => receipt.outcome == OUTCOME_SERVED,
-            Some(PULL_ASK_AUDIO) => {
+            Some(pull) if AudioPull::parse(pull).is_some() => {
                 receipt.outcome == OUTCOME_PULLED
                     && field(FIELD_FORM) == Some(FORM_AUDIO)
                     && pick.is_none()
@@ -298,7 +321,9 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
         && entity_ref(field(FIELD_ASSET_REF))
         && match field(FIELD_FORM) {
             Some(FORM_IMAGE | FORM_ASK) => text.is_none(),
-            Some(FORM_AUDIO) => text.is_none() && (pull.is_none() || pull == Some(PULL_ASK_AUDIO)),
+            Some(FORM_AUDIO) => {
+                text.is_none() && pull.is_none_or(|pull| AudioPull::parse(pull).is_some())
+            }
             Some(FORM_THUMBNAIL) => text.is_none_or(|_| entity_ref(text)),
             Some(FORM_TEXT) => entity_ref(text),
             _ => false,

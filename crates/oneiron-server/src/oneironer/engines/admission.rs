@@ -33,6 +33,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use oneiron::memory::extraction::ExecutionRuntime;
+
 use super::super::bundle::{COREML_ROW, MLX_ROW, ReadManifest, read_manifest};
 use super::super::coreml;
 use super::super::dispatcher::{
@@ -50,7 +52,11 @@ use crate::config::{EmbedderDevice, OneironerConfig};
 
 /// The down reason of a worker whose answers do not clear here, or that
 /// holds no reference case.
-const PARITY_FAILED: &str = "parity_failed";
+pub(super) const PARITY_FAILED: &str = "parity_failed";
+/// The rank of a platform worker Candle beats: after Candle's highest
+/// rank (3, behind two preferred platform workers), so it is never picked
+/// over Candle.
+const NOT_PREFERRED_RANK: usize = 4;
 
 /// The bundle sessions a slot of this process holds: canonical directory,
 /// stack and platform row. Keys, never a worker.
@@ -70,10 +76,12 @@ pub(crate) struct Admission {
 }
 
 /// What the platform workers of one admission share: the one owner of its
-/// rows, and Candle's published rank, which only grows.
+/// rows, Candle's published rank, which only grows, and the first preferred
+/// platform timing, which ranks a second preferred worker against it.
 struct Contest {
     rows: Arc<RowBook>,
     candle_rank: Arc<Mutex<usize>>,
+    first_preferred: Arc<Mutex<Option<Timing>>>,
 }
 
 impl Admission {
@@ -128,6 +136,7 @@ impl Admission {
         let contest = Contest {
             rows: Arc::new(RowBook::new(rows_path(self.rows_location.as_deref()))),
             candle_rank: Arc::new(Mutex::new(0)),
+            first_preferred: Arc::new(Mutex::new(None)),
         };
         match candidate::discover(&dir, &read.manifest) {
             Ok(candidate) => {
@@ -286,6 +295,7 @@ impl Admission {
             reference,
             candle,
             candle_rank: Arc::clone(&contest.candle_rank),
+            first_preferred: Arc::clone(&contest.first_preferred),
             dispatcher: self.dispatcher.clone(),
             baseline: self.baseline_worker,
             admitted: None,
@@ -337,6 +347,8 @@ struct Calibration {
     candle: Option<Timing>,
     /// Candle's rank as the admission's workers have published it.
     candle_rank: Arc<Mutex<usize>>,
+    /// The first preferred platform timing, for the second to rank against.
+    first_preferred: Arc<Mutex<Option<Timing>>>,
     dispatcher: DispatcherHandle,
     baseline: WorkerId,
     admitted: Option<usize>,
@@ -345,12 +357,12 @@ struct Calibration {
 
 impl Calibration {
     /// The worker's rank, once its row for its key, kept or measured on
-    /// `worker` now, clears: 0 when it is preferred over Candle, else 1.
-    /// Candle's rank is published beside it, 1 once any platform worker of
-    /// the slot is preferred, so a second worker's admission never ranks
-    /// Candle back above the first. A row that does not clear, or holds no
-    /// case, is down; a call that failed is a crash, and the next session
-    /// measures again.
+    /// `worker` now, clears: preferred platform workers rank fastest first
+    /// by calibration time, Candle after them, the rest after Candle. A row
+    /// that does not clear, or holds no case, is down; a call that failed
+    /// is a crash, and the next session measures again, except on an
+    /// in-process worker, whose calibration error is down with its reason
+    /// named.
     fn admit(&mut self, worker: &mut dyn Worker) -> Result<usize, Fault> {
         if let Some(rank) = self.admitted {
             return Ok(rank);
@@ -369,6 +381,9 @@ impl Calibration {
                 if !run.keep {
                     return Err(if run.row.cases == 0 {
                         Fault::Down(PARITY_FAILED.to_owned())
+                    } else if self.descriptor.runtime() == ExecutionRuntime::CoreMl {
+                        let detail = run.detail.unwrap_or("reference_failed");
+                        Fault::Down(format!("calibration_failed:{detail}"))
                     } else {
                         Fault::Crash("calibration_failed")
                     });
@@ -383,15 +398,57 @@ impl Calibration {
             return Err(Fault::Down(PARITY_FAILED.to_owned()));
         };
         let preferred = self.candle.is_some_and(|candle| prefers(timing, candle));
-        let rank = usize::from(!preferred);
-        let candle = {
-            let mut candle = self
+        if !preferred {
+            let candle = *self
                 .candle_rank
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            *candle = (*candle).max(usize::from(preferred));
-            self.dispatcher.publish_rank(self.baseline, *candle);
-            *candle
+            tracing::info!(
+                engine = row.engine.as_str(),
+                rank = NOT_PREFERRED_RANK,
+                candle_rank = candle,
+                "oneironer platform worker admitted"
+            );
+            self.admitted = Some(NOT_PREFERRED_RANK);
+            return Ok(NOT_PREFERRED_RANK);
+        }
+        let mut first = self
+            .first_preferred
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (rank, candle) = match *first {
+            None => {
+                *first = Some(timing);
+                let mut candle = self
+                    .candle_rank
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                *candle = (*candle).max(2);
+                self.dispatcher.publish_rank(self.baseline, *candle);
+                (1, *candle)
+            }
+            Some(held) => {
+                let faster = timing
+                    .p50_ms
+                    .total_cmp(&held.p50_ms)
+                    .then_with(|| timing.p95_ms.total_cmp(&held.p95_ms))
+                    == std::cmp::Ordering::Less;
+                if faster {
+                    let candle = *self
+                        .candle_rank
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    (0, candle)
+                } else {
+                    let mut candle = self
+                        .candle_rank
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    *candle = (*candle).max(3);
+                    self.dispatcher.publish_rank(self.baseline, *candle);
+                    (2, *candle)
+                }
+            }
         };
         tracing::info!(
             engine = row.engine.as_str(),

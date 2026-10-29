@@ -21,9 +21,8 @@ impl AttemptQueue<'_> {
     ///
     /// Everything else the row holds stays: its id, state, placement, lease
     /// owner and generation, its ready or scheduled instant, its retry link,
-    /// and every index entry, none of which reads the payload. Only
-    /// `updated_at` moves, to the job clock, and the row is put through the
-    /// queue's admitted encoder.
+    /// its `updated_at`, and every index entry, none of which reads the
+    /// payload. The row is put through the queue's admitted encoder.
     pub(crate) fn replace_owner_retained_payload_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -46,7 +45,6 @@ impl AttemptQueue<'_> {
             return Err(Error::InvariantViolation(ERR_PAYLOAD_REPLACE_STALE));
         }
         record.payload = payload;
-        record.updated_at = crate::ports::job_recorded_at_in_txn(self.store, wtxn)?;
         let encoded = self.encode_in_txn(wtxn, &mut record)?;
         self.store
             .attempt_records

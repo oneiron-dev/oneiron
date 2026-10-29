@@ -144,9 +144,9 @@ pub use archive_delete_wire::{
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_doors::{AssetIngestReceipt, AssetIngestRequest, AssetResolveRequest, AssetResolved};
 pub use asset_resolve::{
-    AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
-    LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
-    pull_image, resolve_audio_ref, resolve_image_ref,
+    AssetConsumer, HydratedAsset, ImageHandle, ImagePick, ImageViewRequest, LandedImage,
+    PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset, pull_image,
+    resolve_audio_ref, resolve_image_ref,
 };
 pub(crate) use asset_resolve::{
     asset_audio_in_lane, asset_image_in_lane, asset_media_in, release_asset_blob_in_txn,
@@ -177,6 +177,7 @@ pub use claims::{
     CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
     PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
 };
+pub use conflict_settle::DreamerDecidedCandidateView;
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diagnostics::{
     BlockedReportView, CoachInspectRequest, CoachInspectionView, CoachProposalView,
@@ -194,9 +195,9 @@ pub use dreamer::{
 };
 pub use dreamer_wake_read::{
     ConsolidationWakeStatusRequest, DreamerWakeCallEndView, DreamerWakeCallStateView,
-    DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeEndView, DreamerWakeGenerationView,
-    DreamerWakeHeaderView, DreamerWakeLeaseView, DreamerWakeLiveCallView, DreamerWakeLiveView,
-    DreamerWakeResumeView, DreamerWakeView,
+    DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeClaimAuthoringFallbackView,
+    DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView, DreamerWakeLeaseView,
+    DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
@@ -333,9 +334,14 @@ pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
-pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub use witness::{
+    TurnProgramWakeOutcome, UnpersistedWakeReason, WitnessAssertions, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
+};
 pub(crate) use witness::{
-    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
+    erase_birth_reply_assertions_in_txn, erase_reply_assertions_in_txn,
+    erase_turn_wake_label_in_txn, reply_assertions_opaque_owners, reply_assertions_owners,
+    reply_assertions_scan, reply_assertions_stub, turn_wake_outcome_in_txn,
 };
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;

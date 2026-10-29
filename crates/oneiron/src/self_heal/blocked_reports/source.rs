@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::store::Store;
 use crate::{EntityId, LlmRequest, Result, Vault};
 
 // FIX 6708: both row kinds in checkpoint images, as row-held responses.
@@ -585,6 +586,32 @@ pub(crate) fn erase_blocked_source_actor_in_txn(
     }
     for step in &steps {
         STEPS.delete(&vault.store, wtxn, step)?;
+    }
+    Ok(())
+}
+
+/// A hard non-erase delete of `entity` takes the requests kept for it (FIX
+/// 6711), each step row that stamps it as an owner, in `wtxn`: the rows a
+/// soft delete keeps for a restore. The receipt rows stay, as does the
+/// actor scrub, with erase. A row that does not decode names no owner and
+/// stays as it is.
+pub(crate) fn drop_blocked_source_steps_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    let mut steps = Vec::new();
+    for row in STEPS.iter_raw_from(store, &*wtxn, &[])? {
+        let (key, bytes) = row?;
+        if let Some(step) = StepSourceKey::decode_key(&key)
+            && let Ok(source) = STEPS.decode_value(&bytes)
+            && source.owners().contains(entity)
+        {
+            steps.push(step);
+        }
+    }
+    for step in &steps {
+        STEPS.delete(store, wtxn, step)?;
     }
     Ok(())
 }

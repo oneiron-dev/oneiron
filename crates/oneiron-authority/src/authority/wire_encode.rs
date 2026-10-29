@@ -264,6 +264,8 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             super::home_candidacy::home_candidacy_value(declaration)
         }
         AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
+        AuthorityOp::PolicySettingSet(set) => super::policy_setting::policy_setting_value(set),
+        AuthorityOp::ExportAct(record) => super::export_act::export_act_value(record),
         AuthorityOp::OwnerKeyEnroll(enroll) => {
             super::owner_key_enrollment::owner_key_enroll_value(enroll)
         }
