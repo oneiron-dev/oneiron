@@ -34,10 +34,11 @@ pub const MAX_RULE_REASON_BYTES: usize = 1_024;
 const RULE_CERTAINTY: f64 = 1.0;
 
 /// One revision of a rule row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HostRule {
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub id: EntityId,
     /// From 1.
     pub revision: u32,
@@ -46,16 +47,19 @@ pub struct HostRule {
     pub question: DecisionQuestion,
     /// The evidence the ask was about, in the order it was asked.
     #[serde(with = "super::codec::entities")]
+    #[schemars(with = "Vec<String>")]
     pub evidence: Vec<EntityId>,
     pub answer: DecisionAnswer,
     /// The owner's reason, as typed.
     pub reason: String,
     /// The ask whose answer wrote this revision.
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub ask: EntityId,
     pub ask_seq: u64,
     /// The owner who wrote it; erased once that owner was erased (FIX 3520).
     #[serde(with = "super::codec::answer_actor")]
+    #[schemars(with = "String")]
     pub by: AnswerActor,
     /// Vault clock seconds when it was written.
     pub written_at: u64,

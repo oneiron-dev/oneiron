@@ -25,7 +25,7 @@ use crate::api::owner_routes::secret_control_routes::pending::{
     pending_release_receipt_schema, release_body_schema,
 };
 use crate::api::owner_routes::secret_control_routes::{
-    custody_reply_schema, rewrap_body_schema,
+    custody_reply_schema, rewrap_body_schema, sealed_change_body_schema,
 };
 use crate::api::owner_routes::secret_found_routes::{
     found_key_body_schema, found_key_settled_schema, grant_found_key_body_schema,
@@ -45,6 +45,10 @@ use crate::api::owner_routes::skill_judge_routes::{
     judge_swap_pick_schema, judge_swap_policy_schema, measure_body_schema, pair_pick_body_schema,
     person_time_total_schema, record_person_time_body_schema, response_pair_pick_schema,
     swap_pick_body_schema, tradeoff_pick_body_schema, tradeoff_settled_schema,
+};
+use crate::owner::secrets::{
+    custody_rotated_schema, register_secret_body_schema, registered_schema,
+    revoke_secret_body_schema, rotate_secret_body_schema,
 };
 
 /// Binds each route's REST shapes.
@@ -79,6 +83,14 @@ pub(super) fn merge(spec: &mut Value) {
         "post",
         unbind_body_schema(),
         bound_view_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/secrets/custody",
+        "post",
+        sealed_change_body_schema(),
+        custody_reply_schema(),
         &[],
     );
     bind(
@@ -123,6 +135,14 @@ pub(super) fn merge(spec: &mut Value) {
     );
     bind(
         spec,
+        "/v1/owner/secrets/register",
+        "post",
+        register_secret_body_schema(),
+        registered_schema(),
+        &[],
+    );
+    bind(
+        spec,
         "/v1/owner/secrets/reveal",
         "post",
         owner_reveal_body_schema(),
@@ -139,10 +159,26 @@ pub(super) fn merge(spec: &mut Value) {
     );
     bind(
         spec,
+        "/v1/owner/secrets/revoke",
+        "post",
+        revoke_secret_body_schema(),
+        custody_rotated_schema(),
+        &[],
+    );
+    bind(
+        spec,
         "/v1/owner/secrets/rewrap",
         "post",
         rewrap_body_schema(),
         custody_reply_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/secrets/rotate",
+        "post",
+        rotate_secret_body_schema(),
+        custody_rotated_schema(),
         &[],
     );
     bind(

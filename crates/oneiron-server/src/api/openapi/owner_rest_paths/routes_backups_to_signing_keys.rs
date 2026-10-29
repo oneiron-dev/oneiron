@@ -10,6 +10,9 @@ use crate::api::owner_origin::{
     set_origin_mirror_strategy_body_schema,
 };
 use crate::api::owner_routes::browser_takeover_routes::browser_screen_body_schema;
+use crate::api::owner_routes::decision_ask_routes::{
+    answer_ask_body_schema, decision_ask_schema, host_rule_schema, revoke_rule_body_schema,
+};
 use crate::api::owner_routes::desktop_takeover_routes::desktop_run_request_body_schema;
 use crate::api::owner_routes::machine_routes::{
     machine_answer_schema, remove_machine_body_schema, set_answer_body_schema,
@@ -41,6 +44,22 @@ pub(super) fn merge(spec: &mut Value) {
         "/v1/owner/desktops/screen",
         "post",
         desktop_run_request_body_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/decisions/asks/answer",
+        "post",
+        answer_ask_body_schema(),
+        decision_ask_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/decisions/rules/revoke",
+        "post",
+        revoke_rule_body_schema(),
+        host_rule_schema(),
         &[],
     );
     super::bind(
