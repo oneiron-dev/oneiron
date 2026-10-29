@@ -90,7 +90,7 @@ impl WindowManager {
         if landed_already(vault, window, before.as_ref(), mirror, gained)? {
             return Ok(());
         }
-        // The live window's replay markers stay as its untouched doc owes them (FIX 538).
+        // Only the markers of rows this pass rematerialized settle (FIX 538).
         forward_rematerialize_mirror(vault, mirror, self.materializer(), window)?;
         let snapshot = gained.then(|| export_snapshot(mirror)).transpose()?;
         let settled = !repair_pending(vault, window)?;
