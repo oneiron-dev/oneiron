@@ -22,6 +22,8 @@ use crate::llm::{BudgetGuard, BudgetLease, BudgetLeaseState};
 #[derive(Default)]
 pub(crate) struct ActiveWakes {
     wakes: Mutex<BTreeMap<WakeRef, Weak<ActiveWake>>>,
+    /// The read phases' fallback tally and deferred triggers (FIX 11568).
+    pub(crate) read_phases: crate::dreamer_wake::read_phase::ReadPhases,
 }
 
 impl ActiveWakes {

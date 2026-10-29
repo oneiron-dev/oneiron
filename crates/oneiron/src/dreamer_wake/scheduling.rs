@@ -4,6 +4,11 @@ use rmpv::Value;
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::dreamer_consolidation::{
+    PreparedPartitionPlans, WatermarkAdvance, apply_partition_plans_in_txn,
+    apply_watermark_advance_in_txn, collect_dirty_turn_ids_until, prepare_partition_plans_in_txn,
+    read_partition_turns_in_txn, read_watermark_advance_in_txn, read_watermark_in_txn,
+};
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
@@ -13,6 +18,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 use super::policy::AgentWakeSignals;
+use super::projector::ProjectionPlan;
+use super::read_phase::{OnStale, ReadWrite, WakeStop, read_then_write};
 
 use super::types::WakeTrigger;
 
@@ -305,7 +312,7 @@ pub fn request_turn_wake(
 /// agent's stored cadence dial on top of it, read in the caller's transaction.
 fn turn_wake_due_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     subject: WakeTurnSubject,
     mut ordinals: std::ops::RangeInclusive<u64>,
 ) -> Result<bool> {
@@ -328,7 +335,7 @@ fn turn_wake_due_in_txn(
 /// own signal stands either way, and the vault's wake takes no signals.
 fn measured_surprise_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     subject: WakeTurnSubject,
     turns: impl Iterator<Item = EntityId>,
 ) -> Result<WakeTurnSubject> {
@@ -351,7 +358,7 @@ fn measured_surprise_in_txn(
 
 /// Whether a TURN carries an import stamp, read as its import's review reads
 /// it (ARCH-0027).
-fn turn_imported_in_txn(vault: &Vault, txn: &heed::RwTxn<'_>, turn: &EntityId) -> Result<bool> {
+fn turn_imported_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, turn: &EntityId) -> Result<bool> {
     Ok(vault.get_raw_in(txn, turn)?.is_some_and(|raw| {
         crate::dreamer_consolidation::decode_turn_body(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
@@ -360,101 +367,164 @@ fn turn_imported_in_txn(vault: &Vault, txn: &heed::RwTxn<'_>, turn: &EntityId) -
     }))
 }
 
+/// What a turn wake's read phase decided.
+struct TurnWakeReads {
+    queue: Option<(ProjectionPlan, Option<PreparedPartitionPlans>)>,
+    advance: Option<WatermarkAdvance>,
+}
+
+/// The turn wake's read phase: today's reads in today's order, in the
+/// caller's snapshot. `None` when `stop` stopped the read; nothing is
+/// written then.
+fn read_turn_wake_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: WakeTurnSubject,
+    stop: WakeStop<'_>,
+) -> Result<Option<TurnWakeReads>> {
+    let scope = DreamerConsolidationScope::Micro;
+    let watermark = read_watermark_in_txn(vault, txn, scope)?;
+    let Some(ids) =
+        collect_dirty_turn_ids_until(vault, txn, scope, watermark.last_learned_at, u64::MAX, stop)?
+    else {
+        return Ok(None);
+    };
+    let mut window = Vec::with_capacity(ids.len());
+    let mut stepped = Vec::new();
+    for turn in read_partition_turns_in_txn(vault, txn, scope, &ids)? {
+        if turn.conversation.is_none() || turn_imported_in_txn(vault, txn, &turn.turn_id)? {
+            stepped.push(turn.learned_at);
+        } else {
+            window.push(turn);
+        }
+    }
+    let subject = measured_surprise_in_txn(vault, txn, subject, window.iter().map(|t| t.turn_id))?;
+    let due =
+        !window.is_empty() && turn_wake_due_in_txn(vault, txn, subject, 1..=window.len() as u64)?;
+    // The watermark settles every turn up to where it moves, so an
+    // undue wake stops it before the first live turn it leaves.
+    let first_live = window.iter().map(|turn| turn.learned_at).min();
+    let through = if due {
+        window
+            .iter()
+            .map(|turn| turn.learned_at)
+            .chain(stepped.iter().copied())
+            .max()
+    } else {
+        stepped
+            .iter()
+            .copied()
+            .filter(|at| first_live.is_none_or(|live| *at < live))
+            .max()
+    };
+    let mut queue = None;
+    if due {
+        let Some(plan) = super::projector::plan_in_txn(vault, txn, &window, &watermark, stop)?
+        else {
+            return Ok(None);
+        };
+        let prepared = prepare_partition_plans_in_txn(vault, txn, scope, &plan.turns, &watermark)?;
+        queue = Some((plan, prepared));
+    }
+    let mut advance = None;
+    if let Some(through) = through {
+        let Some(read) = read_watermark_advance_in_txn(vault, txn, scope, through, stop)? else {
+            return Ok(None);
+        };
+        advance = Some(read);
+    }
+    Ok(Some(TurnWakeReads { queue, advance }))
+}
+
+/// The turn wake's write phase: today's writes in today's order. Returns
+/// whether a wake was queued.
+fn apply_turn_wake_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    reads: TurnWakeReads,
+    now: u64,
+) -> Result<bool> {
+    let scope = DreamerConsolidationScope::Micro;
+    let mut held = None;
+    if let Some((plan, prepared)) = reads.queue {
+        // A plan that queues nothing still runs the hold, as today, with an
+        // empty `enqueued`.
+        let enqueued = match &prepared {
+            Some(prepared) => apply_partition_plans_in_txn(vault, txn, scope, prepared, None, now)?,
+            None => Vec::new(),
+        };
+        held = Some((plan, enqueued));
+    }
+    if let Some(advance) = &reads.advance {
+        apply_watermark_advance_in_txn(vault, txn, scope, advance)?;
+    }
+    // After the settlement, which consumes every carrier up to where
+    // it moves: a rider the projector puts back waits for a later wake.
+    let Some((plan, enqueued)) = held else {
+        return Ok(false);
+    };
+    super::projector::hold_in_txn(vault, txn, &plan, &enqueued)?;
+    Ok(!enqueued.is_empty())
+}
+
 impl Vault {
     /// The turn producer (ARCH-0026 RD-26): a landed turn counts against the
     /// wake grain, and a due turn offers the Micro rounds for every turn no
     /// Micro round has read yet to the projector.
     ///
-    /// The continuous sieve reads what landed first, in the same commit. A
+    /// The continuous sieve reads what landed first, in its own commit. A
     /// turn's ordinal is its place in the unread window, so the Nth new turn
     /// closes an N-turn grain; turns that landed together are due when any of
     /// their ordinals is. A due window goes to the projector's surprise check:
     /// a window that only repeats the turn the projection holds writes
     /// nothing, its repeats riding that turn's round, and any other window is
     /// queued whole. Either way the window is read: the watermark passes it.
-    /// Sieve, enqueue, projector rows and Micro watermark land in one
-    /// transaction, so a crash cannot queue a window twice or lose one.
+    /// The enqueue, the projector rows and the Micro watermark land in one
+    /// transaction, so a crash cannot queue a window twice or lose one; the
+    /// scans and history reads run in a read snapshot before that
+    /// transaction, which writes only if no commit landed in between (FIX
+    /// 11568). A pause or stop before the write writes nothing.
     ///
     /// An imported TURN belongs to its import's one review (ARCH-0027): it is
     /// never planned here and never counts. A TURN without its conversation
     /// edge is never planned or counted either; the settlement parks it on
     /// its carrier until the edge lands, so it stops no later turn. The
     /// watermark steps over both up to the first live turn left unplanned.
-    /// Returns whether a wake was queued.
-    pub fn wake_dreamer_on_turn(&self, subject: WakeTurnSubject, now: u64) -> Result<bool> {
-        use crate::dreamer_consolidation::{
-            advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
-            enqueue_partition_plans_in_txn, read_partition_turns_in_txn, read_watermark_in_txn,
+    /// Returns the write the read phase decided, or that it stopped or
+    /// deferred and wrote nothing.
+    pub(crate) fn wake_dreamer_on_turn_until(
+        &self,
+        subject: WakeTurnSubject,
+        now: u64,
+        stop: WakeStop<'_>,
+        on_stale: OnStale,
+    ) -> Result<ReadWrite<bool>> {
+        let commit = match self.sieve_pass_until(now, stop, on_stale, false)? {
+            ReadWrite::Written(commit) => commit,
+            ReadWrite::Stopped => return Ok(ReadWrite::Stopped),
+            ReadWrite::Deferred => return Ok(ReadWrite::Deferred),
         };
-        let scope = DreamerConsolidationScope::Micro;
-        let queued = self.with_write_txn(|txn| {
-            super::sieve::sieve_pass_in_txn(self, txn, now)?;
-            let watermark = read_watermark_in_txn(self, txn, scope)?;
-            let ids = collect_dirty_turn_ids_in_txn(
-                self,
-                txn,
-                scope,
-                watermark.last_learned_at,
-                u64::MAX,
-            )?;
-            let mut window = Vec::with_capacity(ids.len());
-            let mut stepped = Vec::new();
-            for turn in read_partition_turns_in_txn(self, txn, scope, &ids)? {
-                if turn.conversation.is_none() || turn_imported_in_txn(self, txn, &turn.turn_id)? {
-                    stepped.push(turn.learned_at);
-                } else {
-                    window.push(turn);
-                }
-            }
-            let subject =
-                measured_surprise_in_txn(self, txn, subject, window.iter().map(|t| t.turn_id))?;
-            let due = !window.is_empty()
-                && turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)?;
-            // The watermark settles every turn up to where it moves, so an
-            // undue wake stops it before the first live turn it leaves.
-            let first_live = window.iter().map(|turn| turn.learned_at).min();
-            let through = if due {
-                window
-                    .iter()
-                    .map(|turn| turn.learned_at)
-                    .chain(stepped.iter().copied())
-                    .max()
-            } else {
-                stepped
-                    .iter()
-                    .copied()
-                    .filter(|at| first_live.is_none_or(|live| *at < live))
-                    .max()
-            };
-            let mut held = None;
-            if due {
-                let plan = super::projector::plan_in_txn(self, txn, &window, &watermark)?;
-                let enqueued = enqueue_partition_plans_in_txn(
-                    self,
-                    txn,
-                    scope,
-                    &plan.turns,
-                    &watermark,
-                    None,
-                    now,
-                )?;
-                held = Some((plan, enqueued));
-            }
-            if let Some(through) = through {
-                advance_watermark_in_txn(self, txn, scope, through)?;
-            }
-            // After the settlement, which consumes every carrier up to where
-            // it moves: a rider the projector puts back waits for a later wake.
-            let Some((plan, enqueued)) = held else {
-                return Ok(false);
-            };
-            super::projector::hold_in_txn(self, txn, &plan, &enqueued)?;
-            Ok(!enqueued.is_empty())
-        })?;
-        if queued {
+        let outcome = read_then_write(
+            self,
+            "turn wake",
+            on_stale,
+            |txn| read_turn_wake_in_txn(self, txn, subject, stop),
+            |txn, reads| apply_turn_wake_in_txn(self, txn, reads, now),
+        )?;
+        if commit.followed || matches!(outcome, ReadWrite::Written(true)) {
             self.store.notify_attempt_observers();
         }
-        Ok(queued)
+        Ok(outcome)
+    }
+
+    /// The turn producer with nothing stopping it: a stale read retries in
+    /// its writer, so the wake always lands. Returns whether a wake was
+    /// queued.
+    pub fn wake_dreamer_on_turn(&self, subject: WakeTurnSubject, now: u64) -> Result<bool> {
+        Ok(matches!(
+            self.wake_dreamer_on_turn_until(subject, now, WakeStop::NEVER, OnStale::OneWriter)?,
+            ReadWrite::Written(true)
+        ))
     }
 
     /// The authority-bearing turn producer (DOOR-141), beside the Micro one:

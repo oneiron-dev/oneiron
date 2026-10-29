@@ -136,6 +136,7 @@ mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;
 mod local_queue_budget;
+pub(crate) mod replay_only_commits;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
