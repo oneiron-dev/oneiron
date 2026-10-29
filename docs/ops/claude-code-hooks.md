@@ -156,7 +156,9 @@ only on the pin's terms above: the session sends the credential it names to
 the origin it names.
 
 `oneiron hook --host hermes bind [--url <origin>]` binds in the same order and
-prints the result as one JSON line, `{"url": <origin or null>, "lines": [...]}`.
+prints the result as one JSON line, `{"url": <origin or null>, "lines": [...],
+"hosted": <the selected hosted vault it bound, as `oneiron hosted status` shows
+one, or null>}`.
 Hermes's memory provider (`packages/oneiron-hermes`) runs inside Hermes's own
 process and asks there, so the order has one home.
 
