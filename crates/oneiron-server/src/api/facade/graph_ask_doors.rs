@@ -339,6 +339,7 @@ async fn vault_questions_backfill_answer(
             input.id,
             input.expected_version,
             input.at.unwrap_or(now),
+            input.joins,
         )?)
     })
     .await

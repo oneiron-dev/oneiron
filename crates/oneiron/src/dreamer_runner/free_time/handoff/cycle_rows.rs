@@ -110,7 +110,8 @@ fn local_only_conflicts(
 }
 
 /// Whether the carried `cycle` follows `local`, the same cycle further on:
-/// one opening, ended once, its note and its own-time choice each set once.
+/// one opening, ended once, its note and its own-time choice each set once,
+/// and its asked-for own-time rounds only ever added to (FIX 7763).
 fn cycle_follows(local: &FreeTimeCycle, carried: &FreeTimeCycle) -> bool {
     opening(local) == opening(carried)
         && (local.state == FreeTimeCycleState::Open || carried.state == FreeTimeCycleState::Closed)
@@ -120,15 +121,24 @@ fn cycle_follows(local: &FreeTimeCycle, carried: &FreeTimeCycle) -> bool {
             local.own_time_choice.as_ref(),
             carried.own_time_choice.as_ref(),
         )
+        && local.own_time_rounds <= carried.own_time_rounds
+        && carried.items.starts_with(&local.items)
 }
 
-/// A cycle as it opened: what never changes after.
+/// A cycle as it opened: what never changes after. Its items are the ones
+/// it opened with, before any asked-for round (FIX 7763).
 fn opening(cycle: &FreeTimeCycle) -> FreeTimeCycle {
+    let opened_with = cycle
+        .items
+        .len()
+        .saturating_sub(cycle.own_time_rounds as usize);
     FreeTimeCycle {
         state: FreeTimeCycleState::Open,
         closed_at: None,
         owner_note: None,
         own_time_choice: None,
+        own_time_rounds: 0,
+        items: cycle.items[..opened_with].to_vec(),
         ..cycle.clone()
     }
 }

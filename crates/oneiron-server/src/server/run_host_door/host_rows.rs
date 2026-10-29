@@ -134,6 +134,7 @@ pub(super) fn host_row(
                 request.id,
                 request.expected_version,
                 request.at.unwrap_or(now),
+                request.joins,
             )?)
         }
         AgentVerb::VaultQuestionsRead => {
@@ -208,10 +209,11 @@ pub(super) fn host_row(
             encode(wave_receipt(resume_held_wave(server, actor, queued, now)?)?)
         }
         // The agent's own grant and gate, under the step's invocation; the
-        // rows its passes picked join the row's (FIX 5455).
+        // rows its passes picked join the row's (FIX 5455). A web call on the
+        // deploy's key spends on the entry's line (FIX 11604).
         AgentVerb::ConnectorCall => {
             let (reply, picked) =
-                crate::api::connector_call_listing_as(server, memory, decode(input)?)?;
+                crate::api::connector_call_listing_on(server, memory, decode(input)?, line)?;
             match picked {
                 Some(mut picked) => {
                     if let Some(rows) = evidence.as_mut() {

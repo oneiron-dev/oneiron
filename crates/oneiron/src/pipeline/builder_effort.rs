@@ -14,6 +14,15 @@ impl<'a> PipelineBuilder<'a> {
         self.deadline = Some(deadline);
         self
     }
+    pub(crate) fn retrieval_deadline(&self) -> Option<&'a RetrievalDeadline> {
+        self.deadline
+    }
+    /// Absolute answer-time checkpoint for pack production and hydration,
+    /// which run outside the open retrieval stages.
+    pub(crate) fn answer_checkpoint(&self, error: Error) -> Result<()> {
+        self.deadline
+            .map_or(Ok(()), |deadline| deadline.answer_checkpoint(error))
+    }
     pub(in crate::pipeline) fn deadline_reached(&self) -> bool {
         self.deadline
             .is_some_and(RetrievalDeadline::stop_before_stage)
