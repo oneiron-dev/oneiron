@@ -5,6 +5,7 @@ mod categories;
 mod entity_rank;
 mod post_blend;
 mod ppr_expand;
+mod ppr_visibility;
 mod rerank;
 mod residence_page;
 mod text;
@@ -14,6 +15,7 @@ mod turn_fold;
 use self::admit::ChannelAccumulator;
 use self::post_blend::{PostBlend, PostBlendInputs};
 use self::ppr_expand::{PprExpandInputs, PprExpandState};
+use self::ppr_visibility::pipeline_ppr_visibility;
 use self::rerank::{RerankApplied, RerankLadderInputs};
 use self::text::TextChannelInputs;
 use self::trace_assembly::TraceInputs;
@@ -391,15 +393,27 @@ impl PipelineBuilder<'_> {
                     // ARCH-0039 Layer 2: seed specificity applies ONLY to
                     // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                     // instead of uniform 1/n.
-                    crate::ppr::ppr_query_in_txn_with_diagnostics(
-                        &self.read,
-                        rtxn,
-                        seeds,
-                        *depth,
-                        PPR_DAMPING,
-                        self.ppr_vad_alpha,
-                        crate::ppr::SeedWeighting::Specificity,
-                    )
+                    match pipeline_ppr_visibility(self, filter_config, &claim_gate) {
+                        Some(visibility) => crate::ppr::ppr_query_scoped_in_txn_with_diagnostics(
+                            &self.read,
+                            rtxn,
+                            seeds,
+                            *depth,
+                            PPR_DAMPING,
+                            self.ppr_vad_alpha,
+                            crate::ppr::SeedWeighting::Specificity,
+                            &visibility,
+                        ),
+                        None => crate::ppr::ppr_query_in_txn_with_diagnostics(
+                            &self.read,
+                            rtxn,
+                            seeds,
+                            *depth,
+                            PPR_DAMPING,
+                            self.ppr_vad_alpha,
+                            crate::ppr::SeedWeighting::Specificity,
+                        ),
+                    }
                 })?
             {
                 diagnostics.succeeded.push(RetrievalSignal::Ppr);
