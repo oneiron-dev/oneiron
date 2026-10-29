@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1191 facade rows, 4314 declarations.
+Census: 1191 facade rows, 4315 declarations.
 Inputs: 1120 of 1191 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1036 of 1191 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -10738,12 +10738,16 @@ class InferenceDefaultsReplaceRequest(TypedDict):
 class LensSlot(TypedDict):
     pack_name: str
     skill_id: str
+class LensScope(TypedDict):
+    world: NotRequired[str | None]
+    facet: NotRequired[str | None]
 class LensProposeRequest(TypedDict):
     slot: LensSlot
     pack_content_hash: str
     compiled: Any
     intent_prompt: str
     trigger: NotRequired[MadeByTrigger | None]
+    scope: NotRequired[LensScope | None]
 LensApproval = Literal["proposed"]
 class LensProposalReceipt(TypedDict):
     lens_ref: str
