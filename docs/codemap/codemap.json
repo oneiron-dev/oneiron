@@ -1706,7 +1706,7 @@
      "surface": {
       "crate-vis": 20,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -2546,7 +2546,7 @@
      "path": "src/attempt_queue/engine/workflow.rs",
      "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -15834,7 +15834,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ClaimOutcome",
@@ -16443,9 +16443,9 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 31,
       "enum": 1,
-      "fn": 11,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -31884,7 +31884,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1,
       "fn": 5,
       "struct": 2,
@@ -41475,7 +41475,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 7,
       "struct": 7,
@@ -82781,7 +82781,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 115,
+   "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 5529,
    "test_files": 902
@@ -98552,7 +98552,7 @@
      "path": "src/ai_host/payer_funding.rs",
      "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -117202,6 +117202,7 @@
       "GraphFsPlan",
       "GraphFsReference",
       "GraphNode",
+      "GraphQuestionInput",
       "GroundingContext",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
@@ -119816,7 +119817,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1060,
-      "struct": 3242
+      "struct": 3243
      }
     },
     {
