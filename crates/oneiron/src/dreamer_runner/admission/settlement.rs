@@ -64,6 +64,20 @@ impl DreamerRunnerStore<'_> {
         }
     }
 
+    /// Forgets the paid receipt of `attempt_id`'s terminal step `step_hash`
+    /// in the caller's writer, so the call its forgotten memo asks again is
+    /// charged its own usage (FIX 2851). A step with no receipt is left as it
+    /// is.
+    pub(crate) fn forget_step_charge_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        attempt_id: AttemptId,
+        step_hash: &[u8; 32],
+    ) -> Result<()> {
+        BUDGET_STEP_CHARGE.delete(&self.vault.store, wtxn, &(attempt_id, *step_hash))?;
+        Ok(())
+    }
+
     /// Retire paid-step receipts, and the listing its extraction pinned,
     /// when their attempt can no longer replay.
     pub(crate) fn cleanup_step_receipts_in_txn(
