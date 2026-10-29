@@ -96,6 +96,14 @@ pub struct BookingPagePublication {
     pub theme: ThemeTokens,
     pub landing: BookingLandingContent,
     pub initial_availability: PublicBookingAvailability,
+    /// Who pays an anonymous visitor's free-text parse on this page (FIX
+    /// 5288): the publisher's chosen sponsor, stored at publish and read
+    /// from the publication the parse request already loads. `None`: no
+    /// sponsor was stored, and the parse pays as it always has. Validated
+    /// only as a well-formed id, by the type itself at decode. Never
+    /// emitted in the public render model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sponsor: Option<EntityId>,
 }
 
 impl BookingPagePublication {
@@ -178,6 +186,35 @@ pub fn decode_public_booking_page_value(value: &rmpv::Value) -> Result<BookingPa
         .map_err(|_| Error::InvalidClaimBody("public booking value does not match its schema"))?;
     decoded.validate().map_err(Error::InvalidClaimBody)?;
     Ok(decoded)
+}
+
+/// Who pays an anonymous visitor's free-text parse on a page `publisher`
+/// publishes (FIX 5288, CALLS "FIX 5288 booking sponsor"): the publisher
+/// sponsors the page's anonymous parses. `None` when the publish door has
+/// no publishing principal in hand.
+pub fn publication_sponsor(publisher: EntityId) -> Option<EntityId> {
+    Some(publisher)
+}
+
+/// Stamps the publication-time sponsor onto a `booking.public_page` claim
+/// value at the owner write door (FIX 5288): the publishing principal, by
+/// [`publication_sponsor`]. A value that is not an object is left alone, so
+/// a malformed write keeps today's refusal, never a new one.
+pub(crate) fn stamp_publication_sponsor(value: &mut serde_json::Value, publisher: EntityId) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    match publication_sponsor(publisher) {
+        Some(sponsor) => {
+            object.insert(
+                "sponsor".to_owned(),
+                serde_json::Value::String(sponsor.to_hex()),
+            );
+        }
+        None => {
+            object.remove("sponsor");
+        }
+    }
 }
 
 /// Structural claim gate, used by the existing booking/config family dispatcher

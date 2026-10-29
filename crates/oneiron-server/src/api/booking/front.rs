@@ -154,6 +154,9 @@ async fn run_constraint_turn_in(
         free_text: input.free_text,
     };
     let payer = transport.clone();
+    // The page's publication-time sponsor pays an anonymous visitor's parse
+    // while one is stored and live (FIX 5288).
+    let sponsor = authority.publication.sponsor;
     let turn_server = Arc::clone(server);
     // The ladder's model rungs block on the server's runtime.
     let (outcome, rows) = tokio::task::spawn_blocking(
@@ -170,12 +173,15 @@ async fn run_constraint_turn_in(
             let oracle = PublicSlotOracle(oracle);
             let mut state = session.lock().unwrap_or_else(PoisonError::into_inner);
             let (caps, copy) = (front.caps(), front.copy());
-            // Who pays, judged again just before the seat spends (FIX 5327).
+            // Who pays, judged again just before the seat spends (FIX 5327);
+            // an anonymous visitor's parse pays on the page's live sponsor
+            // while one is stored (FIX 5288).
             let principal = payer.payer_now(turn_server.vault());
             let outcome = on_parse_seat(
                 &turn_server,
                 &settings,
                 principal,
+                sponsor,
                 now,
                 |backend, lease, config| {
                     block_on(run_constraint_turn(

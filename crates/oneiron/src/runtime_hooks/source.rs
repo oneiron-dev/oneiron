@@ -298,6 +298,33 @@ pub(crate) fn record_settlement_in_txn(
     Ok(SettlementPosition(sequence))
 }
 
+/// The actor a critical-confirm timeout demotion settles as (FIX 1093): no
+/// person answered, so the fact names the engine's own unattributed
+/// principal, the same one the demotion's changelog row carries.
+fn timeout_settled_by() -> Result<EntityId> {
+    crate::ports::storage_service_principal()
+}
+
+/// Records a critical-confirm timeout's demotion in the demoting door's
+/// transaction: a `Demoted` settlement, settled by the engine, through
+/// [`record_settlement_in_txn`].
+pub(crate) fn record_timeout_demotion_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    proposal: EntityId,
+) -> Result<SettlementPosition> {
+    record_settlement_in_txn(
+        vault,
+        txn,
+        SettledFact {
+            proposal,
+            outcome: SettledOutcome::Demoted,
+            settled_by: timeout_settled_by()?,
+            kind: SettlementKind::CriticalWriteConfirm,
+        },
+    )
+}
+
 /// Up to `max_entries` facts after `after` (exclusive) in `source`.
 pub(super) fn read_after(
     vault: &Vault,

@@ -7,8 +7,9 @@ use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, TimeRange};
 
 /// A storage service principal, not a user, person, session, or runtime slot.
-/// Used only when the mutation door carries no authenticated actor binding.
-pub(super) fn storage_service_principal() -> Result<EntityId> {
+/// Used when the mutation door carries no authenticated actor binding, and
+/// the actor a critical-confirm timeout demotion settles as (FIX 1093).
+pub(crate) fn storage_service_principal() -> Result<EntityId> {
     let digest = blake3::hash(b"oneiron:storage-service-principal:v1");
     let mut bytes = [0; 16];
     bytes.copy_from_slice(&digest.as_bytes()[..16]);

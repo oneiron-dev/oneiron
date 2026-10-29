@@ -229,6 +229,9 @@ impl Vault {
         Ok(())
     }
 
+    /// Deletes `id` under `reason` through the headerful leg, or the headerless leg when
+    /// it has no header: its tombstone publishes, its store purges, and a hard purge writes
+    /// its receipt.
     fn delete_entity_with_reason_impl(
         &self,
         id: &EntityId,
@@ -357,15 +360,21 @@ impl Vault {
                 .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
         });
         // FIX 5736: a purge names the turn-program rows it removes whole
-        // because they do not decode.
+        // because they do not decode. FIX 5775: the count rides the returned
+        // outcome too, so a delete with no gate decision carries it.
+        let turn_program_details = if reason.active_store_hard_purge_v1() {
+            crate::dreamer_runner::turn_program_erase_details(self, id)?
+        } else {
+            Vec::new()
+        };
         if reason.active_store_hard_purge_v1()
             && let Some(decision) = gate_decision.as_mut()
         {
-            let details = crate::dreamer_runner::turn_program_erase_details(self, id)?;
             decision
                 .system_notices
                 .extend(crate::store::GateSystemNoticeRecord::receipt_details(
-                    "deletion", details,
+                    "deletion",
+                    turn_program_details.clone(),
                 ));
         }
         let mut window_label = window_label_from_timestamp(header.learned_at);
@@ -551,6 +560,7 @@ impl Vault {
                 existed,
                 receipt_id: None,
                 sweep_key: None,
+                turn_program_details: turn_program_details.clone(),
             });
         }
 
@@ -828,7 +838,12 @@ impl Vault {
             )?;
             self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
             wtxn.commit()?;
-            return Ok(DeleteEntityOutcome::missing());
+            return Ok(DeleteEntityOutcome {
+                existed: false,
+                receipt_id: None,
+                sweep_key: None,
+                turn_program_details: turn_program_details.clone(),
+            });
         }
         // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
         // the Observer-B materialization gate consults when a crafted update
@@ -959,6 +974,7 @@ impl Vault {
             existed,
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
+            turn_program_details,
         })
     }
 }
