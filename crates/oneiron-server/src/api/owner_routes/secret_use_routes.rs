@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::secret_custody::SecretBindRequest;
@@ -62,15 +62,17 @@ struct UnbindBody {
 /// `POST /v1/owner/secrets/bind` with `{"handle"}` or `{"name"}`,
 /// `"effector"`, and optionally `"tier_ceiling"` and `"scopes"`. A portable
 /// record's rewrap records where this request reached this install
-/// (`machine_routes::act_surface`): audit only (FIX 4650).
+/// (`machine_routes::act_surface_admitted`): audit only (FIX 4650).
 async fn bind(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<BindBody>,
 ) -> OwnerReply<BoundView> {
     let owner = owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let bound = blocking(move || -> OwnerResult<BoundView> {
         let request = SecretBindRequest {
@@ -94,11 +96,13 @@ async fn bind(
 async fn unbind(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<UnbindBody>,
 ) -> OwnerReply<BoundView> {
     let owner = owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let unbound = blocking(move || -> OwnerResult<BoundView> {
         let target = secret_bindings::target(body.handle, body.name)?;

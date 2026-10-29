@@ -22,7 +22,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::ActAuthority;
@@ -185,11 +185,13 @@ async fn list(
 async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<WorldPrivacySetInput>,
 ) -> OwnerReply<WorldPrivacyOutcome> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<WorldPrivacyOutcome> {
         let (world, settings, seen) = body.parse()?;
@@ -210,10 +212,11 @@ async fn set(
 async fn accept(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WorldPrivacyAnswer> {
-    answer(auth, headers, server, payload, true).await
+    answer(auth, headers, &extensions, server, payload, true).await
 }
 
 /// `POST /v1/owner/worlds/privacy/{proposals/decline,asks/decline}`: the
@@ -221,21 +224,23 @@ async fn accept(
 async fn decline(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WorldPrivacyAnswer> {
-    answer(auth, headers, server, payload, false).await
+    answer(auth, headers, &extensions, server, payload, false).await
 }
 
 async fn answer(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: &Extensions,
     server: Arc<SyncServer>,
     payload: OwnerJsonBody<AnswerRequest>,
     yes: bool,
 ) -> OwnerReply<WorldPrivacyAnswer> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface = super::machine_routes::act_surface_admitted(&server, &auth, &headers, extensions);
     let body = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<WorldPrivacyAnswer> {
         let request = entity_id("request", &body.request)?;
@@ -252,11 +257,13 @@ async fn answer(
 async fn undo(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<UndoChange>,
 ) -> OwnerReply<WorldPrivacyReceipt> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         Ok(server

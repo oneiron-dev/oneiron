@@ -42,7 +42,7 @@ pub(crate) async fn resolve_mcp_caller(
 ) -> Result<McpCallContext, McpGatewayError> {
     let attested = crate::auth::attested_owner(connection, server);
     let Some(owner) = attested.or_else(|| session_owner(connection, server)) else {
-        return resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
+        return resolve_mcp_gateway_actor(mode, request_id, headers, connection, locality, server)
             .await
             .map(|context| with_admitted_proof(context, connection));
     };
@@ -61,9 +61,10 @@ pub(crate) async fn resolve_mcp_caller(
         };
         return managed_owner_context(mode, request_id, headers, owner, auth, server);
     }
-    let context = resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
-        .await
-        .map(|context| with_admitted_proof(context, connection))?;
+    let context =
+        resolve_mcp_gateway_actor(mode, request_id, headers, connection, locality, server)
+            .await
+            .map(|context| with_admitted_proof(context, connection))?;
     let principal = context
         .actor
         .auth

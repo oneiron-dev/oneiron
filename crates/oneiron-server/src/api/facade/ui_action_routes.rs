@@ -328,7 +328,8 @@ async fn dispatch_tool(
     validated: GeneratedUiValidatedAction,
     key: String,
 ) -> (Result<serde_json::Value, FacadeApiError>, CallStamp) {
-    let (bound, key) = match tool_bound(server, auth, held, &headers, &validated, key) {
+    let (bound, key) = match tool_bound(server, auth, held, &headers, &extensions, &validated, key)
+    {
         Ok(bound) => bound,
         Err(refused) => return (Err(refused), CallStamp::Unrecorded),
     };
@@ -352,6 +353,7 @@ fn tool_bound(
     auth: &CoreAuth,
     held: &Arc<HeldCard>,
     headers: &HeaderMap,
+    extensions: &Extensions,
     validated: &GeneratedUiValidatedAction,
     key: String,
 ) -> Result<(ActionBound, String), FacadeApiError> {
@@ -362,7 +364,9 @@ fn tool_bound(
     }
     // The owner act records where this request's own headers say he spoke
     // from (FIX 4625).
-    let surface = crate::api::owner_routes::machine_routes::act_surface(server, auth, headers);
+    let surface = crate::api::owner_routes::machine_routes::act_surface_admitted(
+        server, auth, headers, extensions,
+    );
     let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",

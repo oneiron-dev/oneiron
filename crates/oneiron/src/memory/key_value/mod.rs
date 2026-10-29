@@ -154,12 +154,61 @@ impl Memory<'_> {
         Some(value)
     }
 
+    /// The keyed heads a handle bound to a read credential reads (OF-172
+    /// D2), judged in one lane read over the heads one snapshot lists. It
+    /// runs before the caller's own snapshot opens, as the lane opens its
+    /// own and LMDB allows one per thread; a head written between the two
+    /// is not in the set, so it reads as withheld. `None` for a handle bound
+    /// to no credential, which reads no extra snapshot.
+    fn key_value_readable(&self) -> MemoryResult<Option<BTreeSet<EntityId>>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        let ids: Vec<EntityId> = {
+            let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+            self.key_value_candidates(&txn)?
+                .into_iter()
+                .map(|(_, id, _)| id)
+                .collect()
+        };
+        self.credential_readable_ids(&ids)
+    }
+
+    /// The bound actor/class's live keyed heads, by address. With
+    /// `readable` (a credential-bound handle's [`Self::key_value_readable`]),
+    /// only the heads in it: a withheld head is skipped as absent before any
+    /// conflict check, so it never errors, and a key whose head is withheld
+    /// reads as absent, with no fall back to an older head.
     fn key_value_rows(
         &self,
         txn: &heed::RoTxn<'_>,
+        readable: Option<&BTreeSet<EntityId>>,
     ) -> MemoryResult<BTreeMap<KeyValueAddress, (EntityId, StoredValue)>> {
-        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        let mut candidates = self.key_value_candidates(txn)?;
+        // A credential-bound reader sees only the rows its read lane admits,
+        // before any conflict check, count or page: a withheld head takes no
+        // place.
+        if let Some(readable) = readable {
+            candidates.retain(|(_, id, _)| readable.contains(id));
+        }
         let mut rows = BTreeMap::new();
+        for (address, id, value) in candidates {
+            // Sync or a generic claim writer may create competing heads. Do
+            // not invent a winner or silently delete one on the next write.
+            if rows.insert(address, (id, value)).is_some() {
+                return Err(conflict("multiple committed heads for one actor-owned key"));
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Every live keyed head of the bound actor/class, in scan order.
+    fn key_value_candidates(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<Vec<(KeyValueAddress, EntityId, StoredValue)>> {
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
+        let mut candidates: Vec<(KeyValueAddress, EntityId, StoredValue)> = Vec::new();
         // Existing indexed scan has a hard work ceiling and fails loudly on
         // overflow. Never truncate it into a false negative or a partial page.
         for id in self.vault.claims_for_subject_in_txn(txn, &self.actor)? {
@@ -197,13 +246,9 @@ impl Memory<'_> {
                 namespace: value.namespace.clone(),
                 key: value.key.clone(),
             };
-            // Sync or a generic claim writer may create competing heads. Do
-            // not invent a winner or silently delete one on the next write.
-            if rows.insert(address, (id, value)).is_some() {
-                return Err(conflict("multiple committed heads for one actor-owned key"));
-            }
+            candidates.push((address, id, value));
         }
-        Ok(rows)
+        Ok(candidates)
     }
 
     fn key_value_item(
@@ -231,8 +276,9 @@ impl Memory<'_> {
     /// Exact get in the bound actor/class's worldless namespace.
     pub fn key_value_get(&self, address: &KeyValueAddress) -> MemoryResult<Option<KeyValueItem>> {
         check_address(address)?;
+        let readable = self.key_value_readable()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.key_value_rows(&txn)?
+        self.key_value_rows(&txn, readable.as_ref())?
             .remove(address)
             .map(|(id, value)| self.key_value_item(&txn, id, value))
             .transpose()
@@ -260,8 +306,9 @@ impl Memory<'_> {
                 ));
             }
         }
+        let readable = self.key_value_readable()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.key_value_rows(&txn)?
+        self.key_value_rows(&txn, readable.as_ref())?
             .into_iter()
             .filter(|(address, (_, value))| {
                 address.namespace.starts_with(&request.namespace_prefix)
@@ -291,9 +338,10 @@ impl Memory<'_> {
                 "max_depth must be between 1 and 32",
             ));
         }
+        let readable = self.key_value_readable()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let namespaces: BTreeSet<_> = self
-            .key_value_rows(&txn)?
+            .key_value_rows(&txn, readable.as_ref())?
             .into_keys()
             .map(|address| address.namespace)
             .filter(|ns| ns.starts_with(&request.prefix) && ns.ends_with(&request.suffix))

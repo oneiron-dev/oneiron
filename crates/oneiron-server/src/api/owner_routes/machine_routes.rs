@@ -42,18 +42,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 /// receipts only: no rule reads it. The hosted console behind his
 /// supervisor's `ManagedOwnerAction`; a linked machine that proved itself on
 /// this very request; else this install's own surface (its host action, its
-/// CLI or its app).
-pub(crate) fn act_surface(server: &SyncServer, auth: &CoreAuth, headers: &HeaderMap) -> ActSurface {
-    surface_of(server, auth, || {
-        crate::auth::required_machine_proof(headers).ok()
-    })
-}
-
-/// [`act_surface`] on a request whose `extensions` may hold the caller the
-/// binding door admitted (FIX 6160): the machine proof that door kept for
-/// this caller's slip, never read from the headers again, where it kept
-/// one; the headers' as [`act_surface`] reads them on any other request.
-/// A missing or malformed proof is this install, as there.
+/// CLI or its app). The machine proof is the one the binding door kept for
+/// this caller's slip in `extensions` (FIX 6160), never read from the
+/// headers again, where it kept one; the headers' on any other request
+/// (FIX 6340: every door reads it here). A missing or malformed proof is
+/// this install.
 pub(crate) fn act_surface_admitted(
     server: &SyncServer,
     auth: &CoreAuth,

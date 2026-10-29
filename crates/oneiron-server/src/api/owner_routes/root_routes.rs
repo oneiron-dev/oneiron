@@ -29,7 +29,7 @@
 //!
 //! Each request answer is the request's owner work receipt (`owner_work_routes`),
 //! polled at `GET /v1/owner/owner-work/{request}`. Where he spoke from is
-//! the request's own (`machine_routes::act_surface`): audit only. The cancel
+//! the request's own (`machine_routes::act_surface_admitted`): audit only. The cancel
 //! runs its `vault.roots.requests.cancel` row's verb hooks once around the
 //! one engine operation, as the facade and MCP doors do (OF-580, FIX 5599).
 
@@ -38,14 +38,14 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{RecoveryRootId, RootChange};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::owner_work_routes::{OwnerWorkView, request_entry};
 use super::recovery_kit_target_routes::RepinView;
 use super::{OwnerReply, blocking, hooked_owner, owner};
@@ -156,11 +156,12 @@ struct PendingRootRequest {
 async fn request(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<RootRequest>,
 ) -> OwnerReply<OwnerWorkView> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<OwnerWorkView> {
         let target = entity_id("target", &body.target)?;
@@ -184,11 +185,12 @@ async fn request(
 async fn cancel(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<CancelRootRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let receipt = blocking(move || {
         hooked_row(

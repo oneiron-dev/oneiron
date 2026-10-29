@@ -142,7 +142,7 @@ pub(super) fn facade_caller_or(
 /// Where an owner's say-so on `auth` reached this install, for the act's
 /// audit record only: no admission rule reads it (owner ruling 10-19, "it
 /// doesn't matter where you said yes"). The owner doors' rule
-/// (`owner_routes::machine_routes::act_surface`) for a call that carries no
+/// (`owner_routes::machine_routes::act_surface_admitted`) for a call that carries no
 /// request headers (a held socket's, a drain's resumed call, an MCP row, a
 /// lens card's event): the hosted console for a managed vault's attested
 /// owner; the linked machine the caller's connection proved at its binding

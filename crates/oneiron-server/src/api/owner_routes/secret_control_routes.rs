@@ -24,7 +24,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use base64::Engine as _;
@@ -32,7 +32,7 @@ use oneiron::authority::{CustodyChange, CustodyRecipientPermit};
 use oneiron::secret_custody::{SealedCustodyChange, SecretCustodyStatus, SecretCustodyView};
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::owner_work_routes::OwnerWorkReceiptView;
 use super::{OwnerReply, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
@@ -63,13 +63,14 @@ async fn register_secret(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
+    extensions: Extensions,
     body: Body,
 ) -> OwnerReply<secrets::Registered> {
     let owner = owner(&auth, &server)?;
     if !has_json_content_type(&headers) {
         return Err(ApiError::bad_request("invalid JSON request body", None).into());
     }
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = secrets::RegisterSecret::read(body)
         .await
         .map_err(owner_error)?;
@@ -84,13 +85,14 @@ async fn rotate_secret(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
+    extensions: Extensions,
     body: Body,
 ) -> OwnerReply<secrets::CustodyRotated> {
     let owner = owner(&auth, &server)?;
     if !has_json_content_type(&headers) {
         return Err(ApiError::bad_request("invalid JSON request body", None).into());
     }
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = secrets::RotateSecret::read(body)
         .await
         .map_err(owner_error)?;
@@ -108,13 +110,14 @@ async fn revoke_secret(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
+    extensions: Extensions,
     body: Body,
 ) -> OwnerReply<secrets::CustodyRotated> {
     let owner = owner(&auth, &server)?;
     if !has_json_content_type(&headers) {
         return Err(ApiError::bad_request("invalid JSON request body", None).into());
     }
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let name = secrets::read_revoke(body).await.map_err(owner_error)?;
     let revoked = blocking(move || secrets::revoke(server.vault(), &owner, surface, &name)).await?;
     Ok(Json(revoked))
@@ -139,10 +142,11 @@ async fn rewrap_secret(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
+    extensions: Extensions,
     payload: OwnerJsonBody<RewrapBody>,
 ) -> OwnerReply<secrets::CustodyReply> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let reply = blocking(move || {
         let plan = secrets::custody_plan(request.holder, request.recipients)?;
@@ -295,13 +299,14 @@ async fn sealed_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
+    extensions: Extensions,
     body: Body,
 ) -> OwnerReply<secrets::CustodyReply> {
     let owner = owner(&auth, &server)?;
     if !has_json_content_type(&headers) {
         return Err(ApiError::bad_request("invalid JSON request body", None).into());
     }
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let sealed = sealed_spool::read::<SealedHead>(&server, &headers, body).await?;
     let reply = blocking(move || -> OwnerResult<secrets::CustodyReply> {
         // The whole request moves here, its floor claim with it, so the room

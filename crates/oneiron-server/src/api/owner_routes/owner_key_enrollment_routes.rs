@@ -20,13 +20,13 @@
 //! machine as 32 hex, a key as 64 hex, a proof and a challenge as hex. The
 //! client supplies no owner, vault, target, `seen`, seed or signature but
 //! the new key's own. Where he spoke from is the act's audit only
-//! (`machine_routes::act_surface`).
+//! (`machine_routes::act_surface_admitted`).
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
@@ -36,7 +36,7 @@ use oneiron::authority::{
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -218,11 +218,12 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn challenge(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<ChallengeRequest>,
 ) -> OwnerReply<ChallengeReply> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ChallengeReply> {
         let machine = entity_id("machine", &body.machine)?;
@@ -245,11 +246,12 @@ async fn challenge(
 async fn enroll(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<EnrollRequest>,
 ) -> OwnerReply<ReceiptReply> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ReceiptReply> {
         let input = OwnerKeyEnrollment {

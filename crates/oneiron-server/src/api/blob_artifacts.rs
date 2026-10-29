@@ -339,9 +339,13 @@ pub(super) async fn create(
         run_ref: request.run_ref,
         made_by,
     };
-    if let Some(bound) =
-        super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)?
-        && bound.writes_as() == actor
+    if let Some(bound) = super::facade::action_routes::rest_action_bound(
+        &server,
+        &auth,
+        &headers,
+        &extensions,
+        &input,
+    )? && bound.writes_as() == actor
     {
         let row = AgentVerb::VaultArtifactsCreate;
         let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
