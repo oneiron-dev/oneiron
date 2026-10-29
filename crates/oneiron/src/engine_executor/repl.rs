@@ -300,8 +300,8 @@ impl EngineNativeExecutor<'_> {
                 Err(err) => {
                     // A cancelled root fails the step: the bridge rows it
                     // left stay recorded, and no wait it reached hides that.
-                    let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let callable_rows = host.result_rows();
+                    let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
                     if !bridge_calls.is_empty()
@@ -341,8 +341,8 @@ impl EngineNativeExecutor<'_> {
                 // The guest saw a typed Denied/Failed response (budget
                 // attached) at the chokepoint; the STEP still fails with
                 // the original error after persisting the bridge rows.
-                let durable_wait = host.durable_wait;
                 let callable_rows = host.result_rows();
+                let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
                 let captured = host.captured;
                 if let Some(status) = self.persist_failed_step_after_bridge_calls(
@@ -379,8 +379,8 @@ impl EngineNativeExecutor<'_> {
             let (bodies, runtime_output_paths) = match step_bodies {
                 Ok(found) => found,
                 Err(err) => {
-                    let durable_wait = host.durable_wait;
                     let callable_rows = host.result_rows();
+                    let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
                     if !bridge_calls.is_empty()
