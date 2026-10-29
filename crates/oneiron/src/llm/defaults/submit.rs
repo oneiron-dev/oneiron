@@ -126,15 +126,21 @@ impl Vault {
                 Err(_) => StoredDefaults::Text(String::from_utf8_lossy(&bytes).into_owned()),
             },
         };
-        record_policy_setting_act_in_txn(
+        let signed = record_policy_setting_act_in_txn(
             self,
             txn,
             PolicySetting::InferenceDefaults,
             actor,
             surface,
             &prior,
+            table,
         )?;
-        POLICY.put(&self.store, txn, &(), table)
+        POLICY.put(&self.store, txn, &(), table)?;
+        // The signed record goes last, best effort (FIX 4624).
+        if let Some(act) = signed {
+            self.record_policy_setting_op_in_txn(txn, act);
+        }
+        Ok(())
     }
 
     /// Replaces the inference defaults with `table` when `submitter` holds

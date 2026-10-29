@@ -3050,6 +3050,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/carried_act.rs",
+     "purpose": "The signed half of the owner's setting and export doors (FIX 4624, FIX 5660): an act a door already applied…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CausalWriteDisposition"
      ],
@@ -3442,6 +3452,16 @@
      "purpose": "The per-entry consent and retired-op predicates; `entry_transition` re-exports them",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/export_act.rs",
+     "purpose": "Folds the owner's signed whole-vault exports (FIX 4624): audit only",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -4163,7 +4183,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "re-export": 66
      }
     },
@@ -4203,7 +4223,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -4218,7 +4238,7 @@
      "path": "src/authority/owner_choice.rs",
      "purpose": "The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "struct": 1
      }
     },
@@ -4340,6 +4360,16 @@
      "purpose": "This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1)",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/policy_setting_choice.rs",
+     "purpose": "Folds every signed act on a vault setting (FIX 4624, FIX 5660): the owner's dreamer wake policy and…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -26424,7 +26454,7 @@
      "purpose": "The owner's free-time doors (FIX 4453): one agent's policy with its revision, or Disabled; its cycles, a…",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 14
      }
     },
@@ -26512,7 +26542,7 @@
      "purpose": "The owner's free-time policy for one agent (FIX 4453): the total budget one cycle may spend, the cycle's…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 3,
       "struct": 4
@@ -33617,7 +33647,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -46294,7 +46324,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/memory/witness/program/validation.rs",
+     "path": "src/memory/witness/program/provenance.rs",
      "purpose": "Witness provenance checks and the overlay landing's receipt",
      "surface": {
       "crate-vis": 3
@@ -53431,12 +53461,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "InferenceDefaultsReplaceRequest",
       "PolicyActionOutcome",
-      "PolicySetting",
       "PolicySettingActReceipt",
       "WakePolicySetRequest"
      ],
@@ -53444,8 +53473,8 @@
      "purpose": "The app's policy actions as host verbs (OF-181)",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
-      "fn": 11,
+      "fn": 9,
+      "re-export": 1,
       "struct": 4
      }
     },
@@ -54990,6 +55019,16 @@
      "purpose": "An owner's agent Grant act in the audit (FIX 5628): a mint is a grant and a revoke a revoke",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/receipt/authority_audit/carried_act.rs",
+     "purpose": "An act on a vault setting and an owner's whole-vault export in the audit (FIX 4624, FIX 5660)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -80565,7 +80604,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 221,
+     "files": 224,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81477,7 +81516,7 @@
     "policy_setting_doors": {
      "files": 1,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The app's policy actions as host verbs (OF-181)"
     },
@@ -81552,7 +81591,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82037,7 +82076,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5469,
+   "source_files": 5473,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82249,6 +82288,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExportActRecord"
+     ],
+     "path": "src/authority/export_act.rs",
+     "purpose": "The owner's whole-vault export as a signed owner act (FIX 4624), and its wire codec",
+     "surface": {
+      "const": 4,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -82385,7 +82439,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 30
+      "re-export": 32
      }
     },
     {
@@ -82540,6 +82594,23 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicySetting",
+      "PolicySettingSet"
+     ],
+     "path": "src/authority/policy_setting.rs",
+     "purpose": "The owner's act on a vault setting as a signed op (FIX 4624, FIX 5660), and its wire codec",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -82845,7 +82916,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 37,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82875,7 +82946,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 48,
+   "source_files": 50,
    "test_files": 1
   },
   "oneiron-bench": {

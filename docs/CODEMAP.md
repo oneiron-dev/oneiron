@@ -14,9 +14,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5469 | 902 | 116 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5473 | 902 | 116 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
-| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 48 | 1 | 0 |
+| [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 50 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 145 | 18 | 0 |
 | [oneiron-broker](codemap/oneiron-broker.md) | The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`) | 16 | 5 | 0 |
 | [oneiron-browser](codemap/oneiron-browser.md) | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) | 81 | 0 | 0 |
@@ -70,7 +70,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `anchored_annotation` | dir | 17 | m | yes | ARTL-2 (OF-368 D2/D3/D4): anchored-comment threads over versioned blob artifacts, plus thread → task-brief… |
 | `artifact_hosting` | dir | 13 | m | yes | Local artifact hosting over pinned code snapshots and blob exports |
 | `attempt_queue` | dir | 59 | m | yes | Generic LMDB-backed background attempt queue |
-| `authority` | dir | 221 | L | yes | AUTHORITY_LOG record substrate |
+| `authority` | dir | 224 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 24 | m | — | Engine-side AR-3 campaign reports and read-only experiment selection |
 | `batch` | dir | 153 | L | yes | — |
 | `blob_artifact` | dir | 71 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
@@ -200,7 +200,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `persona_snapshot` | dir | 9 | m | yes | OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A) |
 | `pipeline` | dir | 66 | L | — | — |
 | `policy_model` | dir | 58 | m | yes | Policy classification over two planes |
-| `policy_setting_doors` | file | 1 | s | yes | The app's policy actions as host verbs (OF-181) |
+| `policy_setting_doors` | file | 1 | m | yes | The app's policy actions as host verbs (OF-181) |
 | `ports` | dir | 49 | m | yes | Transaction-composable storage ports |
 | `posterior` | file | 1 | s | — | Shared Beta posterior bandit seam |
 | `ppr` | dir | 9 | m | — | — |
@@ -211,7 +211,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `psych_profile` | dir | 8 | m | — | PsychProfile snapshot record substrate |
 | `query_expansion` | file+dir | 2 | s | — | Host-injected HyDE query-expansion seam |
 | `reaction` | dir | 18 | m | yes | Message reactions as `conversation.reaction` claims (OF-372) |
-| `receipt` | dir | 35 | m | yes | Unified receipt-family query surface over existing receipt emitters |
+| `receipt` | dir | 36 | m | yes | Unified receipt-family query surface over existing receipt emitters |
 | `recovery` | file+dir | 104 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `registry` | dir | 9 | m | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `repo_mutation` | dir | 48 | m | yes | Queued repository mutations, recovery snapshots and reviewed proposals |
@@ -292,7 +292,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `authority` | dir | 37 | m | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `authority` | dir | 39 | m | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
 | `credential_door` | file | 1 | s | Credential-door bounds the authority log's slip checks share with the door itself |
 | `federation` | dir | 8 | m | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
 | `share_travel` | file | 1 | s | The values of what travels with a body when it leaves the vault (OF-491): the text fields born with a body… |

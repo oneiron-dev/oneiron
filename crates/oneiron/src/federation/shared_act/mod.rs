@@ -206,6 +206,12 @@ pub struct SharedActExecutionReceipt {
     /// receipt back. `None` when nothing was signed: a membership change, or
     /// an act run with no slip issuer.
     pub authority_entry: Option<String>,
+    /// The person who authorized the change, PERSON hex, when the writer
+    /// holds one apart from its actor: the attested account owner of a
+    /// managed vault's proof-of-control recovery, as its signed handover
+    /// names him (FIX 5401). `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorizer: Option<String>,
     pub completed_at: u64,
 }
 
@@ -626,6 +632,7 @@ impl Vault {
         effect: Effect,
         export: Option<SharedActExport>,
         authority_entry: Option<crate::authority::AuthorityEntryHash>,
+        authorizer: Option<EntityId>,
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
         let (act_id, request_id) = act.unzip();
@@ -646,6 +653,7 @@ impl Vault {
             authority_entry: authority_entry
                 .as_ref()
                 .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
+            authorizer: authorizer.as_ref().map(EntityId::to_hex),
             completed_at: now,
         };
         self.store
