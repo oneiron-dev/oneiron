@@ -4,12 +4,57 @@
 
 use super::driver::EngineNativeExecutor;
 use super::types::EngineExecutorConfig;
-use crate::LlmRequest;
 use crate::code_run::{
     CapsuleHost, CodeRunReplayRecord, ExecutorStorage, StepCapture, StepStartCapture, capture_step,
 };
+use crate::{EntityId, LlmRequest};
 
 impl EngineNativeExecutor<'_> {
+    /// The complete rows this step's request was read from, or `None` when
+    /// any constituent lacks a witness (FIX 6999). The host-built task and
+    /// browser-handoff evidence stay unknown today; the other sets are real
+    /// witnesses, ready for their later carriers to complete the union.
+    pub(super) fn step_source_rows(
+        &self,
+        config: &EngineExecutorConfig,
+        record: &CodeRunReplayRecord,
+    ) -> Option<Vec<EntityId>> {
+        // Engine 03:58: claimed.task plus executor_config is host-built, not
+        // source-free. Skill additions do not witness the host text itself.
+        let host_task_rows: Option<Vec<EntityId>> = None;
+        let exposure_rows = if self.gated_write.run_write_token().is_none() {
+            Some(Vec::new())
+        } else {
+            self.gated_write
+                .replay_capture()
+                .and_then(|(attempt, _, exposures)| {
+                    (attempt.as_bytes() == config.run_id.as_bytes()).then(|| {
+                        exposures
+                            .iter()
+                            .map(|exposure| exposure.skill)
+                            .collect::<Vec<_>>()
+                    })
+                })
+        };
+        let bridge_rows = crate::code_run::resident_tool_answer_rows(record, None);
+        let epoch_rows = self.compaction_epochs(config.run_id).ok().map(|frames| {
+            frames
+                .epochs
+                .iter()
+                .map(|(row, _)| row.summary_id())
+                .collect::<Vec<_>>()
+        });
+        // Browser planner handoff evidence has no row witness yet (FIX 6999).
+        let browser_rows: Option<Vec<EntityId>> = None;
+        crate::skill_optimize::union_source_rows([
+            host_task_rows,
+            exposure_rows,
+            bridge_rows,
+            epoch_rows,
+            browser_rows,
+        ])
+    }
+
     /// Captures `request` before it is sent, with `record`, the run's row as
     /// it stands before the step, and the config and teaching fingerprint it
     /// runs under, when the run is a leased attempt's own canonical run (the
