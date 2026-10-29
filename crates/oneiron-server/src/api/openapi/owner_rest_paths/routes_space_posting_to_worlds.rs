@@ -14,8 +14,9 @@ use crate::api::owner_routes::space_posting_routes::{
 };
 use crate::api::owner_routes::steer_routes::{steer_body_schema, steer_receipt_schema};
 use crate::api::owner_routes::vault_key_routes::{
-    escrow_retirement_schema, remove_wrap_body_schema, retire_escrow_body_schema,
-    wrap_removed_schema,
+    add_passkey_body_schema, escrow_retirement_schema, remove_wrap_body_schema,
+    retire_escrow_body_schema, set_password_body_schema, unlock_body_schema,
+    vault_key_report_schema, vault_key_wrap_info_schema, wrap_removed_schema,
 };
 use crate::api::owner_routes::weave_routes::{
     clear_weave_schedule_body_schema, set_weave_schedule_body_schema,
@@ -75,6 +76,37 @@ pub(super) fn merge(spec: &mut Value) {
         "post",
         retire_escrow_body_schema(),
         escrow_retirement_schema(),
+        &[],
+    );
+    super::bind_answer(
+        spec,
+        "/v1/owner/vault-key/device",
+        "post",
+        vault_key_wrap_info_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/vault-key/password",
+        "post",
+        set_password_body_schema(),
+        vault_key_wrap_info_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/vault-key/passkeys",
+        "post",
+        add_passkey_body_schema(),
+        vault_key_wrap_info_schema(),
+        &[],
+    );
+    super::bind(
+        spec,
+        "/v1/owner/vault-key/unlock",
+        "post",
+        unlock_body_schema(),
+        vault_key_report_schema(),
         &[],
     );
     super::bind(
