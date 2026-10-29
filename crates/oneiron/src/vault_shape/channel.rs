@@ -19,6 +19,7 @@ use crate::channel_identity_lifecycle::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
+use crate::secret_custody::resolve_secret_ref_in_txn;
 use crate::{EntityId, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -296,8 +297,8 @@ impl Vault {
     /// delegated one is already requested, so only its bind asks again).
     /// `sources` lists the identity once a writer wrote it, beside the
     /// ledger receipt and beside a refusal after that write; a delegated
-    /// one's custody record is resolved by name inside its writer, so its
-    /// rows are unknown.
+    /// one's also lists the custody record its provision and its bind read
+    /// by name (FIX 3687).
     #[expect(clippy::too_many_arguments, reason = "one landing's plain inputs")]
     fn provision_shape_channel(
         &self,
@@ -358,9 +359,8 @@ impl Vault {
                 custody_record_ref,
                 scopes,
             } => {
-                sources.unknown();
                 if held.is_none() {
-                    self.provision_delegated_identity(
+                    self.provision_delegated_shape_identity(
                         &identity_id,
                         DelegatedProvisionRequest {
                             channel: channel.to_owned(),
@@ -372,13 +372,19 @@ impl Vault {
                             ),
                         },
                         now,
+                        sources,
                     )?;
                 }
+                // The bind proves custody again in its own writer, by the
+                // record's name: it reads the identity and that record.
+                let bound = ask(request(ChannelIdentityLifecycleIntent::Bind(BindIntent {
+                    identity_id,
+                    fulfillment_mode,
+                })));
+                sources.list(identity_id);
+                sources.list_read(self.custody_record_named(custody_record_ref));
                 (
-                    ask(request(ChannelIdentityLifecycleIntent::Bind(BindIntent {
-                        identity_id,
-                        fulfillment_mode,
-                    })))?,
+                    bound?,
                     format!("; identity {} waits requested", identity_id.to_hex()),
                 )
             }
@@ -408,5 +414,35 @@ impl Vault {
             result.owner_visible_state,
             result.held_approval_note()
         )))
+    }
+
+    /// Stands up the requested delegated identity `id` through the
+    /// delegated door ([`Vault::provision_delegated_identity`]'s own
+    /// transaction, its custody check unchanged), first reading in that
+    /// writer the custody record the grant names, as the check then reads
+    /// it: `sources` lists that record, also beside the check's refusal, and
+    /// the identity once the writer commits (FIX 3687).
+    fn provision_delegated_shape_identity(
+        &self,
+        id: &EntityId,
+        request: DelegatedProvisionRequest,
+        requested_at: u64,
+        sources: &mut ShapeSources,
+    ) -> Result<()> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let name = &request.grant.custody_record_ref;
+        if let Some(record) = resolve_secret_ref_in_txn(&self.store, &wtxn, name)? {
+            sources.list(record);
+        }
+        self.provision_delegated_identity_in_txn(&mut wtxn, id, request, requested_at)?;
+        wtxn.commit()?;
+        sources.list(*id);
+        Ok(())
+    }
+
+    /// The custody record the secret name `name` names now, for a listing.
+    fn custody_record_named(&self, name: &str) -> Result<Option<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        resolve_secret_ref_in_txn(&self.store, &txn, name)
     }
 }

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1247 code-mode rows (1207 host rows, 40 run rows), 4378 declarations.
+// Census: 1247 code-mode rows (1207 host rows, 40 run rows), 4379 declarations.
 // Replies: 1064 fully typed, 182 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
@@ -2190,7 +2190,8 @@ declare namespace Sdk {
   type PolicyActionOutcome = { outcome: unknown };
   type InferenceDefaultsReplaceRequest = { defaults: unknown; idempotency_key: string };
   type LensSlot = { pack_name: string; skill_id: string };
-  type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string; trigger?: MadeByTrigger | null };
+  type LensScope = { world?: string | null; facet?: string | null };
+  type LensProposeRequest = { slot: LensSlot; pack_content_hash: string; compiled: unknown; intent_prompt: string; trigger?: MadeByTrigger | null; scope?: LensScope | null };
   type LensApproval = "proposed";
   type LensProposalReceipt = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; approval: LensApproval; proposed_by: string; proposed_at: number };
   type LensActivateRequest = { lens_ref: string; compiled_hash: string; expected_active_ref?: string | null };
@@ -6223,9 +6224,9 @@ declare const vault: Sdk.VaultHost & {
     default(input: Sdk.LensDefaultRequest): Promise<Sdk.ScopedReadResult<Sdk.LensFrameCard> | StoredResult>;
     /** Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt. */
     export_pack(input: Sdk.LensPackExportRequest): Promise<Sdk.LensPackExport | StoredResult>;
-    /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
+    /** One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree. */
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
-    /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
+    /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.LensProposalReceipt | StoredResult>;
     /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
     resolve(input: Sdk.LensSelectionResolveRequest): Promise<Sdk.LensSelectionResolved | StoredResult>;

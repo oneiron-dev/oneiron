@@ -2274,13 +2274,13 @@ class Oneiron:
             """The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first."""
     class _VaultLensesVerbs:
         def propose(self, spec: Facade.LensProposeRequest) -> Facade.LensProposalReceipt:
-            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."""
+            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."""
         def activate(self, spec: Facade.LensActivateRequest) -> Facade.LensActivationReceipt:
             """The owner selects a proposed lens revision for its pack slot."""
         def deactivate(self, spec: Facade.LensDeactivateRequest) -> Facade.LensActivationReceipt:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
+            """One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree."""
         def export_pack(self, spec: Facade.LensPackExportRequest) -> Facade.LensPackExport:
             """Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."""
         def select(self, spec: Facade.LensSelectRequest) -> Facade.LensSelection:
