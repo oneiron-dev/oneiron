@@ -36,6 +36,7 @@ mod seed;
 mod shared_setup;
 mod skill;
 mod visibility;
+mod world_facet;
 
 pub use apply::{
     ShapeApplier, ShapeApplyItem, ShapeApplyReceipt, ShapeApplyRequest, ShapeItemState,
@@ -134,6 +135,10 @@ pub enum ShapeRow {
     /// A facet (ARCH-0022): a named mask a person (entity id hex) wears.
     /// A mask grants nothing; a missing one is created.
     Facet { person: String, name: String },
+    /// A facet inside a world (FIX 2297): a named scope the world, by the
+    /// name its row reads, holds and no one wears. It grants nothing; a
+    /// missing one is created.
+    WorldFacet { world: String, name: String },
     /// An installed pack, by name, optionally pinned to a version.
     Pack {
         name: String,
@@ -205,6 +210,7 @@ pub enum ShapeTarget {
     Member { member: String },
     World { name: String },
     Facet { person: String, name: String },
+    WorldFacet { world: String, name: String },
     Pack { name: String },
     Actor { agent_id: String },
     Skill { skill_id: String },
@@ -222,7 +228,7 @@ impl ShapeTarget {
             Self::Shared => 0,
             Self::Member { .. } => 1,
             Self::World { .. } => 2,
-            Self::Facet { .. } => 3,
+            Self::Facet { .. } | Self::WorldFacet { .. } => 3,
             Self::Pack { .. } => 4,
             Self::Actor { .. } => 5,
             Self::Skill { .. } => 6,
@@ -241,6 +247,7 @@ impl ShapeTarget {
             Self::Member { .. } => "member",
             Self::World { .. } => "world",
             Self::Facet { .. } => "facet",
+            Self::WorldFacet { .. } => "world_facet",
             Self::Pack { .. } => "pack",
             Self::Actor { .. } => "actor",
             Self::Skill { .. } => "skill",
@@ -266,6 +273,7 @@ impl ShapeTarget {
             Self::Member { member } => vec![member.as_str()],
             Self::World { name } | Self::Pack { name } => vec![name.as_str()],
             Self::Facet { person, name } => vec![person.as_str(), name.as_str()],
+            Self::WorldFacet { world, name } => vec![world.as_str(), name.as_str()],
             Self::Actor { agent_id } => vec![agent_id.as_str()],
             Self::Skill { skill_id } => vec![skill_id.as_str()],
             Self::Channel { channel, address } => vec![channel.as_str(), address.as_str()],
@@ -289,6 +297,10 @@ impl ShapeRow {
             Self::World { name } => ShapeTarget::World { name: name.clone() },
             Self::Facet { person, name } => ShapeTarget::Facet {
                 person: person.clone(),
+                name: name.clone(),
+            },
+            Self::WorldFacet { world, name } => ShapeTarget::WorldFacet {
+                world: world.clone(),
                 name: name.clone(),
             },
             Self::Pack { name, .. } => ShapeTarget::Pack { name: name.clone() },

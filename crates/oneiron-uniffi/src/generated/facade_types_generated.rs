@@ -3294,6 +3294,13 @@ pub enum ShapeTarget {
         #[serde(rename = "name")]
         name: String,
     },
+    #[serde(rename = "world_facet")]
+    WorldFacet {
+        #[serde(rename = "world")]
+        world: String,
+        #[serde(rename = "name")]
+        name: String,
+    },
     #[serde(rename = "pack")]
     Pack {
         #[serde(rename = "name")]
@@ -3366,6 +3373,13 @@ pub enum ShapeRow {
     Facet {
         #[serde(rename = "person")]
         person: String,
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "world_facet")]
+    WorldFacet {
+        #[serde(rename = "world")]
+        world: String,
         #[serde(rename = "name")]
         name: String,
     },

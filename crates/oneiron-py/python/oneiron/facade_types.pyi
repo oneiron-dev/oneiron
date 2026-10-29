@@ -1001,6 +1001,10 @@ class ShapeTargetFacet(TypedDict):
     kind: Literal["facet"]
     person: str
     name: str
+class ShapeTargetWorldFacet(TypedDict):
+    kind: Literal["world_facet"]
+    world: str
+    name: str
 class ShapeTargetPack(TypedDict):
     kind: Literal["pack"]
     name: str
@@ -1023,7 +1027,7 @@ class ShapeTargetManifest(TypedDict):
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetFacet | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetManifest | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetFacet | ShapeTargetWorldFacet | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetManifest | ShapeTargetSync
 class ShapeRowShared(TypedDict):
     kind: Literal["shared"]
     vault_id: str
@@ -1039,6 +1043,10 @@ class ShapeRowWorld(TypedDict):
 class ShapeRowFacet(TypedDict):
     kind: Literal["facet"]
     person: str
+    name: str
+class ShapeRowWorldFacet(TypedDict):
+    kind: Literal["world_facet"]
+    world: str
     name: str
 class ShapeRowPack(TypedDict):
     kind: Literal["pack"]
@@ -1075,7 +1083,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowFacet | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowManifest | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowFacet | ShapeRowWorldFacet | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowManifest | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):

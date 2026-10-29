@@ -708,9 +708,18 @@ impl Vault {
                 sources.list(facet);
                 Ok(facet.to_hex())
             }
-            (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }, _) => {
-                self.delete_shape_entity(owner, entity.ok_or_else(stale)?)
+            (ShapeChange::Create, ShapeTarget::WorldFacet { world, name }, _) => {
+                let facet = self.create_world_facet(owner, world, name, now)?;
+                sources.list(facet);
+                Ok(facet.to_hex())
             }
+            (
+                ShapeChange::Retire,
+                ShapeTarget::World { .. }
+                | ShapeTarget::Facet { .. }
+                | ShapeTarget::WorldFacet { .. },
+                _,
+            ) => self.delete_shape_entity(owner, entity.ok_or_else(stale)?),
             (
                 ShapeChange::Create,
                 ShapeTarget::Actor { agent_id },

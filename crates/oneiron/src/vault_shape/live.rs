@@ -232,13 +232,9 @@ impl Vault {
             if sources.listing() {
                 sources.list_read(crate::gate::policy_manifest_contributors(&self.store, &txn));
             }
-            let base = crate::claim::base_world_id();
-            for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_WORLD)? {
-                if id == base || crate::entity_id::is_foreign_world_id_range(id) {
-                    continue;
-                }
-                let name = world_name(&body).unwrap_or_else(|| id.to_hex());
-                rows.push((ShapeRow::World { name }, Some(id)));
+            let worlds = self.local_worlds_in_txn(&txn)?;
+            for (id, name) in &worlds {
+                rows.push((ShapeRow::World { name: name.clone() }, Some(*id)));
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_FACET)? {
                 let name = facet_name(&body).unwrap_or_else(|| id.to_hex());
@@ -259,6 +255,12 @@ impl Vault {
                         },
                         Some(id),
                     ));
+                } else if wearers.is_empty()
+                    && let Some(world) = self.facet_world_in_txn(&txn, &id, &worlds)?
+                {
+                    // A facet no one wears, joined to one live world, is
+                    // that world's (FIX 2297).
+                    rows.push((ShapeRow::WorldFacet { world, name }, Some(id)));
                 }
             }
             if let Some(shared) = self.shared_vault_creation_in_txn(&txn)? {

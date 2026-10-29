@@ -162,8 +162,11 @@ fn classify(
                 Receipted
             }
         }
-        // A world or a mask grants nothing.
-        (_, Some(ShapeRow::World { .. } | ShapeRow::Facet { .. })) => Receipted,
+        // A world, a mask or a world's facet grants nothing.
+        (
+            _,
+            Some(ShapeRow::World { .. } | ShapeRow::Facet { .. } | ShapeRow::WorldFacet { .. }),
+        ) => Receipted,
         (None, Some(ShapeRow::Actor { ceiling, .. })) => match ceiling {
             ShapeCeiling::Auto => Widening,
             ShapeCeiling::Proposed => Receipted,
@@ -207,10 +210,12 @@ fn door(
         (ShapeChange::Retire, ShapeTarget::Member { .. }) => Some("remove_shared_member"),
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
         (ShapeChange::Create, ShapeTarget::Facet { .. }) => Some("create_facet"),
-        // A retired world or mask is deleted, never erased: its keys stay.
-        (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }) => {
-            Some("delete_entity")
-        }
+        (ShapeChange::Create, ShapeTarget::WorldFacet { .. }) => Some("create_world_facet"),
+        // A retired world or facet is deleted, never erased: its keys stay.
+        (
+            ShapeChange::Retire,
+            ShapeTarget::World { .. } | ShapeTarget::Facet { .. } | ShapeTarget::WorldFacet { .. },
+        ) => Some("delete_entity"),
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
             Some("update_agent_definition_as")
