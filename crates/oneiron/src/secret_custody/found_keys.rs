@@ -17,8 +17,8 @@
 //! - **grant**: a standing reveal grant for the key's class to one agent
 //!   (the 2a bound: that connection × that class × a project);
 //! - **not a secret**: the owner overrules the scan. A masked span in a
-//!   record's body gets its value back, a file's mark drops the key, and the
-//!   custody record is revoked. The value stays a kept value of that record
+//!   record's body or text field gets its value back, a file's mark drops
+//!   the key, and the custody record is revoked. The value stays a kept value of that record
 //!   ([`KeptValues`]): the write door no longer reads it as a hit there.
 //!
 //! A batch that masks many keys in one record raises one notice for it. The
