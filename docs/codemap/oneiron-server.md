@@ -336,7 +336,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
 | `src/api/facade/grants_doors.rs` | src | s | 2 crate-vis | — | `self.grants.answer` (FIX 1379): an access request answered by the vault owner, or by the person or agent it… |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 13 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
-| `src/api/facade/graph_ask_doors/question_answers.rs` | src | s | 1 crate-vis | — | `vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader ([`question_answers`]), as the… |
+| `src/api/facade/graph_ask_doors/question_answers.rs` | src | s | 1 crate-vis | — | `vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader (`question_answers`), as the… |
+| `src/api/facade/graph_ask_doors/saved_lane.rs` | src | s | 2 crate-vis | — | OF-506 (FIX 1857): a standing question saved through `vault.questions.create` or `.edit` keeps the caller's… |
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
