@@ -52,6 +52,8 @@ mod host_root;
 mod pairing;
 // FIX 10186: `vault.receipts`'s page record.
 mod receipt_page;
+// FIX 10261: a witnessed reply's typed assertions.
+mod witness_assertions;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
@@ -81,6 +83,7 @@ pub use pairing::{
     CheckpointPinTier,
 };
 pub use receipt_page::FacadeReceiptPage;
+pub use witness_assertions::WitnessAssertions;
 
 use std::sync::Arc;
 
