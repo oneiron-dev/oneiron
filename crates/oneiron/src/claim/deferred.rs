@@ -576,6 +576,7 @@ fn park(
             read_frontier_hash,
             reason_codes: vec![reason.to_owned()],
             dreamer_run_id: parker.run,
+            predicate: Some(body.predicate.clone()),
         },
     )?;
     DEFERRED.put(&vault.store, txn, id, &proposal)?;
