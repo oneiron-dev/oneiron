@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1190 facade rows, 4310 declarations.
-Inputs: 1119 of 1190 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1035 of 1190 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1191 facade rows, 4312 declarations.
+Inputs: 1120 of 1191 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1036 of 1191 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -10591,6 +10591,16 @@ class SecretRewrapRequest(TypedDict):
     name: str
     holder: NotRequired[str | None]
     recipients: list[str]
+class SecretRevokeRequest(TypedDict):
+    name: str
+class SecretRevokeReply(TypedDict):
+    receipt_id: NotRequired[str]
+    name: NotRequired[str]
+    from_generation: NotRequired[int]
+    to_generation: NotRequired[int]
+    rotated_at: NotRequired[int]
+    kind: NotRequired[str]
+    custody: SecretCustodyReply
 class SecretCustodyGetRequest(TypedDict):
     name: str
 class SecretCustodyLiveRequest(OwnerWorkReceipt):

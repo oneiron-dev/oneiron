@@ -12,7 +12,8 @@ use oneiron::persona_snapshot::{
     PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCopyRequest,
 };
 use oneiron::settings::ReadDestination;
-use oneiron::share_travel::CopyTravelChoice;
+use oneiron::share_travel::{CopyTravelChoice, effective_copy_refs};
+use oneiron::task_verb::sdk::PersonaSnapshotCopyReceipt;
 use oneiron::{ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -82,6 +83,9 @@ pub(crate) struct Exported {
     pub(crate) struck_row_ids: Vec<String>,
     pub(crate) compiled_at: String,
     pub(crate) stale_after_secs: u64,
+    /// What this copy is, by digest, and what it left out (FIX 1199), as
+    /// the facade rows answer it.
+    pub(crate) receipt: PersonaSnapshotCopyReceipt,
 }
 
 pub(crate) fn preview(
@@ -145,6 +149,11 @@ pub(crate) fn export(
         struck_row_ids: artifact.struck_row_ids,
         compiled_at: rfc3339_secs(artifact.compiled_at_secs),
         stale_after_secs: artifact.stale_after_secs,
+        receipt: PersonaSnapshotCopyReceipt {
+            refs: effective_copy_refs(request.travel.as_ref()),
+            artifact_fingerprint: artifact.artifact_fingerprint,
+            omitted_refs: artifact.omitted_refs,
+        },
     })
 }
 

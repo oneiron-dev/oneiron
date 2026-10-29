@@ -15,6 +15,7 @@ mod boundary;
 mod bridge;
 mod client;
 mod convert;
+mod custody_seal;
 mod dtos;
 mod input_error;
 mod js_json;
