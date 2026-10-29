@@ -63,9 +63,7 @@ const MIRROR_VERSION: u32 = 2;
 /// The most incarnations a mirror names: the live vault's and the one a
 /// restore over it publishes in its place.
 pub(crate) const MIRROR_CANDIDATES: usize = 2;
-/// The most a mirror file is, for its reader and its writer alike: a wrap
-/// change whose mirror would be larger is refused before it commits.
-const MIRROR_LIMIT: u64 = 1 << 20;
+// FIX 2348: the mirror has no size cap.
 /// Why a mirror with no vault beside it unlocks nothing and makes no vault.
 const ORPHANED: &str = "this vault's data is missing but its page-seal mirror is still beside it: \
      move the mirror away to create a new vault here (it may be the only copy of that vault's \
@@ -401,6 +399,31 @@ fn select_incarnation(vault_path: &Path, mirror: &Mirror, key: &VaultDataKey) ->
     if let [only] = mirror.incarnations.as_slice() {
         return Ok(*only);
     }
+    // FIX 2705: a probe open refuses while this process holds the vault, so
+    // match the held page key from OPENED instead.
+    // OPENED is keyed by the path the environment opened at: as given, or
+    // canonical.
+    let held = {
+        let opened = OPENED.lock().unwrap_or_else(PoisonError::into_inner);
+        opened.get(vault_path).cloned().or_else(|| {
+            vault_path
+                .canonicalize()
+                .ok()
+                .and_then(|canonical| opened.get(&canonical).cloned())
+        })
+    };
+    if let Some(held) = held {
+        for incarnation in &mirror.incarnations {
+            let page_key = key.derive(PAGE_KEY_CONTEXT, incarnation);
+            let diff = page_key
+                .iter()
+                .zip(held.iter())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b));
+            if diff == 0 {
+                return Ok(*incarnation);
+            }
+        }
+    }
     for incarnation in &mirror.incarnations {
         let page_key = key.derive(PAGE_KEY_CONTEXT, incarnation);
         if opens_under(vault_path, &page_key) {
@@ -467,15 +490,13 @@ pub fn page_seal_vault_id(vault_path: &Path) -> Result<[u8; 32]> {
 
 fn read_mirror(vault_path: &Path) -> Result<Mirror> {
     let path = page_seal_custody_path(vault_path)?;
-    let file = open_no_follow(&path, false)?;
+    let mut file = open_no_follow(&path, false)?;
     if !file.metadata()?.is_file() {
         return Err(refused("the page-seal mirror is not a file"));
     }
     let mut raw = Vec::new();
-    file.take(MIRROR_LIMIT + 1).read_to_end(&mut raw)?;
-    if raw.len() as u64 > MIRROR_LIMIT {
-        return Err(refused("the page-seal mirror is too large"));
-    }
+    // FIX 2348: the mirror has no size cap.
+    file.read_to_end(&mut raw)?;
     let mirror: Mirror =
         serde_json::from_slice(&raw).map_err(|_| refused("the page-seal mirror is malformed"))?;
     if mirror.version != MIRROR_VERSION {
@@ -500,11 +521,7 @@ fn write_mirror(root: &Path, mirror: &Mirror) -> Result<()> {
     let _ = dir;
     let raw =
         serde_json::to_vec(mirror).map_err(|_| refused("the page-seal mirror did not encode"))?;
-    if raw.len() as u64 > MIRROR_LIMIT {
-        return Err(refused(
-            "the page-seal mirror would pass its 1 MiB limit: remove a wrap first",
-        ));
-    }
+    // FIX 2348: the mirror has no size cap.
     let mut suffix = [0u8; 8];
     os_fill(&mut suffix)?;
     let mut temp = path.as_os_str().to_owned();
