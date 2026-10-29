@@ -105,8 +105,8 @@ impl Vault {
         // push's end: no automatic run reaches the mirror meanwhile, and the
         // push's child inherits it, so a claim is settled elsewhere only once
         // no push of it runs. Taken before the coordinator, as a run does.
-        let hold = mirror_hold_dir(&handle)?;
-        let _held = lock_repository(&hold)?;
+        let push_hold = mirror_hold_dir(&handle)?;
+        let _held = lock_repository(&push_hold)?;
         let observed = self
             .read_publish_remote(&scope.wire, &handle, &view.destination, &name)
             .map_err(|error| super::remote_tip_unknown(&view.ref_name, &error))?;
@@ -189,7 +189,7 @@ impl Vault {
             &name,
             &commit,
             expected.as_ref(),
-            &hold,
+            &push_hold,
         );
         Ok(Ok(
             self.settle_publish_push(&scope, &handle, &claimed, outcome)?
