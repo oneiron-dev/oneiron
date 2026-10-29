@@ -317,7 +317,10 @@ impl Arm {
             Err(unavailable) => return Ok(self.withheld_or(result, unavailable)),
         };
         let checked = (request.arm_id, lease, &*server);
-        let ran = match self.run_step(prepared, answer, Arc::clone(&arm), checked).await? {
+        let ran = match self
+            .run_step(prepared, answer, Arc::clone(&arm), checked)
+            .await?
+        {
             Ok(ran) => ran,
             Err(unavailable) => return Ok(self.withheld_or(result, unavailable)),
         };
@@ -374,8 +377,10 @@ impl Arm {
             .and_then(|host| host.engine_native())
             .and_then(|host| host.provider().code_check().cloned());
         let arms = Arc::downgrade(&self.arms);
-        let live: Arc<dyn Fn() -> bool + Send + Sync> =
-            Arc::new(move || arms.upgrade().is_some_and(|arms| arms.get(&lease).is_some()));
+        let live: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new(move || {
+            arms.upgrade()
+                .is_some_and(|arms| arms.get(&lease).is_some())
+        });
         let ran = tokio::task::spawn_blocking(move || {
             let Ok(mut runtime) = runtimes.as_ref()() else {
                 let resource = Reason::ResourceUnavailable {
