@@ -311,6 +311,7 @@ fn answered<T: serde::Serialize>(
     Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
         output,
         rows: Some(rows),
+        observations: Vec::new(),
     }))
 }
 

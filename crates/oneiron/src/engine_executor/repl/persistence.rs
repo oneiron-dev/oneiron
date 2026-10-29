@@ -117,6 +117,12 @@ impl EngineNativeExecutor<'_> {
         )?;
         record.bridge_calls.extend(bridge_calls);
         record.outputs.extend(captured);
+        super::super::board_frames::record_step_board_frames(
+            &self.storage,
+            record,
+            completed_steps,
+            bridge_start,
+        )?;
         record_text_output(
             &self.storage,
             record,

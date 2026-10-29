@@ -111,6 +111,7 @@ impl HostSelfDispatcher<'_> {
                 return Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
                     output,
                     rows: Some(rows),
+                    observations: Vec::new(),
                 }));
             }
             Err(refused) => SessionReadRefusal::Read(refused.code),

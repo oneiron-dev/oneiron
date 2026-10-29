@@ -819,7 +819,8 @@ impl CodeRunReplayRecord {
 /// [`CodeRunReplayRecord::agent_verb_rows`] reads them; `None` when any answer
 /// has no row set or does not decode. A consult landing's answer lists the
 /// refs it read (DOOR-063), and a bound workflow run's the TASK, workflow,
-/// definitions and attempts it served (FIX 5316).
+/// definitions and attempts it served (FIX 5316). A board frame observed
+/// beside an answer adds the rows it was derived from (FIX 2135).
 pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
     let verb_calls = calls.iter().filter(|call| {
@@ -832,7 +833,7 @@ pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<Enti
         if let SelfDispatchOutcome::AgentVerb(answer) =
             decode_self_dispatch_outcome(&call.outcome).ok()?
         {
-            rows.extend(answer.rows?);
+            rows.extend(answer.released_rows()?);
         }
         // An answer an erase took keeps the rows it was served from (FIX 5718).
         if let Some(kept) = super::wait_rows::erased_answer_rows(&call.outcome) {
@@ -847,6 +848,22 @@ pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<Enti
         );
     }
     Some(rows)
+}
+
+/// The board frames the verb answers among `calls` carried beside their
+/// outputs (FIX 2135), in call order; an answer that does not decode
+/// carried none.
+pub(crate) fn agent_verb_observations_of(
+    calls: &[CodeRunBridgeCall],
+) -> Vec<super::RunObservation> {
+    calls
+        .iter()
+        .filter_map(|call| match decode_self_dispatch_outcome(&call.outcome) {
+            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.observations),
+            _ => None,
+        })
+        .flatten()
+        .collect()
 }
 
 /// Returns the default ABI/layout checks recorded with v1 replay records.

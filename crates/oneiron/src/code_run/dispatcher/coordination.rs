@@ -549,6 +549,7 @@ impl<'a> HostSelfDispatcher<'a> {
         Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
             output,
             rows: Some(reads),
+            observations: Vec::new(),
         }))
     }
 

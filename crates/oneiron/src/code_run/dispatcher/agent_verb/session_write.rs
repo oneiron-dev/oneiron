@@ -124,6 +124,7 @@ impl HostSelfDispatcher<'_> {
                 Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
                     output: stage(wtxn, apply)?,
                     rows: Some(Vec::new()),
+                    observations: Vec::new(),
                 }))
             },
         )?;
