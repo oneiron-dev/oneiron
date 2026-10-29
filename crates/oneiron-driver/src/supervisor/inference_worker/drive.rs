@@ -3,7 +3,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::llm::{WorkerDescriptor, WorkerFailure, WorkerReadiness};
+use oneiron::llm::{
+    WorkerDescriptor, WorkerFailure, WorkerFailureDetail, WorkerPhase, WorkerReadiness,
+};
 
 use super::{
     Inner, LaunchFailure, LoadGrant, Phase, RunningWorker, WORKER_CRASH_BACKOFF_SECS, WorkerExit,
@@ -63,6 +65,24 @@ impl Inner {
         restart
     }
 
+    fn note_failure(&self, reason: &str) {
+        let mut state = self.lock();
+        let phase = match &state.phase {
+            Phase::Installing => WorkerPhase::Install,
+            Phase::Starting => WorkerPhase::Launch,
+            Phase::Qualifying => WorkerPhase::Qualify,
+            Phase::Draining | Phase::IdleStopped => WorkerPhase::Drain,
+            Phase::Ready(_) | Phase::Stopped | Phase::Backoff | Phase::Failed { .. } => {
+                WorkerPhase::Serve
+            }
+        };
+        state.failure_detail = Some(WorkerFailureDetail {
+            model: self.spec.model.clone(),
+            phase,
+            reason: reason.to_owned(),
+        });
+    }
+
     /// Parks the worker until its config changes.
     fn park(&self, readiness: WorkerReadiness, reason: String) {
         tracing::warn!(
@@ -71,6 +91,7 @@ impl Inner {
             %reason,
             "model worker parked until its config changes"
         );
+        self.note_failure(&reason);
         {
             let mut state = self.lock();
             state.phase = Phase::Failed { readiness, reason };
@@ -158,6 +179,7 @@ impl Inner {
                 .as_ref()
                 .map(|epoch| epoch.as_str().to_owned());
             state.phase = Phase::Ready(observed);
+            state.failure_detail = None;
         }
         self.mark_loaded();
         self.notify();
@@ -424,6 +446,7 @@ pub(super) async fn drive(inner: Arc<Inner>) {
                 inner.park(failed(&failure), failure.reason);
                 return;
             }
+            inner.note_failure(&failure.reason);
             tracing::warn!(%worker, reason = %failure.reason, "model worker install failed; trying again");
             if !inner.back_off(&mut attempt).await {
                 inner.finish_or_restart(Phase::Stopped);
@@ -450,6 +473,7 @@ pub(super) async fn drive(inner: Arc<Inner>) {
                     return;
                 }
                 Err(failure) => {
+                    inner.note_failure(&failure.reason);
                     tracing::warn!(%worker, reason = %failure.reason, "model worker did not start; trying again");
                     if !inner.back_off(&mut attempt).await {
                         inner.finish_or_restart(Phase::Stopped);
@@ -469,6 +493,7 @@ pub(super) async fn drive(inner: Arc<Inner>) {
                     tracing::info!(%worker, exit = %exit.description, "aborted model worker reaped");
                 }
                 Ended::Exited(exit) => {
+                    inner.note_failure(&exit.description);
                     tracing::warn!(%worker, exit = %exit.description, "model worker exited; relaunching after its backoff");
                     if !inner.back_off(&mut attempt).await {
                         inner.finish_or_restart(Phase::Stopped);

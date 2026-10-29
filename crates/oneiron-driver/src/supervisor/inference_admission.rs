@@ -200,6 +200,13 @@ pub struct ExecutorRegistration {
     pub idle: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkerQueueStatus {
+    pub queued: u64,
+    pub active: u64,
+    pub paused: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct AdmissionSnapshot {
     pub device: String,
@@ -211,6 +218,7 @@ pub struct AdmissionSnapshot {
     pub ledger: DeviceSnapshot,
     pub pressure: PressureState,
     pub executors: Vec<ExecutorRegistration>,
+    pub workers: BTreeMap<String, WorkerQueueStatus>,
 }
 
 #[derive(Debug, Clone)]

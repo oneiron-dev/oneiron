@@ -68,7 +68,7 @@ pub use self::inference_admission::{
     GrantId, LoadGrant, PRESSURE_ACTION_ORDER, PressureAction, PressureDecision, PressureState,
     QUEUE_ORDER, QueueOrder, RESIDENT_FRESHNESS, ResidentFreshness, TicketId,
     UNKNOWN_MEMORY_POLICY, UNLOAD_EXTERNAL, UNMEDIATED_SHARED_DEVICE, UnknownMemoryPolicy,
-    UnmediatedPolicy, WorkRequest, WorkTicket,
+    UnmediatedPolicy, WorkRequest, WorkTicket, WorkerQueueStatus,
 };
 pub use self::inference_device::{
     DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource,

@@ -52,6 +52,20 @@ impl DeviceAdmission {
                     && ticket.request.class == WorkClass::Background
             })
             .count() as u64;
+        let mut workers = BTreeMap::new();
+        for (id, ticket) in &state.tickets {
+            let worker = workers
+                .entry(ticket.request.worker_id.clone())
+                .or_insert_with(WorkerQueueStatus::default);
+            if is_granted(&state, *id) {
+                worker.active += 1;
+                if state.paused.contains(id) {
+                    worker.paused += 1;
+                }
+            } else if ticket_live(ticket, now) {
+                worker.queued += 1;
+            }
+        }
         AdmissionSnapshot {
             device: self.device.clone(),
             capacity_mib: self.ledger.capacity(),
@@ -62,6 +76,7 @@ impl DeviceAdmission {
             ledger: self.ledger.snapshot(),
             pressure: state.pressure.clone(),
             executors: state.executors.values().cloned().collect(),
+            workers,
         }
     }
 }

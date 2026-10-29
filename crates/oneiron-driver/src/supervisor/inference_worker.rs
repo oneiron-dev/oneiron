@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use oneiron::llm::{
-    InferenceCallReceipt, ResourceClass, WorkerDescriptor, WorkerFailure, WorkerKind,
-    WorkerReadiness, WorkerStatus,
+    InferenceCallReceipt, ResourceClass, WorkerDescriptor, WorkerFailure, WorkerFailureDetail,
+    WorkerKind, WorkerReadiness, WorkerStatus,
 };
 use tokio::sync::watch;
 
@@ -254,6 +254,8 @@ struct State {
     unload_requested: bool,
     /// The last physical call receipt and its qualifying epoch, retained after exit.
     last_receipt: Option<(String, InferenceCallReceipt)>,
+    /// The latest sanitized lifecycle failure, including prequalification failures.
+    failure_detail: Option<WorkerFailureDetail>,
 }
 
 struct Inner {
@@ -406,6 +408,7 @@ impl InferenceWorker {
             abort: None,
             unload_requested: false,
             last_receipt: None,
+            failure_detail: None,
         };
         Self {
             inner: Arc::new(Inner {
@@ -542,6 +545,12 @@ impl InferenceWorker {
                 Phase::Failed { readiness, .. } => readiness.clone(),
             }
         };
+        let queue = self.inner.admission().and_then(|admission| {
+            admission
+                .snapshot()
+                .workers
+                .remove(&self.inner.spec.worker_id)
+        });
         WorkerStatus {
             worker_id: self.inner.spec.worker_id.clone(),
             model: self.inner.spec.model.clone(),
@@ -554,6 +563,10 @@ impl InferenceWorker {
                 .last_receipt
                 .as_ref()
                 .map(|(_, receipt)| receipt.clone()),
+            failure_detail: state.failure_detail.clone(),
+            host_queued: queue.as_ref().map(|queue| queue.queued),
+            host_active: queue.as_ref().map(|queue| queue.active),
+            paused: queue.as_ref().map(|queue| queue.paused),
         }
     }
 

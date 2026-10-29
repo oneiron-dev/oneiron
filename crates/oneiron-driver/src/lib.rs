@@ -62,7 +62,7 @@ pub use supervisor::{
     UnloadOutcome, UnmediatedPolicy, WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS,
     WORKER_LIVENESS_POLL, WORKER_STOP_GRACE, WorkEnvelope, WorkRequest, WorkTicket, WorkerActivity,
     WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerProbe, WorkerProbeFuture,
-    WorkerSpec, WorkerUnavailable,
+    WorkerQueueStatus, WorkerSpec, WorkerUnavailable,
 };
 pub use supervisor::{
     AttachedPassFuture, ConsolidationExecutorFactory, LinkedShutdown, NowSeconds, PassAttachment,

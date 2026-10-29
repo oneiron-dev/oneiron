@@ -219,6 +219,26 @@ pub enum WorkerReadiness {
     },
 }
 
+/// The lifecycle phase a worker failure came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerPhase {
+    Install,
+    Launch,
+    Qualify,
+    Serve,
+    Drain,
+}
+
+/// A sanitized failure that keeps the model and phase even before
+/// qualification produced a descriptor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkerFailureDetail {
+    pub model: ModelId,
+    pub phase: WorkerPhase,
+    pub reason: String,
+}
+
 /// One worker's status: its stable config key, the engine model it serves,
 /// its mode, the physical machine it runs on when known, its readiness, and
 /// what it last reported. Not a provider's or a seat's availability.
@@ -237,6 +257,14 @@ pub struct WorkerStatus {
     pub queue_depth: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_receipt: Option<InferenceCallReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_detail: Option<WorkerFailureDetail>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_queued: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_active: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused: Option<u64>,
 }
 
 /// The receipts in a usage object: the list under [`INFERENCE_CALLS_KEY`] in
