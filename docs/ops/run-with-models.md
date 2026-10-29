@@ -2791,6 +2791,30 @@ and unmetered, and saves the host renderer's name on the judgment. Without the
 renderer, or when the render fails, the unit is read for its structure only
 and abstains. It is never refused. A unit that names both images is refused.
 
+### The owner policy notices (`[policy]`)
+
+The owner plane's policy notices (a human hold, a reword, a trusted-contact check-in) use the
+engine's generic words unless the host words them. `[policy]` sets them at each `serve` start,
+plain or managed. Every key is optional; an absent key keeps the engine's default, and with no
+`[policy]` the server runs as before:
+
+```toml
+[policy]
+owner_hold_notice = "A person reviews this before it goes out."
+owner_reword_notice = "Say it another way and send it again."
+trusted_contact_notified_notice = "Your trusted contact has your check-in."
+trusted_contact_ask_notice = "May we reach your trusted contact?"
+help_message = "Help is here if you want it."
+help_resources = [{ label = "Find help", target = "https://example.org/help" }]
+owner_setting_change_offer = { label = "Change this setting", target = "app://settings/policy" }
+owner_classifier_mode = "classify_all"   # or "pattern_gated"
+```
+
+The same words reach the content-policy doors, the trusted-contact doors, the voice loop's
+sentence safeguards and the anonymous chat. `[policy]` never sets a hosted relay's policy. A
+host that embeds the server and calls `SyncServer::with_owner_policy_config` after it is built
+keeps its own config.
+
 ## 14. Tagger tiers and the teacher's handoff
 
 A host may keep several local tagger bundles as named tiers and serve one.
