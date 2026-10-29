@@ -136,6 +136,12 @@ impl ReservationStatus {
 pub struct BudgetReservation {
     pub debits: Vec<EffectorBudgetDebit>,
     pub status: ReservationStatus,
+    /// What a preauthorizing Spend row reserved for this send stood on (FIX
+    /// 8689): the verb's declared price, whose debit is among `debits` and
+    /// stays the send's charge once it is delivered, or no price in the
+    /// row's unit. `None` when no row preauthorized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spend: Option<crate::connector_key::ConnectorSpendBasis>,
 }
 
 /// One intent's row in [`SETTLEMENT`].
@@ -194,7 +200,9 @@ fn update_settlement_in_txn(
 }
 
 /// Keeps the budget admission reserved for row `id`, in the admission's
-/// writer (FIX 7964). A charge that wrote no usage entry reserves nothing.
+/// writer (FIX 7964), with what its preauthorized spend stood on (FIX
+/// 8689). A charge that wrote no usage entry and met no preauthorizing row
+/// reserves nothing.
 ///
 /// # Errors
 /// Storage faults.
@@ -203,14 +211,16 @@ pub(crate) fn reserve_budget_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &IntentId,
     debits: Vec<EffectorBudgetDebit>,
+    spend: Option<crate::connector_key::ConnectorSpendBasis>,
 ) -> IntentLedgerResult<()> {
-    if debits.is_empty() {
+    if debits.is_empty() && spend.is_none() {
         return Ok(());
     }
     update_settlement_in_txn(vault, wtxn, id, |settlement| {
         settlement.reservation = Some(BudgetReservation {
             debits,
             status: ReservationStatus::Reserved,
+            spend,
         });
     })
 }
