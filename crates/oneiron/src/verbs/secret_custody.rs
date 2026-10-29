@@ -2,11 +2,9 @@
 //! `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
 //! `vault.secrets.custody.get` and `vault.secrets.custody.submit`. Each runs
 //! the same engine door as its `/v1/owner/secrets/*` route, with the same
-//! request fields, under the owner's proof. The replies keep the route's
-//! fields, but a rotate's receipt nests under `receipt` and the view's live
-//! requests are plain receipts. A host passes its own reading of where the
-//! request came from as the act's surface, for audit only. An embedded
-//! handle acts as this install.
+//! request and reply fields, under the owner's proof. A host passes its own
+//! reading of where the request came from as the act's surface, for audit
+//! only. An embedded handle acts as this install.
 //!
 //! A register or rotate that carries the value (`value_base64`) is the
 //! owner's explicit plaintext choice: the value reaches the custody plane
@@ -289,13 +287,13 @@ pub struct SecretRegisteredBinding {
     pub scopes: Vec<String>,
 }
 
-/// A rotate's reply: the receipt this install wrote when it rotated the
-/// record itself, and what the custody request says.
+/// A rotate's reply, as the owner route writes it: the fields of the
+/// receipt this install wrote when it rotated the record itself, beside
+/// what the custody request says.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct SecretRotateReply {
     /// Absent while another holder has the rotation to do.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(flatten)]
     pub receipt: Option<SecretRotationReceipt>,
     pub custody: SecretCustodyReply,
 }
@@ -336,9 +334,21 @@ pub struct SecretCustodyViewReply {
     pub generation: u32,
     /// The custody revision a change states as seen, as 64 hex.
     pub seen: String,
-    pub live: Vec<OwnerWorkReceipt>,
+    pub live: Vec<SecretCustodyLiveRequest>,
     pub candidates: Vec<SecretCustodyCandidateReply>,
     pub delivery: String,
+}
+
+/// One live custody request as the view shows it: its receipt, ids only,
+/// and the words for what its holder checked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretCustodyLiveRequest {
+    #[serde(flatten)]
+    pub receipt: OwnerWorkReceipt,
+    /// The text of the manifest check the receipt's result names; absent
+    /// before the result, and for any other work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_text: Option<String>,
 }
 
 /// One install a surface may offer as holder or recipient.
@@ -657,6 +667,19 @@ impl From<RotationReceipt> for SecretRotationReceipt {
     }
 }
 
+impl From<OwnerWorkReceipt> for SecretCustodyLiveRequest {
+    fn from(receipt: OwnerWorkReceipt) -> Self {
+        let manifest_text = receipt
+            .manifest_check
+            .clone()
+            .map(|check| CustodyManifestCheck::Judged(check).text());
+        Self {
+            receipt,
+            manifest_text,
+        }
+    }
+}
+
 impl From<SecretCustodyView> for SecretCustodyViewReply {
     fn from(view: SecretCustodyView) -> Self {
         Self {
@@ -669,7 +692,11 @@ impl From<SecretCustodyView> for SecretCustodyViewReply {
             status: view.status.map(|status| status.as_str().to_owned()),
             generation: view.generation,
             seen: hex(&view.seen),
-            live: view.live,
+            live: view
+                .live
+                .into_iter()
+                .map(SecretCustodyLiveRequest::from)
+                .collect(),
             candidates: view
                 .candidates
                 .into_iter()
