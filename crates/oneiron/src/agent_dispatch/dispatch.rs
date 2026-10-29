@@ -399,6 +399,9 @@ impl<'a> AgentDispatcher<'a> {
     ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
         let spawn_intent = spawn_intent_digest(&input, &spawn)?;
+        // FIX 11592: the requester the host's door named, or the parent's.
+        let requester =
+            self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
         let requested_target = input.target.agent_definition_ref()?;
         self.observe_seat(requested_target);
 
@@ -581,6 +584,7 @@ impl<'a> AgentDispatcher<'a> {
             comm,
             // OF-541: carried as asked; `spawn_intent` above never reads it.
             direct_spawn,
+            requester,
         })
     }
 

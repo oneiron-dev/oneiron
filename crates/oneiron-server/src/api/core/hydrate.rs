@@ -3,7 +3,6 @@
 use super::super::core_engine_error;
 use super::super::json_payload;
 use super::super::scoped_read_for_core_auth;
-use super::write_shape::CORE_MAX_HYDRATE_REFS;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -22,6 +21,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+mod frames;
 mod use_restricted;
 
 /// Short-id hydrate request.
@@ -356,13 +356,6 @@ pub(crate) async fn core_batch_short_id_hydrate(
     if req.refs.is_empty() {
         return Err(ApiError::bad_request("refs must not be empty", Some("refs")).into());
     }
-    if req.refs.len() > CORE_MAX_HYDRATE_REFS {
-        return Err(ApiError::bad_request(
-            format!("refs must contain at most {CORE_MAX_HYDRATE_REFS} entries"),
-            Some("refs"),
-        )
-        .into());
-    }
 
     let view = req.view.unwrap_or(View::Full);
     let reader = hydrate_reader(req.image_input, view);
@@ -384,8 +377,8 @@ pub(crate) async fn core_batch_short_id_hydrate(
         .filter_map(|item| item.as_ref().ok())
         .map(|(id, hash, mode)| oneiron::claim::PointRead::short(id, *hash).at(*mode))
         .collect();
-    let hydrated = scoped_read
-        .read_named(&valid_refs, None)
+    // FIX 11125: a batch past one frame is read frame by frame, never refused.
+    let hydrated = frames::read_named_frames(&scoped_read, &valid_refs)
         .map_err(|error| core_engine_error("batch hydrate failed", error))?;
     let narrowing = hydrated.receipt;
     // Each item starts from the bulk read's receipt; a successor an item's

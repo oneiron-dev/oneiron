@@ -329,7 +329,10 @@ pub async fn run_compaction_check(
         diagnostic,
         decision: verdict.decision,
     };
-    record(ctx.vault, attempt_id, &declaration, &settled, now)?;
+    if let Err(error) = record(ctx.vault, attempt_id, &declaration, &settled, now) {
+        verdict.spend.note_before_error(ctx);
+        return Err(error);
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: verdict.spend.units,
         step_hashes: Vec::new(),

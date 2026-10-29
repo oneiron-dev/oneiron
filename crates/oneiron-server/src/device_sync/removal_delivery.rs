@@ -12,6 +12,8 @@
 #![cfg_attr(not(feature = "mesh"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
+#[cfg(feature = "mesh")]
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::federation::RemovalExportCopy;
@@ -23,6 +25,7 @@ use tokio::task::JoinHandle;
 use super::DeviceSyncHost;
 use super::dial::Dial;
 use crate::commands::credential_file::PairedCredentialFile;
+use crate::handler::mesh::MeshHost;
 
 /// The first wait after a failed session (a call).
 const REMOVAL_DELIVERY_RETRY_FIRST: Duration = Duration::from_secs(5);
@@ -43,26 +46,42 @@ pub(super) struct Receiver {
 }
 
 impl Receiver {
-    /// The receiver for `dial`'s home, at its URL: `wss`, or `ws` to a
-    /// loopback host, as the device's own link requires off the mesh.
-    /// `None` at any other URL.
+    /// The receiver for `dial`'s home: at its URL where that URL takes one
+    /// (`wss`, or `ws` to a loopback host, as the device's own link requires
+    /// off the mesh), else over the mesh to the home machine where the link
+    /// has a mesh host (FIX 11196). `None` where neither is in reach.
     #[cfg(feature = "mesh")]
-    pub(super) fn start(dial: &Dial) -> Option<Self> {
-        super::direct(&dial.url).ok()?;
-        let base = http_base(&dial.url)?;
+    pub(super) fn start(dial: &Dial, mesh: Option<&MeshHost>) -> Option<Self> {
+        use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
+
         let credential_file = dial.credential_file.clone();
         let archives = credential_file
             .parent()
             .map_or_else(|| PathBuf::from(ARCHIVE_DIR), |dir| dir.join(ARCHIVE_DIR));
         let (stop, stopped) = oneshot::channel();
-        let task = tokio::spawn(receive(base, credential_file, archives, stopped));
+        if super::direct(&dial.url).is_ok() {
+            let base = http_base(&dial.url)?;
+            let task = tokio::spawn(receive(base, credential_file, archives, stopped));
+            return Some(Self { stop, task });
+        }
+        let mesh = mesh?;
+        let dialer: Arc<dyn oneiron::sync::SyncDialer> =
+            Arc::new(MeshSyncDialer::new(mesh.transport(), dial.home));
+        let host = mesh_host(&dial.url);
+        let task = tokio::spawn(receive_mesh(
+            dialer,
+            host,
+            credential_file,
+            archives,
+            stopped,
+        ));
         Some(Self { stop, task })
     }
 
     /// No receiver in a build without the `mesh` feature, whose device sync
     /// never starts.
     #[cfg(not(feature = "mesh"))]
-    pub(super) fn start(_dial: &Dial) -> Option<Self> {
+    pub(super) fn start(_dial: &Dial, _mesh: Option<&MeshHost>) -> Option<Self> {
         None
     }
 
@@ -115,6 +134,16 @@ fn endpoint(base: &reqwest::Url, path: &str) -> reqwest::Url {
     url
 }
 
+/// The `Host` a mesh delivery request carries: the home URL's authority
+/// where it names one, else the mesh itself.
+#[cfg(feature = "mesh")]
+fn mesh_host(url: &str) -> String {
+    http_base(url)
+        .map(|base| base.authority().to_owned())
+        .filter(|host| !host.is_empty())
+        .unwrap_or_else(|| "mesh".to_owned())
+}
+
 /// Sessions back to back until `stop`, waiting after each failed one.
 async fn receive(
     base: reqwest::Url,
@@ -140,6 +169,38 @@ async fn receive(
             biased;
             _ = &mut stop => return,
             session = session(&client, &base, &credential_file, &archives) => session,
+        };
+        match session {
+            Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
+            Err(error) => {
+                tracing::debug!(error = %format!("{error:#}"), "removal archive session");
+                tokio::select! {
+                    biased;
+                    _ = &mut stop => return,
+                    () = tokio::time::sleep(wait) => {}
+                }
+                wait = (wait * 2).min(REMOVAL_DELIVERY_RETRY_MAX);
+            }
+        }
+    }
+}
+
+/// Sessions over the mesh back to back until `stop`, waiting after each
+/// failed one, as at the home's URL.
+#[cfg(feature = "mesh")]
+async fn receive_mesh(
+    dialer: Arc<dyn oneiron::sync::SyncDialer>,
+    host: String,
+    credential_file: PathBuf,
+    archives: PathBuf,
+    mut stop: oneshot::Receiver<()>,
+) {
+    let mut wait = REMOVAL_DELIVERY_RETRY_FIRST;
+    loop {
+        let session = tokio::select! {
+            biased;
+            _ = &mut stop => return,
+            session = session_mesh(dialer.as_ref(), &host, &credential_file, &archives) => session,
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
@@ -218,6 +279,50 @@ async fn session(
     Ok(())
 }
 
+/// One session over the mesh (FIX 11196): what the home sends is written
+/// and acknowledged, as at the home's URL. A session that sent archives
+/// but took no acknowledgement fails, so the next one waits.
+#[cfg(feature = "mesh")]
+async fn session_mesh(
+    dialer: &dyn oneiron::sync::SyncDialer,
+    host: &str,
+    credential_file: &Path,
+    archives: &Path,
+) -> anyhow::Result<()> {
+    let paired = PairedCredentialFile::read(credential_file)?;
+    let slip = oneiron::authority::CapabilitySlip::from_token(&paired.token)
+        .map_err(|_| anyhow::anyhow!("the paired credential's slip does not decode"))?;
+    let person = oneiron::EntityId::from_hex(&slip.claims.holder_ref)?;
+    let credential = SyncTransportCredential::new(paired.token.clone(), paired.signing_key()?);
+    let answer: Deliveries =
+        serde_json::from_slice(&post_mesh(dialer, host, DELIVERY_PATH, &credential, None).await?)?;
+    if answer.deliveries.is_empty() {
+        return Ok(());
+    }
+    let mut acked = false;
+    for delivery in answer.deliveries {
+        let archives = archives.to_owned();
+        let delivery = tokio::task::spawn_blocking(move || {
+            store(&archives, person, &delivery).map(|()| delivery)
+        })
+        .await??;
+        let receipt_id = delivery.copy.receipt_id;
+        let body = serde_json::json!({ "receipt_id": &receipt_id, "version": delivery.version });
+        let answer: Acknowledged = serde_json::from_slice(
+            &post_mesh(dialer, host, ACK_PATH, &credential, Some(body)).await?,
+        )?;
+        tracing::info!(
+            receipt = %receipt_id,
+            version = delivery.version,
+            state = %answer.state,
+            "removal archive received"
+        );
+        acked |= answer.state == "acked";
+    }
+    anyhow::ensure!(acked, "the home took no acknowledgement");
+    Ok(())
+}
+
 /// One request under a fresh holder proof, its nonce new.
 async fn post(
     client: &reqwest::Client,
@@ -239,6 +344,76 @@ async fn post(
         request = request.json(&body);
     }
     Ok(request.send().await?.error_for_status()?)
+}
+
+/// One delivery request over one fresh mesh stream to the home (FIX 11196):
+/// the same path, slip headers and body the URL call sends, answered by the
+/// same route, its answer read whole up to the remote bound. The dial, the
+/// handshake, the exchange and the connection's drive meet one request
+/// timeout, as the renewal's mesh call does.
+#[cfg(feature = "mesh")]
+async fn post_mesh(
+    dialer: &dyn oneiron::sync::SyncDialer,
+    host: &str,
+    path: &str,
+    credential: &SyncTransportCredential,
+    body: Option<serde_json::Value>,
+) -> anyhow::Result<Vec<u8>> {
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, header};
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let headers = credential
+        .left_notice_headers(now)
+        .map_err(anyhow::Error::msg)?;
+    let mut request = Request::post(path).header(header::HOST, host.to_owned());
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    request = request
+        .header(header::ACCEPT, "application/json")
+        .header(header::CONNECTION, "close");
+    let body = match body {
+        Some(body) => {
+            request = request.header(header::CONTENT_TYPE, "application/json");
+            Body::from(body.to_string())
+        }
+        None => Body::empty(),
+    };
+    let request = request.body(body)?;
+    let round = async {
+        let stream = dialer.dial().await?;
+        let (mut sender, connection) =
+            hyper::client::conn::http1::handshake::<_, Body>(hyper_util::rt::TokioIo::new(stream))
+                .await?;
+        let exchange = async move {
+            let response = sender.send_request(request).await?;
+            let status = response.status();
+            let bytes = to_bytes(
+                Body::new(response.into_body()),
+                oneiron_remote::MAX_REMOTE_RESPONSE_BYTES,
+            )
+            .await?;
+            Ok::<_, anyhow::Error>((status, bytes))
+        };
+        // The connection is driven here, beside its one exchange, never on a
+        // task of its own, so an aborted request leaves none of it behind.
+        tokio::pin!(exchange, connection);
+        let mut driving = true;
+        Ok::<_, anyhow::Error>(loop {
+            tokio::select! {
+                exchanged = &mut exchange => break exchanged?,
+                _ = &mut connection, if driving => driving = false,
+            }
+        })
+    };
+    let (status, bytes) = tokio::time::timeout(REMOVAL_DELIVERY_REQUEST_TIMEOUT, round)
+        .await
+        .map_err(|_| anyhow::anyhow!("the delivery request over the mesh timed out"))??;
+    anyhow::ensure!(status.is_success(), "the home answered {status}");
+    Ok(bytes.to_vec())
 }
 
 /// Writes `delivery` under `archives` as `<receipt>.<version>.json`, once it

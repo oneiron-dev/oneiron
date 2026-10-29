@@ -122,7 +122,7 @@ pub(crate) async fn ai_chat_completions(
     auth: &crate::auth::CoreAuth,
     session: Option<EntityId>,
     chat: ChatCompletionRequest,
-) -> super::facade::host_doors::Listed<ChatCompletionResponse> {
+) -> super::facade::host_doors::support::Listed<ChatCompletionResponse> {
     let clock = choices::CallerClock::starting(tokio::time::Instant::now(), chat.deadline_ms);
     let actor = super::mcp_gateway::resolve_mcp_actor_for_auth(server, auth, session).await;
     let mut listed = Vec::new();
