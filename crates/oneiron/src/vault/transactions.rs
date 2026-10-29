@@ -459,6 +459,9 @@ impl Vault {
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.
         let stale_sweep = crate::federation::StaleSweepWatch::begin(self);
+        // Read on the calling thread: the group may run this closure on
+        // another member's (FIX 11607).
+        let rederive = !crate::scope_summary::rederive_deferred();
         let (
             result,
             approved_vad_ids,
@@ -490,7 +493,8 @@ impl Vault {
             if let Err(err) = rekeys.finish(&self.store, wtxn) {
                 return Rows::Discard(Err(E::from(err)));
             }
-            if let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn) {
+            if rederive && let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn)
+            {
                 return Rows::Discard(Err(E::from(err)));
             }
             let approved =
