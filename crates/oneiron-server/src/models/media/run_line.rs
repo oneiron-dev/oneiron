@@ -250,11 +250,17 @@ impl MediaRuntime {
     /// Holds `run`, job `ticket`'s run on a guard of `scope`'s own, for the
     /// booking its permit's settle makes, and books now what its walk's
     /// settled rungs already charged it, before its row is kept (FIX
-    /// 11496). A taken-up job's fresh guard has charged nothing yet.
+    /// 11496). A taken-up job's fresh guard has charged nothing yet. A run
+    /// it replaces, a take-up whose permit settled as it failed, books what
+    /// it charged past its booking first, so no guard's spend is lost.
     pub(super) fn hold_scoped(&self, ticket: &str, scope: SpendScopeId, run: RunAdmission) {
         let booked = self.book(&scope, &run, 0);
-        self.lock_scoped()
+        let replaced = self
+            .lock_scoped()
             .insert(ticket.to_owned(), ScopedJob { scope, run, booked });
+        if let Some(replaced) = replaced {
+            self.book(&replaced.scope, &replaced.run, replaced.booked);
+        }
     }
 
     /// Books on `scope` what `run`'s own guard used past `booked`, what the
