@@ -137,6 +137,12 @@ pub(crate) async fn vault_secrets_custody_submit(
     surface: ActSurface,
     input: SecretCustodySubmitRequest,
 ) -> Listed<SecretCustodyReply> {
+    // A wiped HTTP body's sealed input, put back after the redacted args
+    // decoded (FIX 11668). Any other transport's input already carries its own.
+    let mut input = input;
+    if let Some(secret) = super::secret_body::current_secret() {
+        input.input_base64 = (*secret).clone();
+    }
     as_custody_owner(
         server,
         auth,

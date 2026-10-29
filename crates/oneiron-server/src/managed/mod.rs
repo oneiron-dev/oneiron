@@ -94,6 +94,11 @@ pub use self::vm_init::run_vm_init;
 pub use self::vm_outbox::{
     VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label, run_vm_outbox,
 };
+#[cfg(target_os = "linux")]
+pub(crate) use self::vm_outbox::{
+    DIVERGED_ANSWER_ROUTE, DivergedAnswer, DivergedOwnerAnswer, VmOutboxMemberStatus,
+    answer_diverged, companion_member_statuses,
+};
 
 pub use self::args::{ManagedArgs, ManagedError, ManagedStartMode, NO_FD, SettingsRefusal};
 pub use self::key_sync::{

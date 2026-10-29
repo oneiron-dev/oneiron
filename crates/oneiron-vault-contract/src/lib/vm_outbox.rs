@@ -34,7 +34,8 @@
 //! receipt; those stay with each kind's business owner, whose codecs ride
 //! here unchanged. Nothing here carries a key, a credential or an unsealed
 //! backup. Port 1030 and the 64 KiB chunk are LC's co-signed terms, as was
-//! wire revision 1; revision 2 adds the backup-label registration. This
+//! wire revision 1; revision 2 adds the backup-label registration and the
+//! `diverged_unagreed` answer to a retirement (FIX 11074). This
 //! extension rides contract version 3 with a build floor, and a vault reports
 //! it on `Ping` (`vm_outbox_revision`).
 
@@ -270,11 +271,18 @@ impl VmOutboxAck {
 /// What became of a transfer. Durable means the receiver published it, or
 /// already had it, and synced its record; a deferral keeps the work on both
 /// sides and names the bound it waits on; a refusal names why this transfer
-/// is never taken as it is.
+/// is never taken as it is. A diverged one is the origin's retirement taken
+/// for the version the carrier agreed on, while the receiver keeps its own
+/// copy of the member, one the carrier never agreed on, hashing to `held`:
+/// it is never removed but by its owner's answer (FIX 11074).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum VmOutboxOutcome {
     Durable,
+    DivergedUnagreed {
+        held: String,
+        length: u64,
+    },
     Deferred {
         code: VmOutboxDeferral,
         bound: String,

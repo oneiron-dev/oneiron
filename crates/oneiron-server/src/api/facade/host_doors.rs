@@ -21,7 +21,7 @@ mod authority_clock;
 mod diary;
 mod media;
 mod packs;
-pub(super) mod support;
+pub(in crate::api) mod support;
 mod verdict_hooks;
 mod vision;
 
@@ -31,7 +31,6 @@ pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
-pub(crate) use self::support::*;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
 
@@ -47,6 +46,8 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+// The caller's own actor and person refs (FIX 1047).
+pub(crate) use super::self_actor_doors::*;
 pub(crate) use super::saved_query_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
@@ -127,6 +128,8 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
+pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
@@ -154,6 +157,10 @@ pub(crate) use super::secret_lift_doors::*;
 // The owner's custody register, rotate, rewrap, view and sealed submit
 // doors (FIX 4993), likewise.
 pub(crate) use super::secret_custody_doors::*;
+// The owner's custody member drain doors (FIX 11274), likewise.
+pub(crate) use super::custody_drain_doors::*;
+// The owner's reservoir source preview door (FIX 11352), likewise.
+pub(crate) use super::reservoir_source_doors::*;
 // The usage repair doors (FIX 6476), likewise.
 pub(crate) use super::usage_repair_doors::*;
 // The owner's root wave door (OF-427), likewise.

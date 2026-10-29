@@ -169,6 +169,14 @@ fn standing_policy_receipt_record(
             ceiling.to_string(),
         );
     }
+    if matches!(status, StandingPolicyStatus::Accepted) {
+        if let Some(accepted_by) = &row.accepted_by {
+            fields.insert("answerer".to_owned(), accepted_by.clone());
+        }
+        if let Some(decision_ref) = &row.decision_ref {
+            fields.insert("decision_ref".to_owned(), decision_ref.clone());
+        }
+    }
     ReceiptRecord {
         receipt_id: format!(
             "{STANDING_POLICY_RECEIPT_PREFIX}{}.{}",
