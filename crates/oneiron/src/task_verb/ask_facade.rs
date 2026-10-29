@@ -55,6 +55,27 @@ struct AskCensus {
 }
 
 /// What a first admission, or an approval releasing a held ask, mints.
+impl AskCensus {
+    /// The validated, session-owned projection: no member TASK or launch
+    /// work escapes the ordinary census (FIX 10087).
+    pub(super) fn into_session_parts(
+        self,
+        group_ref: EntityId,
+        owner: EntityId,
+        requested: &TaskAskSpec,
+        question_digest: [u8; 32],
+    ) -> super::session_ask::SessionAskParts {
+        super::session_ask::SessionAskParts {
+            group_ref,
+            owner,
+            requested: requested.clone(),
+            effective: self.effective,
+            holders: self.holders,
+            question_digest,
+        }
+    }
+}
+
 struct AskMint<'a> {
     group_ref: EntityId,
     request_digest: &'a str,

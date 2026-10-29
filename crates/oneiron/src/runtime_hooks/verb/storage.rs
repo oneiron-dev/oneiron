@@ -58,14 +58,18 @@ use crate::session_overlay::{SessionOverlay, TxnSegmentGuard};
 use crate::side_table::{RoutedDbs, SideTableDbs};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::store::SessionStoreView;
+use crate::task_verb::{
+    SessionAskParts, SessionAskRecord, TaskAskAnswer, TaskAskStatus, TaskAskWord,
+};
 use crate::work_line::TaskWorkTurn;
-use crate::{EntityId, Result, Vault};
+use crate::{EntityId, MemoryError, Result, Vault};
 
 use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
 
 mod named_pause;
 mod room_pause;
+mod session_ask;
 
 pub(super) use room_pause::PausedRoute;
 pub(crate) use room_pause::RoomHookCall;
@@ -227,6 +231,8 @@ struct Kept {
     overlay: Arc<SessionOverlay>,
     /// The calls its hooks' asks paused, by invocation.
     asks: HashMap<[u8; 16], KeptAsk>,
+    /// Their typed questions, answers and settlements, by group (FIX 10087).
+    ask_records: HashMap<EntityId, SessionAskRecord>,
 }
 
 /// A paused call as the keep holds it, with when its ask paused it and when
@@ -479,6 +485,7 @@ impl SessionHookKeep {
         Some(f(kept.entry(key.clone()).or_insert_with(|| Kept {
             overlay: SessionOverlay::new(vault.config.off_record_overlay_budget_bytes),
             asks: HashMap::new(),
+            ask_records: HashMap::new(),
         })))
     }
 }
