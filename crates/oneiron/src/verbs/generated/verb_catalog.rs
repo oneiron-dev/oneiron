@@ -145,6 +145,7 @@ pub enum AgentVerb {
     VaultRetrievalPolicyUpdate,
     VaultExport,
     SelfCredentialAttenuate,
+    SelfActor,
     VaultScopePosition,
     VaultScopeCeiling,
     VaultExportScoped,
@@ -1361,6 +1362,7 @@ impl AgentVerb {
         Self::VaultRetrievalPolicyUpdate,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
+        Self::SelfActor,
         Self::VaultScopePosition,
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
@@ -2580,6 +2582,7 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyUpdate => "vault.retrieval.policy.update",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
+            Self::SelfActor => "self.actor",
             Self::VaultScopePosition => "vault.scope.position",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
@@ -3826,6 +3829,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::SelfActor
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
@@ -5071,6 +5075,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::SelfActor
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
@@ -6452,6 +6457,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::SelfActor
                 | Self::VaultReceipts
                 | Self::VaultAssetsIngest
                 | Self::VaultImagesView
@@ -8360,6 +8366,7 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
@@ -9577,6 +9584,7 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
@@ -11070,6 +11078,9 @@ impl AgentVerb {
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
+            }
+            Self::SelfActor => {
+                "The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else."
             }
             Self::VaultScopePosition => {
                 "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."

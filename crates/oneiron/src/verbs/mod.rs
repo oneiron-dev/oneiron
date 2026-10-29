@@ -64,6 +64,7 @@ mod secret;
 mod secret_custody;
 mod secret_grant;
 mod secret_use;
+mod self_actor;
 #[path = "self.rs"]
 mod self_verbs;
 mod share;
@@ -638,6 +639,7 @@ pub use self::secret::*;
 pub use self::secret_custody::*;
 pub use self::secret_grant::*;
 pub use self::secret_use::*;
+pub use self::self_actor::*;
 pub use self::self_verbs::*;
 pub use self::share::*;
 pub use self::shared::*;
