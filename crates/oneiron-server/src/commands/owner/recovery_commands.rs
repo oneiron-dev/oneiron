@@ -125,7 +125,14 @@ fn restore_unlocked(
         // named, read before the new vault is made (FIX 5788).
         let anchor = CustodyAnchorCredentials::handed(args.serve.custody_anchor_credentials_fd)?;
         return emit(&vault_key::restore_fresh(
-            backup, config, keystore, unlock, wrap, pins, anchor,
+            backup,
+            config,
+            keystore,
+            unlock,
+            wrap,
+            pins,
+            anchor,
+            args.pad_machine.as_deref(),
         )?);
     }
     let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)?;
@@ -146,6 +153,13 @@ fn restore_unlocked(
             }
             None => backup::rehearse(backup, base_vault_config(config), scratch, &source)?,
         });
+    }
+    // `--pad-machine` opens pads on `--open-pads` or a restore where no
+    // vault is yet; a restore over the vault reads no machine key.
+    if args.pad_machine.is_some() {
+        anyhow::bail!(
+            "--pad-machine opens pads on --open-pads or a restore where no vault is yet"
+        );
     }
     let mut live = base_vault_config(config);
     live.page_seal = live_seal;

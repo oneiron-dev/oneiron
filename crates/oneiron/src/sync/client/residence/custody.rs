@@ -232,8 +232,8 @@ pub async fn drain_custody_residence_member_as(
     let begun = Arc::clone(vault);
     let begin_owner = owner.clone();
     let begin_target = target.clone();
-    let ticket = blocking(move || begun.begin_custody_member_drain_as(&begin_owner, &begin_target))
-        .await?;
+    let ticket =
+        blocking(move || begun.begin_custody_member_drain_as(&begin_owner, &begin_target)).await?;
     let budgets = residence_budgets(vault)?;
     let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
         return Err(TransportError::Storage("home node offline".into()));
@@ -249,9 +249,11 @@ pub async fn drain_custody_residence_member_as(
         "token": base64::engine::general_purpose::STANDARD.encode(ticket.token.expose()),
     });
     let ack = match rpc.call("residence.custody.drain", params).await? {
-        Ok(reply) => serde_json::from_value::<DrainReply>(reply)
-            .map_err(|_| refused())?
-            .ack,
+        Ok(reply) => {
+            serde_json::from_value::<DrainReply>(reply)
+                .map_err(|_| refused())?
+                .ack
+        }
         Err(_) => return Err(refused()),
     };
     let residence = TargetSpec::residence(home);

@@ -15,6 +15,7 @@ use crate::affect::{
     coping::{COPING_OUTCOME_PREDICATE, validate_coping_outcome_claim_structure},
     validate_affect_trigger_claim_structure,
 };
+use crate::context_pack::FieldProfile;
 use crate::edge::EdgeKind;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
@@ -110,6 +111,16 @@ pub(crate) const CLAIM_FIELDS_FULL: &[&str] = &[
     KEY_CONF_BAND,
     KEY_CONF_BASIS,
 ];
+
+/// The CLAIM fields `profile` reads: the same lists the serializer
+/// projects, so a host projection cannot drift from them (FIX 11037).
+pub fn claim_fields(profile: FieldProfile) -> &'static [&'static str] {
+    match profile {
+        FieldProfile::Minimal => CLAIM_FIELDS_MINIMAL,
+        FieldProfile::Standard => CLAIM_FIELDS_STANDARD,
+        FieldProfile::Full => CLAIM_FIELDS_FULL,
+    }
+}
 
 const fn claim_keys_prefix(len: usize) -> &'static [&'static str] {
     let whole: &[&str] = &CLAIM_BODY_KEYS;

@@ -350,8 +350,8 @@ impl AgentDispatcher<'_> {
     /// try's end.
     pub fn guard_for_scope(&self, scope: &SpendScopeId) -> Result<BudgetGuard> {
         let txn = self.vault.store.env.read_txn()?;
-        let target = self.effective_scope_in_txn(&txn, scope)?;
-        let available = self.available_from_in_txn(&txn, &target)?;
+        let booking = self.booking_in_txn(&txn, scope)?;
+        let available = self.available_through_in_txn(&txn, &booking)?;
         Ok(BudgetGuard::new(
             scope.as_str(),
             available,
@@ -418,8 +418,8 @@ impl AgentDispatcher<'_> {
     /// hard ancestor.
     pub fn available_units(&self, scope: &SpendScopeId) -> Result<u64> {
         let txn = self.vault.store.env.read_txn()?;
-        let target = self.effective_scope_in_txn(&txn, scope)?;
-        self.available_from_in_txn(&txn, &target)
+        let booking = self.booking_in_txn(&txn, scope)?;
+        self.available_through_in_txn(&txn, &booking)
     }
 
     /// `scope` as a spend would report it, without spending: what is left
@@ -427,8 +427,8 @@ impl AgentDispatcher<'_> {
     /// (OF-541's budget hold reads it before work starts).
     pub fn spend_read(&self, scope: &SpendScopeId) -> Result<SpendRead> {
         let txn = self.vault.store.env.read_txn()?;
-        let target = self.effective_scope_in_txn(&txn, scope)?;
-        self.spend_read_in_txn(&txn, &target)
+        let booking = self.booking_in_txn(&txn, scope)?;
+        self.spend_read_through_in_txn(&txn, &booking)
     }
 
     /// [`Self::spend_read`] in the caller's snapshot.
@@ -437,8 +437,8 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         scope: &SpendScopeId,
     ) -> Result<SpendRead> {
-        let target = self.effective_scope_in_txn(txn, scope)?;
-        self.spend_read_in_txn(txn, &target)
+        let booking = self.booking_in_txn(txn, scope)?;
+        self.spend_read_through_in_txn(txn, &booking)
     }
 
     /// [`Self::available_units`] in the caller's snapshot.
@@ -447,8 +447,8 @@ impl AgentDispatcher<'_> {
         txn: &heed::RoTxn<'_>,
         scope: &SpendScopeId,
     ) -> Result<u64> {
-        let target = self.effective_scope_in_txn(txn, scope)?;
-        self.available_from_in_txn(txn, &target)
+        let booking = self.booking_in_txn(txn, scope)?;
+        self.available_through_in_txn(txn, &booking)
     }
 
     pub fn read_spend_scope(&self, scope: &SpendScopeId) -> Result<Option<SpendScope>> {
@@ -596,33 +596,23 @@ impl AgentDispatcher<'_> {
         target.spent_units = target.spent_units.saturating_add(units);
         SCOPE.put(&self.vault.store, txn, &target.scope.0, &target)?;
         closed_scope::tally_through(self, txn, boundaries, units)?;
-        Ok(self.spend_read_in_txn(txn, &target)?)
+        // The spend reports what a read reports after it, the closed
+        // boundaries' room included (FIX 11095).
+        let booking = self.booking_in_txn(txn, scope)?;
+        Ok(self.spend_read_through_in_txn(txn, &booking)?)
     }
 
-    fn spend_read_in_txn(&self, txn: &heed::RoTxn<'_>, scope: &SpendScope) -> Result<SpendRead> {
-        let available = self.available_from_in_txn(txn, scope)?;
-        let binding = self.binding_cap_in_txn(txn, scope)?;
-        let signal = if available == 0 {
-            Some(SpendSignal::AtCap {
-                cap_units: binding.cap_units,
-            })
-        } else if u128::from(available) * 100 <= u128::from(binding.cap_units) * 5 {
-            Some(SpendSignal::WrapUp {
-                available_units: available,
-                cap_units: binding.cap_units,
-            })
-        } else {
-            None
-        };
-        Ok(SpendRead {
-            scope: scope.scope.clone(),
-            unit: scope.unit.clone(),
-            spent_units: scope.spent_units,
-            available_units: available,
-            cap_scope: binding.scope,
-            cap_units: binding.cap_units,
-            signal,
-        })
+    /// `booking` as a spend would report it: what is left under the binding
+    /// cap, no more than any closed hard boundary's room (FIX 11095), the
+    /// same minimum the booking path enforces.
+    fn spend_read_through_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        booking: &Host,
+    ) -> Result<SpendRead> {
+        let available = self.available_through_in_txn(txn, booking)?;
+        let binding = self.binding_cap_in_txn(txn, &booking.host)?;
+        Ok(spend_read_with(&booking.host, available, &binding))
     }
 
     /// Makes `need` units local to `scope`, topping a soft scope up from its
@@ -702,6 +692,32 @@ impl AgentDispatcher<'_> {
             }
         }
         Ok(chain.swap_remove(0).0)
+    }
+}
+
+/// Assembles what one booking host reports: its identity and spend, what is
+/// left under the binding cap, and the wrap-up or cap signal in force.
+fn spend_read_with(host: &SpendScope, available: u64, binding: &SpendScope) -> SpendRead {
+    let signal = if available == 0 {
+        Some(SpendSignal::AtCap {
+            cap_units: binding.cap_units,
+        })
+    } else if u128::from(available) * 100 <= u128::from(binding.cap_units) * 5 {
+        Some(SpendSignal::WrapUp {
+            available_units: available,
+            cap_units: binding.cap_units,
+        })
+    } else {
+        None
+    };
+    SpendRead {
+        scope: host.scope.clone(),
+        unit: host.unit.clone(),
+        spent_units: host.spent_units,
+        available_units: available,
+        cap_scope: binding.scope.clone(),
+        cap_units: binding.cap_units,
+        signal,
     }
 }
 
