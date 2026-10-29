@@ -888,6 +888,7 @@ both bindings and their export-census tests in one change.
 - `ai.video`
 - `ai.video.poll`
 - `ai.video.cancel`
+- `ai.ask_image`
 - `ai.verdict`
 - `vault.graph.ask`
 - `vault.graph.admit`

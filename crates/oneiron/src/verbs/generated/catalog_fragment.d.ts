@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4240 declarations.
-// Replies: 1088 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1214 code-mode rows (1174 host rows, 40 run rows), 4243 declarations.
+// Replies: 1088 fully typed, 125 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
 declare namespace Sdk {
@@ -3213,6 +3213,9 @@ declare namespace Sdk {
   type AiVideoJobRequest = { job: string };
   type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError };
   type AiVideoCancelled = { job: string };
+  type AskImageRequest = { handle: string; question: string; region?: PixelRegion | null; contract?: AnswerContract | null };
+  type AskImageReceipt = { pull: string; run: string; model: ModelId; locality: ModelLocality; usage?: LlmUsage | null; finish_reason?: FinishReason | null };
+  type AskImageAnswer = { asset_ref: string; text?: string | null; answer?: DecisionAnswer | null; typed?: TypedDecision | null; presence?: TypedDecision | null; receipt: AskImageReceipt };
   type AiVerdictReversibility = "reversible_read" | "outbound_effect";
   type AiVerdictRequest = { question: string; contract?: AnswerContract; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; misses?: number; until_ms?: number | null };
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
@@ -4261,6 +4264,8 @@ declare namespace Sdk {
 declare const ai: {
   /** One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call. */
   anonymous_chat(input: Sdk.AnonymousChatRequest): Promise<Sdk.AnonymousChatResponse | StoredResult>;
+  /** One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt. */
+  ask_image(input: Sdk.AskImageRequest): Promise<Sdk.AskImageAnswer | StoredResult>;
   chat: {
     /** Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling. */
     completions(input: Sdk.ChatCompletionRequest): Promise<Sdk.ChatCompletionResponse | StoredResult>;

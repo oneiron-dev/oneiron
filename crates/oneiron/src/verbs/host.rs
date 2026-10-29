@@ -1,7 +1,7 @@
 //! The inputs and answers of the verb-table rows a host door answers: the
 //! owner's `vault.packs.put`, `vault.packs.remove`,
 //! `vault.connectors.subscriptions.*` and `vault.hooks.replay`, the `ai.*` model calls
-//! past text and `ai.verdict`. A server answers each with its own state (the
+//! past text, `ai.ask_image` and `ai.verdict`. A server answers each with its own state (the
 //! owner's proof, its model seats, its decision ladder, its hook sandbox); an
 //! embedded handle answers a pack put as the vault's embedded owner and
 //! refuses the rest, which have nothing to run on there.
@@ -21,7 +21,9 @@ use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
 use crate::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
 
+mod ask_image;
 mod hooks_replay;
+pub use self::ask_image::*;
 pub use self::hooks_replay::*;
 
 /// One file of a pack folder, its content an explicit choice: text, stored as

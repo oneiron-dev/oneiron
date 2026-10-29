@@ -7763,6 +7763,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_ask_image(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.ask_image", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_verdict(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.verdict", js_json(input))
