@@ -9,12 +9,8 @@
 //! no owner erase door yet, so its compartments stay until one exists
 //! (Engine 10-20 08:4x, ruling 4). Nothing here refuses: the delete commits
 //! as it does today, and while KS-7 is off nothing is touched.
-#![allow(
-    dead_code,
-    reason = "the erase doors' purge calls these (KS7-4a); CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
-)]
 
-use heed::{RoTxn, RwTxn};
+use heed::RwTxn;
 
 use super::tombstone::TombstoneReason;
 use super::topology_delete_intent::topology_delete_reservation_in_txn;
@@ -38,49 +34,31 @@ const fn disposition(reason: Option<TombstoneReason>) -> PayloadDisposition {
     }
 }
 
-/// Settles the compartments `id` owns for its delete under `reason`, in
-/// `wtxn`, the transaction that tears it: an erase marks every incarnation
-/// erased and stages each leaf's retirement for the finisher after the
-/// commit ([`Store::finish_checkpoint_payload_retirements_after_commit`]);
-/// an ordinary delete keeps the leaves and retains the active incarnation.
-/// Runs whether or not live rows remained, since old checkpoints may still
-/// hold the owner.
+/// Settles the compartments `id` owns in `wtxn`, the erase transaction that
+/// tears it, by the reason its topology delete reservation names: the
+/// reservation of `request_id` when the purge knows its request, else the
+/// one standing for `id`, which the door wrote earlier in this transaction.
+/// An erase marks every incarnation erased and stages each leaf's retirement
+/// for the finisher after the commit
+/// ([`Store::finish_checkpoint_payload_retirements_after_commit`]); any
+/// other delete, and one with no reservation (a remote tombstone's replay),
+/// keeps the leaves and retains the active incarnation.
 ///
 /// # Errors
 ///
-/// Storage faults, and an incarnation row that does not decode.
-pub(crate) fn settle_deleted_owner_in_txn(
+/// Storage faults, a reservation or an incarnation row that does not decode.
+pub(crate) fn settle_checkpoint_payloads_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
-    reason: Option<TombstoneReason>,
+    request_id: Option<&[u8; 16]>,
 ) -> Result<()> {
+    let reason = topology_delete_reservation_in_txn(store, wtxn, id)?
+        .filter(|reserved| request_id.is_none_or(|request| reserved.request_id == *request))
+        .map(|reserved| reserved.reason);
     let disposition = disposition(reason);
     for subtype in ENTITY_OWNED {
         settle_owner_in_txn(store, wtxn, subtype, id.as_bytes(), disposition)?;
     }
     Ok(())
-}
-
-/// The reason a local delete of `id` committed under `request_id`, read from
-/// the topology delete reservation the delete's door writes in its own
-/// transaction before it tears: for a purge that knows its request but not
-/// its reason. `None` when no reservation of that request stands (a remote
-/// tombstone's replay names its reason itself).
-///
-/// # Errors
-///
-/// Storage faults, and a reservation that does not decode.
-pub(crate) fn reserved_delete_reason_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-    request_id: Option<&[u8; 16]>,
-) -> Result<Option<TombstoneReason>> {
-    let Some(request_id) = request_id else {
-        return Ok(None);
-    };
-    Ok(topology_delete_reservation_in_txn(store, txn, id)?
-        .filter(|reserved| reserved.request_id == *request_id)
-        .map(|reserved| reserved.reason))
 }
