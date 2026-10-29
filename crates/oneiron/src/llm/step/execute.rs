@@ -620,6 +620,7 @@ fn budget_trap(
                 reason: "durable step budget exhausted".to_owned(),
                 cause: crate::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
+                carried_spend: None,
                 now: ctx.now_s(),
             },
         )?;

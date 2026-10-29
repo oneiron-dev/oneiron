@@ -315,6 +315,7 @@ impl DreamerWakeDriver<'_> {
             reason,
             cause,
             park_owner: park_owner.to_owned(),
+            carried_spend: None,
             now,
         };
         let lease = admitted_lease(admitted, park_owner);

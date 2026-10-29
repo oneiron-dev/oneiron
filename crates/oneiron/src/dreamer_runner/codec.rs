@@ -15,10 +15,10 @@ use super::constants::{
     DREAMER_BUDGET_SCHEMA_VERSION, DREAMER_HOME_NODE_DESIGNATION_KEYS,
     DREAMER_HOME_NODE_DESIGNATION_SCHEMA_VERSION, DREAMER_PARKED_KEYS,
     DREAMER_PARKED_SCHEMA_VERSION, DREAMER_RUN_TREE_KEYS, DREAMER_RUN_TREE_SCHEMA_VERSION,
-    KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CAUSE, KEY_CLASS, KEY_CREATED_AT,
-    KEY_ELECTED_AT, KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER, KEY_PARKED_AT,
-    KEY_REASON, KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION, KEY_TOTAL_UNITS,
-    KEY_UPDATED_AT,
+    KEY_ATTEMPT_ID, KEY_ATTEMPT_TYPE, KEY_BUDGET_ID, KEY_CARRIED_SPEND, KEY_CAUSE, KEY_CLASS,
+    KEY_CREATED_AT, KEY_ELECTED_AT, KEY_INPUT, KEY_NODE_ID, KEY_PARENT_ATTEMPT, KEY_PARK_OWNER,
+    KEY_PARKED_AT, KEY_REASON, KEY_REMAINING_UNITS, KEY_RESERVED_UNITS, KEY_SCHEMA_VERSION,
+    KEY_TOTAL_UNITS, KEY_UPDATED_AT,
 };
 use super::types::{
     DreamerAttemptPayload, DreamerBudgetRecord, DreamerBudgetReservation, DreamerHomeNodeClass,
@@ -535,6 +535,10 @@ pub(super) fn encode_parked_record(record: &DreamerParkedAttemptRecord) -> Resul
             Value::from(KEY_PARK_OWNER),
             Value::from(record.park_owner.as_str()),
         ),
+        (
+            Value::from(KEY_CARRIED_SPEND),
+            record.carried_spend.map_or(Value::Nil, Value::from),
+        ),
         (Value::from(KEY_PARKED_AT), Value::from(record.parked_at)),
     ]);
     encode_value(&value, "dreamer parked row MessagePack encode failed")
@@ -548,6 +552,7 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
     let mut reason = None;
     let mut cause = None;
     let mut park_owner = None;
+    let mut carried_spend: Option<Option<u64>> = None;
     let mut parked_at = None;
     let mut seen = [false; DREAMER_PARKED_KEYS.len()];
 
@@ -586,6 +591,16 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
                 validate_park_owner(&parsed)?;
                 park_owner = Some(parsed);
             }
+            KEY_CARRIED_SPEND => {
+                if matches!(value, Value::Nil) {
+                    carried_spend = Some(None);
+                } else {
+                    carried_spend = Some(Some(expect_u64(
+                        value,
+                        "dreamer parked carried_spend must be an integer",
+                    )?));
+                }
+            }
             KEY_PARKED_AT => {
                 parked_at = Some(expect_u64(value, "dreamer parked_at must be an integer")?);
             }
@@ -608,6 +623,8 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
         cause: cause.ok_or(invalid_dreamer_runner("missing dreamer parked cause"))?,
         park_owner: park_owner
             .ok_or(invalid_dreamer_runner("missing dreamer parked park_owner"))?,
+        carried_spend: carried_spend
+            .ok_or(invalid_dreamer_runner("missing dreamer parked carried_spend"))?,
         parked_at: parked_at.ok_or(invalid_dreamer_runner("missing dreamer parked_at"))?,
     })
 }

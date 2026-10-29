@@ -774,5 +774,6 @@ pub struct DreamerParkedAttemptRecord {
     pub reason: String,
     pub cause: DreamerParkCause,
     pub park_owner: String,
+    pub carried_spend: Option<u64>,
     pub parked_at: u64,
 }

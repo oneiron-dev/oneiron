@@ -1011,6 +1011,7 @@ impl<'a> DreamerRunnerStore<'a> {
             reason: input.reason,
             cause: input.cause,
             park_owner: input.park_owner,
+            carried_spend: input.carried_spend,
             parked_at: input.now,
         };
         let existing = PARKED.get(&self.vault.store, &*wtxn, &record.attempt_id)?;

@@ -162,6 +162,7 @@ impl DreamerWakeDriver<'_> {
                         reason: reason.clone(),
                         cause,
                         park_owner: input.lease_owner.clone(),
+                        carried_spend: None,
                         now: input.now,
                     },
                     admitted_lease(admitted, &input.lease_owner),

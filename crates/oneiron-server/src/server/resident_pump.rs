@@ -299,7 +299,7 @@ impl SyncServer {
         let mut pass = Pass::default();
         let vault = self.vault();
         // A run parked on its payer goes on once the owners said yes (FIX 805).
-        resume_payer_parks(vault, LEASE_OWNER, now);
+        resume_payer_parks(vault, LEASE_OWNER, now, None);
         // OF-533: the waits a pumped run parks on are swept on this recheck,
         // so a parked ask's deadline lands with no Dreamer enabled.
         if let Err(error) = vault.settle_code_run_waits() {
