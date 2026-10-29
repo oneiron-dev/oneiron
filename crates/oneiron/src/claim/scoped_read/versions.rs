@@ -253,8 +253,21 @@ impl<'v> ScopedRead<'v> {
         id: &EntityId,
         mode: ReadMode,
     ) -> Result<Option<AdmittedRevision>> {
-        let authority = HeldAuthority::default();
-        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, &authority)? else {
+        self.entity_raw_with_mode_held_in(txn, policy, filter, id, mode, &HeldAuthority::default())
+    }
+
+    /// [`Self::entity_raw_with_mode_in`] under the relationship authority a
+    /// read holds for every row it reads in `txn` (FIX 11648).
+    pub(super) fn entity_raw_with_mode_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        mode: ReadMode,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<Option<AdmittedRevision>> {
+        let Some(mut raw) = self.admitted_raw_in(txn, policy, filter, id, mode, authority)? else {
             return Ok(None);
         };
         // The short-reference hash names the stored revision, so it is taken
