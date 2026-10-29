@@ -71342,7 +71342,7 @@
      "purpose": "Recovery: the start scan for leases a stopped worker left, the rehome of markers an earlier build left below…",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -114516,7 +114516,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/server/tagging/coordinator.rs",
@@ -116029,7 +116029,7 @@
     "server": {
      "files": 72,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Sync server state and maintenance jobs, split by concern"
     },
@@ -116104,7 +116104,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 31,
+   "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1445,
    "test_files": 182
