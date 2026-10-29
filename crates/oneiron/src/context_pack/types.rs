@@ -103,6 +103,8 @@ pub struct PackStats {
     pub critical_over_budget: bool,
     /// Critical claims eligible before budget truncation (not suppressed claims).
     pub critical_count: usize,
+    /// Assembly stopped optional work at the answer deadline (retrieval stages or L2/edge/hydration).
+    pub deadline_exceeded: bool,
 }
 
 /// The critical claims a pack run found among its admitted candidates, and

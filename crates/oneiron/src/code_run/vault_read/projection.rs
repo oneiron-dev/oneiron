@@ -111,6 +111,7 @@ fn project_pack_stats(stats: &PackStats) -> CoreContextPackStats {
         neighbors_hydrated: stats.neighbors_hydrated,
         cosine_ghosts_dampened: stats.cosine_ghosts_dampened,
         claims_suppressed: stats.claims_suppressed,
+        deadline_exceeded: stats.deadline_exceeded,
         tokens: project_token_stats(&stats.tokens),
         items_truncated: project_accounting(stats.items_truncated),
         items_dropped: project_accounting(stats.items_dropped),

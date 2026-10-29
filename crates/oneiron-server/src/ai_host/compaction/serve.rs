@@ -28,7 +28,7 @@ use oneiron::{BudgetGuard, LlmResponse};
 use super::{
     BACKEND_KEY, COMPACTION_RUN, CompactionMeter, ServedCompactionBackend, output_tokens, refused,
 };
-use crate::ai_host::payer_funding::scope_funding;
+use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::models::{RoleCall, RoleRefusal};
 
 impl ServedCompactionBackend {
@@ -284,15 +284,24 @@ impl ServedCompactionBackend {
         let turn =
             |error: String| refused(CompactionSuppression::TurnScoped { check: None }, error);
         // A pass under a room-paid scope bills its root payer's own account
-        // (OF-531); a payer this host cannot bill holds the pass for the turn.
+        // (OF-531); a payer this host cannot bill holds the pass for the turn,
+        // and one the owners must first approve holds it until they say yes
+        // (FIX 3740).
         let (guard, payer) = match &self.meter {
             CompactionMeter::CodeMode(guard) => (guard.clone(), None),
             // A chat turn's flight bills the payer its turn resolved, on its
             // own guard on the chat actor's line (FIX 4465 D).
             CompactionMeter::Chat { guard, payer } => (guard.clone(), payer.clone()),
             CompactionMeter::Scope(scope) => {
-                let payer = scope_funding(&self.vault, Some(scope), false)
-                    .map_err(|fault| turn(fault.to_string()))?;
+                let payer =
+                    scope_funding(&self.vault, Some(scope), false).map_err(
+                        |fault| match fault {
+                            PayerFault::Needed { .. } => {
+                                refused(CompactionSuppression::PayerNeeded, fault.to_string())
+                            }
+                            PayerFault::Missing { .. } => turn(fault.to_string()),
+                        },
+                    )?;
                 let guard = AgentDispatcher::new(&self.vault)
                     .guard_for_scope(scope)
                     .map_err(|error| turn(error.to_string()))?;
@@ -326,6 +335,21 @@ impl ServedCompactionBackend {
 impl CompactionBackend for ServedCompactionBackend {
     fn backend_key(&self) -> &str {
         &self.key
+    }
+
+    /// The runtime's recovery count (FIX 1112): a run's turn-scoped hold
+    /// ends at its next breakpoint once a model seat comes back.
+    fn recoveries(&self) -> u64 {
+        *self.models.recoveries().borrow()
+    }
+
+    /// A pass held on its payer tries again once its scope's funding reads
+    /// yes, read as [`Self::ready`] first read it (FIX 3740).
+    fn funded(&self) -> bool {
+        match &self.meter {
+            CompactionMeter::Scope(scope) => scope_funding(&self.vault, Some(scope), false).is_ok(),
+            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => true,
+        }
     }
 
     fn tier_class(&self) -> CompactionTierClass {

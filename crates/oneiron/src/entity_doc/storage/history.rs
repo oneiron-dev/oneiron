@@ -130,8 +130,23 @@ pub(crate) fn record_bodies_at_in_txn<K>(
     }
     let h = head(store, txn, entity)?;
     let doc = load(store, txn, &h)?;
+    // As the history walk reads: the live frontier from the live document,
+    // an older one on one private scratch copy checked out there, and a fork
+    // only where checkout cannot name the state (FIX 11647).
+    let live = doc.frontier();
+    let mut scratch: Option<EntityDoc> = None;
     let mut bodies = Vec::with_capacity(frontiers.len());
     for (key, frontier) in frontiers {
+        if frontier == live {
+            bodies.push((key, body_with_document(&h.field, body, &doc)?));
+            continue;
+        }
+        if !doc.doc.is_shallow()
+            && let Some(read) = read_with_scratch(&doc, &h.field, body, &frontier, &mut scratch)
+        {
+            bodies.push((key, read));
+            continue;
+        }
         let Ok(version) = doc.fork(&frontier) else {
             continue;
         };
