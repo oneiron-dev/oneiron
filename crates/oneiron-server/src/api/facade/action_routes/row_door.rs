@@ -198,6 +198,7 @@ impl FacadeRowDoor {
         if let Some(auth) = &self.credential {
             let auth = auth.clone();
             let server = Arc::clone(&self.server);
+            let headers = self.headers.clone();
             let call = call.clone();
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             let row = async move {
@@ -219,6 +220,7 @@ impl FacadeRowDoor {
                 let stamp = record_credential_row(
                     &server,
                     &auth,
+                    &headers,
                     verb,
                     (request_digest, inputs, attempt),
                     &answer,
@@ -291,11 +293,14 @@ impl FacadeRowDoor {
 /// Records the receipt of a row the credential's own facade call ran in
 /// process (FIX 10635), as a facade route's receipt door records its call:
 /// attributed to the credential, its request and answer digested, the
-/// inputs captured before it ran and the attempt it ran inside. No session
-/// binds it, so only an off-record row keeps none ([`call_receipt::record`]).
+/// inputs captured before it ran and the attempt it ran inside. A row run
+/// inside an anonymous off-record session the credential is verified in
+/// keeps none, judged as the route's receipt door judges it, and so does
+/// an off-record row ([`call_receipt::record`]).
 fn record_credential_row(
     server: &SyncServer,
     auth: &CoreAuth,
+    headers: &HeaderMap,
     verb: &str,
     (request_digest, inputs, attempt): (String, Option<ActionInputs>, Option<CallAttemptWitness>),
     answer: &Result<FacadeCallOutput, FacadeApiError>,
@@ -317,10 +322,12 @@ fn record_credential_row(
             )),
         ),
     };
+    let anonymous =
+        call_receipt::in_anonymous_session(server, headers, call_receipt::request_principal(auth));
     let (actor_ref, actor_class) = call_receipt::call_actor(auth);
     call_receipt::record(
         server,
-        false,
+        anonymous,
         CallReceiptInput {
             transport: CREDENTIAL_ROW_TRANSPORT,
             verb: verb.to_owned(),
