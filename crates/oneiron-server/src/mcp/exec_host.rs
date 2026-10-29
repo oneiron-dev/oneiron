@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod description_route;
 mod off_record_run;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
 
@@ -958,8 +959,9 @@ fn seat_for(
         .ok_or("manifest-backed run requires a capability profile")?;
     let task = task(facet);
     match pin {
+        // A typed run is born on its description route when one applies (FIX 11307).
         SeatPin::Base(Some(type_ref)) => {
-            vault.birth_task_model_seat(run_id, type_ref, &task, decisions, parent_at)
+            description_route::task_seat(vault, run_id, type_ref, &task, decisions, parent_at)
         }
         SeatPin::Base(None) => vault.birth_model_seat(run_id, &task, decisions, parent_at),
         SeatPin::Routed(bound) => {
