@@ -169,7 +169,7 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
     tokio::spawn(async move {
         let result = produce(producer).await;
         if let Some(sitting) = activity {
-            ai.session_hint(sitting, SessionHint::Activity);
+            ai.session_hint(sitting, SessionHint::Activity, None);
         }
         // The answer is the agent's turn, so its own cadence dial counts it.
         ai.turn_landed(

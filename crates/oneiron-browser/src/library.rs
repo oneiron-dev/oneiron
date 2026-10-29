@@ -100,14 +100,18 @@ pub struct WorkflowProgram {
 /// Offers a solved run's program to the library. `args` are the values the
 /// solved run used: the host checks the page now with them, then replays
 /// the program once with no model on a fresh guest, with `replay_args`
-/// where the proposal gives them, else with `args` again.
+/// where the proposal gives them, else with `args` again. A proposal names
+/// its program whole, or a site skill's seed by `candidate` (CUA E10).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProposeInput {
+    #[serde(default)]
     pub subgoal: String,
     #[serde(default)]
     pub params: Vec<String>,
+    #[serde(default)]
     pub steps: Vec<BatchStep>,
+    #[serde(default)]
     pub postcondition: Vec<ExpectInput>,
     #[serde(default)]
     pub args: BTreeMap<String, String>,
@@ -126,6 +130,12 @@ pub struct ProposeInput {
     /// only, which grants nothing.
     #[serde(default)]
     pub seed: Option<WorkflowSeed>,
+    /// A seed candidate `library.find` or an `open` listed: the host
+    /// resolves its exact bytes, whose program and provenance stand in for
+    /// the proposal's own; `args`, `replay_args` and `supersedes` stay the
+    /// caller's.
+    #[serde(default)]
+    pub candidate: Option<String>,
 }
 
 /// Which check refused a program.
