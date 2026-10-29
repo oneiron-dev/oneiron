@@ -110,6 +110,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) corpus_snapshot_ref: Option<String>,
     pub(super) replay_query_ref: Option<String>,
     pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
+    /// An already-held task-work turn for PPR, so admission never nests.
+    pub(super) ppr_work: Option<Arc<crate::work_line::TaskWorkTurn>>,
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
@@ -197,6 +199,7 @@ impl<'a> PipelineBuilder<'a> {
             corpus_snapshot_ref: None,
             replay_query_ref: None,
             deadline: None,
+            ppr_work: None,
             rerank: None,
             hyde: None,
             access_factor_overrides: None,
@@ -285,6 +288,12 @@ impl<'a> PipelineBuilder<'a> {
     /// same vault's; telemetry routing stays with [`Self::in_session`].
     pub(crate) fn reading(mut self, read: crate::store::StoreRead<'a>) -> Self {
         self.read = read;
+        self
+    }
+
+    /// Carries an already-held task-work turn into PPR admission.
+    pub(crate) fn ppr_work_turn(mut self, turn: Arc<crate::work_line::TaskWorkTurn>) -> Self {
+        self.ppr_work = Some(turn);
         self
     }
 

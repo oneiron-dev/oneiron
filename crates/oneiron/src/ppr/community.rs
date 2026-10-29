@@ -17,7 +17,7 @@ use super::cache_store::{SEED_HASH_LEN, read_graph_version};
 use super::policy::{PprAlphas, SeedWeighting};
 use super::query::{
     DeferredPprCacheWrite, PprCachePolicy, PprQueryResult, hash_seeds,
-    ppr_query_in_txn_with_diagnostics, ppr_query_in_txn_with_identity, validate_ppr_request,
+    ppr_query_in_txn_with_diagnostics_and_deadline, ppr_query_in_txn_with_identity,
 };
 
 /// Inputs captured by the Uniform expansion caller before seed IDs are sorted
@@ -43,7 +43,7 @@ pub(crate) fn ppr_query_in_txn_with_community_deferred_cache(
     Option<DeferredPprCacheWrite>,
     crate::ppr_community::CommunityBoostReport,
 )> {
-    let output = ppr_community_query_in_txn(store, txn, request, false)?;
+    let output = ppr_community_query_in_txn(store, txn, request, false, None)?;
     Ok((output.scores, output.write, output.report))
 }
 /// The same read snapshot and actual boosted IDs survive until final selection.
@@ -75,9 +75,10 @@ pub(crate) fn ppr_expand_in_txn_with_community_diagnostics(
     store: &Store,
     txn: &RoTxn<'_>,
     mut request: CommunityPprRequest<'_>,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<(PprQueryResult, Option<CommunityPprDiversity>)> {
     request.weighting = SeedWeighting::Uniform;
-    let output = ppr_community_query_in_txn(store, txn, request, true)?;
+    let output = ppr_community_query_in_txn(store, txn, request, true, deadline)?;
     Ok((
         PprQueryResult {
             scores: output.scores,
@@ -99,6 +100,7 @@ fn ppr_community_query_in_txn(
     txn: &RoTxn<'_>,
     request: CommunityPprRequest<'_>,
     defer_diversity: bool,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<CommunityPprOutput> {
     use crate::ppr_community::{
         CommunityBoostReport, CommunityQueryView, apply_community_prior, boost_community_scores,
@@ -106,7 +108,7 @@ fn ppr_community_query_in_txn(
     };
     let config = &request.config.ppr_community;
     if request.weighting != SeedWeighting::Uniform || config.beta == 0.0 {
-        let result = ppr_query_in_txn_with_diagnostics(
+        let result = ppr_query_in_txn_with_diagnostics_and_deadline(
             store,
             txn,
             request.seeds,
@@ -114,6 +116,7 @@ fn ppr_community_query_in_txn(
             request.teleport_alpha,
             request.config.ppr_vad_alpha,
             request.weighting,
+            deadline,
         )?;
         return Ok(CommunityPprOutput {
             cache: result.cache,
@@ -124,7 +127,6 @@ fn ppr_community_query_in_txn(
         });
     }
     crate::config::validate_ppr_community(config)?;
-    validate_ppr_request(request.seeds, request.depth)?;
     validate_ppr_vad_alpha(request.config.ppr_vad_alpha)?;
     let evidence_ids: HashSet<_> = request
         .context
@@ -186,6 +188,7 @@ fn ppr_community_query_in_txn(
             defer_writes: true,
             community_identity: identity,
         },
+        deadline,
     )?;
     let cache_outcome = result.cache;
     let mut scores = result.scores;
