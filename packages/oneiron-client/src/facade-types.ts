@@ -2177,7 +2177,7 @@ export type HookReplayCase = { on: "fact"; source: FactSource; position: FactPos
 /** `oneiron::runtime_hooks::replay::HookReplayCompare` */
 export type HookReplayCompare = "same" | "differs" | "incomplete"
 /** `oneiron::verbs::host::hooks_replay::HookReplayOutcome` */
-export type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string }
+export type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "withheld"; reason: string } | { status: "missing_history"; reason: string }
 /** `oneiron::verbs::host::hooks_replay::HookReplayRow` */
 export type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome }
 /** `oneiron::verbs::hub::HubHookReplay` */
@@ -4489,7 +4489,7 @@ export type HookRegenBindingRequest = { binding: EntityId }
 /** `oneiron::runtime_hooks::regen::HookContractStamp` */
 export type HookContractStamp = { verb_table: string; sandbox: string }
 /** `oneiron::runtime_hooks::regen::HookGoldenDiff` */
-export type HookGoldenDiff = { cases: number; changed: string[] }
+export type HookGoldenDiff = { cases: number; changed: string[]; execution_failed: string[]; withheld: string[]; missing_history: string[] }
 /** `oneiron::runtime_hooks::regen::HookRegenFailurePhase` */
 export type HookRegenFailurePhase = "intent" | "generate" | "validate" | "golden_replay"
 /** `oneiron::runtime_hooks::regen::HookRegenFailure` */
