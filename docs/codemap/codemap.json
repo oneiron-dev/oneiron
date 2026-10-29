@@ -98242,7 +98242,7 @@
      "path": "src/api/error_map.rs",
      "purpose": "Engine-to-ApiError mapping plus query/JSON rejection translators",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -105796,6 +105796,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/error/typed_refusal.rs",
+     "purpose": "The typed refusals of the direct error vocabulary (FIX 6032)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -112270,7 +112280,7 @@
      "purpose": "The embedder provider slot"
     },
     "error": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -112559,7 +112569,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1345,
+   "source_files": 1346,
    "test_files": 182
   },
   "oneiron-spawn": {
