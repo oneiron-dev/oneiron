@@ -840,6 +840,47 @@ fn dreamer_claim_index_text(
     Ok(lines.join("\n"))
 }
 
+impl Vault {
+    /// Text-indexes every surfaceable Dreamer claim that has no text posting,
+    /// as a signed promotion now indexes its claim: signed promotions landed
+    /// before that wrote none. The words come from the stored body; the
+    /// queries a claim was extracted for were never stored. An indexed claim
+    /// is skipped, so a second pass indexes nothing. Returns how many it indexed.
+    pub fn index_dreamer_claims_without_text(&self) -> Result<usize> {
+        let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+        self.with_write_txn_grouped(|wtxn| {
+            // Collect, then write: the type-index cursor drops before the first write.
+            let mut unindexed = Vec::new();
+            for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
+                &self.store,
+                &*wtxn,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                None,
+            )? {
+                let id = row?;
+                if self
+                    .store
+                    .text_forward
+                    .get(&*wtxn, id.as_bytes())?
+                    .is_none()
+                    && let Ok(Some(body)) = self.get_claim_in_txn(&*wtxn, &id)
+                    && crate::memory::claim_author(&body) == Some(dreamer)
+                    && crate::claim::claim_surfaceable(&body)
+                    && !crate::claim::is_reserved_predicate(&body.predicate)
+                {
+                    unindexed.push((id, dreamer_claim_index_text(self, &*wtxn, &body, &[])?));
+                }
+            }
+            for (id, text) in &unindexed {
+                self.batch_in()
+                    .text(id, &[("val", text.as_str())])
+                    .apply(wtxn)?;
+            }
+            Ok(unindexed.len())
+        })
+    }
+}
+
 /// The same typed evidence decision returned by the public evidence read.
 fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
