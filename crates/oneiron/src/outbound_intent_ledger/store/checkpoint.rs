@@ -57,7 +57,7 @@ const ACCOUNTING: &str = "accounting ";
 
 /// A call's compartment: its attempt id (16), then its call sequence
 /// (u64be).
-fn call(attempt_id: &AttemptId, call_seq: u64) -> Result<OwnerRef> {
+pub(super) fn call(attempt_id: &AttemptId, call_seq: u64) -> Result<OwnerRef> {
     let mut id = [0; 24];
     id[..16].copy_from_slice(attempt_id.as_bytes());
     id[16..].copy_from_slice(&call_seq.to_be_bytes());
