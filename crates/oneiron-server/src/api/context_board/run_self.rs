@@ -8,11 +8,11 @@
 //! and goes when that connection does. Without one, the brief is resolved
 //! from the run itself: the agent, the person its subject anchor names, the
 //! line the run's entry spends on, the clock and the skills the run's own
-//! session loaded. Every field no host resolves is left out and named as
-//! unavailable, never stated as a value.
+//! session loaded. Every field no host resolves is left out of the brief
+//! and named on one unavailable line, never stated as a value.
 
 use oneiron::context_board::{
-    CommunicationLimits, SelfBriefState, SessionReadSet, StreamConnectionId,
+    CommunicationLimits, SelfBrief, SelfBriefState, SessionReadSet, StreamConnectionId,
 };
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{MemoryError, MemoryResult};
@@ -21,15 +21,19 @@ use oneiron::task_verb::sdk::DescribeRequest;
 use crate::server::SyncServer;
 
 /// The brief fields no host resolves for a run (FIX-LIST: the self-brief
-/// producers): left out of a resolved brief and named as unavailable.
-const RUN_BRIEF_UNRESOLVED: [&str; 6] = [
-    "cast",
-    "grant_revision",
-    "effective_scope",
-    "communication",
-    "classes",
-    "working_set",
+/// producers), each by its identity key and the name its unavailable line
+/// gives it: left out of a resolved brief and named on that line.
+const RUN_BRIEF_UNRESOLVED: [(&str, &str); 6] = [
+    ("grant_revision", "grant_revision"),
+    ("cast", "cast"),
+    ("communication", "communication limits"),
+    ("classes", "class verdicts"),
+    ("working_set", "working set"),
+    ("effective_scope", "effective scope"),
 ];
+
+/// The head of a resolved brief's unavailable line.
+const RUN_BRIEF_UNAVAILABLE: &str = "unavailable (no producer yet)";
 
 /// Answers a pumped run's `describe(self)` for its agent `actor`, over the
 /// run's own board `connection`, its entry spending on `line`: the run's
@@ -66,7 +70,7 @@ pub(crate) async fn describe_self_for_run(
         None => {
             let (state, unavailable) = resolved_state(server, actor, line, &reads)?;
             let brief = state.describe(&server.vault, &reads, Some(&people))?;
-            let tail = brief.render_available(&unavailable);
+            let tail = render_resolved(&brief, &unavailable);
             (brief, tail)
         }
     };
@@ -76,17 +80,53 @@ pub(crate) async fn describe_self_for_run(
     Ok((value, sources))
 }
 
+/// [`SelfBrief::render`]'s sections for a resolved brief: each field
+/// `unavailable` names (its identity key, its name) is left out of
+/// identity, and one line after the sections names them all, so no
+/// placeholder reads as a resolved fact. Escaped as the renderer escapes.
+fn render_resolved(brief: &SelfBrief, unavailable: &[(&str, &str)]) -> String {
+    let mut identity = serde_json::to_value(brief).unwrap_or_default();
+    let skills = identity
+        .as_object_mut()
+        .and_then(|fields| {
+            for (key, _) in unavailable {
+                fields.remove(*key);
+            }
+            fields.remove("skills")
+        })
+        .unwrap_or_default();
+    let safe = |value: &serde_json::Value| {
+        value
+            .to_string()
+            .replace('&', "\\u0026")
+            .replace('<', "\\u003c")
+            .replace('>', "\\u003e")
+    };
+    let mut out = format!(
+        "<skills>{}</skills>\n<identity>{}</identity>",
+        safe(&skills),
+        safe(&identity)
+    );
+    if let Some(people) = &brief.people {
+        out.push('\n');
+        out.push_str(&people.render());
+    }
+    let names: Vec<&str> = unavailable.iter().map(|(_, name)| *name).collect();
+    out.push_str(&format!("\n{RUN_BRIEF_UNAVAILABLE}: {}", names.join(", ")));
+    out
+}
+
 /// The run's brief state as the run itself resolves it, and the fields it
 /// could not: [`RUN_BRIEF_UNRESOLVED`] always, the principal when no subject
 /// anchor names the person behind the agent, and the budget when no line
-/// binds the run's entry. Each unresolved field holds an empty value the
-/// render leaves out.
+/// binds the run's entry. Each unresolved field holds a value
+/// [`render_resolved`] leaves out.
 fn resolved_state(
     server: &SyncServer,
     actor: oneiron::WriteActor,
     line: Option<&RunAdmission>,
     reads: &SessionReadSet,
-) -> MemoryResult<(SelfBriefState, Vec<&'static str>)> {
+) -> MemoryResult<(SelfBriefState, Vec<(&'static str, &'static str)>)> {
     let mut unavailable = RUN_BRIEF_UNRESOLVED.to_vec();
     let self_ref = actor.entity_ref();
     let now = std::time::SystemTime::now()
@@ -95,13 +135,13 @@ fn resolved_state(
     let principal =
         oneiron::subject_model::actor_subject_anchor(&server.vault, &self_ref, now.as_secs())?
             .unwrap_or_else(|| {
-                unavailable.push("principal");
+                unavailable.push(("principal", "principal"));
                 self_ref
             });
     let (budget_lease_id, budget) = match line {
         Some(line) => (line.run().to_owned(), line.read()),
         None => {
-            unavailable.extend(["budget_lease_id", "budget"]);
+            unavailable.extend([("budget_lease_id", "budget lease"), ("budget", "budget")]);
             (String::new(), unresolved_budget())
         }
     };
