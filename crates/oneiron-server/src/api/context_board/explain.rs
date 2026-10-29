@@ -265,6 +265,10 @@ fn explain_refusal(error: ApiError) -> MemoryError {
     let code = match error.code() {
         ErrorCode::BadRequest => MEMORY_CODE_BAD_REQUEST,
         ErrorCode::Unauthorized | ErrorCode::Forbidden => MEMORY_CODE_FORBIDDEN,
+        // The engine's own refusal codes keep their name (FIX 6032).
+        code @ (ErrorCode::HostActionRequiresSupportGrant | ErrorCode::OwnerBindingRequired) => {
+            code.as_str()
+        }
         ErrorCode::NotFound => MEMORY_CODE_NOT_FOUND,
         _ => MEMORY_CODE_INTERNAL,
     };

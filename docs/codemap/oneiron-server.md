@@ -234,7 +234,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/discover.rs` | src | m | 26 crate-vis | — | The discovery route: what this server offers a client, its capabilities and runtime health |
 | `src/api/discover/capabilities.rs` | src | s | 5 crate-vis | — | The capabilities discovery and health advertise, sorted (FIX 6692) |
 | `src/api/entity.rs` | src | m | 3 crate-vis | — | — |
-| `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
+| `src/api/error_map.rs` | src | s | 4 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
 | `src/api/esign.rs` | src | m | 6 crate-vis | — | Session-less signing ceremony |
 | `src/api/esign/delivery_outbox.rs` | src | m | 1 crate-vis | — | The e-sign delivery outbox (OF-415, FIX 3577): the seam that hands each authorized `esign.delivery` intent… |
 | `src/api/esign/delivery_outbox/completion.rs` | src | s | 2 crate-vis | — | A completed delivery's hand-off (FIX 5306): the completion receipt the sender takes to retire its own record… |
@@ -955,6 +955,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/tests/turns.rs` | test | m | — | — | Turns are the embedding unit (ARCH-0004): a witnessed conversation is found by what it meant, through the… |
 | `src/error/mod.rs` | src | m | 4 struct · 2 enum · 27 fn · 1 const · 1 re-export · 3 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
+| `src/error/typed_refusal.rs` | src | s | 6 crate-vis | — | The typed refusals of the direct error vocabulary (FIX 6032) |
 | `src/feedback_delivery.rs` | src | m | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
 | `src/feedback_redaction.rs` | src | s | 7 crate-vis | — | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… |

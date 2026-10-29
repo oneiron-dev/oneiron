@@ -95,7 +95,11 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         ErrorCode::BadRequest => {
             optional_string(&mut properties, "field");
         }
-        ErrorCode::Forbidden => {
+        ErrorCode::Forbidden
+        | ErrorCode::HostActionRequiresSupportGrant
+        | ErrorCode::OwnerBindingRequired
+        | ErrorCode::CourtesyDeleteUnauthenticated
+        | ErrorCode::ControlScopeDenied => {
             optional_string(&mut properties, "requiredScope");
         }
         ErrorCode::NotFound => {
