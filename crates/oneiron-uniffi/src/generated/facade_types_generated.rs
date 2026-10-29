@@ -64624,11 +64624,11 @@ pub struct ScopedReadResultOptionalNoteHistoryView {
     pub narrowing: ScopedReadReceipt,
 }
 
-/// `oneiron::note::documents::NoteEdit`.
+/// `oneiron::note::documents::NoteProgramEdit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
-pub enum NoteEdit {
+pub enum NoteProgramEdit {
     #[serde(rename = "replace_span")]
     ReplaceSpan {
         #[serde(rename = "start")]
@@ -64677,7 +64677,7 @@ pub struct NoteForkRequest {
     #[serde(rename = "base")]
     pub base: NoteVersion,
     #[serde(rename = "edit")]
-    pub edit: NoteEdit,
+    pub edit: NoteProgramEdit,
     #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -64934,13 +64934,13 @@ pub struct EditNoteRequest {
     #[serde(rename = "note_ref")]
     pub note_ref: String,
     #[serde(rename = "edit")]
-    pub edit: NoteEdit,
+    pub edit: NoteProgramEdit,
 }
 
-/// `oneiron::note::documents::NoteEditOutcome`.
+/// `oneiron::note::documents::NoteProgramEditOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
-pub enum NoteEditOutcome {
+pub enum NoteProgramEditOutcome {
     #[serde(rename = "edited")]
     Edited {
         #[serde(rename = "head")]

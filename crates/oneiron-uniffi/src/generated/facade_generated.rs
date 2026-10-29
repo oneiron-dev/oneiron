@@ -5641,7 +5641,7 @@ export_facade! {
     let output = client.vault_notes_editor_close(&input)?;
     crate::codec::lift_record("vault.notes.editor.close", &output)
 };
-"vault.notes.edit" => fn vault_notes_edit(&self, input: EditNoteRequest) -> NoteEditOutcome = |client| {
+"vault.notes.edit" => fn vault_notes_edit(&self, input: EditNoteRequest) -> NoteProgramEditOutcome = |client| {
     let input: oneiron::task_verb::sdk::EditNoteRequest = crate::codec::lower_record("vault.notes.edit", input)?;
     let output = client.vault_notes_edit(&input)?;
     crate::codec::lift_record("vault.notes.edit", &output)
