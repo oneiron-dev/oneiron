@@ -121,8 +121,13 @@ impl NapiVault {
     /// The ids stored with type byte `entity_type`.
     pub(super) fn ids_of_type(&self, entity_type: u8) -> napi::Result<Vec<EntityId>> {
         match self.session_memory() {
-            Some(memory) => memory.raw_entities_by_type(entity_type).map_err(facade_error),
-            None => self.vault.entities_by_type(entity_type).map_err(to_napi_err),
+            Some(memory) => memory
+                .raw_entities_by_type(entity_type)
+                .map_err(facade_error),
+            None => self
+                .vault
+                .entities_by_type(entity_type)
+                .map_err(to_napi_err),
         }
     }
 
