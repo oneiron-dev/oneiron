@@ -242,6 +242,9 @@ impl SyncServer {
                 wait: config.limits.queue_wait(),
             },
         ));
+        // Another vault of this process reads this one through this handle
+        // (FIX 11157): the read-only door refuses a root held open here.
+        vault.register_served();
         Ok(Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
