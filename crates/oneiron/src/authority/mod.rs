@@ -239,7 +239,7 @@ pub use checkpoint_root_status::{
 };
 pub use clock_repair::{
     AUTHORITY_CLOCK_REPAIR_EVIDENCE, AuthorityClockRepair, AuthorityClockRepairEvidence,
-    AuthorityClockRepairOutcome,
+    AuthorityClockRepairOutcome, ClockRepairCaller,
 };
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;
