@@ -638,7 +638,10 @@ impl HttpEmbedder {
             // The pods' door, or the endpoint's until the pool binds.
             EmbeddingDestination::Pod(_) => (
                 self.pod_paid.get().or_else(|| self.paid.get()),
-                self.pods.get().map(|pods| &pods.client).unwrap_or(&self.client),
+                self.pods
+                    .get()
+                    .map(|pods| &pods.client)
+                    .unwrap_or(&self.client),
             ),
             EmbeddingDestination::Primary => (self.paid.get(), &self.client),
         };
