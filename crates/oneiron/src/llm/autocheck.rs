@@ -200,7 +200,8 @@ const HOLD: &str = "hold";
 /// reason written past it would lose the hold, so a host writes none that
 /// late (FIX 654).
 pub trait AutoCheckNotes: Send + Sync {
-    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>, due: Instant) -> Result<Vec<String>>;
+    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>, due: Instant)
+    -> Result<Vec<String>>;
 }
 
 /// The host's auto check as one typed decision through its ladder: allow or

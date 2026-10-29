@@ -118,10 +118,11 @@ async fn vault_decisions_asks_confirm_grant_answer(
     let owner = super::owner_binding::facade_owner(server, auth, VERB)?;
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || -> MemoryResult<DecisionAsk> {
-        let (ask, _) = server
-            .decision_host()
-            .asks()
-            .confirm_grant(&owner, input.seq, &input.notice)?;
+        let (ask, _) =
+            server
+                .decision_host()
+                .asks()
+                .confirm_grant(&owner, input.seq, &input.notice)?;
         Ok(ask)
     })
     .await

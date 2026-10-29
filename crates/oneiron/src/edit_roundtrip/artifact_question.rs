@@ -10,9 +10,8 @@ use crate::edit_roundtrip::CellValue;
 use crate::llm::decision::questions::{question_unit_correlation, standing_ask_route};
 use crate::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
-    DecisionLadder,
-    DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion, LocatedDecision,
-    MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
+    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion,
+    LocatedDecision, MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result};

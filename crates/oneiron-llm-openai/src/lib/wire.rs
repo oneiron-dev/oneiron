@@ -247,7 +247,10 @@ pub fn parse_openai_chat_response(body: &JsonValue) -> LlmResult<LlmResponse> {
         reply_assertions: Default::default(),
         // The tokens' log-probabilities, as the provider reported them, when
         // the request asked (FIX 1557).
-        token_scores: choice.get("logprobs").filter(|scores| !scores.is_null()).cloned(),
+        token_scores: choice
+            .get("logprobs")
+            .filter(|scores| !scores.is_null())
+            .cloned(),
     })
 }
 

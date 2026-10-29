@@ -265,10 +265,12 @@ impl MediaRuntime {
         };
         let row_kept = row.clone();
         let kept = match intent {
-            true => store.update(id, row.clone()).and_then(|written| match written {
-                JobWrite::Kept | JobWrite::Erased => Ok(true),
-                JobWrite::Deleted => store.put(id, row),
-            }),
+            true => store
+                .update(id, row.clone())
+                .and_then(|written| match written {
+                    JobWrite::Kept | JobWrite::Erased => Ok(true),
+                    JobWrite::Deleted => store.put(id, row),
+                }),
             false => store.put(id, row),
         };
         // FIX 2963: a row the vault refuses is held as the job's held write.

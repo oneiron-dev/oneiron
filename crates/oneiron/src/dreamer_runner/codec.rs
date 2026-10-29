@@ -623,8 +623,9 @@ pub(super) fn decode_parked_record(bytes: &[u8]) -> Result<DreamerParkedAttemptR
         cause: cause.ok_or(invalid_dreamer_runner("missing dreamer parked cause"))?,
         park_owner: park_owner
             .ok_or(invalid_dreamer_runner("missing dreamer parked park_owner"))?,
-        carried_spend: carried_spend
-            .ok_or(invalid_dreamer_runner("missing dreamer parked carried_spend"))?,
+        carried_spend: carried_spend.ok_or(invalid_dreamer_runner(
+            "missing dreamer parked carried_spend",
+        ))?,
         parked_at: parked_at.ok_or(invalid_dreamer_runner("missing dreamer parked_at"))?,
     })
 }

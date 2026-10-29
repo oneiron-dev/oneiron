@@ -19,12 +19,12 @@ mod runner;
 mod slots;
 mod tournament;
 
+pub use ask_consent::{AskConsent, AskEffect, AskUndoFidelity, ConsentAskQueue};
 pub use providers::{
     DecisionCall, DecisionModel, DecisionPack, DecisionProvider, MAX_DECISION_STATE_BYTES,
     MAX_SCORE_LEVEL_BYTES, ModelDecisionProvider, PairedAnswer, ProviderCapability,
     ProviderDecision, RuleDecisionProvider, SCORE_LEVELS_FIELD, level_score, score_levels_in,
 };
-pub use ask_consent::{AskConsent, AskEffect, AskUndoFidelity, ConsentAskQueue};
 pub use roles::{
     AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
     ResolvedRole, RoleHolder, RoleRank,

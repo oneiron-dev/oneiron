@@ -210,14 +210,18 @@ fn fitted_case_state<S: HeldOutReplayNotes + ?Sized>(
     case: &HeldOutReplayCase<'_>,
     wrap: impl Fn(Value) -> Value,
 ) -> Result<(Value, Option<StateCut>)> {
-    fit_reserve_state(case.held_out_receipts.len(), case.instructions.len(), |kept, cut| {
-        let fitted = HeldOutReplayCase {
-            held_out_receipts: &case.held_out_receipts[..kept],
-            instructions: cut_text(case.instructions, cut),
-            ..*case
-        };
-        Ok(wrap(case_state(scorer, &fitted)?))
-    })
+    fit_reserve_state(
+        case.held_out_receipts.len(),
+        case.instructions.len(),
+        |kept, cut| {
+            let fitted = HeldOutReplayCase {
+                held_out_receipts: &case.held_out_receipts[..kept],
+                instructions: cut_text(case.instructions, cut),
+                ..*case
+            };
+            Ok(wrap(case_state(scorer, &fitted)?))
+        },
+    )
 }
 
 impl dyn HeldOutReplayNotes + '_ {
@@ -329,9 +333,11 @@ impl dyn HeldOutReplayNotes + '_ {
         case: &HeldOutReplayCase<'_>,
         blind: &[BlindPreference],
     ) -> Result<f32> {
-        let (state, cut) = fitted_case_state(self, case, |state| {
-            json!({"case": state, "blind_preferences": blind})
-        })?;
+        let (state, cut) = fitted_case_state(
+            self,
+            case,
+            |state| json!({"case": state, "blind_preferences": blind}),
+        )?;
         score_cut(self, "contrastive", &[case.skill], &state, cut)
     }
 

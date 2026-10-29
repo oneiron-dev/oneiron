@@ -274,9 +274,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 let probability = |p: f64| p.clamp(0.0, 1.0);
                 let (answer, probability) = match (question.labels, &asked.contract) {
                     // A noul's probability is P(yes), whichever way it reads.
-                    (LabelSet::Noul, _) => {
-                        (DecisionAnswer::Noul(top == 0), probability(labels[0]))
-                    }
+                    (LabelSet::Noul, _) => (DecisionAnswer::Noul(top == 0), probability(labels[0])),
                     // A score's level stands for its place on the score's scale.
                     (LabelSet::Choice(levels), AnswerContract::Score { min, max }) => (
                         DecisionAnswer::Score(level_score(*min, *max, top, levels.len())),

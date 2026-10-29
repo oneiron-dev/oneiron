@@ -89,10 +89,12 @@ impl MediaRuntime {
             .read(id, false)
             .and_then(KeptJob::live)
             .or_else(|| store.held_row(id));
-        let held = base.ok_or_else(|| "no row of it is kept".to_owned()).and_then(|mut row| {
-            row.ended = Some(state.clone());
-            store.hold(id, row)
-        });
+        let held = base
+            .ok_or_else(|| "no row of it is kept".to_owned())
+            .and_then(|mut row| {
+                row.ended = Some(state.clone());
+                store.hold(id, row)
+            });
         if let Err(error) = held {
             tracing::error!(%error, ticket = id, "a media job's end is held here only");
         }

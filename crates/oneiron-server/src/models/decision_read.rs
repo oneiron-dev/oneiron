@@ -34,8 +34,8 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
     BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
-    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage,
-    LlmResult, LlmUsage, RetryableLlmError,
+    LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
+    LlmUsage, RetryableLlmError,
 };
 use oneiron::{ModelId, ModelLocality};
 use serde_json::{Value as JsonValue, json};

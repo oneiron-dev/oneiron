@@ -40,9 +40,7 @@ use oneiron::llm::media::{
     MediaProgressFuture, MediaRequest, MediaResponse, MediaUsage, MediaVoice,
 };
 use oneiron::voice_cascade::speakable_pieces;
-use oneiron::voice_cascade::voxcpm2::{
-    PcmSpool, VoxCpm2PcmBody, VoiceServingLimits, WarmTarget,
-};
+use oneiron::voice_cascade::voxcpm2::{PcmSpool, VoiceServingLimits, VoxCpm2PcmBody, WarmTarget};
 use oneiron::{
     BudgetLease, EntityId, FatalLlmError, LlmError, LlmResult, ModelId, ModelLocality,
     RetryableLlmError, Vault,
@@ -78,11 +76,7 @@ struct Transcript<'a> {
 
 /// One render's JSON header: the pinned target, the text, and the reference
 /// transcript when it rides here, else its byte length.
-fn render_header(
-    target: &JsonValue,
-    text: &str,
-    transcript: Transcript<'_>,
-) -> LlmResult<Vec<u8>> {
+fn render_header(target: &JsonValue, text: &str, transcript: Transcript<'_>) -> LlmResult<Vec<u8>> {
     let header = match transcript.placement {
         TranscriptPlacement::Header => json!({
             "target": target,
@@ -246,9 +240,7 @@ fn effective_limits(
         max_text_bytes: narrowed.max_text_bytes.min(warm.max_text_bytes),
         max_ref_bytes: narrowed.max_ref_bytes.min(warm.max_ref_bytes),
         max_queued_renders: narrowed.max_queued_renders.min(warm.max_queued_renders),
-        max_inflight_uploads: narrowed
-            .max_inflight_uploads
-            .min(warm.max_inflight_uploads),
+        max_inflight_uploads: narrowed.max_inflight_uploads.min(warm.max_inflight_uploads),
         upload_read_deadline_ms: narrowed
             .upload_read_deadline_ms
             .min(warm.upload_read_deadline_ms),

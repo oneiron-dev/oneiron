@@ -102,7 +102,8 @@ impl BaselineCalibration {
             tracing::warn!(
                 "no oneironer engine on this machine clears the bundle's parity bar; name one with oneironer.device"
             );
-            self.dispatcher.retire(self.provisional_worker, PARITY_FAILED);
+            self.dispatcher
+                .retire(self.provisional_worker, PARITY_FAILED);
             return;
         };
         let worker = if engine == self.provisional.engine {

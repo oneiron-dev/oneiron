@@ -179,7 +179,11 @@ fn stamp_erased_before_deindex_in_txn(
             started_at: now_ms,
             updated_at: now_ms,
             response_payload: None,
-            owners: StepStateOwners { actor: None, subject: None, claim: Some(*claim) },
+            owners: StepStateOwners {
+                actor: None,
+                subject: None,
+                claim: Some(*claim),
+            },
             erased: true,
         },
     )
@@ -208,7 +212,11 @@ fn stamp_erased_before_deindex_in_rows(rows: &mut Rows, claim: EntityId) -> Resu
             started_at: 0,
             updated_at: 0,
             response_payload: None,
-            owners: StepStateOwners { actor: None, subject: None, claim: Some(claim) },
+            owners: StepStateOwners {
+                actor: None,
+                subject: None,
+                claim: Some(claim),
+            },
             erased: true,
         })?;
         match rows.binary_search_by(|(row, _)| row.as_slice().cmp(&full)) {

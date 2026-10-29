@@ -145,7 +145,16 @@ pub(crate) async fn ai_speech_for_run(
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
     let (request, voices) = prepare(server, AiOperation::Speech, input)?;
-    rendered(server, AiOperation::Speech, request, voices, Some(run), None, None).await
+    rendered(
+        server,
+        AiOperation::Speech,
+        request,
+        voices,
+        Some(run),
+        None,
+        None,
+    )
+    .await
 }
 
 /// `ai.image`: one image out; reference images make it an edit. Beside it,

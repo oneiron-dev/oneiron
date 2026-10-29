@@ -52,7 +52,9 @@ impl GeminiTransport for GeminiHttp {
         request: GeminiHttpRequest,
         _lease: &'a BudgetLease,
     ) -> LlmResult<GeminiProviderStream<'a>> {
-        let events = self.http.post_sse(&request.path, &BTreeMap::new(), &request.body);
+        let events = self
+            .http
+            .post_sse(&request.path, &BTreeMap::new(), &request.body);
         let frames = events.map(|item| -> LlmResult<GeminiFrame> {
             match item.map_err(transport)? {
                 SseItem::Status(reply) => Ok(GeminiFrame::Status(GeminiHttpResponse {

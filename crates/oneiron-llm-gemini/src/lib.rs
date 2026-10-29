@@ -38,10 +38,7 @@ impl<T: GeminiTransport> GeminiBackend<T> {
     pub fn from_catalog(catalog: Vec<LlmCatalogEntry>, transport: T) -> Self {
         Self {
             transport,
-            models: catalog
-                .into_iter()
-                .map(|e| (e.model.clone(), e))
-                .collect(),
+            models: catalog.into_iter().map(|e| (e.model.clone(), e)).collect(),
         }
     }
 }

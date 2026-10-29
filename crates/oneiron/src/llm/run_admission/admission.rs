@@ -474,7 +474,12 @@ impl RunAdmission {
     #[must_use]
     pub fn media_gate(&self, inner: Arc<dyn MediaBackend>, offer: &OfferBinding) -> MediaGate {
         let offer = self.inner.bound(offer).dispatch_binding();
-        MediaGate::new(Arc::clone(&self.inner), inner, offer, self.submit_key.clone())
+        MediaGate::new(
+            Arc::clone(&self.inner),
+            inner,
+            offer,
+            self.submit_key.clone(),
+        )
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,

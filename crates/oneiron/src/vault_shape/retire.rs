@@ -160,7 +160,9 @@ impl Vault {
             }),
         };
         let released = match &held {
-            Some(held) => self.apply_channel_identity_lifecycle_request(request, held.request_ref)?,
+            Some(held) => {
+                self.apply_channel_identity_lifecycle_request(request, held.request_ref)?
+            }
             None => self.apply_channel_identity_lifecycle_intent(request)?,
         };
         if released.identity_retiring {

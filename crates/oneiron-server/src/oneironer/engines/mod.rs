@@ -397,9 +397,7 @@ fn load_with(
 /// The built-in engine, which serves while the after-bind calibration
 /// measures this machine's engines (FIX 7108), as it serves a bundle with no
 /// reference.
-fn built_in_while_calibrating(
-    config: &OneironerConfig,
-) -> anyhow::Result<(LocalTagger, Serving)> {
+fn built_in_while_calibrating(config: &OneironerConfig) -> anyhow::Result<(LocalTagger, Serving)> {
     let engine = engines_here(OneironerRuntime::Candle)
         .into_iter()
         .find(|engine| engine.built_in())

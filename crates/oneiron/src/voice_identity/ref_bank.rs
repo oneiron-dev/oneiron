@@ -993,10 +993,10 @@ pub use owner_acts::{
     VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
 };
 use render_history::{RenderEventKey, read_render_consent, record_render_consent_in};
-use target_verification::VendorClone;
 pub use render_history::{
     VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,
 };
+use target_verification::VendorClone;
 
 #[cfg(test)]
 #[path = "ref_bank/tests.rs"]

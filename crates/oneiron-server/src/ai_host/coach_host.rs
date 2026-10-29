@@ -57,7 +57,9 @@ use oneiron::feedback::{
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,
 };
 use oneiron::limit_ask::EngineLimit;
-use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold, ThinkThreshold};
+use oneiron::llm::decision::{
+    HumanAskReason, PersonChangedAnswer, PersonThreshold, ThinkThreshold,
+};
 use oneiron::session_lifecycle::SessionSpeakers;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{EntityId, Error, LlmMessageRole, Vault};

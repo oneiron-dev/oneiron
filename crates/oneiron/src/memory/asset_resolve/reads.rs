@@ -150,7 +150,11 @@ pub fn hydrated_asset(
     let mut counted = |len: usize| {
         let admitted = admits(len);
         if admitted {
-            charged.set(charged.get().saturating_add(u64::try_from(len).unwrap_or(u64::MAX)));
+            charged.set(
+                charged
+                    .get()
+                    .saturating_add(u64::try_from(len).unwrap_or(u64::MAX)),
+            );
         }
         admitted
     };

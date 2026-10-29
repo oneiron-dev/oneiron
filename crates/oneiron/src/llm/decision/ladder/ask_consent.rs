@@ -109,7 +109,9 @@ impl AskConsent {
             .flatten()
             .any(|required| required == bound)
         {
-            return Err(invalid("an ask's bound is one of its effect's requirements"));
+            return Err(invalid(
+                "an ask's bound is one of its effect's requirements",
+            ));
         }
         let facts = effect.facts();
         let place = effect.place();
@@ -187,7 +189,9 @@ impl AskConsent {
             .flatten()
             .any(|required| *required == bound)
         {
-            return Err(invalid("an ask's bound is one of its effect's requirements"));
+            return Err(invalid(
+                "an ask's bound is one of its effect's requirements",
+            ));
         }
         Ok((effect, bound))
     }

@@ -74,9 +74,11 @@ impl BigModel {
                         .generate_served_by(&run, request, None, &|| true, deadline)
                         .await
                         .map(|(response, _)| response),
-                    Answerer::Model(_) => ladder
-                        .generate_exact_by(&run, request, None, &|| true, deadline)
-                        .await,
+                    Answerer::Model(_) => {
+                        ladder
+                            .generate_exact_by(&run, request, None, &|| true, deadline)
+                            .await
+                    }
                 }
             })
             .ok()?;

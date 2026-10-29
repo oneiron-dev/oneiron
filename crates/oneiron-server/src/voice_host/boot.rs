@@ -51,10 +51,10 @@ use oneiron::disclosure::RoomParty;
 use oneiron::interlocutor::InterlocutorResolutionInput;
 use oneiron::llm::{DEFAULT_BUDGET_RESERVE_UNITS, VoiceChunkPolicy};
 use oneiron::voice_cascade::uds::SocketGuard;
-use oneiron::workspace_roster::RoomWork;
 use oneiron::voice_cascade::{
     VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
 };
+use oneiron::workspace_roster::RoomWork;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault, WriteActor};
 use oneiron_vault_contract::{MANAGED_VOICE_NONCE_BYTES, ManagedOwnerAction};
 use serde::Deserialize;
@@ -634,8 +634,7 @@ fn bind_room(
     room: &str,
 ) -> io::Result<(VoiceContainerBinding, Option<EntityId>)> {
     let place = EntityId::from_hex(room).map_err(|_| refused(Refusal::Room))?;
-    let RoomWork { room, branch } =
-        call_place(vault, place).map_err(|_| refused(Refusal::Room))?;
+    let RoomWork { room, branch } = call_place(vault, place).map_err(|_| refused(Refusal::Room))?;
     let read =
         crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| refused(Refusal::Room))?;
     // A room the caller cannot read is one that does not exist.

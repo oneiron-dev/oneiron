@@ -123,7 +123,9 @@ impl QuestionTarget {
             input.get("target"),
             input.get("context").and_then(Value::as_array),
         ) else {
-            return Err(invalid("a detector input needs a target and a context list"));
+            return Err(invalid(
+                "a detector input needs a target and a context list",
+            ));
         };
         let mut lines = vec![line("question", &self.definition)?, line("target", target)?];
         for item in context {

@@ -441,9 +441,11 @@ async fn provision_record(
             cloned_at,
             awaiting,
         ),
-        None => server
-            .vault
-            .record_voice_target_clone(&clone, &vendor_voice_id, cloned_at, awaiting),
+        None => {
+            server
+                .vault
+                .record_voice_target_clone(&clone, &vendor_voice_id, cloned_at, awaiting)
+        }
     };
     match recorded {
         Ok(record) => {

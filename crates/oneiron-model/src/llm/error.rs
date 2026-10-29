@@ -211,7 +211,11 @@ impl RetryableLlmError {
     /// The far end refused the call, with its `code`, before anything ran.
     #[must_use]
     pub fn refused(code: &str, message: &str) -> Self {
-        Self::fault(TransportFaultKind::Refused, None, format!("{code}: {message}"))
+        Self::fault(
+            TransportFaultKind::Refused,
+            None,
+            format!("{code}: {message}"),
+        )
     }
 
     /// The far end sent a frame the call cannot take where it came.

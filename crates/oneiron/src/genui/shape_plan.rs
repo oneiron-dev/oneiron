@@ -185,7 +185,9 @@ fn standing(item: &ShapePlanCardItem) -> (LensStatus, String) {
             LensStatus::Proposed,
             format!("waits for your word; filing refused: {reason}"),
         ),
-        Some(ShapeItemState::Held { approval_digest, .. }) => (
+        Some(ShapeItemState::Held {
+            approval_digest, ..
+        }) => (
             LensStatus::Proposed,
             format!("the release waits for your approve-once press on {approval_digest}"),
         ),

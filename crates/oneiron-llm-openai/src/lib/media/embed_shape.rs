@@ -67,7 +67,9 @@ impl EmbedShape {
             .parts
             .iter()
             .any(|part| matches!(part, MediaPart::Audio { .. }));
-        if fixed.iter().any(|field| request.params.contains_key(*field))
+        if fixed
+            .iter()
+            .any(|field| request.params.contains_key(*field))
             || (audio && matches!(self, Self::Jina | Self::Cohere))
         {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -109,11 +111,7 @@ impl EmbedShape {
             .iter()
             .map(|part| {
                 let (field, input, kind) = match self {
-                    Self::Infinity => (
-                        "input",
-                        json!([part_input(part)?]),
-                        json!(modality(part)),
-                    ),
+                    Self::Infinity => ("input", json!([part_input(part)?]), json!(modality(part))),
                     Self::Cohere => match part {
                         MediaPart::Text { text } => {
                             ("texts", json!([text]), json!(COHERE_DOCUMENT))
@@ -216,7 +214,10 @@ fn part_input(part: &MediaPart) -> LlmResult<Value> {
         MediaPart::Image { media_type, bytes } | MediaPart::Audio { media_type, bytes }
             if !bytes.is_empty() =>
         {
-            json!(format!("data:{media_type};base64,{}", STANDARD.encode(bytes)))
+            json!(format!(
+                "data:{media_type};base64,{}",
+                STANDARD.encode(bytes)
+            ))
         }
         _ => return Err(FatalLlmError::InvalidRequest.into()),
     })

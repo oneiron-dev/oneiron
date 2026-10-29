@@ -385,29 +385,29 @@ fn run_unit(
         .iter()
         .flat_map(|(job, _)| job.windows.inputs())
         .collect();
-    let (code, fault, panicked) =
-        match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
-            Ok(results) if results.len() == inputs.len() => {
-                let mut results = results.into_iter();
-                let answers = unit
-                    .iter()
-                    .map(|(job, _)| {
-                        let parts: Vec<_> = results.by_ref().take(job.windows.len()).collect();
-                        parts
-                            .into_iter()
-                            .collect::<oneiron::Result<Vec<EncoderOutput>>>()
-                            .and_then(|outputs| job.windows.merge(outputs))
-                    })
-                    .collect();
-                return (answers, None, false);
-            }
-            Ok(_) => (
-                "the worker answered another number of calls",
-                "wrong_result_count",
-                false,
-            ),
-            Err(_) => ("the worker panicked", "worker_panicked", true),
-        };
+    let (code, fault, panicked) = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs)))
+    {
+        Ok(results) if results.len() == inputs.len() => {
+            let mut results = results.into_iter();
+            let answers = unit
+                .iter()
+                .map(|(job, _)| {
+                    let parts: Vec<_> = results.by_ref().take(job.windows.len()).collect();
+                    parts
+                        .into_iter()
+                        .collect::<oneiron::Result<Vec<EncoderOutput>>>()
+                        .and_then(|outputs| job.windows.merge(outputs))
+                })
+                .collect();
+            return (answers, None, false);
+        }
+        Ok(_) => (
+            "the worker answered another number of calls",
+            "wrong_result_count",
+            false,
+        ),
+        Err(_) => ("the worker panicked", "worker_panicked", true),
+    };
     let failed = unit
         .iter()
         .map(|_| Err(failure(WORKER_TOOL, code)))

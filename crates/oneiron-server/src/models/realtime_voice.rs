@@ -206,8 +206,8 @@ impl RealtimeVoiceSession {
                     return Err(RetryableLlmError::ServerError.into());
                 }
             };
-            let event: JsonValue = serde_json::from_str(frame.as_str())
-                .map_err(|_| FatalLlmError::EmptyResponse)?;
+            let event: JsonValue =
+                serde_json::from_str(frame.as_str()).map_err(|_| FatalLlmError::EmptyResponse)?;
             match event["type"].as_str() {
                 Some("response.created") => self.responding = true,
                 Some("response.done") => self.answered(&event)?,

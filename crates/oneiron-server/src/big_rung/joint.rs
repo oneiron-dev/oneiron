@@ -144,7 +144,10 @@ impl JointRead<'_> {
         let (answer, probability) = match contract {
             // A yes/no's probability is P(yes), whichever way it reads.
             AnswerContract::Noul => (DecisionAnswer::Noul(top == 0), labels[0]),
-            _ => (DecisionAnswer::Choice(self.options[top].clone()), labels[top]),
+            _ => (
+                DecisionAnswer::Choice(self.options[top].clone()),
+                labels[top],
+            ),
         };
         Some(ProviderDecision {
             answer,

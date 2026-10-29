@@ -311,14 +311,12 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             }
             // `claim_kind` wakes observers only when it claims, so an empty
             // claim never self-wakes the pump (ONE-2100).
-            CampaignHomeNodeAdmission::Designated(_) => {
-                AttemptQueue::new(self.vault)
-                    .claim_kind(
-                        CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND,
-                        ClaimAttempt { lease_owner, now },
-                    )
-                    .map(CampaignEnrollmentClaim::Queue)
-            }
+            CampaignHomeNodeAdmission::Designated(_) => AttemptQueue::new(self.vault)
+                .claim_kind(
+                    CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND,
+                    ClaimAttempt { lease_owner, now },
+                )
+                .map(CampaignEnrollmentClaim::Queue),
         }
     }
 

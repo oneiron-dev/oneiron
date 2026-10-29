@@ -134,8 +134,7 @@ impl Memory<'_> {
             None => {
                 let live = vault.room_live_speaker_entries_in(&txn, room)?;
                 let speakers = vault.live_speaker_clearance_in(&txn, &live)?;
-                let met =
-                    crate::claim::meet_clearance(terms.clearance.as_ref(), fresh.as_ref());
+                let met = crate::claim::meet_clearance(terms.clearance.as_ref(), fresh.as_ref());
                 RoomTerms {
                     clearance: crate::claim::meet_clearance(met.as_ref(), speakers.as_ref()),
                     ..terms.clone()

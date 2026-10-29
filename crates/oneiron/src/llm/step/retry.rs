@@ -104,12 +104,7 @@ fn stated_reset_secs(error: &RetryableLlmError, now: u64) -> Option<u64> {
         } => (*retry_after, resets_at),
         _ => return None,
     };
-    retry_after.or_else(|| {
-        resets_at
-            .iter()
-            .find(|at| **at > now)
-            .map(|at| at - now)
-    })
+    retry_after.or_else(|| resets_at.iter().find(|at| **at > now).map(|at| at - now))
 }
 
 /// When the provider limit `error` says it resets, in Unix seconds (FIX 11226): a Retry

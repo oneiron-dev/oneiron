@@ -61,8 +61,12 @@ fn routed_task(
         return None;
     }
     let settings = SeatSettings {
-        allowed_models: (!task.listed.is_empty())
-            .then(|| task.listed.iter().map(|listed| listed.model_ref.clone()).collect()),
+        allowed_models: (!task.listed.is_empty()).then(|| {
+            task.listed
+                .iter()
+                .map(|listed| listed.model_ref.clone())
+                .collect()
+        }),
         effort: task.override_effort,
         ..SeatSettings::default()
     };

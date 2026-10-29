@@ -690,13 +690,13 @@ impl Vault {
             ) => Ok(self
                 .add_shared_member(owner, shared()?, person(member)?, Some((*role).into()))?
                 .id),
-            (
-                ShapeChange::Update,
-                ShapeTarget::Member { .. },
-                Some(ShapeRow::Member { .. }),
-            ) if pending_invitation(current).is_some() => Err(invalid(
-                "their invitation at another role is still pending; withdraw it, or wait for their answer",
-            )),
+            (ShapeChange::Update, ShapeTarget::Member { .. }, Some(ShapeRow::Member { .. }))
+                if pending_invitation(current).is_some() =>
+            {
+                Err(invalid(
+                    "their invitation at another role is still pending; withdraw it, or wait for their answer",
+                ))
+            }
             (
                 ShapeChange::Update,
                 ShapeTarget::Member { member },

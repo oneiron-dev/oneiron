@@ -32,14 +32,12 @@ pub(super) fn descriptor_checked(
     if outbound_capability_manifest(channel).is_none() {
         return Ok(outbound.clone());
     }
-    let contract = outbound_verb_contract(channel, &outbound.verb)
-        .map_err(|_| invalid("a step's outbound verb is not one its channel's connector carries"))?;
+    let contract = outbound_verb_contract(channel, &outbound.verb).map_err(|_| {
+        invalid("a step's outbound verb is not one its channel's connector carries")
+    })?;
     Ok(CampaignProgramOutbound {
         verb: contract.kind.clone(),
-        idempotency_supported: !matches!(
-            contract.replay_safety(),
-            OutboundReplaySafety::Reconcile
-        ),
+        idempotency_supported: !matches!(contract.replay_safety(), OutboundReplaySafety::Reconcile),
         ..outbound.clone()
     })
 }

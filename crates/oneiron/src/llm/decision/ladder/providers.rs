@@ -141,7 +141,8 @@ pub fn score_levels_in(question: &DecisionQuestion, state: &Value) -> Option<Vec
     if !matches!(question.contract, AnswerContract::Score { .. }) {
         return None;
     }
-    let levels: Vec<String> = serde_json::from_value(state.get(SCORE_LEVELS_FIELD)?.clone()).ok()?;
+    let levels: Vec<String> =
+        serde_json::from_value(state.get(SCORE_LEVELS_FIELD)?.clone()).ok()?;
     (levels.len() >= 2
         && levels
             .iter()

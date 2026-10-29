@@ -235,7 +235,9 @@ pub(crate) fn calibration_pairs_in_txn(
         });
     }
     // A person who changed the model's answer labels it too (OF-516).
-    pairs.extend(person_changed_pairs_in_txn(vault, txn, principal, question, &kept)?);
+    pairs.extend(person_changed_pairs_in_txn(
+        vault, txn, principal, question, &kept,
+    )?);
     Ok(pairs)
 }
 

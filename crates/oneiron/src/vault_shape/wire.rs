@@ -73,7 +73,11 @@ impl Vault {
         })?;
         Ok(format!(
             "{entity_kind} declared {}",
-            if on_wire { "on the wire" } else { "off the wire" }
+            if on_wire {
+                "on the wire"
+            } else {
+                "off the wire"
+            }
         ))
     }
 

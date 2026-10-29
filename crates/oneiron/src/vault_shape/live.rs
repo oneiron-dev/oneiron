@@ -19,8 +19,7 @@ use crate::gate::manifest_authenticity::manifest_is_quarantined;
 use crate::ports::{EdgeDirection, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CHANNEL_IDENTITY, ENTITY_TYPE_CONNECTOR_KEY,
-    ENTITY_TYPE_FACET, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_WORLD,
+    ENTITY_TYPE_FACET, ENTITY_TYPE_POLICY_MANIFEST, ENTITY_TYPE_SKILL, ENTITY_TYPE_WORLD,
 };
 use crate::skill::{SkillLifecycle, decode_skill_record};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};

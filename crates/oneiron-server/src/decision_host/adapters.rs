@@ -126,8 +126,7 @@ impl DecisionProvider for SystemOneRung {
             served: None,
         };
         let score_levels = call.score_levels().unwrap_or_default();
-        if matches!(call.question.contract, AnswerContract::Score { .. })
-            && score_levels.is_empty()
+        if matches!(call.question.contract, AnswerContract::Score { .. }) && score_levels.is_empty()
         {
             return Ok(abstain);
         }

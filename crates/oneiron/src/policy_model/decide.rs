@@ -13,8 +13,8 @@ use crate::llm::decision::catalogue::{
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial,
     DecisionQuestion, DecisionRung, GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions,
-    GeneratedMiss, GeneratedRung, GeneratedStep, HeldLadder, MAX_DECISION_STATE_BYTES,
-    ProviderPin, Reversibility, TypedDecision, cut_text, fit_state,
+    GeneratedMiss, GeneratedRung, GeneratedStep, HeldLadder, MAX_DECISION_STATE_BYTES, ProviderPin,
+    Reversibility, TypedDecision, cut_text, fit_state,
 };
 use crate::llm::{
     BudgetGuard, BudgetLease, ContentPart, DurableStepError, DurableStepResult, LlmBackend,

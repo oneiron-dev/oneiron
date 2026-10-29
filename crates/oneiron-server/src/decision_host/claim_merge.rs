@@ -46,8 +46,12 @@ impl DecisionHost {
         let big = replay.ladder.big.map(read);
         let replay = ClaimReplayDecisions {
             ladder: DecisionLadder {
-                system_one: system_one.as_ref().map(|rung| rung as &dyn DecisionProvider),
-                escalation: escalation.as_ref().map(|rung| rung as &dyn DecisionProvider),
+                system_one: system_one
+                    .as_ref()
+                    .map(|rung| rung as &dyn DecisionProvider),
+                escalation: escalation
+                    .as_ref()
+                    .map(|rung| rung as &dyn DecisionProvider),
                 big: big.as_ref().map(|rung| rung as &dyn DecisionProvider),
                 ..replay.ladder
             },

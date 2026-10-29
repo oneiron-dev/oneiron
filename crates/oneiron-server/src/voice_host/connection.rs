@@ -16,11 +16,11 @@ use oneiron::policy_model::PolicyEnforcementAction;
 use oneiron::speculative::SpeculativeFireDecision;
 use oneiron::store::GateSystemNoticeRecord;
 use oneiron::voice_cascade::uds::MAX_FRAME_BYTES;
-use oneiron::voice_identity::VoiceSegmentEmbeddingInput;
 use oneiron::voice_cascade::{
     AsrUpdate, Brain, CascadeControl, ControlEvent, GenerationEpoch, RetrievalContext,
     TtsSeamClient, TurnMemories,
 };
+use oneiron::voice_identity::VoiceSegmentEmbeddingInput;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;

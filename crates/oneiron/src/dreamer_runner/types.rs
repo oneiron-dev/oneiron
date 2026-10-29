@@ -14,8 +14,8 @@ use super::claim_authoring::{
 };
 use super::codec::invalid_dreamer_runner;
 // A Retry park's pause, resolved per vault (FIX 8716).
-mod retry_policy;
 mod park;
+mod retry_policy;
 
 pub use park::ParkDreamerAttempt;
 

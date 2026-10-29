@@ -274,9 +274,11 @@ pub(in crate::api::ai::chat) fn start_turn(
     // answers in a thread is funded by the join filed for that thread
     // first, then the room's, as a queued Continue or Retry is (FIX 3572).
     let branch = match origin {
-        Some(room) => crate::server::blocking(|| reply_place(&vault, room, reply_to))
-            .map_err(|error| engine(&error))?
-            .branch,
+        Some(room) => {
+            crate::server::blocking(|| reply_place(&vault, room, reply_to))
+                .map_err(|error| engine(&error))?
+                .branch
+        }
         None => None,
     };
     let funding = match origin {

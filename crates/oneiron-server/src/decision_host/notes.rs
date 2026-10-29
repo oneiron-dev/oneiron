@@ -103,11 +103,13 @@ impl ReviewNotes for HostNotes {
                 })
                 .collect(),
         );
-        let mut sources: Vec<_> = findings.iter().map(|finding| finding.input.target).collect();
+        let mut sources: Vec<_> = findings
+            .iter()
+            .map(|finding| finding.input.target)
+            .collect();
         sources.sort_unstable();
         sources.dedup();
-        let Some(text) = self.written(REVIEW_NOTE_SYSTEM, &data, Some(sources), NOTE_BUDGET)
-        else {
+        let Some(text) = self.written(REVIEW_NOTE_SYSTEM, &data, Some(sources), NOTE_BUDGET) else {
             return Ok(notes);
         };
         for (index, note) in review_notes(&text) {

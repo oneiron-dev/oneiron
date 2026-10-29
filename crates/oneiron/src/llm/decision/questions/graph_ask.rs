@@ -12,8 +12,8 @@ use crate::claim::{
 };
 use crate::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, EvidenceVersion, HostRuleRef, MAX_DECISION_AUDIO_BYTES,
-    MAX_DECISION_IMAGE_BYTES, PairedAnswer, PairedReading, ProviderPin, TypedDecision,
+    DecisionRung, EvidenceVersion, HostRuleRef, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
+    PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
