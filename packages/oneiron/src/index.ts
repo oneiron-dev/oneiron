@@ -1335,6 +1335,14 @@ export class Oneiron {
       /** Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream. */
       dial: (input: Facade.MeshDialRequest): Facade.MeshPathReceipt => this.#call(() => this.#client.vaultMeshDial(input) as Facade.MeshPathReceipt),
     },
+    outbox: {
+      diverged: {
+        /** The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source. */
+        list: (input: Facade.EmptyRequest): Facade.OutboxDivergedPage => this.#call(() => this.#client.vaultOutboxDivergedList(input) as Facade.OutboxDivergedPage),
+        /** The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn. */
+        answer: (input: Facade.OutboxDivergedAnswerRequest): Facade.OutboxDivergedAnswerReceipt => this.#call(() => this.#client.vaultOutboxDivergedAnswer(input) as Facade.OutboxDivergedAnswerReceipt),
+      },
+    },
     inspection: {
       /** Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item. */
       resolve: (input: Facade.InspectionResolveRequest): Facade.InspectionResolved => this.#call(() => this.#client.vaultInspectionResolve(input) as Facade.InspectionResolved),

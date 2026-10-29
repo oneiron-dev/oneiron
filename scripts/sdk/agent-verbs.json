@@ -4912,6 +4912,34 @@
       "section": false
     },
     {
+      "name": "vault.outbox.diverged.list",
+      "description": "The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::OutboxDivergedPage",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.outbox.diverged.list\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.outbox.diverged.answer",
+      "description": "The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn.",
+      "input": "crate::task_verb::sdk::OutboxDivergedAnswerRequest",
+      "output": "crate::task_verb::sdk::OutboxDivergedAnswerReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.outbox.diverged.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.inspection.resolve",
       "description": "Resolves an inspection handle for the caller; unreadable, missing and wrong-kind targets all answer with no item.",
       "input": "crate::lens::InspectionResolveRequest",

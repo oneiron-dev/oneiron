@@ -326,6 +326,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.mesh.set_alpn_grant", post(facade_route))
         .route("/vault.mesh.revoke_machine", post(facade_route))
         .route("/vault.mesh.dial", post(facade_route))
+        .route("/vault.outbox.diverged.list", post(facade_route))
+        .route("/vault.outbox.diverged.answer", post(facade_route))
         .route("/vault.inspection.resolve", post(facade_route))
         .route("/vault.shared.propose_delete", post(facade_route))
         .route("/vault.shared.propose_transfer", post(facade_route))

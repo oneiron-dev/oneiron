@@ -132,6 +132,7 @@ mod model_step_doors;
 mod model_stream_doors;
 mod note_doors;
 mod off_record_doors;
+pub(crate) mod outbox_diverged_doors;
 mod off_record_room_doors;
 mod origin_doors;
 mod origin_publish_doors;

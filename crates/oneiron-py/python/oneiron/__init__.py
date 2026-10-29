@@ -655,6 +655,9 @@ class Oneiron:
         def mesh(self) -> "Oneiron._VaultMeshVerbs":
             return Oneiron._VaultMeshVerbs(self._client)
         @property
+        def outbox(self) -> "Oneiron._VaultOutboxVerbs":
+            return Oneiron._VaultOutboxVerbs(self._client)
+        @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs":
             return Oneiron._VaultInspectionVerbs(self._client)
         @property
@@ -2445,6 +2448,21 @@ class Oneiron:
         def dial(self, spec):
             """Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream."""
             return json.loads(_translate(lambda: self._client.vault_mesh_dial(json.dumps(spec))))
+    class _VaultOutboxVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def diverged(self) -> "Oneiron._VaultOutboxDivergedVerbs":
+            return Oneiron._VaultOutboxDivergedVerbs(self._client)
+    class _VaultOutboxDivergedVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_list(json.dumps(spec))))
+        def answer(self, spec):
+            """The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn."""
+            return json.loads(_translate(lambda: self._client.vault_outbox_diverged_answer(json.dumps(spec))))
     class _VaultInspectionVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

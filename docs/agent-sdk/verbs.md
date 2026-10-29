@@ -312,6 +312,8 @@ both bindings and their export-census tests in one change.
 - `vault.mesh.set_alpn_grant`
 - `vault.mesh.revoke_machine`
 - `vault.mesh.dial`
+- `vault.outbox.diverged.list`
+- `vault.outbox.diverged.answer`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
