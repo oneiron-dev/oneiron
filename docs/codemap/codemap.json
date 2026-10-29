@@ -75167,6 +75167,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/verbs/free_time_policy.rs",
+     "purpose": "`vault.free_time.policy.set_as` (FIX 11424): an agent sets or clears one agent's free-time policy under its…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/verbs/generated/catalog_fragment_revision.rs",
      "purpose": "—",
      "surface": {
@@ -75195,7 +75205,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1214
+      "fn": 1215
      }
     },
     {
@@ -75640,7 +75650,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 85,
+      "re-export": 86,
       "struct": 38
      }
     },
@@ -82121,7 +82131,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 96,
+     "files": 97,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82193,7 +82203,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5482,
+   "source_files": 5483,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94380,7 +94390,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1182
+      "fn": 1183
      }
     },
     {
@@ -95833,7 +95843,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1183
+      "fn": 1184
      }
     },
     {
@@ -100416,9 +100426,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/free_time_doors.rs",
-     "purpose": "The owner's free-time host doors (FIX 4453): `vault.free_time.policy.get`, `.policy.set`, `.cycles` and…",
+     "purpose": "The free-time host doors (FIX 4453): the owner's `vault.free_time.policy.get`, `.policy.set`, `.cycles` and…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -100646,7 +100656,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors/support/owner_action.rs",
-     "purpose": "The owner-act `as_owner` the channel, code, merge queue and origin doors share (FIX 8922)",
+     "purpose": "The owner-act `as_owner` the channel, code, codebase, code view, merge queue and origin doors share (FIX…",
      "surface": {
       "crate-vis": 1
      }
@@ -102330,7 +102340,7 @@
      "path": "src/api/mcp_gateway/type_feedback_release.rs",
      "purpose": "Type feedback leaves an MCP answer on its own release (FIX 10390, CALLS \"feedback released apart from its…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
