@@ -24,6 +24,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/steer", post(steer))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/steer`'s body (FIX 11611):
+/// [`SteerRequest`].
+pub(crate) fn steer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SteerRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/steer`'s answer (FIX 11611):
+/// [`SteerReceipt`].
+pub(crate) fn steer_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SteerReceipt>()
+}
+
 fn steer_error(error: MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
