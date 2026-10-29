@@ -99,7 +99,7 @@ pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
     receipt_reference_refusals, receipt_refusal, record_reference_refusals_in_txn,
 };
-pub use self::served_form::{PixelPull, ServedForm, ServedRung};
+pub use self::served_form::{AudioPull, PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 
