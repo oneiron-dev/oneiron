@@ -7,7 +7,7 @@ use super::live::ShapeSources;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::skill::SkillLifecycle;
-use crate::skill_hub::HubSyncDisposition;
+use crate::skill_hub::{HubSyncDisposition, default_skill_hub_id};
 use crate::skill_hub::pack_catalog::hub_pin;
 use crate::{EntityId, TimeRange, Vault};
 use schemars::JsonSchema;
@@ -47,8 +47,10 @@ impl Vault {
     /// checked before any skill write (FIX 10202), and the import commits
     /// that same package: a source carrying another skill or version refuses
     /// the item and leaves skill state unchanged. `sources` lists the
-    /// candidate as soon as it lands; an import refused before it lands one
-    /// reads rows it does not name, so they are unknown.
+    /// candidate as soon as it lands. An import refused before its import
+    /// proper began read the hub's record alone, so it lists that (FIX
+    /// 3513); one refused after reads rows it does not name, so they are
+    /// unknown.
     pub(super) fn import_shape_skill(
         &self,
         owner: &AuthenticatedOwner,
@@ -63,9 +65,22 @@ impl Vault {
             end: now,
         };
         owner.revalidate(self)?;
+        // The hub an import reads its configuration from, once it is called.
+        let mut read_hub = None;
+        let mut importing = false;
         let imported = match source {
             ShapeSkillSource::Library { subtree } => {
-                self.import_default_hub_skill_expecting(subtree, skill_id, version, occurred, now)
+                default_skill_hub_id().and_then(|hub| {
+                    read_hub = Some(hub);
+                    self.import_default_hub_skill_expecting(
+                        subtree,
+                        skill_id,
+                        version,
+                        occurred,
+                        now,
+                        &mut importing,
+                    )
+                })
             }
             ShapeSkillSource::Hub {
                 hub,
@@ -77,12 +92,24 @@ impl Vault {
                 .map_err(|_| invalid("a hub is named by entity id hex"))
                 .and_then(|hub| {
                     let pin = hub_pin(pin_type, pin_value)?;
+                    read_hub = Some(hub);
                     self.import_skill_from_hub_ref_expecting(
-                        owner, hub, folder, pin, publisher, skill_id, version,
+                        owner,
+                        hub,
+                        folder,
+                        pin,
+                        publisher,
+                        skill_id,
+                        version,
+                        &mut importing,
                     )
                 }),
         };
-        let entity = imported.inspect_err(|_| sources.unknown())?;
+        let entity = imported.inspect_err(|_| match read_hub {
+            _ if importing => sources.unknown(),
+            Some(hub) => sources.list(hub),
+            None => {}
+        })?;
         sources.list(entity);
         let record = self
             .get_skill_record(&entity)?
