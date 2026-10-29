@@ -2213,7 +2213,7 @@ export type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; o
 /** `oneiron::verbs::host::hooks_replay::HookReplayRow` */
 export type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome }
 /** `oneiron::verbs::hub::HubHookReplay` */
-export type HubHookReplay = { hook: string; entries: HookReplayRow[] }
+export type HubHookReplay = { hook: string; entries: HookReplayRow[]; unreplayed: boolean }
 /** `oneiron::verbs::hub::HubHookQualificationReceipt` */
 export type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] }
 /** `oneiron::verbs::host::PackTextFile` */

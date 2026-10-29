@@ -5655,6 +5655,7 @@ class HookReplayRow(TypedDict):
 class HubHookReplay(TypedDict):
     hook: str
     entries: list[HookReplayRow]
+    unreplayed: bool
 class HubHookQualificationReceipt(TypedDict):
     put: PackPutReceipt
     replays: list[HubHookReplay]

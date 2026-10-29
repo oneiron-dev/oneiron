@@ -17521,6 +17521,8 @@ pub struct HubHookReplay {
     pub hook: String,
     #[serde(rename = "entries")]
     pub entries: Vec<HookReplayRow>,
+    #[serde(rename = "unreplayed")]
+    pub unreplayed: bool,
 }
 
 /// `oneiron::verbs::hub::HubHookQualificationReceipt`.

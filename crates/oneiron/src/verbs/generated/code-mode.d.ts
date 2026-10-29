@@ -1124,7 +1124,7 @@ declare namespace Sdk {
   type HookReplayCompare = "same" | "differs" | "incomplete";
   type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "withheld"; reason: string } | { status: "missing_history"; reason: string };
   type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
-  type HubHookReplay = { hook: string; entries: HookReplayRow[] };
+  type HubHookReplay = { hook: string; entries: HookReplayRow[]; unreplayed: boolean };
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
   type PackTextFile = { path: string; text: string };
   type PackBytesFile = { path: string; content_base64: string };
