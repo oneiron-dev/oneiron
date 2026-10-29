@@ -729,7 +729,9 @@ impl VaultConfig {
         recipient: Option<crate::recovery::checkpoint::HostHoldsRecipient>,
     ) -> Self {
         self.checkpoint_host_holds = match recipient {
-            Some(recipient) => crate::recovery::checkpoint::HostHoldsSealing::To(recipient),
+            Some(recipient) => {
+                crate::recovery::checkpoint::HostHoldsSealing::To(Box::new(recipient))
+            }
             None => crate::recovery::checkpoint::HostHoldsSealing::RecipientMissing,
         };
         self
