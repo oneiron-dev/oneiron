@@ -10,11 +10,11 @@
 use std::sync::Arc;
 
 use oneiron::llm::BrokerIsolation;
+use oneiron::llm::media::MediaPart;
 use oneiron::llm::media::{
     MediaBackend, MediaFuture, MediaJobState, MediaProgressFuture, MediaRequest, MediaResponse,
     ReferenceCompatibility,
 };
-use oneiron::llm::media::MediaPart;
 use oneiron::{BudgetLease, LlmResult, ModelId};
 
 use crate::models::ModelHostBudgets;

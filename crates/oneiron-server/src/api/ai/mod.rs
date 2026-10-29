@@ -192,6 +192,7 @@ async fn session(
         Ok(key) => key,
         Err(response) => return *response,
     };
+    // The request carries no deadline, so none bounds the hint's wait.
     server.ai.session_hint(
         key,
         match request.event {
@@ -199,6 +200,7 @@ async fn session(
             SessionEvent::Activity => SessionHint::Activity,
             SessionEvent::End => SessionHint::ExplicitEnd,
         },
+        None,
     );
     (
         StatusCode::ACCEPTED,

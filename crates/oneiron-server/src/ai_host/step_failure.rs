@@ -5,8 +5,9 @@
 //! A model call the provider answered with a retryable error is a host
 //! tripwire (T1) whose evidence is the failed attempt itself (its
 //! `last_error` keeps the reason). It is tried again after a backoff, up to
-//! five consecutive tries. Anything else, and a fifth retryable failure,
-//! ends the step for a person to look at (escalation `Human`, no healer case),
+//! the vault's `workflow_step_max_tries` consecutive tries (shipped five).
+//! Anything else, and a retryable failure past the cap, ends the step for a
+//! person to look at (escalation `Human`, no healer case),
 //! and the workflow stops. The checkpoint and Q&A refs the ladder forwards to
 //! that surface name the workflow root: the server keeps no Q&A thread for
 //! steps, and neither ref is persisted on these two paths.
@@ -20,9 +21,6 @@ use oneiron::failure_ladder::{
     HandleAttemptFailure, TypedFailureEvidence, TypedFailureVerdict,
 };
 use oneiron::{DreamerRunnerStore, EntityId, Vault};
-
-/// Consecutive tries of one step before it ends: five.
-const MAX_TRIES: NonZeroU16 = NonZeroU16::MIN.saturating_add(4);
 
 /// A step lease this pump holds after the step failed.
 pub(super) struct FailedStep {
@@ -86,12 +84,23 @@ pub(super) fn settle(
         }
     };
     let root_ref = as_entity(root)?;
+    // The step's consecutive-try cap (FIX 7748): the vault's resolved
+    // `workflow_step_max_tries` row, else the shipped five when the row does
+    // not read. A policy read failure never refuses or stops the run.
+    let max_tries = match vault.workflow_step_max_tries() {
+        Ok(tries) => NonZeroU16::new(tries.clamp(1, u64::from(u16::MAX)) as u16)
+            .expect("a clamped try cap stays nonzero"),
+        Err(error) => {
+            tracing::warn!(%error, leaf = ?step.leaf, "workflow_step_max_tries_unresolved");
+            NonZeroU16::new(5).expect("five is nonzero")
+        }
+    };
     // Which try of its step this was: a retry is a fresh row, so the try
     // count is the lineage behind it.
     let tries = queue
         .retry_chain_depth(step.leaf)?
         .saturating_add(1)
-        .min(u32::from(MAX_TRIES.get()));
+        .min(u32::from(max_tries.get()));
     DreamerRunnerStore::new(vault).fail_agent_dispatch_with_evidence(
         HandleAttemptFailure {
             attempt_id: step.leaf,
@@ -109,7 +118,7 @@ pub(super) fn settle(
                 agent_ref: agent.to_hex(),
                 skill_ref: None,
             },
-            max_consecutive_transients: MAX_TRIES,
+            max_consecutive_transients: max_tries,
             escalation_mode: FailureEscalationMode::Human,
             healer_slot: HealerSlot::Reserved,
         },

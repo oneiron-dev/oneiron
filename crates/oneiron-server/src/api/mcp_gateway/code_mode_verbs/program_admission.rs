@@ -86,6 +86,7 @@ impl RunGuests {
             planner: None,
             payer: None,
             admission: Some(job.filing(job_id)),
+            admission_lease: Some(leased.clone()),
         };
         let outcome = guests.reconstruct_and_propose(server, runtime, leased, &caller, job);
         drop(guests);

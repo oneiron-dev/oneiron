@@ -4,8 +4,8 @@
 //! rule; these doors only check the owner's proof and project.
 use serde::{Deserialize, Serialize};
 
-use crate::consent::AuthenticatedOwner;
 use super::ResidentShare;
+use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Error, Result, Vault};
 
 /// Every resident share on record: no selector names another vault's.

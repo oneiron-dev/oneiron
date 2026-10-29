@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1167 facade rows, 4194 declarations.
+Census: 1167 facade rows, 4198 declarations.
 Inputs: 1100 of 1167 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1167 fully typed, 127 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -21072,14 +21072,15 @@ class WorkflowSeed(TypedDict):
     digest: str
     license: str
 class ProposeInput(TypedDict):
-    subgoal: str
+    subgoal: NotRequired[str]
     params: NotRequired[list[str]]
-    steps: list[BatchStep]
-    postcondition: list[ExpectInput]
+    steps: NotRequired[list[BatchStep]]
+    postcondition: NotRequired[list[ExpectInput]]
     args: NotRequired[dict[str, str]]
     replay_args: NotRequired[dict[str, str]]
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
+    candidate: NotRequired[str | None]
 SlotField = Literal["text", "option"]
 class SlotCandidate(TypedDict):
     step: int
@@ -21338,6 +21339,20 @@ class DialogAnswerFailure(TypedDict):
     kind: str
     accept: bool
     error: str
+class SeedCandidate(TypedDict):
+    candidate: str
+    path: str
+    digest: str
+    license: str
+class SiteSkillMatch(TypedDict):
+    skill_id: str
+    revision: str
+    knowledge: str
+    seeds: NotRequired[list[SeedCandidate]]
+SiteSkillErrorCode = Literal["no_lease", "origin", "loader", "unresolved", "digest_mismatch", "no_loader"]
+class SiteSkillError(TypedDict):
+    code: SiteSkillErrorCode
+    detail: str
 class VerbsObservation(TypedDict):
     seq: int
     scope: str
@@ -21356,6 +21371,8 @@ class VerbsObservation(TypedDict):
     rebound: NotRequired[Rebound | None]
     fact: NotRequired[ActionFact | None]
     dialogs: NotRequired[list[DialogAnswerFailure]]
+    site_skills: NotRequired[list[SiteSkillMatch]]
+    site_skill_notes: NotRequired[list[SiteSkillError]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
 BrowserObservationPage = BrowserAnswer
@@ -21491,11 +21508,14 @@ class BatchOutput(TypedDict):
 BrowserBatchOutput = BrowserAnswer
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
+    url: NotRequired[str | None]
     subgoal: NotRequired[str | None]
     type_ref: NotRequired[str | None]
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
+    candidates: NotRequired[list[SeedCandidate]]
+    site_skill_notes: NotRequired[list[SiteSkillError]]
 BrowserLibraryFindOutput = BrowserAnswer
 class DraftInput(TypedDict):
     subgoal: str

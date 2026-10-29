@@ -85,7 +85,11 @@ pub(super) fn refresh_due_as<A: GraphAnswerer>(
 /// Holds a failed question's work until [`FAILED_REFRESH_HOLD_SECS`] after
 /// `now`. A hold that cannot be written leaves the question due: the failure
 /// is already the caller's to report.
-pub(in crate::llm::decision::questions) fn hold_failed(vault: &Vault, question: EntityId, now: u64) {
+pub(in crate::llm::decision::questions) fn hold_failed(
+    vault: &Vault,
+    question: EntityId,
+    now: u64,
+) {
     let held = vault.with_write_txn_grouped(|txn| {
         let Some(mut head) = QUESTION_HEAD.get(&vault.store, txn, &HeadKey(question))? else {
             return Ok(());
@@ -192,7 +196,10 @@ impl Vault {
 /// The scheduled, backfill and materialized-arrival work due at `now`, with
 /// each question's principal. A question's arrivals wait while its scheduled
 /// refresh or backfill runs.
-pub(super) fn due_work(vault: &Vault, now: u64) -> Result<Vec<(EntityId, EntityId, RefreshTrigger)>> {
+pub(super) fn due_work(
+    vault: &Vault,
+    now: u64,
+) -> Result<Vec<(EntityId, EntityId, RefreshTrigger)>> {
     let work = {
         let txn = vault.store.env.read_txn()?;
         let mut work = Vec::new();

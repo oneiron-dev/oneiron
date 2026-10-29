@@ -2,6 +2,8 @@
 //! `settle` chooses the existing completion or failure door for each outcome.
 //! The parent module keeps the claim, lease constants, and shared run state.
 
+use std::num::NonZeroU16;
+
 use super::{
     AgentDispatchStatus, AgentDispatcher, AttemptConfession, AttemptId, AttemptQueue,
     AttemptResultRef, BoundRun, Claimed, CodeRunReplayRecord, CompleteDreamerAttempt, DecisionHost,
@@ -9,7 +11,7 @@ use super::{
     EngineExecutorStatus, EngineRunError, EntityId, FORK_REFUSALS, FailureEscalationMode,
     FailureLadderOutcome, FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot,
     LEASE_OWNER, LlmError, OUTAGE_PARK_REASON, OutputContextEntry, ParkDreamerAttempt, PayerFault,
-    RUN_MAX_TRIES, RUN_RETRY_BACKOFF_SECS, RetryableLlmError, SetAttemptResult, SpentKind, TypeRef,
+    RUN_RETRY_BACKOFF_SECS, RetryableLlmError, SetAttemptResult, SpentKind, TypeRef,
     TypedFailureEvidence, TypedFailureVerdict, Vault, WAITING_PARK_REASON, agent_dispatch_actor,
     browser_workflow, open_trap, park_and_bind_wait_trap, park_for_payer, parks_on_outage,
     parse_confession, register_wait, restore_output, run_continuation, trap_for_durable_wait,
@@ -113,6 +115,17 @@ pub(super) fn settle(
         }
     };
     evidence.stable_reason = reason.to_owned();
+    // The run's consecutive-try cap (FIX 7748): the vault's resolved
+    // `resident_run_max_tries` row, else the shipped three when the row does
+    // not read. A policy read failure never refuses or stops the run.
+    let max_tries = match vault.resident_run_max_tries() {
+        Ok(tries) => NonZeroU16::new(tries.clamp(1, u64::from(u16::MAX)) as u16)
+            .expect("a clamped try cap stays nonzero"),
+        Err(error) => {
+            tracing::warn!(%error, attempt = ?attempt.id, "resident_run_max_tries_unresolved");
+            NonZeroU16::new(3).expect("three is nonzero")
+        }
+    };
     // Any other failure has no detector verdict, and the ladder never infers
     // one from prose: the run ends for a person to look at. Its checkpoint is
     // the start of the step that failed (FIX 3694), a ref of its own, never
@@ -140,7 +153,7 @@ pub(super) fn settle(
                 agent_ref: claimed.agent.to_hex(),
                 skill_ref: None,
             },
-            max_consecutive_transients: RUN_MAX_TRIES,
+            max_consecutive_transients: max_tries,
             escalation_mode: FailureEscalationMode::Human,
             healer_slot: HealerSlot::Reserved,
         },

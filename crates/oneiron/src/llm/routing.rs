@@ -621,8 +621,7 @@ impl Vault {
                     .expect("effort serializes as a string")
                     .as_str()
                     .expect("effort is a string"),
-                type_ref
-                    .map_or_else(String::new, |type_ref| format!(" for task type {type_ref}")),
+                type_ref.map_or_else(String::new, |type_ref| format!(" for task type {type_ref}")),
                 reason
             ),
             grading: routed.grading,
