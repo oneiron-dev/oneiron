@@ -1,11 +1,14 @@
 //! The OpenAPI schemas of the owner routes handled in [`super`] itself (FIX 11611):
 //! `POST /v1/owner/backups/rehearse`, the five `POST /v1/owner/cleanup*`
-//! writes and the three `POST /v1/owner/imports/*` writes. [`super`] is
+//! writes, the three `POST /v1/owner/imports/*` writes and the two
+//! `POST /v1/owner/runs/*` writes (FIX 11611 part D). [`super`] is
 //! already past the file-size bar, so their schema fns live here, beside
 //! the route files' own.
 
-use super::{DecideCleanup, DecideImport, RehearseRequest, RestoreArchived, RevertCleanupRun};
-use crate::owner::{backup, cleanup, imports};
+use super::{
+    DecideCleanup, DecideImport, DecideRun, RehearseRequest, RestoreArchived, RevertCleanupRun,
+};
+use crate::owner::{backup, cleanup, imports, runs};
 
 /// The OpenAPI schema of `POST /v1/owner/backups/rehearse`'s body (FIX 11611):
 /// [`RehearseRequest`].
@@ -89,4 +92,16 @@ pub(crate) fn import_approved_schema() -> serde_json::Value {
 /// [`imports::ImportDeclined`].
 pub(crate) fn import_declined_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<imports::ImportDeclined>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/runs/approve`'s body (FIX 11611),
+/// shared with `POST /v1/owner/runs/decline`: [`DecideRun`].
+pub(crate) fn decide_run_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DecideRun>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/runs/approve`'s answer (FIX 11611),
+/// shared with `POST /v1/owner/runs/decline`: [`runs::RunResolved`].
+pub(crate) fn run_resolved_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<runs::RunResolved>()
 }

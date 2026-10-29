@@ -44,7 +44,7 @@ mod agent_grant_routes;
 mod authority_clock_routes;
 mod backup_setting_routes;
 pub(super) mod browser_takeover_routes;
-mod budget_hold_routes;
+pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
 mod commitment_routes;
@@ -82,13 +82,13 @@ mod owner_key_enrollment_routes;
 pub(super) mod owner_work_routes;
 mod pack_preview_routes;
 mod pack_routes;
-mod pad_routes;
+pub(super) mod pad_routes;
 pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
-mod recovery_kit_target_routes;
+pub(super) mod recovery_kit_target_routes;
 mod room_thread_setting_routes;
-mod root_routes;
+pub(super) mod root_routes;
 pub(super) mod schema;
 mod secret_control_routes;
 mod secret_found_routes;
@@ -732,7 +732,7 @@ async fn review_run(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideRun {
     run_id: Option<String>,
