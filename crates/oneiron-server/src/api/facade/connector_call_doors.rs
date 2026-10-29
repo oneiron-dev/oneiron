@@ -3,7 +3,7 @@
 //! `host_doors` re-exports it, so the generated HTTP facade handler (the held
 //! socket runs the same dispatch) and the MCP dispatcher (a tool call and an
 //! MCP code-mode call) call it by the name every host door has; a pumped
-//! agent run calls [`connector_call_as`]. All of them meet one admission: the
+//! agent run calls [`connector_call_listing_as`]. All of them meet one admission: the
 //! caller's own principal, its own standing grant and the gate. The call is
 //! never the owner's by default. The principal is the caller's: the facade
 //! credential's own (`facade_actor`), the MCP connector's resolved actor, or
@@ -89,43 +89,10 @@ const AWAITING_INPUT_REPLY_NARROWS: bool = false;
 /// content; what the ref leads to narrows where it is read or delivered. A
 /// connector's questions keep their answer path
 /// ([`AWAITING_INPUT_REPLY_NARROWS`]).
-fn answers_as_before(reply: &ConnectorCallReply) -> bool {
+pub(crate) fn answers_as_before(reply: &ConnectorCallReply) -> bool {
     reply.wait_ref().is_some()
         || (!AWAITING_INPUT_REPLY_NARROWS
             && matches!(reply, ConnectorCallReply::AwaitingInput { .. }))
-}
-
-/// [`connector_call`]'s call as it answered before FIX 5455: its reply in
-/// full, beside the rows its reads listed. `ai.voice.tool` hands the reply
-/// to its live session.
-pub(crate) async fn connector_call_reply(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass),
-    invocation: Option<InvocationId>,
-    input: ConnectorCallRequest,
-) -> Listed<ConnectorCallReply> {
-    const VERB: &str = "connector.call";
-    let line = super::host_doors::calling_line();
-    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
-        let memory = match invocation {
-            Some(invocation) => memory.with_invocation(invocation),
-            None => memory,
-        };
-        connector_call_listing_on(server, &memory, input, line.as_ref()).map(|(reply, _)| reply)
-    })
-    .await
-}
-
-/// One connector call for the caller `memory` is bound to, with the
-/// invocation it carries. Blocking: it sends, so call it on a blocking
-/// worker.
-pub(crate) fn connector_call_as(
-    server: &SyncServer,
-    memory: &Memory<'_>,
-    input: ConnectorCallRequest,
-) -> MemoryResult<ConnectorCallReply> {
-    connector_call_listing_as(server, memory, input).map(|(reply, _)| reply)
 }
 
 /// [`connector_call_listing_as`] for a caller that spends on `line`, its
@@ -143,8 +110,10 @@ pub(crate) fn connector_call_listing_on(
     connector_call_listing_as(server, memory, input)
 }
 
-/// [`connector_call_as`], beside the rows the call's passes picked
-/// (FIX 5455), `None` when they are not known.
+/// One connector call for the caller `memory` is bound to, with the
+/// invocation it carries, beside the rows the call's passes picked
+/// (FIX 5455), `None` when they are not known. Blocking: it sends, so call
+/// it on a blocking worker.
 pub(crate) fn connector_call_listing_as(
     server: &SyncServer,
     memory: &Memory<'_>,

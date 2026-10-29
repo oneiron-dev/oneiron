@@ -32,7 +32,9 @@ pub use derivation::{
     ScopeSummaryMetadata, SummaryDerivation, SummaryLineSources, SummaryLineSpan,
     SummarySourceVersion,
 };
-pub(crate) use derivation::{rederive_changed_in_txn, roll_back_summary_in_txn};
+pub(crate) use derivation::{
+    defer_rederive, rederive_changed_in_txn, rederive_deferred, roll_back_summary_in_txn,
+};
 pub use purpose::SummaryPurpose;
 pub use status::{ArcPendingStatus, ScopeSummaryResult, ScopeSummaryStatus, SummaryStale};
 mod word_sources;

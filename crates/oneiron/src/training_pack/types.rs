@@ -14,14 +14,14 @@ use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 use super::TrainingTarget;
 
 /// A source is a repository and an immutable revision, never a moving branch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SourcePin {
     pub repository: String,
     pub revision: String,
 }
 
 /// A particular version in the vault's existing blob custody.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactPin {
     pub artifact: EntityId,
     pub version: u64,
@@ -29,7 +29,7 @@ pub struct ArtifactPin {
     pub bytes: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckpointFileKind {
     Weights,
@@ -39,7 +39,7 @@ pub enum CheckpointFileKind {
     AdapterConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CheckpointFilePin {
     pub name: String,
     pub kind: CheckpointFileKind,
@@ -49,7 +49,7 @@ pub struct CheckpointFilePin {
     pub declared_blake3: [u8; 32],
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PinnedCheckpoint {
     pub model: ModelId,
     pub files: Vec<CheckpointFilePin>,
@@ -280,6 +280,17 @@ impl<'de> Deserialize<'de> for TrainingOwner {
     }
 }
 
+/// Its schema is its wire form: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
+impl schemars::JsonSchema for TrainingOwner {
+    fn schema_name() -> String {
+        "TrainingOwner".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 /// The owner's yes on one prepared spec and declaration. It holds no
 /// credential, key, lease or permit; the host takes a fresh permit at dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -300,7 +311,7 @@ pub struct TrainingHold {
     pub at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExportCheck {
     pub hash_mismatches: Vec<String>,
     pub probe_coverage_matches: bool,
@@ -322,7 +333,7 @@ pub struct ExportCheck {
 /// What the host reproduced of a trained classifier's receipt on the stack
 /// that would serve it (FIX 7568), before it may serve: a check of our own
 /// artifact against the trainer's word.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CandleParityCheck {
     /// Every probe's token ids, rendered and tokenized here with the
     /// export's own pinned tokenizer and cut into its windows, hash to the
@@ -347,7 +358,7 @@ impl CandleParityCheck {
 
 /// What a question head's trainer also measured on its fixed probes: every
 /// logit finite, the export's tokens the training's, and its own verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuestionExportCheck {
     pub finite: bool,
     pub tokens_match: bool,
@@ -368,14 +379,14 @@ pub struct TrainingResult {
     pub service_units: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalibrationResult {
     pub temperature: f64,
     pub brier_score: f64,
     pub calibration_error: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HeldOutResult {
     pub exposure: EntityId,
     pub checkpoint_blake3: [u8; 32],
@@ -429,14 +440,14 @@ pub struct TrainingPackDraft {
 }
 
 /// A separate owner decision; an override keeps the failed checks on its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SwapChoice {
     Evaluated,
     ExplicitOverride { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RoleSwapReceipt {
     pub id: EntityId,
     pub run: EntityId,

@@ -62,16 +62,23 @@ export interface LensFrameEventRequest {
    * trip, never approval or action authority; any other action ignores it.
    */
   readonly selectedContext?: readonly string[]
+  /**
+   * The stream profile this event's answer is framed in (FIX 11399): a
+   * patch-profile caller takes the card's refinement beside a local
+   * action's `$state`. Omitted, the answer is today's plain JSON.
+   */
+  readonly stream?: Facade.GeneratedUiStreamProfile
 }
 
 /**
  * What a lens-card event answers. There is no discriminator: a local action
- * answers the card's new `$state`, a deterministic tool its outcome and the
- * scoped read of its entity arguments, and a model round trip the callback
- * queued for the agent that emitted the card.
+ * answers the card's new `$state` (beside the card's refinement for a
+ * patch-profile caller), a deterministic tool its outcome and the scoped
+ * read of its entity arguments, and a model round trip the callback queued
+ * for the agent that emitted the card.
  */
 export type LensFrameEventReply =
-  | { readonly $state: Facade.GeneratedUiStateSnapshot }
+  | { readonly $state: Facade.GeneratedUiStateSnapshot; readonly refinement?: Facade.GeneratedUiSegment | null }
   | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
   | { readonly queued: boolean; readonly callbackId: string }
 
@@ -395,7 +402,9 @@ export class Oneiron {
   /**
    * Sends one event on a lens card the connected server rendered (OF-181):
    * `POST /v1/core/lens-frames/{cardId}/events` under this handle's
-   * credential. `request.event.cardId` must name the same card. A card the
+   * credential. `request.event.cardId` must name the same card. A
+   * patch-profile caller also names `stream: "patch"` (FIX 11399) and takes
+   * the card's refinement beside a local action's `$state`. A card the
    * server no longer holds throws `NOT_FOUND`: render the lens again. An
    * embedded handle throws `BAD_REQUEST`: lens frames live on the served
    * host that rendered the card, so render the lens through a connected
@@ -2325,7 +2334,7 @@ export class Oneiron {
         set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
       },
       grants: {
-        /** The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant. */
+        /** The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door. */
         mint: (input: Facade.AgentGrantMintRequest): Facade.AgentGrantMinted => this.#call(() => this.#client.vaultAgentsGrantsMint(input) as Facade.AgentGrantMinted),
         /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
         revoke: (input: Facade.AgentGrantRevokeRequest): Facade.AgentGrantRevoked => this.#call(() => this.#client.vaultAgentsGrantsRevoke(input) as Facade.AgentGrantRevoked),
@@ -3385,7 +3394,7 @@ export class Oneiron {
       /** Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment. */
       usage: (input: Facade.LiveVoiceUsageRequest): Facade.LiveVoiceUsage => this.#call(() => this.#client.aiVoiceUsage(input) as Facade.LiveVoiceUsage),
       /** Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards. */
-      tool: (input: Facade.LiveVoiceToolRequest): Facade.LiveVoiceToolReply => this.#call(() => this.#client.aiVoiceTool(input) as Facade.LiveVoiceToolReply),
+      tool: (input: Facade.LiveVoiceToolRequest): Facade.ActAnswer<Facade.LiveVoiceToolReply> => this.#call(() => this.#client.aiVoiceTool(input) as Facade.ActAnswer<Facade.LiveVoiceToolReply>),
       /** Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation. */
       end: (input: Facade.LiveVoiceSessionRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceEnd(input) as Facade.LiveVoiceProcessed),
       /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */
@@ -3393,21 +3402,21 @@ export class Oneiron {
     },
     /** One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call. */
     anonymous_chat: (input: Facade.AnonymousChatRequest): Facade.AnonymousChatResponse => this.#call(() => this.#client.aiAnonymousChat(input) as Facade.AnonymousChatResponse),
-    /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
+    /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
-    /** One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. */
+    /** One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. The owner calls it, or an agent whose Grant names ai.image, as his call. */
     image: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiImage(input) as Facade.AiAnswer),
-    /** Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. */
+    /** Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. The owner calls it, or an agent whose Grant names ai.speech, as his call. */
     speech: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiSpeech(input) as Facade.AiAnswer),
-    /** Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. */
+    /** Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. The owner calls it, or an agent whose Grant names ai.transcribe, as his call. */
     transcribe: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiTranscribe(input) as Facade.AiAnswer),
-    /** One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. */
+    /** One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. The owner calls it, or an agent whose Grant names ai.embed, as his call. */
     embed: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiEmbed(input) as Facade.AiAnswer),
-    /** Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. */
+    /** Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. The owner calls it, or an agent whose Grant names ai.video, as his call. */
     video: Object.assign((input: Facade.AiCallRequest): Facade.AiVideoTicket => this.#call(() => this.#client.aiVideo(input) as Facade.AiVideoTicket), {
-      /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
+      /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. The owner polls every job; an agent whose owner agent Grant names ai.video polls only the jobs it asked for. */
       poll: (input: Facade.AiVideoJobRequest): Facade.AiVideoJob => this.#call(() => this.#client.aiVideoPoll(input) as Facade.AiVideoJob),
-      /** Stops a video job at its provider. */
+      /** Stops a video job at its provider. The owner cancels any job; an agent whose owner agent Grant names ai.video cancels only the jobs it asked for. */
       cancel: (input: Facade.AiVideoJobRequest): Facade.AiVideoCancelled => this.#call(() => this.#client.aiVideoCancel(input) as Facade.AiVideoCancelled),
     }),
     /** One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt. */

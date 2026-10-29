@@ -53,18 +53,36 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/browsers/return", post(hand_back))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RunRequest {
     run: String,
 }
 
-#[derive(Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/browsers/take`'s body (FIX 11611):
+/// [`RunRequest`].
+pub(crate) fn browser_run_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RunRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/take`'s answer (FIX 11611):
+/// [`Takeover`].
+pub(crate) fn browser_takeover_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Takeover>()
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReturnRequest {
     run: String,
     #[serde(default)]
     postcondition: Vec<ExpectInput>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/return`'s body (FIX 11611):
+/// [`ReturnRequest`].
+pub(crate) fn browser_return_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReturnRequest>()
 }
 
 #[derive(Deserialize)]
@@ -82,7 +100,7 @@ struct StreamQuery {
     run: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct InputRequest {
     run: String,
@@ -91,6 +109,12 @@ struct InputRequest {
     #[serde(default)]
     tab: Option<String>,
     action: BrowserPersonInput,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/input`'s body (FIX 11611):
+/// [`InputRequest`].
+pub(crate) fn browser_input_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputRequest>()
 }
 
 #[derive(Serialize)]
@@ -110,17 +134,29 @@ struct BrowserList {
     browsers: Vec<BrowserView>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct InputReply {
     inputs: u64,
 }
 
-#[derive(Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/browsers/input`'s answer (FIX 11611):
+/// [`InputReply`].
+pub(crate) fn browser_input_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputReply>()
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
 struct ReturnReply {
     record: TakeoverRecord,
     receipt: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     demonstration: Option<DemonstrationOutput>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/return`'s answer (FIX 11611):
+/// [`ReturnReply`].
+pub(crate) fn browser_return_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReturnReply>()
 }
 
 /// `GET /v1/owner/browsers`: each run browser whose guest started, its

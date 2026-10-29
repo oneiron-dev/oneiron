@@ -34,7 +34,7 @@ pub struct AgentHealthLoadedSkill {
 
 /// The revision a `skill_edit` draft replaces whole: one the card's run
 /// loaded, named as the apply door takes it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthSkillTarget {
     /// The SKILL revision, as 32 hex.
