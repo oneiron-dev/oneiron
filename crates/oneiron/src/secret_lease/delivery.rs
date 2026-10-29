@@ -13,6 +13,7 @@
 //! claims a delivery or a cleanup it did not make.
 
 use super::grant::{SecretCleanup, SecretGrantHolder};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 
 /// A run host's side of a T1 grant. Implementations never log, return or
@@ -25,6 +26,8 @@ pub trait SecretHostDelivery {
     -> Option<String>;
 
     /// Puts `value` into `destination`, replacing what it held.
+    /// FIX 7954: `grant` is the delivering grant, so a teardown clears only
+    /// its own grant's copy.
     ///
     /// # Errors
     /// Why the bytes did not land. The grant and its lease are then revoked
@@ -32,16 +35,24 @@ pub trait SecretHostDelivery {
     fn deliver(
         &mut self,
         holder: &SecretGrantHolder,
+        grant: &EntityId,
         destination: &str,
         value: &[u8],
     ) -> Result<()>;
 
     /// Clears what `destination` holds, at teardown, and says what it found.
     /// Bytes a process already copied are beyond any host's reach.
+    /// FIX 7954: clears only what `grant` delivered; a newer grant's copy
+    /// stays and reports absent for this grant.
     ///
     /// # Errors
     /// Why it could not clear it; the teardown then reports the copy kept.
-    fn withdraw(&mut self, holder: &SecretGrantHolder, destination: &str) -> Result<SecretCleanup>;
+    fn withdraw(
+        &mut self,
+        holder: &SecretGrantHolder,
+        grant: &EntityId,
+        destination: &str,
+    ) -> Result<SecretCleanup>;
 }
 
 /// The host with no T1 destinations: it names none, delivers nothing and
@@ -61,6 +72,7 @@ impl SecretHostDelivery for NoSecretHostDelivery {
     fn deliver(
         &mut self,
         _holder: &SecretGrantHolder,
+        _grant: &EntityId, // FIX 7954: the delivering grant, refused with the rest.
         destination: &str,
         _value: &[u8],
     ) -> Result<()> {
@@ -70,6 +82,7 @@ impl SecretHostDelivery for NoSecretHostDelivery {
     fn withdraw(
         &mut self,
         _holder: &SecretGrantHolder,
+        _grant: &EntityId, // FIX 7954: no destination held, so no grant's copy can clear.
         _destination: &str,
     ) -> Result<SecretCleanup> {
         Ok(SecretCleanup::Kept)
