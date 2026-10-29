@@ -22,6 +22,7 @@
 //! measures again.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use super::super::dispatcher::{DispatcherHandle, WorkerId, WorkerSpec};
 use super::super::endpoint::ModelCard;
@@ -46,6 +47,9 @@ pub(crate) struct BaselineCalibration {
     provisional_worker: WorkerId,
     /// The slot's card, which a platform worker must answer as.
     card: ModelCard,
+    /// The slot's serving engine, which the measured choice replaces once
+    /// it lands.
+    serving: Arc<Mutex<Option<Serving>>>,
 }
 
 impl BaselineCalibration {
@@ -59,6 +63,7 @@ impl BaselineCalibration {
         provisional: Serving,
         provisional_worker: WorkerId,
         card: ModelCard,
+        serving: Arc<Mutex<Option<Serving>>>,
     ) -> Option<Self> {
         (provisional.pick == Pick::Calibrating).then(|| Self {
             config: config.clone(),
@@ -67,6 +72,7 @@ impl BaselineCalibration {
             provisional,
             provisional_worker,
             card,
+            serving,
         })
     }
 
@@ -134,6 +140,9 @@ impl BaselineCalibration {
             engine,
             pick: Pick::Measured,
         };
+        if let Ok(mut current) = self.serving.lock() {
+            *current = Some(baseline);
+        }
         if let Some(admission) = Admission::new(
             &self.config,
             self.rows_location.as_deref(),

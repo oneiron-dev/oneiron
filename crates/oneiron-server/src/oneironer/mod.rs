@@ -229,8 +229,9 @@ pub(crate) struct TaggerSlot {
     config: OneironerConfig,
     tagger: Arc<ProviderTagger>,
     card: Mutex<Option<endpoint::ModelCard>>,
-    /// The engine a local tagger runs on and how it was picked.
-    serving: Option<engines::Serving>,
+    /// The engine a local tagger runs on and how it was picked; the
+    /// after-bind calibration writes its measured choice here once it lands.
+    serving: Arc<Mutex<Option<engines::Serving>>>,
     /// The platform admission the serving build starts, until it does.
     platforms: Option<Admission>,
     /// The after-bind calibration of the Candle baseline the serving build
@@ -291,11 +292,12 @@ impl TaggerSlot {
         Ok(())
     }
 
-    /// The engine a local tagger was loaded on at startup and how it was
-    /// picked; `None` for an endpoint. Not a call's execution: each call's
-    /// receipt names the worker that ran it.
+    /// The engine a local tagger serves on and how it was picked: the
+    /// provisional engine until the after-bind calibration lands, its
+    /// measured choice after; `None` for an endpoint. Not a call's
+    /// execution: each call's receipt names the worker that ran it.
     pub(crate) fn serving(&self) -> Option<engines::Serving> {
-        self.serving
+        self.serving.lock().ok().and_then(|serving| serving.clone())
     }
 
     /// The last model card a probe accepted.
@@ -399,7 +401,8 @@ fn build_slot_inner(
         return Ok(None);
     };
     config.validate()?;
-    let (mut serving, mut platforms, mut calibration) = (None, None, None);
+    let serving = Arc::new(Mutex::new(None));
+    let (mut platforms, mut calibration) = (None, None);
     let tagger = match config.provider {
         OneironerProvider::Local => {
             // The serving build measures nothing before the listener binds
@@ -431,7 +434,9 @@ fn build_slot_inner(
                 tier = config.tier.as_deref().unwrap_or("-"),
                 "oneironer engine serving"
             );
-            serving = Some(engine);
+            if let Ok(mut current) = serving.lock() {
+                *current = Some(engine);
+            }
             let card = tagger.card();
             let provider = Provider::Local {
                 card: card.clone(),
@@ -467,8 +472,15 @@ fn build_slot_inner(
                     worker,
                     card.clone(),
                 );
-                calibration =
-                    BaselineCalibration::new(config, rows_location, handle, engine, worker, card);
+                calibration = BaselineCalibration::new(
+                    config,
+                    rows_location,
+                    handle,
+                    engine,
+                    worker,
+                    card,
+                    Arc::clone(&serving),
+                );
                 tagger
             } else {
                 let _ = WorkerSpec::validate_local(engine.engine, &tagger);
