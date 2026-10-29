@@ -241,6 +241,7 @@ impl<'v> Memory<'v> {
                 off_record_session: self.off_record_session.clone(),
                 credential: self.credential,
                 credential_instrument: self.credential_instrument.clone(),
+                attested_owner: self.attested_owner,
                 credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
                 task_work_turn: self.task_work_turn.clone(),

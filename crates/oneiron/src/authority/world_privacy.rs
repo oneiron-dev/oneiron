@@ -458,32 +458,37 @@ pub(super) fn folded_worlds(
     state
         .worlds
         .iter()
-        .map(|(world, frontier)| {
-            let roster_read = read_under(&standing, *world, MachineAdmitter::Roster);
-            let local_read = match standing.local() {
-                MachineAdmitter::Roster => roster_read.clone(),
-                local => read_under(&standing, *world, local),
-            };
-            (
-                *world,
-                FoldedWorld {
-                    live: frontier
-                        .live
-                        .iter()
-                        .map(|(hash, edit)| (*hash, edit.machine))
-                        .collect(),
-                    live_settings: frontier
-                        .live
-                        .iter()
-                        .map(|(hash, edit)| (*hash, edit.settings.clone()))
-                        .collect(),
-                    effective: world_meet(&standing, *world, StandingView::Install).effective(),
-                    roster_read,
-                    local_read,
-                },
-            )
-        })
+        .map(|(world, frontier)| (*world, folded_world(&standing, *world, frontier)))
         .collect()
+}
+
+/// One world of [`folded_worlds`], `frontier` being its edits in
+/// `standing`'s state.
+pub(super) fn folded_world(
+    standing: &Standing<'_>,
+    world: EntityId,
+    frontier: &WorldFrontier,
+) -> FoldedWorld {
+    let roster_read = read_under(standing, world, MachineAdmitter::Roster);
+    let local_read = match standing.local() {
+        MachineAdmitter::Roster => roster_read.clone(),
+        local => read_under(standing, world, local),
+    };
+    FoldedWorld {
+        live: frontier
+            .live
+            .iter()
+            .map(|(hash, edit)| (*hash, edit.machine))
+            .collect(),
+        live_settings: frontier
+            .live
+            .iter()
+            .map(|(hash, edit)| (*hash, edit.settings.clone()))
+            .collect(),
+        effective: world_meet(standing, world, StandingView::Install).effective(),
+        roster_read,
+        local_read,
+    }
 }
 
 /// The world's settings revision in `state`: a digest of its live edits,

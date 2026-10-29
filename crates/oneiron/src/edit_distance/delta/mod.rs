@@ -70,12 +70,14 @@ pub use self::lanes::{
 };
 pub(super) use self::schema::u32_saturating;
 pub use self::schema::{AmendmentDelta, DeltaSource, MEASUREMENT_ENGINE_VERSION, OpsSummary};
-pub(in crate::edit_distance) use self::store::amendment_recorded_in_txn;
 pub(crate) use self::store::{
     OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, put_amendment_delta_in_txn,
     put_amendment_uncaptured_in_txn,
 };
 pub use self::store::{amendment_delta, project_identity_amendment_deltas};
+pub(in crate::edit_distance) use self::store::{
+    amendment_recorded_in_txn, captured_amendment_delta_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

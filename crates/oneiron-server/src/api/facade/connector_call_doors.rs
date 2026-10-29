@@ -132,6 +132,9 @@ pub(crate) fn connector_call_listing_as(
     memory: &Memory<'_>,
     input: ConnectorCallRequest,
 ) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
+    if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
+        return crate::web_connector::call_listing(server, memory, input);
+    }
     let invocation = memory
         .invocation()
         .map(|invocation| sdk::connector_call_invocation(memory.actor(), invocation))

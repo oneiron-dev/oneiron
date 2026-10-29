@@ -2994,6 +2994,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/agent_world_undo.rs",
+     "purpose": "An agent's world privacy edit judged by its Grant (FIX 11426, contract §4)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/ai_grant.rs",
      "purpose": "The narrower `ai.*` inference Grant (FIX 3208; Engine 10-29 09:36 on L02's recommendation)",
      "surface": {
@@ -4780,6 +4790,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/support_repair.rs",
+     "purpose": "FIX 4407: a support holder runs one repair the customer selected",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AdmittedTaskGrant"
      ],
@@ -5411,7 +5431,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "Folds `WorldPrivacy` edits into each world's effective settings",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 4,
       "fn": 7,
       "struct": 2
@@ -18205,7 +18225,7 @@
      "path": "src/comm/mod.rs",
      "purpose": "Communication standing-state claims and the ARCH-0035 projector",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 5
      }
     },
@@ -18226,7 +18246,7 @@
      "path": "src/comm/parties.rs",
      "purpose": "Node-local party shortcut vs synced PERSON truth plus twin reconciliation",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 1
      }
     },
@@ -18247,7 +18267,7 @@
      "path": "src/comm/projector.rs",
      "purpose": "Ordered idempotent projector pass and the record verbs that feed it",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 5
      }
     },
@@ -29616,13 +29636,37 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AmendmentCauseRecord"
+     ],
+     "path": "src/edit_distance/attribution/causes.rs",
+     "purpose": "The amendment judge's labels, read for one actor (FIX 8264): the inlet agent-health cards join beside the…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/cells.rs",
+     "purpose": "The one write path into the shared `learning.edit_cost` cells (ARCH-0003 #learning-qualifiers, ARCH-0056 §5)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/evidence_judge.rs",
      "purpose": "Amendment evidence doors and the judging pass",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8
      }
     },
@@ -29633,26 +29677,54 @@
      "path": "src/edit_distance/attribution/mod.rs",
      "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and everything a judged amendment's shares earn",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 7,
       "fn": 1,
-      "re-export": 4
+      "re-export": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/origin.rs",
+     "purpose": "Who drafted an amended proposal: the executor identity at revision, the task type and the project its run…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "EditCost"
-     ],
+     "notable": [],
      "path": "src/edit_distance/attribution/projector.rs",
-     "purpose": "Projection of judged amendments — edit-cost claims, the skill's reliability record, actor lessons — and…",
+     "purpose": "Projection of judged amendments — attributed shares into the shared `learning.edit_cost` cells, the skill's…",
      "surface": {
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 1,
+      "fn": 3
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/rejection.rs",
+     "purpose": "A rejection goes through the judge before it charges anyone (ARCH-0056 §5, §11; FIX 7823)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/scope_erase.rs",
+     "purpose": "A project's erase takes the project off the amendment rows that carry it (FIX 6038)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/attribution/stored.rs",
@@ -29677,7 +29749,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 13,
+      "fn": 16,
       "struct": 5,
       "type": 1
      }
@@ -29689,6 +29761,39 @@
      "path": "src/edit_distance/attribution/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentDefinitionRef",
+      "ArtifactPublisher",
+      "RecentChange",
+      "RecentChanges",
+      "SkillAtVersion",
+      "TriagePacket",
+      "TriageReceipt",
+      "TriageSubject",
+      "WorseningSignal"
+     ],
+     "path": "src/edit_distance/attribution/triage.rs",
+     "purpose": "The triage packet a persistent failure mints, and the one owner-inbox escalation that carries it (ARCH-0056…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 1,
+      "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/attribution/worsening.rs",
+     "purpose": "The persistent-failure trigger (ARCH-0056 §5 \"Persistent failure → the triage packet\"; FIX 7825)",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "m",
@@ -29787,7 +29892,7 @@
      "path": "src/edit_distance/delta/store.rs",
      "purpose": "Delta side-ledger writes, receipt attachment, and the identity-topology projection pass",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -30101,6 +30206,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/edit_distance/miner/observed.rs",
+     "purpose": "The observed-preference door's evidence bar for a mined cluster (FIX 3083)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/edit_distance/miner/policy.rs",
      "purpose": "OF-379 proposal routing, driven by validated policy-manifest rows",
      "surface": {
@@ -30203,7 +30318,7 @@
      "path": "src/edit_distance/proposal_text/receipts.rs",
      "purpose": "Commit-envelope writer and read-time provenance fold for authored text",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -30214,6 +30329,16 @@
      "path": "src/edit_distance/proposal_text/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/publisher/delivery_outcome.rs",
+     "purpose": "The outbound path's answer for a handed-off signature (FIX 7690, 9811)",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "s",
@@ -30252,7 +30377,7 @@
      "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "re-export": 7,
       "type": 1
@@ -30300,11 +30425,12 @@
       "SignatureSendState"
      ],
      "path": "src/edit_distance/publisher/transport.rs",
-     "purpose": "Publisher comm transport: counterparty, send states, and the send door",
+     "purpose": "Publisher comm transport: send states and the send door",
      "surface": {
-      "const": 3,
+      "const": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -30363,13 +30489,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/routing/keys.rs",
      "purpose": "Pinned ledger keys and receipt fields",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 26
      }
     },
     {
@@ -30388,10 +30514,29 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/routing/mod.rs",
-     "purpose": "ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment says about the MODEL GENERATION…",
+     "purpose": "ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment says about the EXECUTOR that…",
      "surface": {
-      "crate-vis": 1,
       "re-export": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/outcomes.rs",
+     "purpose": "Anchored task outcomes beside edit cost (ARCH-0056 §8, FIX 7828)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/routing/prior.rs",
+     "purpose": "The carried prior (ARCH-0056 §8, ARCH-0003 #prior-origins): what a head with too few own runs reads beside…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -30418,6 +30563,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CarriedPrior",
       "RolloutRung",
       "RoutingScopeKey",
       "RoutingScopeStats",
@@ -30427,8 +30573,8 @@
      "purpose": "Routing scope and rung types",
      "surface": {
       "enum": 1,
-      "fn": 5,
-      "struct": 3
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -30444,9 +30590,8 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/routing/version.rs",
-     "purpose": "Model stack versioning",
+     "purpose": "The executor serving now",
      "surface": {
-      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -34395,6 +34540,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/feedback/report/delivery/counterparty.rs",
+     "purpose": "The publisher ACTOR a report's signature channel runs to (FIX 7829)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ReportPublisherMetadata"
      ],
@@ -37325,7 +37480,7 @@
      "purpose": "The engine's housekeeping pass: every sweep the engine relies on, run when due",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 4,
       "fn": 13,
       "struct": 5
@@ -39028,7 +39183,7 @@
      "path": "src/learning/evidence.rs",
      "purpose": "The anchored-evidence ledger: the only input the projector reads",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 3,
       "fn": 6,
       "struct": 3
@@ -40177,7 +40332,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 20,
-      "mod": 199,
+      "mod": 200,
       "re-export": 76
      }
     },
@@ -46079,7 +46234,7 @@
      "purpose": "Handle binders: the `with_*` methods and the accessors that read back what a binder set",
      "surface": {
       "crate-vis": 13,
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -55456,7 +55611,7 @@
      "surface": {
       "const": 5,
       "crate-vis": 5,
-      "fn": 21,
+      "fn": 22,
       "struct": 1
      }
     },
@@ -63009,7 +63164,7 @@
      "path": "src/skill_hub/pack_catalog/builtin.rs",
      "purpose": "Engine-embedded connector source and local first-open installation",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 3,
       "struct": 1
      }
@@ -63083,7 +63238,7 @@
      "purpose": "Who a pack hook's outcomes run as: the owner, or a foreign skill publisher",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1
      }
     },
@@ -64753,7 +64908,7 @@
      "purpose": "The reliability floor dial and the quarantine proposal a floor crossing mints",
      "surface": {
       "const": 4,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -64775,7 +64930,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 7
      }
     },
@@ -72078,7 +72233,7 @@
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -75505,7 +75660,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1219
+      "fn": 1222
      }
     },
     {
@@ -75950,7 +76105,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 86,
+      "re-export": 87,
       "struct": 38
      }
     },
@@ -76723,7 +76878,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SupportGrantList",
@@ -76809,6 +76964,16 @@
      "surface": {
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/web_connector.rs",
+     "purpose": "Embedded-owner projection of the web connector's switch and usage doors (FIX 11598)",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -77734,6 +77899,80 @@
      "path": "src/wave_orchestration/tests.rs",
      "purpose": "Wave-orchestration tests (ONE-1905)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebFetchInput",
+      "WebFetchOutput",
+      "WebSearchHit",
+      "WebSearchInput",
+      "WebSearchOutput",
+      "WebTool"
+     ],
+     "path": "src/web_connector/mod.rs",
+     "purpose": "The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and…",
+     "surface": {
+      "const": 7,
+      "enum": 1,
+      "fn": 7,
+      "re-export": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FetchRoute",
+      "ResultRetention",
+      "WebProvider",
+      "WebProviderProfile"
+     ],
+     "path": "src/web_connector/provider.rs",
+     "purpose": "The provider registry: which providers may serve a web call, on whose key, at what declared price, and how…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebConnectorSetting",
+      "WebProviderKey"
+     ],
+     "path": "src/web_connector/setting.rs",
+     "purpose": "The vault's one switch: which provider serves its web calls, on whose key",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebCallOutcome",
+      "WebConnectorUsage",
+      "WebConnectorUsagePage",
+      "WebConnectorUsageRead",
+      "WebCostBasis",
+      "WebKeySource"
+     ],
+     "path": "src/web_connector/usage.rs",
+     "purpose": "One usage row per web call: provider, tool, key source, latency and cost",
+     "surface": {
+      "const": 2,
+      "enum": 3,
+      "fn": 2,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -81045,7 +81284,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 226,
+     "files": 228,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81514,7 +81753,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 75,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -81605,7 +81844,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82445,7 +82684,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 97,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82478,6 +82717,13 @@
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
+    },
+    "web_connector": {
+     "files": 4,
+     "impl_vault": true,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The built-in `web` connector (FIX 11598, CONN-1 A): `connector.web.search(query)` and…"
     },
     "web_fetch": {
      "files": 8,
@@ -82517,7 +82763,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5508,
+   "source_files": 5527,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82661,7 +82907,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 91,
+      "const": 92,
       "re-export": 1,
       "type": 1
      }
@@ -83118,13 +83364,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "SupportDelegation"
+      "SupportDelegation",
+      "SupportRepair"
      ],
      "path": "src/authority/support_delegation.rs",
      "purpose": "OF-606: the support delegation a customer's support slip carries, signed in its claims beside `grant_ref`…",
      "surface": {
-      "const": 4,
-      "fn": 3,
+      "const": 5,
+      "enum": 1,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -94743,7 +94991,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1187
+      "fn": 1190
      }
     },
     {
@@ -96196,7 +96444,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1188
+      "fn": 1191
      }
     },
     {
@@ -100951,7 +101199,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 156
+      "crate-vis": 157
      }
     },
     {
@@ -101890,6 +102138,16 @@
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
       "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/web_connector_doors.rs",
+     "purpose": "Typed owner doors over the built-in web connector's switch and usage rows (FIX 11598)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -103808,6 +104066,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/support_repair_routes.rs",
+     "purpose": "`POST /v1/owner/support-repairs/run` (FIX 4407): the support holder's door for one repair the customer…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/training_swap_routes.rs",
      "purpose": "`/v1/owner/coach/training-runs` (OF-577, FIX 857): the owner's view of a training run's result and their own…",
      "surface": {
@@ -104737,7 +105005,7 @@
      "path": "src/auth/binding_admission.rs",
      "purpose": "Consume holder proofs at the network door, once per request or upgrade, and stop serving a shared vault its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -112914,7 +113182,7 @@
      "path": "src/server/housekeeping.rs",
      "purpose": "The host's half of the engine's housekeeping",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -113979,6 +114247,96 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/keys.rs",
+     "purpose": "The provider key for one web call",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/mod.rs",
+     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that names…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/brave.rs",
+     "purpose": "Brave: Search-plan web search on the user's own key or the hub",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/context_dev.rs",
+     "purpose": "context.dev: web search and scrape, one credit a call, on the user's own key or the hub",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/exa.rs",
+     "purpose": "Exa: auto search with highlights and contents text, on the user's own key or the hub (Exa §4.2)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/mod.rs",
+     "purpose": "One adapter per provider: one HTTPS request per call, its answer shaped into search hits or one page, with…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/octen.rs",
+     "purpose": "Octen: web search with highlights and standard extraction. octen.ai runs only on the user's own key or the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/tavily.rs",
+     "purpose": "Tavily: basic search and basic extraction, the launch default on the deploy's backend key (CONN-1 A)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/web_connector/providers/tinyfish.rs",
+     "purpose": "Tinyfish: TinySearch and TinyFetch, free within their daily allowances, on the user's own key or the hub…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -114391,7 +114749,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 608,
+     "files": 610,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114866,6 +115224,13 @@
      "layout": "file",
      "purpose": "Endpoint discovery and browser access for an external shared web client"
     },
+    "web_connector": {
+     "files": 9,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The served half of the built-in `web` connector (FIX 11598, CONN-1 A): every `connector.call` that names…"
+    },
     "wire_health": {
      "files": 2,
      "impl_vault": false,
@@ -114883,7 +115248,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1408,
+   "source_files": 1419,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -118930,6 +119295,7 @@
       "SupportGrantStatus",
       "SupportGrantView",
       "SupportHolderClass",
+      "SupportRepair",
       "SurfaceBand",
       "SwapChoice",
       "SwitchCarried",
@@ -119270,8 +119636,18 @@
       "WeaveSieveScoreView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
+      "WebCallOutcome",
+      "WebConnectorSetting",
+      "WebConnectorUsage",
+      "WebConnectorUsagePage",
+      "WebConnectorUsageRead",
+      "WebCostBasis",
       "WebCrawlRequest",
       "WebFetchRequest",
+      "WebKeySource",
+      "WebProvider",
+      "WebProviderKey",
+      "WebTool",
       "WellnessPersonRequest",
       "WellnessPolicyConfigureRequest",
       "WellnessProjection",
@@ -119365,8 +119741,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1051,
-      "struct": 3226
+      "enum": 1058,
+      "struct": 3230
      }
     },
     {

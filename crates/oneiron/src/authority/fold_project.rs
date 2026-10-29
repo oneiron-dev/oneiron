@@ -147,6 +147,10 @@ pub(super) fn project_once(
     let accepted_roster_marks = merged.as_ref().map_or_else(BTreeSet::new, |state| {
         rows.accepted_roster_marks(state, &valid_entries)
     });
+    // Each live agent world edit's world as read without it (FIX 11426).
+    let agent_world_undo = merged.as_mut().map_or_else(Default::default, |state| {
+        super::agent_world_undo::AgentWorldUndo::of(state, context.pin, context.machine_standing)
+    });
     let fold = AuthorityFold {
         append_heads: BTreeSet::new(),
         anchor_heads: BTreeMap::new(),
@@ -250,6 +254,7 @@ pub(super) fn project_once(
         agent_carried_acts: merged
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.agent_carried_acts.clone()),
+        agent_world_undo,
         home_candidacy: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::home_candidacy::folded_home_candidacies(state)
         }),

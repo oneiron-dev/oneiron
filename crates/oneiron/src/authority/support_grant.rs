@@ -89,6 +89,9 @@ pub struct SupportGrantRequest {
     /// full owner-grade proof, whose reach is the vault's, so any value is
     /// within it.
     pub comm: Option<CommReach>,
+    /// The repairs the support holder may run (FIX 4407), each by its own
+    /// id, signed into the slip; empty for none.
+    pub repairs: BTreeSet<SupportRepair>,
 }
 
 /// Where a support grant stands, as its list and the registry show it.
@@ -218,6 +221,7 @@ impl Vault {
                 owner_ref: approver.to_hex(),
                 approved_at,
                 wall_expires_at: approved_at.checked_add(ttl).ok_or_else(overflow)?,
+                repairs: request.repairs,
             }),
             comm: request.comm,
         };

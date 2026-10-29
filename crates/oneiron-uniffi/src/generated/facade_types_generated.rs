@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1187 facade rows, 4277 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1139.
+// UniFFI census: 1190 facade rows, 4288 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1142.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -22041,6 +22041,25 @@ pub enum SupportHolderClass {
     Agent,
 }
 
+/// `oneiron_authority::authority::support_delegation::SupportRepair`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SupportRepair {
+    #[serde(rename = "critical_confirm_expiry")]
+    CriticalConfirmExpiry,
+    #[serde(rename = "symbol_lease_expiry")]
+    SymbolLeaseExpiry,
+    #[serde(rename = "esign_expiry")]
+    EsignExpiry,
+    #[serde(rename = "esign_seal_backstop")]
+    EsignSealBackstop,
+    #[serde(rename = "commitment_lapse")]
+    CommitmentLapse,
+    #[serde(rename = "ppr_cache_eviction")]
+    PprCacheEviction,
+    #[serde(rename = "shared_act_maturity")]
+    SharedActMaturity,
+}
+
 /// `oneiron::verbs::support_grant::SupportGrantMintRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -22067,6 +22086,8 @@ pub struct SupportGrantMintRequest {
     pub ticket_ref: Option<String>,
     #[serde(rename = "comm", default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<CommReach>,
+    #[serde(rename = "repairs", default, skip_serializing_if = "Option::is_none")]
+    pub repairs: Option<Vec<SupportRepair>>,
 }
 
 /// `oneiron::authority::support_grant::SupportGrantStatus`.
@@ -22116,6 +22137,8 @@ pub struct SupportGrantView {
     pub comm: CommReach,
     #[serde(rename = "revoke_command")]
     pub revoke_command: String,
+    #[serde(rename = "repairs", default, skip_serializing_if = "Option::is_none")]
+    pub repairs: Option<Vec<SupportRepair>>,
 }
 
 /// `oneiron::verbs::support_grant::SupportGrantMintAnswer`.
@@ -31752,6 +31775,8 @@ pub enum Observation {
     Magnitude(f64),
     #[serde(rename = "category")]
     Category(String),
+    #[serde(rename = "count_only")]
+    CountOnly(String),
 }
 
 /// `oneiron::receipt::pack_attribution::ContributionCheck`.
@@ -31869,6 +31894,12 @@ pub struct EvidenceRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub goal_revision: Option<String>,
+    #[serde(
+        rename = "measurement_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub measurement_version: Option<String>,
 }
 
 /// `oneiron::learning::doors::LearningEvidenceView`.
@@ -48334,6 +48365,161 @@ pub struct ModelManifestReplace {
         skip_serializing_if = "Option::is_none"
     )]
     pub teacher_approval: Option<TeacherProbeApproval>,
+}
+
+/// `oneiron::web_connector::provider::WebProvider`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WebProvider {
+    #[serde(rename = "tavily")]
+    Tavily,
+    #[serde(rename = "exa")]
+    Exa,
+    #[serde(rename = "brave")]
+    Brave,
+    #[serde(rename = "tinyfish")]
+    Tinyfish,
+    #[serde(rename = "context_dev")]
+    ContextDev,
+    #[serde(rename = "octen")]
+    Octen,
+}
+
+/// `oneiron::web_connector::setting::WebProviderKey`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum WebProviderKey {
+    #[serde(rename = "backend")]
+    Backend,
+    #[serde(rename = "secret")]
+    Secret {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "hub")]
+    Hub {
+        #[serde(rename = "connector")]
+        connector: String,
+    },
+}
+
+/// `oneiron::web_connector::setting::WebConnectorSetting`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WebConnectorSetting {
+    #[serde(rename = "provider")]
+    pub provider: WebProvider,
+    #[serde(rename = "key")]
+    pub key: WebProviderKey,
+}
+
+/// `oneiron::web_connector::usage::WebConnectorUsageRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WebConnectorUsageRead {
+    #[serde(rename = "since_ms", default, skip_serializing_if = "Option::is_none")]
+    pub since_ms: Option<u64>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::web_connector::WebTool`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WebTool {
+    #[serde(rename = "search")]
+    Search,
+    #[serde(rename = "fetch")]
+    Fetch,
+}
+
+/// `oneiron::web_connector::usage::WebKeySource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WebKeySource {
+    #[serde(rename = "backend")]
+    Backend,
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "hub")]
+    Hub,
+}
+
+/// `oneiron::web_connector::usage::WebCostBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WebCostBasis {
+    #[serde(rename = "actual")]
+    Actual,
+    #[serde(rename = "estimated")]
+    Estimated,
+    #[serde(rename = "unpriced")]
+    Unpriced,
+}
+
+/// `oneiron::web_connector::usage::WebCallOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum WebCallOutcome {
+    #[serde(rename = "ok")]
+    Ok {
+        #[serde(rename = "results")]
+        results: u32,
+    },
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+    #[serde(rename = "waiting")]
+    Waiting {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::web_connector::usage::WebConnectorUsage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WebConnectorUsage {
+    #[serde(rename = "at_ms")]
+    pub at_ms: u64,
+    #[serde(rename = "tool")]
+    pub tool: WebTool,
+    #[serde(rename = "provider")]
+    pub provider: WebProvider,
+    #[serde(rename = "key")]
+    pub key: WebKeySource,
+    #[serde(
+        rename = "hub_connector",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hub_connector: Option<String>,
+    #[serde(rename = "latency_ms")]
+    pub latency_ms: u64,
+    #[serde(
+        rename = "cost_micro_usd",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cost_micro_usd: Option<u64>,
+    #[serde(rename = "cost_basis")]
+    pub cost_basis: WebCostBasis,
+    #[serde(
+        rename = "provider_request_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provider_request_id: Option<String>,
+    #[serde(rename = "outcome")]
+    pub outcome: WebCallOutcome,
+}
+
+/// `oneiron::web_connector::usage::WebConnectorUsagePage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WebConnectorUsagePage {
+    #[serde(rename = "rows")]
+    pub rows: Vec<WebConnectorUsage>,
+    #[serde(rename = "total_cost_micro_usd")]
+    pub total_cost_micro_usd: u64,
+    #[serde(rename = "unpriced")]
+    pub unpriced: u32,
 }
 
 /// `oneiron::llm::manifest::doors::OneironerBind`.

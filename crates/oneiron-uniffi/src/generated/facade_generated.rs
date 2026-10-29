@@ -4196,6 +4196,21 @@ export_facade! {
     let output = client.vault_models_manifest_replace(&input)?;
     crate::codec::lift_record("vault.models.manifest.replace", &output)
 };
+"vault.settings.web_connector" => fn vault_settings_web_connector(&self) -> WebConnectorSetting = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.settings.web_connector")?;
+    let output = client.vault_settings_web_connector(&input)?;
+    crate::codec::lift_record("vault.settings.web_connector", &output)
+};
+"vault.settings.web_connector.replace" => fn vault_settings_web_connector_replace(&self, input: WebConnectorSetting) -> WebConnectorSetting = |client| {
+    let input: oneiron::web_connector::WebConnectorSetting = crate::codec::lower_record("vault.settings.web_connector.replace", input)?;
+    let output = client.vault_settings_web_connector_replace(&input)?;
+    crate::codec::lift_record("vault.settings.web_connector.replace", &output)
+};
+"vault.connectors.web.usage" => fn vault_connectors_web_usage(&self, input: WebConnectorUsageRead) -> WebConnectorUsagePage = |client| {
+    let input: oneiron::web_connector::WebConnectorUsageRead = crate::codec::lower_record("vault.connectors.web.usage", input)?;
+    let output = client.vault_connectors_web_usage(&input)?;
+    crate::codec::lift_record("vault.connectors.web.usage", &output)
+};
 "vault.models.oneironer.bind" => fn vault_models_oneironer_bind(&self, input: OneironerBind) -> ModelManifest = |client| {
     let input: oneiron::llm::manifest::doors::OneironerBind = crate::codec::lower_record("vault.models.oneironer.bind", input)?;
     let output = client.vault_models_oneironer_bind(&input)?;

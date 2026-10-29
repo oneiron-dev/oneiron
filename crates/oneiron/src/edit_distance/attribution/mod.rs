@@ -4,10 +4,12 @@
 //! ```text
 //! Δ RECEIPT (ED-01/02)  +  routing facts (recorded at the amendment door)
 //!   └─ judge_amendment_hunks ──> AmendmentJudgment (label + share split)
-//!        ├─ skill_defect %     → skill.edit_cost   (SKILL entity), its share
+//!        ├─ skill_defect %     → learning.edit_cost on the SKILL, at the
+//!        │                       drafting executor, its share
 //!        │                     → skill.reliability: the amended attempt's ONE
 //!        │                       record becomes a loss of this share
-//!        ├─ execution_lapse %  → actor.edit_cost   (ACTOR entity), its share
+//!        ├─ execution_lapse %  → learning.edit_cost on the ACTOR, its own
+//!        │                       executor, its share
 //!        │                     → one actor.lesson citing the receipt
 //!        ├─ discovery %        → a skill EDIT PROPOSAL, minted through SK-04's door
 //!        ├─ environment %      → nothing at all — the judgment row IS the record
@@ -21,6 +23,11 @@
 //! [`project_amendment_reliability`] and [`project_amendment_lessons`].
 //! Reliability needs the attempt the amended proposal came from; the host
 //! names it at the evidence door ([`AmendmentEvidence::with_attempt`]).
+//!
+//! A REJECTION takes the same judge before it charges anyone (FIX 7823). It
+//! carries no Δ and no hunks, so it is one region, one label at 100%; its
+//! judgment row is the record, and only the shares that charge a skill or an
+//! actor reach a `learning.edit_cost` cell, counted rejected.
 //!
 //! # A verdict is a split
 //!
@@ -48,14 +55,16 @@
 //! is the proof, and a host that wants a model tier implements SK-04's trait
 //! rather than a new one.
 //!
-//! # Cost is an AGGREGATE, never a raw Δ
+//! # Cost is a shared cell, never a raw Δ
 //!
 //! [`project_edit_cost_claims`] takes JUDGMENTS, not deltas — that signature is
-//! the guard. A `d_norm` reaches a claim only after a class named who owns it,
-//! and the value written is the mean over every persisted judgment sharing the
-//! row's `(subject, scope)` pair. Recomputed from the judgment ledger on every
-//! pass, so an interrupted pass leaves a stale row the next pass corrects,
-//! never a double-counted one (the [`crate::skill_reliability`] posture).
+//! the guard. A `d_norm` reaches a cell only after a class named who owns it,
+//! as one evidence row per receipt, weighted by its share, in the shared
+//! `learning.edit_cost` cell qualified by executor, consent scope and task
+//! type (FIX 9797), in the project scope of the run or the reviewed claim
+//! (FIX 6038). The learning projector recomputes the estimate from the
+//! cell's rows, so a replay overwrites rather than double-counts, and
+//! [`edit_cost_for`] reads it back. No parallel scalar head is kept.
 //!
 //! # The Blind Curator guard
 //!
@@ -68,30 +77,47 @@
 //! is visible at all.
 
 mod audit;
+mod causes;
+mod cells;
 mod evidence_judge;
+mod origin;
 mod projector;
+mod rejection;
+mod scope_erase;
 mod stored;
 mod taxonomy;
+mod triage;
+mod worsening;
 
 pub use self::audit::{
     AmendmentAuditFixture, AmendmentAuditRecord, held_out_amendment_fixtures, judge_audit_records,
     judge_audit_reports, run_judge_audit, run_judge_audit_with_decisions,
 };
+pub use self::causes::AmendmentCauseRecord;
+pub use self::cells::edit_cost_for;
 pub use self::evidence_judge::{
     amendment_evidence, amendment_judgments, judge_amendment, judge_amendment_hunks,
     judge_amendment_verdicts, judge_amendment_with, pending_preference_proposals,
     record_amendment_evidence,
 };
 pub use self::projector::{
-    EditCost, edit_cost_for, project_amendment_lessons, project_amendment_reliability,
-    project_edit_cost_claims,
+    project_amendment_lessons, project_amendment_reliability, project_edit_cost_claims,
 };
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
     HunkLabel, PreferenceProposal, classify_amendment, validate_share_vector,
 };
+pub use self::triage::{
+    AgentDefinitionRef, ArtifactPublisher, RecentChange, RecentChanges, SkillAtVersion,
+    TriagePacket, TriageReceipt, TriageSubject, WorseningSignal, triage_packet,
+};
 
+pub(crate) use self::causes::amendment_causes_in_txn;
+pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
+pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
+pub(in crate::edit_distance) use self::rejection::{Rejection, judge_rejection_in_txn};
+pub(crate) use self::scope_erase::erase_amendment_project_in_txn;
 
 /// The recorded, grounded attempt→amendment joins, judged or not: every
 /// evidence row that names the attempt its amended proposal came from, keyed

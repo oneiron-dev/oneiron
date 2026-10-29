@@ -91,6 +91,7 @@ mod slide_render;
 pub mod usage;
 mod wake_adapters;
 pub mod web_client;
+mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
