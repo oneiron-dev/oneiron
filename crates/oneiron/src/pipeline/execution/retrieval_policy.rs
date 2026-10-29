@@ -53,18 +53,14 @@ impl PipelineBuilder<'_> {
         } else {
             Default::default()
         };
+        // Coverage reads the configured channels without consuming them: the
+        // first attempt still runs the caller's Search PPR and any explicit Expand.
         let mut explicit_seeds = Vec::new();
-        for (seeds, _) in self
-            .ppr_search
-            .take()
-            .into_iter()
-            .chain(self.ppr_expand.take())
-        {
-            explicit_seeds.extend(seeds);
+        for (seeds, _) in self.ppr_search.iter().chain(self.ppr_expand.iter()) {
+            explicit_seeds.extend(seeds.iter().copied());
         }
         explicit_seeds.sort_unstable();
         explicit_seeds.dedup();
-        explicit_seeds.truncate(crate::ppr::MAX_PPR_SEEDS);
         // Disable the channel's internal adaptive loop: each widening is now
         // one policy decision. Hard occurred/learned/since filters never change.
         let temporal_allowed = self.temporal_search.as_mut().is_some_and(|config| {
@@ -211,7 +207,6 @@ impl PipelineBuilder<'_> {
                     seeds.extend_from_slice(&explicit_seeds);
                     seeds.sort_unstable();
                     seeds.dedup();
-                    seeds.truncate(crate::ppr::MAX_PPR_SEEDS);
                     self.ppr_expand = Some((seeds, 1));
                     hops += 1;
                 }
