@@ -2995,7 +2995,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def list(self, spec=None):
-            """Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."""
+            """Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_list(json.dumps({} if spec is None else spec))))
         def declare(self, spec):
             """Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."""

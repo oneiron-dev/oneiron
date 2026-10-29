@@ -563,6 +563,7 @@ pub(super) fn prepare_call(
             extraction_prompt: settings.extraction_prompt.clone().unwrap_or_default(),
             session,
             shutdown: shutdown.clone(),
+            owner_policy: server.policy_doors.owner.clone(),
         },
     )
     .map_err(failed)?;

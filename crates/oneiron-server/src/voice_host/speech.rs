@@ -193,10 +193,12 @@ pub(super) struct Verdict {
 pub(super) type Verdicts = FuturesUnordered<Pin<Box<dyn Future<Output = Verdict> + Send>>>;
 
 /// Runs each sentence's safeguard on the owner plane, on the pass's own
-/// backend and meter, beside the sentence's speech.
+/// backend and meter and under the host's owner-plane policy config (FIX
+/// 5043), beside the sentence's speech.
 struct HostSafeguard<'a> {
     backend: &'a Arc<dyn LlmBackend>,
     budget: &'a BudgetGuard,
+    policy: &'a Arc<PolicyModelConfig>,
     verdicts: &'a mut Verdicts,
 }
 
@@ -204,11 +206,10 @@ impl Safeguard for HostSafeguard<'_> {
     fn submit(&mut self, request: SafeguardRequest) -> oneiron::Result<()> {
         let backend = Arc::clone(self.backend);
         let budget = self.budget.clone();
+        let policy = Arc::clone(self.policy);
         self.verdicts.push(Box::pin(async move {
             let generation = request.generation();
-            let outcome = request
-                .enforce_with_budget(&PolicyModelConfig::default(), backend.as_ref(), &budget)
-                .await;
+            let outcome = request.enforce_with_budget(&policy, backend.as_ref(), &budget).await;
             Verdict {
                 generation,
                 outcome,
@@ -541,6 +542,7 @@ impl VoiceHost {
                 let mut safeguard = HostSafeguard {
                     backend: self.backend(),
                     budget: self.budget(),
+                    policy: self.owner_policy(),
                     verdicts: &mut bridge.verdicts,
                 };
                 if work.dispatch(&mut outputs.tts, &mut safeguard).is_empty() {

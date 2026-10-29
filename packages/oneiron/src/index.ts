@@ -1684,7 +1684,7 @@ export class Oneiron {
       answer: (input: Facade.CourtesyDeleteAnswerRequest): Facade.CourtesyDeleteIncoming => this.#call(() => this.#client.vaultCourtesyDeleteAnswer(input) as Facade.CourtesyDeleteIncoming),
     },
     embedding_spaces: {
-      /** Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind. */
+      /** Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move. */
       list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesList(input) as Facade.EmbeddingSpacesView),
       /** Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors. */
       declare: (input: Facade.EmbeddingSpaceDeclareRequest): Facade.EmbeddingSpacesView => this.#call(() => this.#client.vaultEmbeddingSpacesDeclare(input) as Facade.EmbeddingSpacesView),
