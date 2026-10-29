@@ -23,6 +23,8 @@ use crate::memory::Memory;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
+mod editor_sources;
+
 pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).
 pub(super) const SOURCES_KEY: &str = "sources";
@@ -144,7 +146,17 @@ impl ScopeSummaryPlan {
         if let Some(arc) = &self.arc {
             return crate::dreamer_consolidation::arc_evidence_in_txn(vault, txn, arc);
         }
-        scope_summary_evidence_in_txn(vault, txn, &self.sources, self.session.is_some())
+        let mut evidence =
+            scope_summary_evidence_in_txn(vault, txn, &self.sources, self.session.is_some())?;
+        // An edited predecessor's text is model input: the rows it was
+        // written from are read and pinned with the evidence (FIX 10092).
+        if self.editor_text.is_some()
+            && let Some(previous) = self.previous
+        {
+            evidence.editor_sources =
+                editor_sources::editor_sources_in_txn(vault, txn, &previous, &evidence)?;
+        }
+        Ok(evidence)
     }
 
     /// The requester's surface a landing's reply is checked and receipted on
@@ -547,6 +559,7 @@ impl Vault {
                     notes: evidence.notes.clone(),
                 },
             )?;
+            editor_sources::register_in_txn(self, txn, &id, evidence)?;
             let metadata = ScopeSummaryMetadata {
                 purpose: plan.purpose.clone(),
                 keep: composed.keep.to_owned(),
@@ -558,7 +571,12 @@ impl Vault {
                     instruction: composed.instruction.to_owned(),
                     model: composed.model.to_owned(),
                     policy_frontier: plan.policy_frontier,
-                    sources: evidence.source_versions.clone(),
+                    sources: evidence
+                        .source_versions
+                        .iter()
+                        .chain(&evidence.editor_sources)
+                        .cloned()
+                        .collect(),
                     previous: plan.previous.map(|id| id.to_hex()),
                     recorded_at: now,
                     generated_text_hash: *blake3::hash(composed.text.as_bytes()).as_bytes(),

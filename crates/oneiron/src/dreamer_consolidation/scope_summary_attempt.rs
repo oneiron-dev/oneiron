@@ -506,14 +506,36 @@ pub(crate) struct ScopeSummaryEvidence {
     /// What an Arc's call shows and its labels (FIX 7509 P8); `None` for
     /// every other target.
     arc: Option<arc_evidence::ArcView>,
+    /// Each row an edited predecessor's text was written from beyond these
+    /// covers and MESSAGEs, pinned as read (FIX 10092): the text goes to the
+    /// model, so they are fenced with the evidence and kept on its summary.
+    pub(crate) editor_sources: Vec<SummarySourceVersion>,
 }
 
 impl ScopeSummaryEvidence {
     pub(crate) fn fingerprint(&self) -> Result<[u8; 32]> {
-        let bytes = serde_json::to_vec(&(&self.source_versions, &self.text))
+        let bytes = serde_json::to_vec(&(&self.source_versions, &self.text, &self.editor_sources))
             .map_err(|_| invalid_consolidation("summary evidence did not hash"))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }
+}
+
+/// The version pins of `sources` as the Dreamer reads them in `txn` (FIX
+/// 10092); `None` once one of them is gone or the Dreamer does not read it.
+pub(crate) fn editor_source_pins_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sources: &[EntityId],
+) -> Result<Option<Vec<SummarySourceVersion>>> {
+    let rows = dreamer_read(vault)?.get_entities_parts_in_txn(txn, sources)?;
+    let mut pins = Vec::with_capacity(sources.len());
+    for (source, row) in sources.iter().zip(rows) {
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        pins.push(source_pin(vault, txn, *source, Some(&row))?);
+    }
+    Ok(Some(pins))
 }
 
 fn source_pin(

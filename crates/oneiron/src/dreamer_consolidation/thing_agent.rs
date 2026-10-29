@@ -177,9 +177,13 @@ pub trait ThingChildSession {
     /// is refused, and it settles with `code`.
     fn stop(&mut self, code: &'static str);
 
-    /// The units the child's own generation spent on its parent's guard so
-    /// far.
-    fn generation_units(&self) -> u64;
+    /// Closes the count of the child's own generation on its parent's guard
+    /// and returns the units it spent so far, for the parent to charge once
+    /// (FIX 9015). A call admitted before the close that settles after it is
+    /// never cancelled or lost: the host charges its terminal usage to the
+    /// attempt's line when it settles, and the line holds it owed until then
+    /// ([`crate::dreamer_runner::DreamerRunnerStore::owe_late_calls`]).
+    fn close_generation(&self) -> u64;
 }
 
 /// What a waiting parent is handed.

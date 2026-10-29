@@ -39,6 +39,19 @@ impl ReadSetProducer {
     /// served (FIX 7017).
     pub const TOOL_ANSWERS: Self = Self("resident.tool_answers");
 
+    /// A Dreamer weave recipe's evidence: the one row its draft reads
+    /// (FIX 7019).
+    pub const DREAMER_RECIPE_EVIDENCE: Self = Self("dreamer.recipe_evidence");
+
+    /// A Dreamer weave lens render's period: the rows its stored report's
+    /// items were read from (FIX 7019).
+    pub const DREAMER_WEAVE_REPORT: Self = Self("dreamer.weave_report");
+
+    /// A Dreamer consolidation branch's extraction: each slice's TURNs,
+    /// conversations, projected MESSAGEs and the listed rows its page
+    /// shows (FIX 7019).
+    pub const DREAMER_EXTRACTION: Self = Self("dreamer.extraction");
+
     /// The key the record keeps.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
