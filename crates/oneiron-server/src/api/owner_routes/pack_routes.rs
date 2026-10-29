@@ -386,7 +386,7 @@ async fn place_agent_world(
     Ok(Json(placed))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct HookEnabled {
     /// The binding claim, as 32 hex.
@@ -744,7 +744,7 @@ async fn restore_default_skills(
 }
 
 /// What one skill sync did.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct SkillSync {
     /// `applied`, `proposed` or `refused_by_policy`.
     outcome: &'static str,
