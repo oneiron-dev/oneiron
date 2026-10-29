@@ -5,6 +5,50 @@
 
 use super::*;
 
+/// Who binds a pack's hooks, and whose stamp the binding claims carry.
+#[derive(Clone, Copy)]
+pub(in crate::skill_hub::pack_catalog) enum HookBinder<'a> {
+    /// The owner's consent: each hook binds as the pack's author, and a
+    /// binding an agent stamped stays the agent's.
+    Owner(&'a AuthenticatedOwner),
+    /// A resident agent writing the `local` pack (ARCH-0080 §7): each hook
+    /// whose body it wrote binds as its own, in a claim stamped with the
+    /// agent; a binding another author stands on is left as it is.
+    Agent(WriteActor),
+}
+
+impl HookBinder<'_> {
+    /// Whether this binder writes `row`: the owner every binding, an agent
+    /// only its own.
+    fn writes(self, row: &PackHookBinding) -> bool {
+        match self {
+            Self::Owner(_) => true,
+            Self::Agent(agent) => matches!(
+                &row.author,
+                HookAuthor::Agent { agent: author } if *author == agent.entity_ref()
+            ),
+        }
+    }
+}
+
+/// The stamp of a binding claim an agent writes: the agent itself, as
+/// Generated content, placed by the gate at the agent's own ceiling.
+fn agent_envelope(agent: WriteActor, pack: &str, source: &EntityId) -> Result<WriteEnvelope> {
+    Ok(WriteEnvelope::new(
+        agent,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![
+            (Value::from("surface"), Value::from("pack.hooks")),
+            (Value::from("pack"), Value::from(pack)),
+            (
+                Value::from("source"),
+                Value::Binary(source.as_bytes().to_vec()),
+            ),
+        ]))?,
+        ClaimApprovalStatus::Auto,
+    ))
+}
+
 impl Vault {
     /// ARCH-0080 §9's update rule, once `receipt` installed `source` over a
     /// pack whose hooks are bound: a same-capability update rebinds them,
@@ -74,10 +118,40 @@ impl Vault {
         source_id: EntityId,
         source: &PackSource,
     ) -> Result<Vec<EntityId>> {
-        let owner_id = owner.revalidate_in_txn(self, txn)?;
+        self.bind_hooks_in_txn(txn, HookBinder::Owner(owner), source_id, source)
+    }
+
+    /// [`Self::bind_pack_hooks_in_txn`] for `binder`. An agent binds only in
+    /// the `local` pack, as a live writer, and its claims name the vault
+    /// owner whose ask it carries; it stops only bindings of its own. Only
+    /// the owner marks a hook blocking (ARCH-0080 §10), so an agent's own
+    /// binding is not blocking.
+    pub(in crate::skill_hub::pack_catalog) fn bind_hooks_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        binder: HookBinder<'_>,
+        source_id: EntityId,
+        source: &PackSource,
+    ) -> Result<Vec<EntityId>> {
         let pack = source.manifest.name.as_str();
+        let (owner_id, envelope) = match binder {
+            HookBinder::Owner(owner) => {
+                let owner_id = owner.revalidate_in_txn(self, txn)?;
+                (owner_id, owner_envelope(owner, owner_id, pack, &source_id)?)
+            }
+            HookBinder::Agent(agent) => {
+                if pack != super::super::LOCAL_PACK_NAME {
+                    return Err(invalid("an agent binds hooks in the local pack only"));
+                }
+                self.verify_write_actor_in_txn(txn, &agent)?;
+                let owner_id = crate::policy_model::owners_in_txn(self, txn)?
+                    .first()
+                    .copied()
+                    .ok_or_else(|| invalid("the vault has no live owner"))?;
+                (owner_id, agent_envelope(agent, pack, &source_id)?)
+            }
+        };
         let content_hash = source.content_hash().to_hex();
-        let envelope = owner_envelope(owner, owner_id, pack, &source_id)?;
         let at = crate::unix_seconds_now();
         let occurred = TimeRange { start: at, end: at };
         let prior = bindings_in_txn(&self.store, txn)?;
@@ -113,10 +187,31 @@ impl Vault {
         let mut transitions = Vec::new();
         let mut grants = Vec::new();
         for hook in source.hooks() {
-            // A moved body keeps its hook's dial: on while any of its
-            // bindings runs, off once the owner stopped every one.
             let (id, mut row) =
                 PackHookBinding::for_hook(pack, source_id, owner_id, author.clone(), hook, true)?;
+            let standing = prior
+                .iter()
+                .find(|(prior_id, _)| *prior_id == id)
+                .map(|(_, kept)| kept);
+            // An agent leaves another author's binding as it stands, and a
+            // binding an agent stamped stays the agent's on the owner's put.
+            match (binder, standing) {
+                (HookBinder::Agent(_), Some(kept)) if !binder.writes(kept) => continue,
+                (HookBinder::Agent(agent), _) => {
+                    row.author = HookAuthor::Agent {
+                        agent: agent.entity_ref(),
+                    };
+                    row.selector.blocking = false;
+                }
+                (HookBinder::Owner(_), Some(kept))
+                    if matches!(kept.author, HookAuthor::Agent { .. }) =>
+                {
+                    row.author = kept.author.clone();
+                }
+                (HookBinder::Owner(_), _) => {}
+            }
+            // A moved body keeps its hook's dial: on while any of its
+            // bindings runs, off once the owner stopped every one.
             row.enabled = match prior.iter().find(|(prior_id, _)| *prior_id == id) {
                 Some((_, kept)) => kept.enabled,
                 // A claim at this id the reader skipped as malformed keeps
@@ -186,7 +281,7 @@ impl Vault {
             bound.push(id);
         }
         for (id, mut row) in prior {
-            if row.pack == pack && row.enabled && !bound.contains(&id) {
+            if row.pack == pack && row.enabled && !bound.contains(&id) && binder.writes(&row) {
                 let previous = row.clone();
                 row.enabled = false;
                 transitions.push((id, Some(previous), row.clone()));

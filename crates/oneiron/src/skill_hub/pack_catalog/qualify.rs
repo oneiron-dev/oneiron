@@ -321,7 +321,7 @@ impl Vault {
                 hub: *hub,
                 grant_ref: grant.clone(),
             }),
-            HookAuthor::Owner => None,
+            HookAuthor::Owner | HookAuthor::Agent { .. } => None,
         };
         let disposition = self.with_write_txn_grouped(|txn| {
             if PACK_CANDIDATE
@@ -467,7 +467,7 @@ impl Vault {
                 hub: *hub,
                 grant_ref: grant.clone(),
             }),
-            HookAuthor::Owner => None,
+            HookAuthor::Owner | HookAuthor::Agent { .. } => None,
         };
         let disposition = self.with_write_txn_grouped(|txn| {
             if PACK_CANDIDATE
