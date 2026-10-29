@@ -493,10 +493,16 @@ fn enter_run(
         .map_err(text)?
         .enter();
     door.bind_meter(line);
+    door.bind_attempt(Some(
+        EntityId::from_bytes(*status.attempt.id.as_bytes())
+            .map_err(text)?
+            .to_hex(),
+    ));
     let entered = enter_engine_native_run(
         vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
     );
     door.bind_meter(None);
+    door.bind_attempt(None);
     entered
 }
 

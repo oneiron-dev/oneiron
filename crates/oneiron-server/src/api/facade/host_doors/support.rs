@@ -59,9 +59,9 @@ pub(super) fn artifact_asker(
 /// `sources`, the rows the call is read from (FIX 11311). A banked voice
 /// withdrawn or re-recorded while it rendered, on the rung that answered, is
 /// not handed back; nor is a call that found the voice withdrawn everywhere
-/// while it waited (FIX 1746). An owner's call known by `replay` answers a
-/// repeat from its first answer, unpaid (FIX 2962); a run's call, on its
-/// own line, is never replayed.
+/// while it waited (FIX 1746). An owner's call known by `replay` and a run's
+/// call known by its step key each answer a repeat from the first answer,
+/// unpaid (FIX 2962, FIX 2245).
 pub(super) async fn rendered(
     server: &SyncServer,
     operation: AiOperation,
@@ -74,7 +74,11 @@ pub(super) async fn rendered(
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
     let answer = match run {
-        Some(run) => media.run_admitted(run, request, voices.as_ref()).await,
+        Some(run) => {
+            media
+                .run_admitted(run, request, voices.as_ref(), replay)
+                .await
+        },
         None => {
             media
                 .run_replayed(request, voices.as_ref(), None, sources, None, replay)

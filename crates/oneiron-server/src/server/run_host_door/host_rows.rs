@@ -26,6 +26,7 @@ pub(super) fn host_row(
     verb: AgentVerb,
     input: Value,
     line: Option<&RunAdmission>,
+    attempt: Option<&str>,
     evidence: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<Value> {
     let (principal, class) = (actor.entity_ref(), actor.actor_class());
@@ -191,6 +192,7 @@ pub(super) fn host_row(
                 tokio::runtime::Handle::current().block_on(crate::api::ai_speech_for_run(
                     server,
                     line,
+                    attempt,
                     decode(input)?,
                 ))?,
             )
@@ -226,7 +228,9 @@ pub(super) fn host_row(
         AgentVerb::SelfUse => encode(crate::api::self_use_as(server, memory, decode(input)?)?),
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),
         _ => match granted_media(server, principal, verb) {
-            Some(operation) => granted_media_row(server, principal, line, verb, operation, input),
+            Some(operation) => {
+                granted_media_row(server, principal, line, attempt, verb, operation, input)
+            }
             None => Err(owners(verb, "ai.* media calls are the owner's")),
         },
     }
@@ -261,6 +265,7 @@ fn granted_media_row(
     server: &SyncServer,
     agent: EntityId,
     line: Option<&RunAdmission>,
+    attempt: Option<&str>,
     verb: AgentVerb,
     operation: AiOperation,
     input: Value,
@@ -271,6 +276,7 @@ fn granted_media_row(
         AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_for_run(
             server,
             line,
+            attempt,
             decode(input)?,
             Some(agent),
         ))?),
@@ -286,6 +292,7 @@ fn granted_media_row(
             server,
             line,
             operation,
+            attempt,
             decode(input)?,
         ))?),
     }
