@@ -79,6 +79,9 @@ impl SieveTexts {
         txn: &heed::RoTxn<'_>,
         stop: WakeStop<'_>,
     ) -> Result<Option<Self>> {
+        if stop.stopped() {
+            return Ok(None);
+        }
         let policy = super::policy::policy_in_txn(vault, txn)?;
         let retry = RETRY.get(&vault.store, txn, &())?.unwrap_or_default();
         let cursor = CURSOR.get(&vault.store, txn, &())?;

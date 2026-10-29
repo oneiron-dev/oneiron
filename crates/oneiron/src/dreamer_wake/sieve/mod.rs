@@ -58,7 +58,7 @@ pub use recipes::{SieveAudit, SieveAuditRecord, SieveConsumeReceipt};
 mod rules;
 #[cfg(test)]
 mod tests;
-mod texts;
+pub(crate) mod texts;
 use texts::{late_ids_in_txn, new_entries_in_txn, withheld_rows_in_txn};
 mod words;
 
@@ -418,7 +418,7 @@ pub(crate) fn demote_turn_in_txn(
 /// landed in the cursor's own second behind it, then new turns past the
 /// cursor, and last, on what the pass has left, the withheld turns a grant
 /// may now let it read.
-pub(crate) fn sieve_pass_in_txn(
+fn sieve_pass_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     now: u64,

@@ -135,7 +135,7 @@ mod diagnostics;
 mod gate_decision;
 mod group_commit;
 mod handle;
-mod replay_only_commits;
+pub(crate) mod replay_only_commits;
 // FIX 7907, 7958: a federation grant's scope opening keys.
 pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
