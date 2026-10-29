@@ -44,7 +44,7 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
-            (task_ids, rows, room_joins, pad_windows, settled_tasks),
+            (task_ids, rows, room_joins, pad_windows, settled_tasks, notifications_changed),
             retirement_staged,
         ) = self.store.group_write_classed(callback, class, |wtxn| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -95,6 +95,7 @@ impl Vault {
                         postcommit.room_joins,
                         postcommit.pad_windows,
                         postcommit.settled_tasks,
+                        postcommit.notifications_changed,
                     ),
                     staged != retirements_before
                         || crate::store::credential_erases_staged() != credentials_before,
@@ -107,6 +108,11 @@ impl Vault {
             self.store.notify_proactivity_changes();
         }
         self.store.notify_task_updates(task_ids);
+        // FIX 3084: a notification this write put or marked wakes the live
+        // queries that follow notifications, now that it is durable.
+        if notifications_changed {
+            self.store.notify_notification_updates();
+        }
         // The owner's waiting shed looks again (FIX 10157).
         self.wake_owner_shed();
         // FIX 1140: a TASK this write settled wakes its peer-result waiters

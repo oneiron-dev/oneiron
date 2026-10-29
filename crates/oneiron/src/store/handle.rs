@@ -329,6 +329,8 @@ pub struct StoreCore {
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// The committed-notification signal live queries wake on (FIX 3084).
+    pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
     pub(crate) container_output: crate::conversation::ContainerOutputGuard,
