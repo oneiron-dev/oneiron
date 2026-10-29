@@ -1,15 +1,17 @@
 //! The new-effect admission's budget steps, moved out of `admission.rs`
 //! whole: the co-actor's preflight and the one-shot charge. FIX 8788 adds
-//! the Linear mirror's Rate wait: a mutation whose only full budget rows are
-//! Rate windows that refuse rather than suspend is not denied, records no
-//! decision and charges nothing, and comes back naming
-//! [`crate::linear_sync::LINEAR_RATE_WINDOW_REASON`].
+//! the Linear mirror's Rate wait, and FIX 8686 the scoped connector call's:
+//! a mutation whose only full budget rows are count-bound windows that
+//! refuse rather than suspend is not denied, records no decision and charges
+//! nothing, and comes back naming
+//! [`crate::linear_sync::LINEAR_RATE_WINDOW_REASON`]. FIX 8689 adds the Spend
+//! a preauthorizing row reserves before the call.
 
 use super::types::OutboundEffectResult;
 use crate::Vault;
 use crate::connector_key::{
-    self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
-    EffectorBudgetOnExhaust,
+    self, ConnectorKeyStatus, ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetCharge,
+    EffectorBudgetChargeOutcome, EffectorBudgetDebit, EffectorBudgetOnExhaust, SpendReserve,
 };
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
@@ -18,11 +20,12 @@ use crate::outbound_intent_ledger::{
     OutboundCallClass,
 };
 
-/// FIX 8788: whether every full budget row a two-actor mutation meets only
-/// paces: the primary's key, and the co-actor's when it is another key
-/// (`co`, its own rows alone unless `co_pool`), each read whole. Only a
-/// dispatch with a co-actor, the Linear mirror's, asks; any other send meets
-/// its budget as before.
+/// FIX 8788, FIX 8686: when every full budget row a mutation meets only
+/// paces, the instant (Unix seconds) its windows all open again: the
+/// primary's key, and the co-actor's when it is another key (`co`, its own
+/// rows alone unless `co_pool`), each read whole. A Linear mirror mutation
+/// (it has a co-actor) and a scoped connector call ask; any other send
+/// meets its budget as before.
 pub(super) fn rate_paced(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -30,7 +33,7 @@ pub(super) fn rate_paced(
     co: Option<&mut gate::ExternalEffectGovernance>,
     budget_class: BudgetClass,
     co_pool: bool,
-) -> Result<bool, IntentLedgerError> {
+) -> Result<Option<u64>, IntentLedgerError> {
     let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let mut block = connector_key::BudgetBlock::Open;
     for (governance, pool) in [(Some(governance), true), (co, co_pool)] {
@@ -49,14 +52,20 @@ pub(super) fn rate_paced(
             pool,
         )?);
     }
-    Ok(matches!(block, connector_key::BudgetBlock::Paced { .. }))
+    Ok(match block {
+        connector_key::BudgetBlock::Paced { next_eligible_at } => Some(next_eligible_at),
+        connector_key::BudgetBlock::Open | connector_key::BudgetBlock::Hard => None,
+    })
 }
 
-/// A mutation that waits for a full Rate window (FIX 8788): both actors'
-/// grants allowed it, no decision is recorded, nothing is charged and no
-/// ledger row is written, and it names its reason. It was not delivered, and
-/// it asks no one for a press.
-pub(super) fn rate_window_result(intent_id: IntentId) -> OutboundEffectResult {
+/// A mutation that waits for a full count-bound window (FIX 8788, FIX
+/// 8686) until `next_eligible_at`: its grants allowed it, no decision is
+/// recorded, nothing is charged and no ledger row is written, and it names
+/// its reason. It was not delivered, and it asks no one for a press.
+pub(super) fn rate_window_result(
+    intent_id: IntentId,
+    next_eligible_at: u64,
+) -> OutboundEffectResult {
     OutboundEffectResult {
         resolution: None,
         dispatch: IntentDispatchResult {
@@ -77,7 +86,61 @@ pub(super) fn rate_window_result(intent_id: IntentId) -> OutboundEffectResult {
         ceiling_count: None,
         approval_digest: None,
         approval_actor: None,
+        paced_until: Some(next_eligible_at),
     }
+}
+
+/// FIX 8689: the price `tool` declares on the slate that governs the
+/// primary's key, when a key governs the call and its slate names one.
+pub(super) fn spend_price_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    governance: &mut gate::ExternalEffectGovernance,
+    tool: &str,
+) -> Result<Option<ConnectorSpendEstimate>, IntentLedgerError> {
+    let Some(target) = governance.budget_target_mut() else {
+        return Ok(None);
+    };
+    Ok(
+        connector_key::governing_slate_in_txn(&vault.store, wtxn, &target.key)?
+            .and_then(|(_, slate)| slate.tool(tool).and_then(|row| row.price.clone())),
+    )
+}
+
+/// FIX 8689: what the primary key's preauthorizing Spend rows, and its
+/// catalog pool's, say of `price`. `None` when one has no room: nothing
+/// debited, and a row set to suspend suspended its key. `Some(None)` when
+/// none preauthorizes. Otherwise the entries reserved (when `apply`) and
+/// what they stood on.
+pub(super) fn spend_reserve(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    governance: &mut gate::ExternalEffectGovernance,
+    price: Option<&ConnectorSpendEstimate>,
+    apply: bool,
+) -> Result<Option<Option<(Vec<EffectorBudgetDebit>, ConnectorSpendBasis)>>, IntentLedgerError> {
+    let Some(target) = governance.budget_target_mut() else {
+        return Ok(Some(None));
+    };
+    // The meter's own trusted clock, as the charge reads it.
+    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    Ok(
+        match connector_key::reserve_connector_spend_in_txn(
+            &vault.store,
+            wtxn,
+            &target.key_id,
+            &target.key,
+            &target.governing_connector,
+            price,
+            now,
+            true,
+            apply,
+        )? {
+            SpendReserve::SettleOnly => Some(None),
+            SpendReserve::Reserved { debits, basis } => Some(Some((debits, basis))),
+            SpendReserve::Exhausted { .. } => None,
+        },
+    )
 }
 
 /// OF-427: whether a co-actor's own (distinct) connector key is exhausted.
