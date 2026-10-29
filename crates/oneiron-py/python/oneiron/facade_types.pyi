@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1165 facade rows, 4191 declarations.
-Inputs: 1098 of 1165 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1039 of 1165 fully typed, 126 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1166 facade rows, 4192 declarations.
+Inputs: 1099 of 1166 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1039 of 1166 fully typed, 127 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -16582,7 +16582,7 @@ class AskEffect(TypedDict):
     catastrophe: NotRequired[CatastropheClass | None]
     project: NotRequired[str | None]
     thread: NotRequired[str | None]
-    erase: NotRequired[bool]
+    erase: bool
     action: NotRequired[ShapeGrantBound | None]
     disclosure: NotRequired[ShapeGrantBound | None]
 class AskConsent(TypedDict):
@@ -16608,6 +16608,9 @@ class DecisionAsk(TypedDict):
     prefilled_reason: NotRequired[str | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
+class DecisionAskConfirmGrantRequest(TypedDict):
+    seq: int
+    notice: str
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
 class ConnectorEntry(TypedDict):

@@ -7943,6 +7943,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_decisions_asks_confirm_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.asks.confirm_grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_decisions_asks(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.decisions.asks", js_json(input))

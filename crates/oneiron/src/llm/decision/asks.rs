@@ -96,11 +96,9 @@ pub struct DecisionAsk {
     pub pack_state: Option<serde_json::Value>,
     /// The consent effect the ask is about and the bound an owner's reason drafts a
     /// standing grant of (FIX 2975), as its caller bound it; none for an ask about none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consent: Option<AskConsent>,
     /// The owner's nearest reason on record for that effect, read when the ask was queued:
     /// the card's reason, pre-filled. None when no reason on record is near it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefilled_reason: Option<String>,
 }
 
@@ -140,7 +138,6 @@ pub struct AskAnswer {
     pub rule: Option<HostRuleRef>,
     /// The standing grant that reason drafted from the ask's consent effect (FIX 2975),
     /// Proposed until the owner confirms it; none when it drafted none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant: Option<AskGrantDraft>,
 }
 

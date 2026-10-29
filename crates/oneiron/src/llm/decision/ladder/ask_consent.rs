@@ -59,22 +59,16 @@ pub struct AskEffect {
     pub undo_fidelity: AskUndoFidelity,
     pub blast_radius: u64,
     /// The catastrophe class the host matched, when it matched one.
-    #[serde(default)]
     pub catastrophe: Option<CatastropheClass>,
     /// The project it acts inside, by entity id hex.
-    #[serde(default)]
     pub project: Option<String>,
     /// The conversation thread it acts inside, by entity id hex.
-    #[serde(default)]
     pub thread: Option<String>,
     /// Whether it is an erase.
-    #[serde(default)]
     pub erase: bool,
     /// The action requirement, when it acts.
-    #[serde(default)]
     pub action: Option<ShapeGrantBound>,
     /// The disclosure requirement, when it discloses.
-    #[serde(default)]
     pub disclosure: Option<ShapeGrantBound>,
 }
 

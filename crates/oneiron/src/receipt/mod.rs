@@ -48,7 +48,9 @@ pub use self::call::{
     call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
 pub use self::context_emit::ContextEmitReceipt;
-pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
+pub use self::decision_asks::{
+    DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
+};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,

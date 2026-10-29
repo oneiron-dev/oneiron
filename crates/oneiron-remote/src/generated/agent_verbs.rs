@@ -2800,6 +2800,9 @@ impl OneironClient {
                 "vault.decisions.asks.climb" => remote_agent_verb_output::<
                     Option<oneiron::llm::decision::ResolvedRole>,
                 >(client, verb, &input),
+                "vault.decisions.asks.confirm_grant" => remote_agent_verb_output::<
+                    oneiron::llm::decision::DecisionAsk,
+                >(client, verb, &input),
                 "self.decisions.asks" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::DecisionAsk>,
                 >(client, verb, &input),
@@ -14703,6 +14706,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.decisions.asks.climb", value)
+    }
+    pub fn vault_decisions_asks_confirm_grant(
+        &self,
+        input: &oneiron::receipt::DecisionAskConfirmGrantRequest,
+    ) -> Result<oneiron::llm::decision::DecisionAsk, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.asks.confirm_grant", value)
     }
     pub fn self_decisions_asks(
         &self,

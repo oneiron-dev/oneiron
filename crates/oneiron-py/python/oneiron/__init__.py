@@ -4715,6 +4715,8 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_decisions_asks_answer(json.dumps(spec))))
         def climb(self, spec):
             return json.loads(_translate(lambda: self._client.vault_decisions_asks_climb(json.dumps(spec))))
+        def confirm_grant(self, spec):
+            return json.loads(_translate(lambda: self._client.vault_decisions_asks_confirm_grant(json.dumps(spec))))
     class _VaultBookingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

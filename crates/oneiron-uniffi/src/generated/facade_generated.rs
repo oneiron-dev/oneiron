@@ -4516,6 +4516,11 @@ export_facade! {
     let output = client.vault_decisions_asks_climb(&input)?;
     crate::codec::lift_record("vault.decisions.asks.climb", &output)
 };
+"vault.decisions.asks.confirm_grant" => fn vault_decisions_asks_confirm_grant(&self, input: DecisionAskConfirmGrantRequest) -> DecisionAsk = |client| {
+    let input: oneiron::receipt::DecisionAskConfirmGrantRequest = crate::codec::lower_record("vault.decisions.asks.confirm_grant", input)?;
+    let output = client.vault_decisions_asks_confirm_grant(&input)?;
+    crate::codec::lift_record("vault.decisions.asks.confirm_grant", &output)
+};
 "self.decisions.asks" => fn self_decisions_asks(&self) -> Vec<DecisionAsk> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.decisions.asks")?;
     let output = client.self_decisions_asks(&input)?;

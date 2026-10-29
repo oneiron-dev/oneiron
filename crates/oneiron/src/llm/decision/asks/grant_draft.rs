@@ -81,8 +81,8 @@ impl Vault {
 
     /// The owner's confirm of the standing grant his reason drafted on ask `seq`, as
     /// `owner`: consent's reason door mints it, with its rule row, `notice_text` (the
-    /// host's words) and its undo, and the draft reads confirmed. Only a Proposed draft
-    /// confirms.
+    /// host's words) and its undo, and the draft reads confirmed, in one writer. Only a
+    /// Proposed draft confirms.
     ///
     /// # Errors
     ///
@@ -95,49 +95,47 @@ impl Vault {
         notice_text: &str,
     ) -> Result<(DecisionAsk, OwnerReasonConfirmation)> {
         self.recheck_owner(owner)?;
-        let ask = self
-            .decision_ask(seq)?
-            .ok_or_else(|| invalid("no such decision ask"))?;
-        let (Some(consent), Some(answer)) = (&ask.consent, &ask.answer) else {
-            return Err(invalid("the decision ask drafted no standing grant"));
-        };
-        let (Some(AskGrantDraft::Proposed { grant_ref }), Some(reason)) =
-            (&answer.grant, &answer.reason)
-        else {
-            return Err(invalid("the decision ask holds no Proposed grant draft"));
-        };
-        let (effect, bound) = consent.validate()?;
-        if bound.digest().to_hex() != *grant_ref {
-            return Err(invalid("the grant draft no longer matches its ask"));
-        }
-        let confirmation = self.confirm_owner_reason(
-            owner,
-            &effect,
-            &bound,
-            OwnerReasonConfirm {
-                reason: Some(reason.as_str()),
-                notice_text,
-            },
-        )?;
-        let confirmed = AskGrantDraft::Confirmed {
-            grant_ref: grant_ref.clone(),
-            receipt: confirmation.receipt.decision_id().to_hex(),
-            rule: confirmation
-                .undo
-                .as_ref()
-                .map_or_else(String::new, |undo| undo.rule_decision_id.to_hex()),
-        };
-        let held = self.with_write_txn_grouped(|txn| {
+        self.with_write_txn_grouped(|txn| {
             let mut held = ASKS
                 .get(&self.store, &*txn, &seq)?
                 .ok_or_else(|| invalid("no such decision ask"))?;
+            let (Some(consent), Some(answer)) = (&held.consent, &held.answer) else {
+                return Err(invalid("the decision ask drafted no standing grant"));
+            };
+            let (Some(AskGrantDraft::Proposed { grant_ref }), Some(reason)) =
+                (&answer.grant, &answer.reason)
+            else {
+                return Err(invalid("the decision ask holds no Proposed grant draft"));
+            };
+            let (effect, bound) = consent.validate()?;
+            if bound.digest().to_hex() != *grant_ref {
+                return Err(invalid("the grant draft no longer matches its ask"));
+            }
+            let grant_ref = grant_ref.clone();
+            let confirmation = self.confirm_owner_reason_in_txn(
+                txn,
+                owner,
+                &effect,
+                &bound,
+                OwnerReasonConfirm {
+                    reason: Some(reason.as_str()),
+                    notice_text,
+                },
+            )?;
+            let confirmed = AskGrantDraft::Confirmed {
+                grant_ref,
+                receipt: confirmation.receipt.decision_id().to_hex(),
+                rule: confirmation
+                    .undo
+                    .as_ref()
+                    .map_or_else(String::new, |undo| undo.rule_decision_id.to_hex()),
+            };
             if let Some(answer) = held.answer.as_mut() {
-                answer.grant = Some(confirmed.clone());
+                answer.grant = Some(confirmed);
             }
             ASKS.put(&self.store, txn, &seq, &held)?;
-            Ok(held)
-        })?;
-        Ok((held, confirmation))
+            Ok((held, confirmation))
+        })
     }
 }
 

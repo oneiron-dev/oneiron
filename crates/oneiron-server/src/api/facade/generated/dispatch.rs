@@ -28512,6 +28512,41 @@ async fn vault_decisions_asks_climb(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_decisions_asks_confirm_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.decisions.asks.confirm_grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.decisions.asks.confirm_grant", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.decisions.asks.confirm_grant", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_decisions_asks_confirm_grant(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn self_decisions_asks(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38267,6 +38302,9 @@ pub(crate) async fn call_verb(
         "vault.decisions.bands.enforce" => vault_decisions_bands_enforce(server, call, input).await,
         "vault.decisions.asks.answer" => vault_decisions_asks_answer(server, call, input).await,
         "vault.decisions.asks.climb" => vault_decisions_asks_climb(server, call, input).await,
+        "vault.decisions.asks.confirm_grant" => {
+            vault_decisions_asks_confirm_grant(server, call, input).await
+        }
         "self.decisions.asks" => self_decisions_asks(server, call, input).await,
         "connector.list" => connector_list(server, call, input).await,
         "connector.status" => connector_status(server, call, input).await,

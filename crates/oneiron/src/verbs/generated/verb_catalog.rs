@@ -907,6 +907,7 @@ pub enum AgentVerb {
     VaultDecisionsBandsEnforce,
     VaultDecisionsAsksAnswer,
     VaultDecisionsAsksClimb,
+    VaultDecisionsAsksConfirmGrant,
     SelfDecisionsAsks,
     ConnectorList,
     ConnectorStatus,
@@ -2097,6 +2098,7 @@ impl AgentVerb {
         Self::VaultDecisionsBandsEnforce,
         Self::VaultDecisionsAsksAnswer,
         Self::VaultDecisionsAsksClimb,
+        Self::VaultDecisionsAsksConfirmGrant,
         Self::SelfDecisionsAsks,
         Self::ConnectorList,
         Self::ConnectorStatus,
@@ -3314,6 +3316,7 @@ impl AgentVerb {
             Self::VaultDecisionsBandsEnforce => "vault.decisions.bands.enforce",
             Self::VaultDecisionsAsksAnswer => "vault.decisions.asks.answer",
             Self::VaultDecisionsAsksClimb => "vault.decisions.asks.climb",
+            Self::VaultDecisionsAsksConfirmGrant => "vault.decisions.asks.confirm_grant",
             Self::SelfDecisionsAsks => "self.decisions.asks",
             Self::ConnectorList => "connector.list",
             Self::ConnectorStatus => "connector.status",
@@ -4510,6 +4513,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
@@ -5729,6 +5733,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
@@ -7042,6 +7047,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
@@ -7840,6 +7846,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::ConnectorCall
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
@@ -8950,6 +8957,7 @@ impl AgentVerb {
             Self::VaultDecisionsBandsEnforce => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::VaultDecisionsAsksConfirmGrant => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
@@ -10141,6 +10149,7 @@ impl AgentVerb {
             Self::VaultDecisionsBandsEnforce => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::VaultDecisionsAsksConfirmGrant => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
@@ -13071,6 +13080,7 @@ impl AgentVerb {
             }
             Self::VaultDecisionsAsksAnswer => "",
             Self::VaultDecisionsAsksClimb => "",
+            Self::VaultDecisionsAsksConfirmGrant => "",
             Self::SelfDecisionsAsks => "",
             Self::ConnectorList => {
                 "Every live catalogued connector whose name or summary matches the query."

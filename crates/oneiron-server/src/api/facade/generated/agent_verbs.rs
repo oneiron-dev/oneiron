@@ -994,6 +994,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.decisions.bands.enforce", post(facade_route))
         .route("/vault.decisions.asks.answer", post(facade_route))
         .route("/vault.decisions.asks.climb", post(facade_route))
+        .route("/vault.decisions.asks.confirm_grant", post(facade_route))
         .route("/self.decisions.asks", post(facade_route))
         .route("/connector.list", post(facade_route))
         .route("/connector.status", post(facade_route))

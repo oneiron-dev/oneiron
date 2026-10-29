@@ -4992,6 +4992,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.decisions.asks.confirm_grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::DecisionAskConfirmGrantRequest,
+                >(),
+            ),
+            (
                 "self.decisions.asks",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -16334,6 +16340,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.decisions.asks.confirm_grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.decisions.asks" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -21166,6 +21179,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.decisions.asks.climb" => {
             let _input: crate::receipt::DecisionAskClimbRequest = decode(value.clone())?;
         }
+        "vault.decisions.asks.confirm_grant" => {
+            let _input: crate::receipt::DecisionAskConfirmGrantRequest = decode(value.clone())?;
+        }
         "self.decisions.asks" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -23960,6 +23976,9 @@ pub fn invoke(
             encode(vault_decisions_asks_answer(memory, decode(value)?)?)
         }
         "vault.decisions.asks.climb" => encode(vault_decisions_asks_climb(memory, decode(value)?)?),
+        "vault.decisions.asks.confirm_grant" => {
+            encode(vault_decisions_asks_confirm_grant(memory, decode(value)?)?)
+        }
         "self.decisions.asks" => encode(self_decisions_asks(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
@@ -32105,6 +32124,12 @@ pub fn vault_decisions_asks_climb(
     input: crate::receipt::DecisionAskClimbRequest,
 ) -> MemoryResult<Option<crate::llm::decision::ResolvedRole>> {
     crate::task_verb::sdk::host_only(memory, "vault.decisions.asks.climb", &input)
+}
+pub fn vault_decisions_asks_confirm_grant(
+    memory: &Memory<'_>,
+    input: crate::receipt::DecisionAskConfirmGrantRequest,
+) -> MemoryResult<crate::llm::decision::DecisionAsk> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.asks.confirm_grant", &input)
 }
 pub fn self_decisions_asks(
     memory: &Memory<'_>,
