@@ -3381,6 +3381,8 @@ class Oneiron:
             """Queues generation that resumes an incomplete assistant reply from exactly its saved text."""
         def retry(self, spec: Facade.TurnActionRequest) -> Facade.TurnActionReceipt:
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
+        def rebind(self, spec: Facade.TurnActionRebindRequest) -> Facade.TurnActionRebindReceipt:
+            """Rebinds the caller's queued turn action whose credential no longer stands to the live credential this request was admitted on; the action keeps its scope."""
     class _VaultConversationsTurnsVerbs:
         def create(self, spec: Facade.ConversationTurnCreateInput) -> Facade.CoreEntityWriteReceipt:
             """Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once."""
