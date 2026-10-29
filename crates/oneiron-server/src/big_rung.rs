@@ -31,6 +31,7 @@ use serde_json::{Value, json};
 use crate::config::models::{BigReply, BigSettings};
 use crate::models::{CallDeadline, ModelRuntime};
 
+mod note;
 mod route;
 use route::{DecisionSendConstraint, ResolvedDecisionRoute};
 

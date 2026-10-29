@@ -9,14 +9,13 @@ use super::{
     CAMPAIGN_TASTE_USEFUL_WORDING, CampaignTasteDecisions, CampaignTasteWording,
     ClaimReplayDecisions, ConsolidationDecisions, DecisionAsks, DecisionBand, DecisionBandPolicy,
     DecisionDial, DecisionHost, DecisionLadder, DecisionProvider, DecisionRung, EntityId,
-    FanoutDecisions, HeldLadder, HostingPrivacyPosture, ImagePick, LadderNotes,
-    MembershipDecisions, PLACEMENT_BUDGET, PLACEMENT_WORDING, PLANNER_BUDGET, PLANNER_WORDING,
-    PlacementDecisions, PolicyDecisions, REVIEW_DIAL, REVIEW_HARD_CHECK_WORDING,
-    REVIEW_LENS_BUDGET, REVIEW_OUT_OF_SCOPE_WORDING, REVIEW_SEVERITY_WORDING,
-    REVIEW_VERDICT_WORDING, RetrievalDeadline, ReviewDecisions, ReviewWording, SeatDecisions,
-    SeatPickSettings, TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING,
-    TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions, Vault,
-    WAVE_FANOUT_WORDING,
+    FanoutDecisions, HeldLadder, HostingPrivacyPosture, ImagePick, MembershipDecisions,
+    PLACEMENT_BUDGET, PLACEMENT_WORDING, PLANNER_BUDGET, PLANNER_WORDING, PlacementDecisions,
+    PolicyDecisions, REVIEW_DIAL, REVIEW_HARD_CHECK_WORDING, REVIEW_LENS_BUDGET,
+    REVIEW_OUT_OF_SCOPE_WORDING, REVIEW_SEVERITY_WORDING, REVIEW_VERDICT_WORDING, RetrievalDeadline,
+    ReviewDecisions, ReviewWording, SeatDecisions, SeatPickSettings, TASK_ASK_UP_WORDING,
+    TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING, TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions,
+    UsefulUpstreamDecisions, Vault, WAVE_FANOUT_WORDING,
 };
 
 impl DecisionHost {
@@ -355,8 +354,8 @@ impl DecisionHost {
 
     /// A critic review's questions through this ladder for `principal`, the
     /// caller, over `state`, the target as the caller reads it: the engine's
-    /// review dial, this host's bands and wording, one clock per lens, and no
-    /// notes.
+    /// review dial, this host's bands and wording, one clock per lens, and
+    /// this host's notes (FIX 3040).
     #[must_use]
     pub(crate) fn review_decisions<'a>(
         &'a self,
@@ -376,7 +375,7 @@ impl DecisionHost {
                 hard_check: REVIEW_HARD_CHECK_WORDING.to_owned(),
                 out_of_scope: REVIEW_OUT_OF_SCOPE_WORDING.to_owned(),
             },
-            notes: None,
+            notes: Some(&self.notes),
         }
     }
 
@@ -497,7 +496,7 @@ impl DecisionHost {
             model_wording: settings.model_wording.clone(),
             effort_wording: settings.effort_wording.clone(),
             budget: settings.budget,
-            notes: Arc::new(LadderNotes),
+            notes: Arc::new(self.notes.clone()),
         }
     }
 }

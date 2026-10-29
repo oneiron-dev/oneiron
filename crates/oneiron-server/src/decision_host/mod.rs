@@ -66,6 +66,7 @@ use crate::server::SyncServer;
 mod adapters;
 mod attach;
 mod doors;
+mod notes;
 mod refresh;
 
 pub(crate) use adapters::description_notes;
@@ -197,6 +198,9 @@ pub struct DecisionHost {
     /// The vault's credential-broker context, which a `key_secret` System
     /// One seat sends through; `None` until serve sets one.
     broker: Option<crate::models::BrokerContext>,
+    /// The notes beside decided answers: the big model's when one is bound,
+    /// else the template (FIX 3040, 654).
+    notes: notes::HostNotes,
 }
 
 impl DecisionHost {
@@ -235,6 +239,7 @@ impl DecisionHost {
             big_on_host: None,
             verdict_spend: Arc::default(),
             broker: None,
+            notes: notes::HostNotes::default(),
         }
     }
 
@@ -407,6 +412,7 @@ impl DecisionHost {
         self.ladder.big = None;
         self.big_model = None;
         self.big_on_host = None;
+        self.notes = notes::HostNotes::default();
         let Some(settings) = settings else {
             return self;
         };
@@ -431,6 +437,7 @@ impl DecisionHost {
                     ModelDecisionProvider::new(model.pin(), Arc::new(model.kept_on_host()))
                         .ok()
                         .map(|rung| Arc::new(rung) as Arc<dyn DecisionProvider>);
+                self.notes = notes::HostNotes::new(Some(Arc::clone(&model)));
                 self.big_model = Some(model);
             }
             Err(error) => tracing::warn!(%error, "the big model cannot fill its rung"),
@@ -510,7 +517,7 @@ impl DecisionHost {
                 dial: self.dial(DecisionRung::Big),
                 bands: self.bands.clone(),
                 wording: wording.to_owned(),
-                notes: Arc::new(LadderNotes),
+                notes: Arc::new(self.notes.clone()),
                 calibrated: None,
             })
         });

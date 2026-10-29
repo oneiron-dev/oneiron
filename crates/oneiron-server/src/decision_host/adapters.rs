@@ -197,7 +197,11 @@ impl DecisionProvider for SystemOneRung {
 }
 
 impl AutoCheckNotes for LadderNotes {
-    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>) -> oneiron::Result<Vec<String>> {
+    fn hold_reasons(
+        &self,
+        candidate: &AutoCheckCandidate<'_>,
+        _due: std::time::Instant,
+    ) -> oneiron::Result<Vec<String>> {
         Ok(vec![format!(
             "the host's decision ladder held this {} write from a {} source",
             candidate.predicate,
