@@ -1712,7 +1712,7 @@ class Oneiron:
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
             return json.loads(_translate(lambda: self._client.vault_inbox_lens(json.dumps(spec))))
         def groups(self, spec):
-            """Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."""
+            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
             return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
     class _VaultInboxConcernsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1877,7 +1877,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def settle(self, spec):
-            """The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer."""
+            """The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer."""
             return json.loads(_translate(lambda: self._client.vault_skills_attribution_settle(json.dumps(spec))))
         def read(self, spec):
             """The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows."""
@@ -2995,7 +2995,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def list(self, spec=None):
-            """Every declared embedding space, the text index, the space each kind slot reads, every move and the probe count per kind."""
+            """Every declared embedding space, the text index, the space each kind slot reads, every move, the probe count per kind, each space's refused-document count and each staged embedder binding move."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_list(json.dumps({} if spec is None else spec))))
         def declare(self, spec):
             """Declares or widens one embedding space: id, dimensions, accepts, query_towers and optional evidence floors."""

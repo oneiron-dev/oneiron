@@ -53,6 +53,7 @@ mod mutation;
 mod records;
 pub(crate) use mutation::{
     EntityPutAudit, MutationAudit, audit_entity_put_in_txn, audit_mutation_in_txn,
+    storage_service_principal,
 };
 mod regeneration;
 mod safe_read;

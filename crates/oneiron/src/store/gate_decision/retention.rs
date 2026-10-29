@@ -12,7 +12,7 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::deletion::LegalHoldTarget;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ErasedHoldTarget, Error, RecordError, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::key_custody::{
     CustodyKind, RetireCause, RetirementIntent, retirement_in_txn, retirement_prefix,
@@ -106,15 +106,12 @@ impl Store {
         else {
             return Ok(());
         };
+        // The record's typed state (FIX 2923), never a bad request.
         if intent.cause == RetireCause::Erase {
-            return Err(Error::InvalidConfig(
-                "gate decision partition was erased".into(),
-            ));
+            return Err(RecordError::HoldTargetErased(ErasedHoldTarget::Erased).into());
         }
         if custody.retired(&intent.subject.at(intent.through))? {
-            return Err(Error::InvalidConfig(
-                "gate decision partition key already retired".into(),
-            ));
+            return Err(RecordError::HoldTargetErased(ErasedHoldTarget::KeyRetired).into());
         }
         Ok(())
     }

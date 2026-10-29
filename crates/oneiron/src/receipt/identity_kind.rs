@@ -131,6 +131,7 @@ fn proposal_outcome_receipt(
         outcome,
         scope,
         amended_body,
+        ..
     } = &record.action
     else {
         unreachable!("proposal outcome receipt projects only resolution events")

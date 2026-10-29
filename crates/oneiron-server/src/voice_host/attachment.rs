@@ -35,6 +35,9 @@ impl VoiceHostConfig {
                 extraction_prompt: self.extraction_prompt.clone(),
                 session: self.session.clone(),
                 shutdown: self.shutdown.clone(),
+                // A supervisor's pass attachment has no server's `[policy]`:
+                // the engine's default, as before.
+                owner_policy: oneiron::policy_model::PolicyModelConfig::default(),
             },
         )
         .map_err(|error| {

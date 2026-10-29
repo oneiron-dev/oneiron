@@ -51,8 +51,8 @@ use serde_json::json;
 
 pub(super) use self::boundary::executor_boundary_contract;
 pub(super) use self::prompt::{executor_system_prompt, executor_turn_instruction};
-pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 use self::results::recorded_output;
+pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 
 pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
