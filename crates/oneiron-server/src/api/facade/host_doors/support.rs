@@ -6,12 +6,12 @@ use std::sync::Arc;
 
 use oneiron::llm::media::{AiOperation, MediaRequest};
 use oneiron::llm::run_admission::RunAdmission;
+use oneiron::memory::foreign_code::ForeignCodeFailure;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
     ProducerRows,
 };
-use oneiron::memory::foreign_code::ForeignCodeFailure;
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 

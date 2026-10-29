@@ -157,7 +157,15 @@ async fn declare(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.declare";
-    run_row(server, owner, actor, verb, request, sdk::declare_embedding_space_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::declare_embedding_space_as,
+    )
+    .await
 }
 
 /// `POST /v1/owner/embedding-spaces/bind`: binds one kind slot, or returns it
@@ -170,7 +178,15 @@ async fn bind(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.bind";
-    run_row(server, owner, actor, verb, request, sdk::bind_embedding_slot_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::bind_embedding_slot_as,
+    )
+    .await
 }
 
 /// `POST /v1/owner/embedding-spaces/one-space`: the one-space preset.
@@ -182,7 +198,15 @@ async fn one_space(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.one_space";
-    run_row(server, owner, actor, verb, request, sdk::bind_one_embedding_space_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::bind_one_embedding_space_as,
+    )
+    .await
 }
 
 /// `POST /v1/owner/embedding-spaces/retire`: drops a space no slot binds and
@@ -195,7 +219,15 @@ async fn retire(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.retire";
-    run_row(server, owner, actor, verb, request, sdk::retire_embedding_space_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::retire_embedding_space_as,
+    )
+    .await
 }
 
 /// `POST /v1/owner/embedding-spaces/move`: starts moving every slot the
@@ -208,7 +240,15 @@ async fn begin_move(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.move";
-    run_row(server, owner, actor, verb, request, sdk::begin_embedding_space_move_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::begin_embedding_space_move_as,
+    )
+    .await
 }
 
 /// `POST /v1/owner/embedding-spaces/move/check`: runs the move's probes now,
@@ -316,7 +356,15 @@ async fn undo_move(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.move_undo";
-    run_row(server, owner, actor, verb, request, sdk::undo_embedding_space_move_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::undo_embedding_space_move_as,
+    )
+    .await
 }
 
 /// `POST /v1/owner/embedding-spaces/move/abandon`: ends an open move with no
@@ -329,7 +377,15 @@ async fn abandon_move(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.move_abandon";
-    run_row(server, owner, actor, verb, request, sdk::abandon_embedding_space_move_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::abandon_embedding_space_move_as,
+    )
+    .await
 }
 
 /// `GET /v1/owner/embedding-spaces/probes`.
@@ -356,7 +412,15 @@ async fn put_probe(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.probes.put";
-    run_row(server, owner, actor, verb, request, sdk::put_embedding_space_probe_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::put_embedding_space_probe_as,
+    )
+    .await
 }
 
 /// `POST /v1/owner/embedding-spaces/probes/delete`.
@@ -368,7 +432,15 @@ async fn delete_probe(
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = payload.read(&server).await?;
     let verb = "vault.embedding_spaces.probes.delete";
-    run_row(server, owner, actor, verb, request, sdk::delete_embedding_space_probe_as).await
+    run_row(
+        server,
+        owner,
+        actor,
+        verb,
+        request,
+        sdk::delete_embedding_space_probe_as,
+    )
+    .await
 }
 
 /// `GET /v1/owner/embedding-spaces/refused?space=`: every document the space's
