@@ -10,11 +10,11 @@ use super::runner::{
     decode_enrollment_attempt_payload, enrollment_consequence_id, membership_sends,
     resolve_program_step,
 };
-use super::storage::CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND;
+use super::storage::{CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, invalid};
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, Result};
 use crate::gate::{
     ApprovalTarget, CampaignLegFacts, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles,
@@ -67,6 +67,65 @@ pub(super) struct EnrollmentLegDispatch {
     /// retained before the chokepoint first took it; `None` when its
     /// retained request did not read or keep.
     pub(super) first_asked_event_ref: Option<EntityId>,
+}
+
+/// What the v1 envelope derivation resolved to (FIX 11670).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CampaignEnvelopeBytes {
+    /// The envelope bytes, frozen exactly as the outward leg freezes them.
+    Resolved(Vec<u8>),
+    /// The member does not resolve to a sendable target on the step's
+    /// pinned channel and sender (FIX 11513 K12); nothing is sent.
+    UnresolvableTarget,
+    /// The step's filed body does not pin to the program row (FIX 11513
+    /// K11); nothing is sent.
+    BodyUnpinned,
+}
+
+/// Derives the v1 envelope bytes the outward leg freezes: exactly these
+/// five keys, never the raw body (FIX 11513). Both resolutions are
+/// read-only fns of `(vault, event, step)`, so the membership leg calls
+/// this too and `enrollment_intent_id` hashes the bytes the leg freezes
+/// (FIX 11670).
+///
+/// # Errors
+///
+/// Storage errors propagate; every unresolvable shape is a variant,
+/// never an error. JSON encoding of the envelope cannot fail in
+/// practice and surfaces as [`Error::InvalidConfig`].
+pub(super) fn campaign_envelope_bytes(
+    vault: &Vault,
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+) -> Result<CampaignEnvelopeBytes> {
+    let Some(target) =
+        super::target::resolve_campaign_member_target(vault, event.entity_ref, step)?
+    else {
+        return Ok(CampaignEnvelopeBytes::UnresolvableTarget);
+    };
+    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches(
+        step.program_ref,
+        step.step_ref,
+        outbound.call_seq,
+        &outbound.payload,
+    )?
+    else {
+        return Ok(CampaignEnvelopeBytes::BodyUnpinned);
+    };
+    // The wire payload is the v1 envelope the channel sender decodes with
+    // `deny_unknown_fields`, never the raw body: exactly these five keys,
+    // none of the chokepoint-sniffed ones (FIX 11513).
+    let envelope = serde_json::json!({
+        "target": target.target,
+        "content_ref": content_ref,
+        "counterparty_ref": target.party_key,
+        "actor": event.owner_actor.to_hex(),
+        "trigger_ref": event.event_ref.to_hex(),
+    });
+    let envelope_bytes = serde_json::to_vec(&envelope)
+        .map_err(|_| invalid("a campaign envelope is not JSON-encodable"))?;
+    Ok(CampaignEnvelopeBytes::Resolved(envelope_bytes))
 }
 
 /// Runs the outward leg for a claimed enrollment attempt.
@@ -130,50 +189,31 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     // The send waits on a resolvable target (FIX 11513 K12): without one
     // there is no address to freeze, so the leg ends before the chokepoint
     // rather than minting an intent that can never send. Ids only: the
-    // target address never reaches the log.
-    let Some(target) =
-        super::target::resolve_campaign_member_target(vault, event.entity_ref, &step)?
-    else {
-        tracing::warn!(
-            event_ref = %event.event_ref.to_hex(),
-            program_ref = %step.program_ref.to_hex(),
-            step_ref = %step.step_ref.to_hex(),
-            "a campaign enrollment's member does not resolve to a sendable target on the step's pinned channel; nothing is sent (FIX 11513 K12)"
-        );
-        return Ok(EnrollmentOutboundLeg::UnresolvableTarget);
+    // target address never reaches the log. The send likewise waits on the
+    // filed body pinning to the program row (FIX 11513 K11): the blob's
+    // latest version can run ahead of the accepted row, and then the send
+    // waits rather than carrying words the program never accepted.
+    let envelope_bytes = match campaign_envelope_bytes(vault, &event, &step, outbound)? {
+        CampaignEnvelopeBytes::Resolved(bytes) => bytes,
+        CampaignEnvelopeBytes::UnresolvableTarget => {
+            tracing::warn!(
+                event_ref = %event.event_ref.to_hex(),
+                program_ref = %step.program_ref.to_hex(),
+                step_ref = %step.step_ref.to_hex(),
+                "a campaign enrollment's member does not resolve to a sendable target on the step's pinned channel; nothing is sent (FIX 11513 K12)"
+            );
+            return Ok(EnrollmentOutboundLeg::UnresolvableTarget);
+        }
+        CampaignEnvelopeBytes::BodyUnpinned => {
+            tracing::warn!(
+                event_ref = %event.event_ref.to_hex(),
+                program_ref = %step.program_ref.to_hex(),
+                step_ref = %step.step_ref.to_hex(),
+                "a campaign enrollment's filed body does not pin to its program row; nothing is sent (FIX 11513 K11)"
+            );
+            return Ok(EnrollmentOutboundLeg::BodyUnpinned);
+        }
     };
-    // The send waits on the filed body pinning to the program row
-    // (FIX 11513 K11): the blob's latest version can run ahead of the
-    // accepted row, and then the send waits rather than carrying words the
-    // program never accepted.
-    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches(
-        step.program_ref,
-        step.step_ref,
-        outbound.call_seq,
-        &outbound.payload,
-    )?
-    else {
-        tracing::warn!(
-            event_ref = %event.event_ref.to_hex(),
-            program_ref = %step.program_ref.to_hex(),
-            step_ref = %step.step_ref.to_hex(),
-            "a campaign enrollment's filed body does not pin to its program row; nothing is sent (FIX 11513 K11)"
-        );
-        return Ok(EnrollmentOutboundLeg::BodyUnpinned);
-    };
-    // The wire payload is the v1 envelope the channel sender decodes with
-    // `deny_unknown_fields`, never the raw body: exactly these five keys,
-    // none of the chokepoint-sniffed ones (FIX 11513).
-    let envelope = serde_json::json!({
-        "target": target.target,
-        "content_ref": content_ref,
-        "counterparty_ref": target.party_key,
-        "actor": event.owner_actor.to_hex(),
-        "trigger_ref": event.event_ref.to_hex(),
-    });
-    let envelope_bytes = serde_json::to_vec(&envelope).map_err(|_| {
-        OutboundEffectError::InvalidInput("a campaign envelope is not JSON-encodable")
-    })?;
     let consequence_id = enrollment_consequence_id(&event, &step)?;
     // FIX 6424 part 2a (Engine ruling 7): the request retained for this call
     // is read before its gate input is built; a new one is retained before
