@@ -43,9 +43,10 @@ use oneiron::dreamer_runner::maintenance::coach::{
     COACH_EVAL_MEASUREMENT_FACET, COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
     COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
     COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
-    COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET,
-    COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
+    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_THINK_THRESHOLD_FACET,
+    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
+    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
+    ThinkThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -56,7 +57,9 @@ use oneiron::feedback::{
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,
 };
 use oneiron::limit_ask::EngineLimit;
-use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold};
+use oneiron::llm::decision::{
+    HumanAskReason, PersonChangedAnswer, PersonThreshold, ThinkThreshold,
+};
 use oneiron::session_lifecycle::SessionSpeakers;
 use oneiron::skill_optimize::union_source_rows;
 use oneiron::{EntityId, Error, LlmMessageRole, Vault};
@@ -97,6 +100,10 @@ const THRESHOLD_BATCH: usize = 256;
 /// sets no number for Q3; these are the host's policy.
 const THRESHOLD_STEP: f64 = 0.05;
 const THRESHOLD_FLOOR: f64 = 0.5;
+/// How far one tune lowers the think threshold, and where it stops (FIX
+/// 2437). Canon sets no number for Q2's tune; these are the host's policy.
+const THINK_THRESHOLD_STEP: f64 = 0.05;
+const THINK_THRESHOLD_FLOOR: f64 = 0.5;
 /// The Coach's instruction for the distill. The sitting goes as data.
 const DISTILL_SYSTEM: &str = "You are the Coach. The data you get is one ended \
     conversation: its turns in order, each with who spoke and what they said, and the \
@@ -287,6 +294,23 @@ fn run_one(
             tracing::debug!(
                 proposed = proposal.is_some(),
                 "the Coach read the answers a person changed"
+            );
+            Ok(())
+        }
+        COACH_THINK_THRESHOLD_FACET => {
+            // Tune from the row an accept may have just changed (FIX 2437).
+            server.decision_host().refresh_think_threshold(vault)?;
+            let current = server.decision_host().bands().think_threshold();
+            let proposal = vault.run_coach_think_threshold(
+                admitted,
+                current,
+                &ThinkStepDown,
+                THRESHOLD_BATCH,
+                now,
+            )?;
+            tracing::debug!(
+                proposed = proposal.is_some(),
+                "the Coach read the quick picks that proved wrong"
             );
             Ok(())
         }
@@ -503,5 +527,32 @@ impl PersonThresholdPolicy for StepDown {
         });
         let next = (current.threshold - THRESHOLD_STEP).max(THRESHOLD_FLOOR);
         Ok((missed && next < current.threshold).then_some(next))
+    }
+}
+
+/// The host's Q2 rule (FIX 2437). A person changed an answer the read gave
+/// without thinking more, its "needs more thinking?" reading under the row,
+/// so the row was too high for that case: one tune lowers it one step, down
+/// to a floor. Only changed answers are recorded, never a quick pick a person
+/// let stand, so the rule never raises the row.
+struct ThinkStepDown;
+
+impl ThinkThresholdPolicy for ThinkStepDown {
+    fn revise(
+        &self,
+        current: Option<ThinkThreshold>,
+        missed: &[PersonChangedAnswer],
+    ) -> oneiron::Result<Option<f64>> {
+        let Some(current) = current else {
+            return Ok(None);
+        };
+        let quick = missed.iter().any(|record| {
+            record
+                .prior_paired
+                .as_ref()
+                .is_some_and(|reading| reading.probability < current.threshold)
+        });
+        let next = (current.threshold - THINK_THRESHOLD_STEP).max(THINK_THRESHOLD_FLOOR);
+        Ok((quick && next < current.threshold).then_some(next))
     }
 }

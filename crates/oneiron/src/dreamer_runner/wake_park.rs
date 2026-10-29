@@ -2,6 +2,7 @@
 //! reads, and the projection the deadline lane arms on.
 
 use crate::attempt_queue::AttemptRecord;
+use crate::dreamer_wake::checkpoint_resumable_in_txn;
 use crate::error::Result;
 
 use super::store::{DreamerRunnerStore, PARKED};
@@ -18,7 +19,8 @@ pub struct DreamerCheckpointDue {
     pub parked_at: u64,
     /// When the next local pass may resume it, in Unix seconds: when it
     /// parked, or the vault's resolved Retry pause later for a Retry park
-    /// (FIX 8716).
+    /// (FIX 8716), or the reset a provider limit that refused its try stated
+    /// (FIX 11226).
     pub due_at: u64,
 }
 
@@ -36,13 +38,11 @@ impl DreamerRunnerStore<'_> {
             let Some(attempt) = self.attempts.get_in_txn(&rtxn, park.attempt_id)? else {
                 continue;
             };
-            if crate::dreamer_wake::checkpoint_resumable_in_txn(self.vault, &rtxn, &park, &attempt)?
-                .is_some()
-            {
+            if let Some(cut) = checkpoint_resumable_in_txn(self.vault, &rtxn, &park, &attempt)? {
                 due.push(DreamerCheckpointDue {
                     attempt,
                     parked_at: park.parked_at,
-                    due_at: park.later_pass_due_at(retry_secs).unwrap_or(park.parked_at),
+                    due_at: cut.due_at(&park, retry_secs).unwrap_or(park.parked_at),
                 });
             }
         }

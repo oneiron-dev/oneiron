@@ -143,6 +143,7 @@ pub(super) const KEY_REASON: &str = "reason";
 pub(super) const KEY_PARK_OWNER: &str = "park_owner";
 pub(super) const KEY_PARKED_AT: &str = "parked_at";
 pub(super) const KEY_CAUSE: &str = "cause";
+pub(super) const KEY_CARRIED_SPEND: &str = "carried_spend";
 
 // v2 adds the mandatory overdraft and owed keys (FIX 8702, 8728, 9015).
 pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 2;
@@ -150,7 +151,8 @@ pub(super) const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 2;
 pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // v2 adds the mandatory `park_owner` token; v1 rows (no owner) fail closed.
 // The typed `cause` key is mandatory too: a row without one fails closed.
-pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 2;
+// v3 adds the mandatory `carried_spend` key (`None` encodes as nil).
+pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 3;
 pub(super) const DREAMER_BUDGET_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
     KEY_BUDGET_ID,
@@ -176,12 +178,13 @@ pub(super) const DREAMER_RUN_TREE_KEYS: [&str; 4] = [
     KEY_PARENT_ATTEMPT,
     KEY_CREATED_AT,
 ];
-pub(super) const DREAMER_PARKED_KEYS: [&str; 6] = [
+pub(super) const DREAMER_PARKED_KEYS: [&str; 7] = [
     KEY_SCHEMA_VERSION,
     KEY_ATTEMPT_ID,
     KEY_REASON,
     KEY_CAUSE,
     KEY_PARK_OWNER,
+    KEY_CARRIED_SPEND,
     KEY_PARKED_AT,
 ];
 

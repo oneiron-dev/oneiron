@@ -89,16 +89,25 @@ impl fmt::Display for PayerFault {
 /// The host's PERSON-to-billing-account map, the one hook (CALLS, FIX 805
 /// resolver). A live Owner of the vault bills the vault's own account, the
 /// one owner spend bills: that is the Owner's own account, not a fallback.
-/// Neither canon nor a root's payer consent maps any other PERSON to an
-/// account, so their room-paid calls hold on a payer-needed ask until a host
-/// maps them here. An owner check that fails to read maps none, so the call
+/// Any other PERSON bills the account they filed as their own
+/// (`self.billing.account.file`, FIX 3332); a PERSON who filed none holds on
+/// a payer-needed ask, as before. A read that fails maps none, so the call
 /// holds rather than bills the vault unasked.
 fn billing_account(vault: &Vault, person: EntityId) -> Option<PayerAccount> {
     match vault.is_live_owner_person(&person) {
-        Ok(true) => Some(PayerAccount::VaultOwner),
-        Ok(false) => None,
+        Ok(true) => return Some(PayerAccount::VaultOwner),
+        Ok(false) => {}
         Err(error) => {
             tracing::warn!(%error, "a payer's owner standing could not be read");
+            return None;
+        }
+    }
+    match vault.own_billing_account(&person) {
+        Ok(filed) => filed.map(|filed| PayerAccount::Person {
+            account: filed.account,
+        }),
+        Err(error) => {
+            tracing::warn!(%error, "a payer's own billing account could not be read");
             None
         }
     }
@@ -297,12 +306,14 @@ fn payer_needed_ask(
 /// neither fails nor spends a try on its failure ladder. It keeps its lease
 /// and its spend scope, and [`resume_payer_parks`] takes it up once the
 /// payer can be billed. The owners' ask is the hold's notice; the park's
-/// reason names the payer and the ask, never a spend cap.
+/// reason names the payer and the ask, never a spend cap. A step's park
+/// carries what it spent so far for its resume.
 pub(crate) fn park_for_payer(
     vault: &Vault,
     attempt: AttemptId,
     owner: &str,
     fault: &PayerFault,
+    carried_spend: Option<u64>,
     now: u64,
 ) -> oneiron::Result<()> {
     DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
@@ -310,6 +321,7 @@ pub(crate) fn park_for_payer(
         reason: format!("{PAYER_PARK_REASON}{fault}"),
         cause: DreamerParkCause::Signal,
         park_owner: owner.to_owned(),
+        carried_spend,
         now,
     })?;
     Ok(())
@@ -320,11 +332,18 @@ pub(crate) fn park_for_payer(
 /// funding now reads otherwise. Each is released to the queue as the same
 /// try and admitted again from the start; a funding that now fails another
 /// way fails it there. One whose payer still waits stays parked, unwritten.
-/// Returns how many still wait (or were not read or resumed). It runs on each
-/// pump pass: an answer's write wakes the pumps, and a funding change no
-/// commit signals is caught by their timed recheck, which runs while any
-/// payer park still waits (FIX 9467).
-pub(crate) fn resume_payer_parks(vault: &Vault, owner: &str, now: u64) -> usize {
+/// A park that carried what its step spent hands it to `restore` for the
+/// step's next try, instead of re-estimating it. Returns how many still wait
+/// (or were not read or resumed). It runs on each pump pass: an answer's
+/// write wakes the pumps, and a funding change no commit signals is caught
+/// by their timed recheck, which runs while any payer park still waits
+/// (FIX 9467).
+pub(crate) fn resume_payer_parks(
+    vault: &Vault,
+    owner: &str,
+    now: u64,
+    restore: Option<&std::sync::Mutex<std::collections::HashMap<AttemptId, u64>>>,
+) -> usize {
     let rows = match AttemptQueue::new(vault).list() {
         Ok(rows) => rows,
         Err(error) => {
@@ -366,6 +385,12 @@ pub(crate) fn resume_payer_parks(vault: &Vault, owner: &str, now: u64) -> usize 
         if waits {
             waiting += 1;
             continue;
+        }
+        if let (Some(restore), Some(spent)) = (restore, park.carried_spend) {
+            restore
+                .lock()
+                .expect("step spend mutex poisoned")
+                .insert(row.id, spent);
         }
         match runner.resume_parked(row.id, owner, now) {
             Ok(Some(_)) => resumed += 1,

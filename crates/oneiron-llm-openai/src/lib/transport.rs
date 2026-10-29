@@ -87,18 +87,29 @@ pub enum OpenAiCompatTransportError {
 }
 
 impl From<OpenAiCompatTransportError> for LlmError {
-    /// The typed socket faults keep the retryable cut they always were; their
-    /// detail is for the transport's own log.
+    /// The typed socket faults are the retryable cut they always were, now
+    /// carrying their cause (FIX 10403), so a result row or receipt names it.
     fn from(error: OpenAiCompatTransportError) -> Self {
         match error {
             OpenAiCompatTransportError::Timeout => RetryableLlmError::Timeout.into(),
-            OpenAiCompatTransportError::StreamCut
-            | OpenAiCompatTransportError::Connection
-            | OpenAiCompatTransportError::NotSent { .. }
-            | OpenAiCompatTransportError::Io { .. }
-            | OpenAiCompatTransportError::Refused { .. }
-            | OpenAiCompatTransportError::UnexpectedFrame(_)
-            | OpenAiCompatTransportError::EndedWithError(_) => RetryableLlmError::StreamCut.into(),
+            OpenAiCompatTransportError::StreamCut | OpenAiCompatTransportError::Connection => {
+                RetryableLlmError::StreamCut.into()
+            }
+            OpenAiCompatTransportError::NotSent { stage, detail } => {
+                RetryableLlmError::not_sent(stage, detail).into()
+            }
+            OpenAiCompatTransportError::Io { stage, detail } => {
+                RetryableLlmError::io_after_send(stage, detail).into()
+            }
+            OpenAiCompatTransportError::Refused { code, message } => {
+                RetryableLlmError::refused(&code, &message).into()
+            }
+            OpenAiCompatTransportError::UnexpectedFrame(detail) => {
+                RetryableLlmError::unexpected_frame(detail).into()
+            }
+            OpenAiCompatTransportError::EndedWithError(detail) => {
+                RetryableLlmError::ended_with_error(detail).into()
+            }
             OpenAiCompatTransportError::Server => RetryableLlmError::ServerError.into(),
         }
     }

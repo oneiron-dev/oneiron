@@ -90,6 +90,16 @@ impl MediaRuntime {
         self.cloners.get(target).cloned()
     }
 
+    /// Each hosted render target that clones, by name, at the locality its
+    /// clone wire states (FIX 1567).
+    #[must_use]
+    pub fn clone_targets(&self) -> Vec<(String, oneiron::ModelLocality)> {
+        self.cloners
+            .iter()
+            .map(|(target, cloner)| (target.clone(), cloner.locality()))
+            .collect()
+    }
+
     /// A run of its own on the media meter for a voice clone's calls (FIX
     /// 3009): the clone wire admits and settles each one on it. Its permits
     /// carry `sources`, the rows the calls are read from (FIX 11311), `None`
@@ -98,6 +108,24 @@ impl MediaRuntime {
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
         Ok(undeclared_run(
             MEDIA_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        )
+        .sourced(sources))
+    }
+
+    /// A run of its own on the media meter for one realtime voice session
+    /// (FIX 462): a voice loop, not an `ai.*` call, each response of it
+    /// admitted and settled on it. Its permits carry `sources`, the rows the
+    /// session reads, `None` when not known whole.
+    pub fn voice_loop_run(
+        &self,
+        sources: Option<Vec<oneiron::EntityId>>,
+    ) -> LlmResult<RunAdmission> {
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        Ok(undeclared_run(
+            crate::models::VOICE_LOOP_RUN,
             meter,
             self.host.clone(),
             Arc::clone(&self.receipts),

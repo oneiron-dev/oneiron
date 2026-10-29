@@ -158,16 +158,30 @@ impl Vault {
         bound: &GrantBound,
         payload: OwnerReasonConfirm<'_>,
     ) -> Result<OwnerReasonConfirmation> {
+        self.with_write_txn_grouped(|txn| {
+            self.confirm_owner_reason_in_txn(txn, owner, effect, bound, payload)
+        })
+    }
+
+    /// [`Self::confirm_owner_reason`] in the caller's writer, so a record of
+    /// the confirm lands in the same commit as its grant and rule row (FIX
+    /// 2975). A refusal writes nothing.
+    pub(crate) fn confirm_owner_reason_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        effect: &ComposedEffect,
+        bound: &GrantBound,
+        payload: OwnerReasonConfirm<'_>,
+    ) -> Result<OwnerReasonConfirmation> {
         let digest = effect.digest();
         let Some(reason) = payload.reason else {
-            return self.with_write_txn_grouped(|txn| {
-                owner.revalidate_in_txn(self, &*txn)?;
-                let receipt = self.approve_once_in_txn(txn, owner, digest)?;
-                Ok(OwnerReasonConfirmation {
-                    receipt,
-                    notice_text: None,
-                    undo: None,
-                })
+            owner.revalidate_in_txn(self, &*txn)?;
+            let receipt = self.approve_once_in_txn(txn, owner, digest)?;
+            return Ok(OwnerReasonConfirmation {
+                receipt,
+                notice_text: None,
+                undo: None,
             });
         };
         let reason = reason.trim();
@@ -189,62 +203,58 @@ impl Vault {
                 "reason must bind the exact non-catastrophe effect requirement",
             )));
         }
-        self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, &*txn)?;
-            let grant_ref = bound.digest().to_hex();
-            if let Some(grant) = self.consent_grant_in_txn(&*txn, &grant_ref)?
-                && grant.is_active()
-            {
-                // Only the live rule that derived THIS grant permits an
-                // in-moment re-ask. A same-bound independent re-mint retires
-                // that rule in the shared mint door, even with the same owner
-                // authentication; it cannot be silently replaced here.
-                let mut derived = false;
-                for entry in
-                    RULES.iter_from(&self.store, &*txn, &RuleKey::grant_prefix(&grant_ref))?
+        let actor = owner.revalidate_in_txn(self, &*txn)?;
+        let grant_ref = bound.digest().to_hex();
+        if let Some(grant) = self.consent_grant_in_txn(&*txn, &grant_ref)?
+            && grant.is_active()
+        {
+            // Only the live rule that derived THIS grant permits an
+            // in-moment re-ask. A same-bound independent re-mint retires
+            // that rule in the shared mint door, even with the same owner
+            // authentication; it cannot be silently replaced here.
+            let mut derived = false;
+            for entry in RULES.iter_from(&self.store, &*txn, &RuleKey::grant_prefix(&grant_ref))? {
+                let (key, rule) = entry?;
+                check(&key, &rule)?;
+                if !rule.retired
+                    && rule.actor == *actor.as_bytes()
+                    && rule.actor == *grant.owner_stamp.actor.as_bytes()
+                    && rule.authentication_id == grant.owner_stamp.decision_id.as_bytes()
+                    && grant.grant.bound() == bound
                 {
-                    let (key, rule) = entry?;
-                    check(&key, &rule)?;
-                    if !rule.retired
-                        && rule.actor == *actor.as_bytes()
-                        && rule.actor == *grant.owner_stamp.actor.as_bytes()
-                        && rule.authentication_id == grant.owner_stamp.decision_id.as_bytes()
-                        && grant.grant.bound() == bound
-                    {
-                        derived = true;
-                        break;
-                    }
-                }
-                if !derived {
-                    return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "reason would replace an unrelated standing grant",
-                    )));
+                    derived = true;
+                    break;
                 }
             }
-            let receipt = self.create_standing_grant_in_txn(txn, owner, bound.clone())?;
-            let row = RuleRow {
-                version: 1,
-                grant_ref: grant_ref.clone(),
-                reason: reason.to_owned(),
-                decision_id: receipt.decision_id().as_bytes(),
-                actor: actor.as_bytes().to_owned(),
-                authentication_id: owner.decision_id().as_bytes(),
-                retired: false,
-            };
-            let key = RuleKey {
-                grant_ref: grant_ref.clone(),
-                decision_id: row.decision_id,
-            };
-            RULES.put(&self.store, txn, &key, &row)?;
-            Ok(OwnerReasonConfirmation {
-                undo: Some(OwnerReasonUndo {
-                    command: OWNER_REASON_UNDO_COMMAND.to_owned(),
-                    grant_ref,
-                    rule_decision_id: receipt.decision_id(),
-                }),
-                receipt,
-                notice_text: Some(payload.notice_text.to_owned()),
-            })
+            if !derived {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "reason would replace an unrelated standing grant",
+                )));
+            }
+        }
+        let receipt = self.create_standing_grant_in_txn(txn, owner, bound.clone())?;
+        let row = RuleRow {
+            version: 1,
+            grant_ref: grant_ref.clone(),
+            reason: reason.to_owned(),
+            decision_id: receipt.decision_id().as_bytes(),
+            actor: actor.as_bytes().to_owned(),
+            authentication_id: owner.decision_id().as_bytes(),
+            retired: false,
+        };
+        let key = RuleKey {
+            grant_ref: grant_ref.clone(),
+            decision_id: row.decision_id,
+        };
+        RULES.put(&self.store, txn, &key, &row)?;
+        Ok(OwnerReasonConfirmation {
+            undo: Some(OwnerReasonUndo {
+                command: OWNER_REASON_UNDO_COMMAND.to_owned(),
+                grant_ref,
+                rule_decision_id: receipt.decision_id(),
+            }),
+            receipt,
+            notice_text: Some(payload.notice_text.to_owned()),
         })
     }
 

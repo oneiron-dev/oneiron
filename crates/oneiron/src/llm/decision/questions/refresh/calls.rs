@@ -64,6 +64,7 @@ pub(super) fn graph_proposal(
                 probability: Some(prediction.probability),
                 providers: vec![prediction.provider],
                 paired,
+                rule: prediction.rule,
             }))
         }
         Some(GraphDecision::Decision(decision)) => {

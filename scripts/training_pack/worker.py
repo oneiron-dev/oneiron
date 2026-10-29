@@ -21,6 +21,7 @@ import platform
 import re
 import sys
 import time
+import traceback
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -64,6 +65,8 @@ NOT_MEASURED = ("cost", "serving_latency", "calibration", "held_out_quality", "c
 IS_NOT = ("HeldOutResult", "TrainingRun", "owner swap", "serving readiness")
 CODE, PROVENANCE = ("worker.py", "encoder.py"), {"split_receipt", "consent_receipt"}
 MODEL_ID = re.compile(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[A-Za-z0-9._-]+")
+# The last frames a redacted traceback keeps: file, line and function only.
+TRACEBACK_FRAMES = 20
 
 
 class Failure(Exception):
@@ -527,8 +530,13 @@ def main(argv: list[str] | None = None) -> int:
         status, receipt["reason"] = "refused", str(error)
     except Failure as error:
         status, receipt["reason"] = "failed", str(error)
-    except Exception as error:  # noqa: BLE001 - the class only: a message may quote input
+    except Exception as error:  # noqa: BLE001 - class and frames only: a message may quote input
         status, receipt["reason"] = "failed", f"unexpected {type(error).__name__}"
+        frames = traceback.extract_tb(error.__traceback__)
+        receipt["traceback"] = [
+            {"file": Path(frame.filename).name, "line": frame.lineno, "function": frame.name}
+            for frame in frames[-TRACEBACK_FRAMES:]
+        ]
     receipt["status"] = status
     marks["end"] = time.monotonic()
     receipt["elapsed_seconds"] = {name: round(at - clock, 3) for name, at in marks.items()}

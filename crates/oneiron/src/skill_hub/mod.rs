@@ -42,7 +42,7 @@ pub use claim_refinement::{
 pub(crate) use claim_refinement::{
     claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
 };
-pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions};
+pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions, claim_replay_filled_state};
 pub use default_hub::{
     DefaultSkillHub, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit,
     default_skill_hub_id,

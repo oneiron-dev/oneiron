@@ -65,6 +65,7 @@ pub enum AgentVerb {
     VaultFanoutLaunch,
     SelfBudget,
     SelfBudgetLand,
+    SelfBillingAccountFile,
     VaultBudgetsLeaseOpen,
     VaultBudgetsLease,
     VaultBudgetsLeaseTopUp,
@@ -888,6 +889,7 @@ pub enum AgentVerb {
     VaultModelsTrialsGet,
     VaultModelsTrialsApprove,
     VaultModelsTrialsRun,
+    VaultModelsTrialsResendArm,
     VaultModelsTrialsComplete,
     VaultModelsBindingsPropose,
     VaultModelsBindingsGet,
@@ -917,6 +919,7 @@ pub enum AgentVerb {
     VaultQuestionsPause,
     VaultQuestionsBackfill,
     VaultQuestionsRead,
+    VaultQuestionsOutcomeWindows,
     VaultQuestionsAnswers,
     VaultQuestionsRefresh,
     VaultQuestionsOutcomes,
@@ -927,6 +930,7 @@ pub enum AgentVerb {
     VaultDecisionsBandsEnforce,
     VaultDecisionsAsksAnswer,
     VaultDecisionsAsksClimb,
+    VaultDecisionsAsksConfirmGrant,
     SelfDecisionsAsks,
     ConnectorList,
     ConnectorStatus,
@@ -1276,6 +1280,7 @@ impl AgentVerb {
         Self::VaultFanoutLaunch,
         Self::SelfBudget,
         Self::SelfBudgetLand,
+        Self::SelfBillingAccountFile,
         Self::VaultBudgetsLeaseOpen,
         Self::VaultBudgetsLease,
         Self::VaultBudgetsLeaseTopUp,
@@ -2099,6 +2104,7 @@ impl AgentVerb {
         Self::VaultModelsTrialsGet,
         Self::VaultModelsTrialsApprove,
         Self::VaultModelsTrialsRun,
+        Self::VaultModelsTrialsResendArm,
         Self::VaultModelsTrialsComplete,
         Self::VaultModelsBindingsPropose,
         Self::VaultModelsBindingsGet,
@@ -2128,6 +2134,7 @@ impl AgentVerb {
         Self::VaultQuestionsPause,
         Self::VaultQuestionsBackfill,
         Self::VaultQuestionsRead,
+        Self::VaultQuestionsOutcomeWindows,
         Self::VaultQuestionsAnswers,
         Self::VaultQuestionsRefresh,
         Self::VaultQuestionsOutcomes,
@@ -2138,6 +2145,7 @@ impl AgentVerb {
         Self::VaultDecisionsBandsEnforce,
         Self::VaultDecisionsAsksAnswer,
         Self::VaultDecisionsAsksClimb,
+        Self::VaultDecisionsAsksConfirmGrant,
         Self::SelfDecisionsAsks,
         Self::ConnectorList,
         Self::ConnectorStatus,
@@ -2490,6 +2498,7 @@ impl AgentVerb {
             Self::VaultFanoutLaunch => "vault.fanout.launch",
             Self::SelfBudget => "self.budget",
             Self::SelfBudgetLand => "self.budget.land",
+            Self::SelfBillingAccountFile => "self.billing.account.file",
             Self::VaultBudgetsLeaseOpen => "vault.budgets.lease.open",
             Self::VaultBudgetsLease => "vault.budgets.lease",
             Self::VaultBudgetsLeaseTopUp => "vault.budgets.lease.top_up",
@@ -3337,6 +3346,7 @@ impl AgentVerb {
             Self::VaultModelsTrialsGet => "vault.models.trials.get",
             Self::VaultModelsTrialsApprove => "vault.models.trials.approve",
             Self::VaultModelsTrialsRun => "vault.models.trials.run",
+            Self::VaultModelsTrialsResendArm => "vault.models.trials.resend_arm",
             Self::VaultModelsTrialsComplete => "vault.models.trials.complete",
             Self::VaultModelsBindingsPropose => "vault.models.bindings.propose",
             Self::VaultModelsBindingsGet => "vault.models.bindings.get",
@@ -3366,6 +3376,7 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "vault.questions.pause",
             Self::VaultQuestionsBackfill => "vault.questions.backfill",
             Self::VaultQuestionsRead => "vault.questions.read",
+            Self::VaultQuestionsOutcomeWindows => "vault.questions.outcome_windows",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
             Self::VaultQuestionsRefresh => "vault.questions.refresh",
             Self::VaultQuestionsOutcomes => "vault.questions.outcomes",
@@ -3376,6 +3387,7 @@ impl AgentVerb {
             Self::VaultDecisionsBandsEnforce => "vault.decisions.bands.enforce",
             Self::VaultDecisionsAsksAnswer => "vault.decisions.asks.answer",
             Self::VaultDecisionsAsksClimb => "vault.decisions.asks.climb",
+            Self::VaultDecisionsAsksConfirmGrant => "vault.decisions.asks.confirm_grant",
             Self::SelfDecisionsAsks => "self.decisions.asks",
             Self::ConnectorList => "connector.list",
             Self::ConnectorStatus => "connector.status",
@@ -3731,6 +3743,7 @@ impl AgentVerb {
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLease
                 | Self::VaultBudgetsLeaseTopUp
@@ -4554,6 +4567,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsGet
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsGet
@@ -4583,6 +4597,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomes
@@ -4593,6 +4608,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
@@ -4971,6 +4987,7 @@ impl AgentVerb {
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLease
                 | Self::VaultBudgetsLeaseTopUp
@@ -5794,6 +5811,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsGet
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsGet
@@ -5823,6 +5841,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomes
@@ -5833,6 +5852,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
@@ -6193,6 +6213,7 @@ impl AgentVerb {
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultVoicesLineage
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
@@ -6355,6 +6376,7 @@ impl AgentVerb {
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLease
                 | Self::VaultBudgetsLeaseTopUp
@@ -7131,6 +7153,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsGet
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsGet
@@ -7159,6 +7182,7 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRead
+                | Self::VaultQuestionsOutcomeWindows
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::VaultQuestionsOutcomes
@@ -7169,6 +7193,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
                 | Self::ConnectorStatus
@@ -7458,6 +7483,7 @@ impl AgentVerb {
                 | Self::TasksWave
                 | Self::VaultFanoutSpawn
                 | Self::SelfBudgetLand
+                | Self::SelfBillingAccountFile
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLeaseTopUp
                 | Self::VaultBudgetsHoldResume
@@ -7950,6 +7976,7 @@ impl AgentVerb {
                 | Self::VaultModelsTrialsNominate
                 | Self::VaultModelsTrialsApprove
                 | Self::VaultModelsTrialsRun
+                | Self::VaultModelsTrialsResendArm
                 | Self::VaultModelsTrialsComplete
                 | Self::VaultModelsBindingsPropose
                 | Self::VaultModelsBindingsAccept
@@ -7976,6 +8003,7 @@ impl AgentVerb {
                 | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
+                | Self::VaultDecisionsAsksConfirmGrant
                 | Self::ConnectorCall
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
@@ -8245,6 +8273,7 @@ impl AgentVerb {
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
+            Self::SelfBillingAccountFile => &["spec"],
             Self::VaultBudgetsLeaseOpen => &["spec"],
             Self::VaultBudgetsLease => &["spec"],
             Self::VaultBudgetsLeaseTopUp => &["spec"],
@@ -9068,6 +9097,7 @@ impl AgentVerb {
             Self::VaultModelsTrialsGet => &["spec"],
             Self::VaultModelsTrialsApprove => &["spec"],
             Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsResendArm => &["spec"],
             Self::VaultModelsTrialsComplete => &["spec"],
             Self::VaultModelsBindingsPropose => &["spec"],
             Self::VaultModelsBindingsGet => &["spec"],
@@ -9097,6 +9127,7 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
+            Self::VaultQuestionsOutcomeWindows => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
             Self::VaultQuestionsOutcomes => &["spec"],
@@ -9107,6 +9138,7 @@ impl AgentVerb {
             Self::VaultDecisionsBandsEnforce => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::VaultDecisionsAsksConfirmGrant => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
@@ -9457,6 +9489,7 @@ impl AgentVerb {
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
+            Self::SelfBillingAccountFile => &["spec"],
             Self::VaultBudgetsLeaseOpen => &["spec"],
             Self::VaultBudgetsLease => &["spec"],
             Self::VaultBudgetsLeaseTopUp => &["spec"],
@@ -10280,6 +10313,7 @@ impl AgentVerb {
             Self::VaultModelsTrialsGet => &["spec"],
             Self::VaultModelsTrialsApprove => &["spec"],
             Self::VaultModelsTrialsRun => &["spec"],
+            Self::VaultModelsTrialsResendArm => &["spec"],
             Self::VaultModelsTrialsComplete => &["spec"],
             Self::VaultModelsBindingsPropose => &["spec"],
             Self::VaultModelsBindingsGet => &["spec"],
@@ -10309,6 +10343,7 @@ impl AgentVerb {
             Self::VaultQuestionsPause => &["spec"],
             Self::VaultQuestionsBackfill => &["spec"],
             Self::VaultQuestionsRead => &["spec"],
+            Self::VaultQuestionsOutcomeWindows => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
             Self::VaultQuestionsOutcomes => &["spec"],
@@ -10319,6 +10354,7 @@ impl AgentVerb {
             Self::VaultDecisionsBandsEnforce => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
+            Self::VaultDecisionsAsksConfirmGrant => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
             Self::ConnectorList => &["spec"],
             Self::ConnectorStatus => &["spec"],
@@ -10785,6 +10821,9 @@ impl AgentVerb {
             }
             Self::SelfBudgetLand => {
                 "The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."
+            }
+            Self::SelfBillingAccountFile => {
+                "Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only."
             }
             Self::VaultBudgetsLeaseOpen => {
                 "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit."
@@ -13211,6 +13250,9 @@ impl AgentVerb {
             Self::VaultModelsTrialsRun => {
                 "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."
             }
+            Self::VaultModelsTrialsResendArm => {
+                "Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown."
+            }
             Self::VaultModelsTrialsComplete => {
                 "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."
             }
@@ -13233,9 +13275,11 @@ impl AgentVerb {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
             }
             Self::AiImage => {
-                "One image out of the host's image model; reference images make it an edit."
+                "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."
             }
-            Self::AiSpeech => "Speech audio out of text, from the host's speech model.",
+            Self::AiSpeech => {
+                "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."
+            }
             Self::VaultVoicesPacksPut => {
                 "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."
             }
@@ -13254,11 +13298,15 @@ impl AgentVerb {
             Self::VaultVoicesLineage => {
                 "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."
             }
-            Self::AiTranscribe => "Text out of speech audio, from the host's transcription model.",
-            Self::AiEmbed => {
-                "One embedding vector per input text, from the host's embedding model."
+            Self::AiTranscribe => {
+                "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."
             }
-            Self::AiVideo => "Starts a video render as a provider job and answers with its ticket.",
+            Self::AiEmbed => {
+                "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."
+            }
+            Self::AiVideo => {
+                "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."
+            }
             Self::AiVideoPoll => {
                 "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
             }
@@ -13278,6 +13326,9 @@ impl AgentVerb {
             Self::VaultQuestionsPause => "",
             Self::VaultQuestionsBackfill => "",
             Self::VaultQuestionsRead => "",
+            Self::VaultQuestionsOutcomeWindows => {
+                "Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed."
+            }
             Self::VaultQuestionsAnswers => {
                 "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."
             }
@@ -13304,6 +13355,7 @@ impl AgentVerb {
             }
             Self::VaultDecisionsAsksAnswer => "",
             Self::VaultDecisionsAsksClimb => "",
+            Self::VaultDecisionsAsksConfirmGrant => "",
             Self::SelfDecisionsAsks => "",
             Self::ConnectorList => {
                 "Every live catalogued connector whose name or summary matches the query."

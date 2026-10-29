@@ -162,6 +162,7 @@ mod retrieval_telemetry;
 #[cfg(unix)]
 mod root_directory;
 mod send_receipt_audit;
+mod served_vaults;
 mod short_id_alias;
 mod structural_kind_registry;
 mod sync_responses;
@@ -189,6 +190,7 @@ pub(crate) use asset_body::{
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
 pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+pub(crate) use served_vaults::served_vault_at;
 // FIX 6730: what a commit changes for the backup watermark.
 #[cfg(feature = "sync")]
 pub(crate) use backup_change::telemetry_batch_class;

@@ -834,6 +834,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_billing_account_file(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.billing.account.file")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.billing.account.file", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_budgets_lease_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.budgets.lease.open")?;
         let output = py
@@ -8118,6 +8125,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_models_trials_resend_arm(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.trials.resend_arm")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.models.trials.resend_arm", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_models_trials_complete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.models.trials.complete")?;
         let output = py
@@ -8327,6 +8344,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_questions_outcome_windows(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.questions.outcome_windows")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.questions.outcome_windows", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_questions_answers(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.questions.answers")?;
         let output = py
@@ -8404,6 +8435,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.decisions.asks.climb")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.decisions.asks.climb", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_decisions_asks_confirm_grant(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.decisions.asks.confirm_grant")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.decisions.asks.confirm_grant", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

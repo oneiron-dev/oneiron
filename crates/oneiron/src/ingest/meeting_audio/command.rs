@@ -3,21 +3,20 @@
 //! The executable is trusted host configuration, never recording metadata. The
 //! caller supplies an OF-133 route receipt; this adapter does not invent one.
 //! The bundled offline bridge refuses missing forced alignment/community-1.
-//! Each pack's inference is one `ai.transcribe` call on the host's
-//! [`WireSeat`]: admitted on its own permit and started at the rung's media
-//! gate before the pack goes to the native process, then settled on the
-//! seconds it heard. Its answer stays the bridge's aligned words.
+//! Each physical model call a stage makes (VAD, full-file diarization, ASR,
+//! each CTC alignment window, each cleanup group) is one call on its model's
+//! [`WireSeat`](crate::llm::run_admission::WireSeat): the bridge names it
+//! before it runs, and it runs once its permit, under the stage's run,
+//! starts at the rung's media gate, then settles on what it heard or counted
+//! (FIX 3765, `unit`). A stage runs as long as it makes progress: a process
+//! that writes nothing for [`UNIT_PROGRESS_TIMEOUT`] faults (`process`).
 
 use std::fs::{File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::time::Duration;
 
 use serde_json::{Value, json};
-
-use crate::llm::ModelLocality;
-use crate::llm::media::{AiOperation, MediaPart, MediaUsage};
-use crate::llm::run_admission::{WireCallError, WireSeat};
 
 use super::provenance::sha256;
 use super::{
@@ -28,8 +27,16 @@ use super::{
 };
 
 mod process;
+mod unit;
 
-const PROTOCOL: &str = "oneiron.meeting_audio.host.v1";
+pub use unit::MeetingAudioSeats;
+
+const PROTOCOL: &str = "oneiron.meeting_audio.host.v2";
+
+/// How long a native host process may write nothing (no unit, progress,
+/// end or reply) before its stage faults (CALLS, FIX 3765). A recording runs
+/// as long as its units progress.
+pub const UNIT_PROGRESS_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Native process configuration. Every path is absolute and host-owned.
 /// No launcher, shell, remote URL, package installer or model downloader runs.
@@ -41,8 +48,6 @@ pub struct CommandAudioConfig {
     pub ffmpeg: PathBuf,
     pub workspace: PathBuf,
     pub model_snapshot: PathBuf,
-    /// Bound for one native port call, including output and process shutdown.
-    pub stage_timeout: std::time::Duration,
 }
 
 /// Capability data reported by a configured bridge. This is not qualification
@@ -101,29 +106,31 @@ pub struct CommandMeetingAudioHost {
     config: CommandAudioConfig,
     route: AsrRoute,
     runtime_profile: Option<(PathBuf, String)>,
-    /// The host's on-device rung for the routed ASR model: every pack's
-    /// inference is a call on it.
-    seat: WireSeat,
+    /// The host's on-device rungs, one per physical model: each unit a
+    /// stage runs is a call on its model's.
+    seats: MeetingAudioSeats,
 }
 
 impl CommandMeetingAudioHost {
     /// `route` must come from the caller's authenticated OF-133 selection.
     /// This local-only backend refuses fleet/hosted routes rather than claiming
     /// inference ran on another tier. The engine checks the batch-default pin.
-    /// `seat` is the host's rung for the routed model on this device, which
-    /// each pack's inference is admitted on.
-    pub fn new(config: CommandAudioConfig, route: AsrRoute, seat: WireSeat) -> AudioResult<Self> {
+    /// `seats` are the host's rungs on this device, one per physical model;
+    /// the ASR rung serves the routed model.
+    pub fn new(
+        config: CommandAudioConfig,
+        route: AsrRoute,
+        seats: MeetingAudioSeats,
+    ) -> AudioResult<Self> {
         let files = [&config.python, &config.bridge, &config.ffmpeg];
         let dirs = [&config.workspace, &config.model_snapshot];
         if files.iter().any(|p| !p.is_absolute() || !p.is_file())
             || dirs.iter().any(|p| !p.is_absolute() || !p.is_dir())
-            || config.stage_timeout.is_zero()
-            || config.stage_timeout > std::time::Duration::from_secs(7200)
             || route.tier != ProcessingTier::Local
             || route.model_id.trim().is_empty()
             || route.route_receipt_ref.trim().is_empty()
-            || seat.locality() != ModelLocality::OnDevice
-            || seat.model().rsplit_once('@').map(|(model, _)| model)
+            || !seats.on_device()
+            || seats.asr.model().rsplit_once('@').map(|(model, _)| model)
                 != Some(route.model_id.as_str())
         {
             return Err(AudioError::InvalidOptions);
@@ -132,7 +139,7 @@ impl CommandMeetingAudioHost {
             config,
             route,
             runtime_profile: None,
-            seat,
+            seats,
         })
     }
 
@@ -182,7 +189,8 @@ impl CommandMeetingAudioHost {
 
     /// One native call. No recording, request or reply is refused by its size
     /// (Rule 5): the request goes through a private file and the reply is read
-    /// whole.
+    /// whole. Each unit the process names runs on its own permit, and the
+    /// call runs while the process makes progress.
     fn call(&self, stage: &str, body: &[u8], options: Value) -> AudioResult<Reply> {
         let request_id = uuid::Uuid::new_v4().to_string();
         let header = json!({
@@ -198,11 +206,14 @@ impl CommandMeetingAudioHost {
         input
             .write_all(&encoded)
             .and_then(|()| input.write_all(body))
-            .and_then(|()| input.seek(SeekFrom::Start(0)).map(|_| ()))
+            .and_then(|()| input.flush())
             .map_err(|_| host_error(stage, "RequestIo"))?;
+        drop(input);
         let mut command = oneiron_spawn::command(&self.config.python);
         command
             .arg(&self.config.bridge)
+            .arg("--request")
+            .arg(&scratch.0)
             .arg("--workspace")
             .arg(&self.config.workspace)
             .arg("--ffmpeg")
@@ -212,8 +223,7 @@ impl CommandMeetingAudioHost {
             .env("HF_HUB_OFFLINE", "1")
             .env("TRANSFORMERS_OFFLINE", "1")
             .env("PYTHONDONTWRITEBYTECODE", "1")
-            .current_dir(&self.config.workspace)
-            .stdin(Stdio::from(input));
+            .current_dir(&self.config.workspace);
         if let Some((path, digest)) = &self.runtime_profile {
             validate_runtime_profile(path, digest)?;
             command
@@ -222,8 +232,21 @@ impl CommandMeetingAudioHost {
                 .arg("--runtime-profile-sha256")
                 .arg(digest);
         }
-        let (success, output) = process::capture(&mut command, self.config.stage_timeout)
+        let mut session = process::Session::spawn(&mut command, UNIT_PROGRESS_TIMEOUT)
             .map_err(|code| host_error(stage, code))?;
+        let output = loop {
+            match session.next().map_err(|code| host_error(stage, code))? {
+                process::Frame::Reply(output) => break output,
+                process::Frame::Event(event) => match unit::event_name(&event, &request_id) {
+                    Some("unit") => {
+                        self.run_unit(stage, &request_id, &mut session, &event["unit"])?;
+                    }
+                    Some("progress") => {}
+                    _ => return Err(host_error(stage, "InvalidResponse")),
+                },
+            }
+        };
+        let success = session.finish().map_err(|code| host_error(stage, code))?;
         drop(scratch);
         parse_reply(stage, &request_id, success, output)
     }
@@ -243,42 +266,6 @@ impl CommandMeetingAudioHost {
             return Err(AudioError::InvalidProvenance);
         }
         self.call(stage, &bytes, options)
-    }
-
-    /// Runs one pack's inference by `infer` as one `ai.transcribe` call on
-    /// the host's seat. The pack's audio goes to the native process, not in
-    /// the call, so the call names it by its digest and length; an answer
-    /// settles on the seconds of audio the pack carried.
-    fn admitted_pack(
-        &self,
-        request: &AsrPackRequest<'_>,
-        infer: impl FnOnce() -> AudioResult<Reply>,
-    ) -> AudioResult<Reply> {
-        let audio_ms = request.audio.duration_ms()?;
-        let mut call = self.seat.request(
-            AiOperation::Transcribe,
-            vec![MediaPart::Audio {
-                media_type: "audio/pcm".into(),
-                bytes: Vec::new(),
-            }],
-            None,
-        );
-        call.params.extend([
-            ("audio_format".to_owned(), Value::from("pcm_s16le")),
-            ("sample_rate".to_owned(), Value::from(16_000)),
-            ("num_channels".to_owned(), Value::from(1)),
-            ("audio_ms".to_owned(), Value::from(audio_ms)),
-            ("audio_sha256".to_owned(), Value::from(request.audio_sha256)),
-        ]);
-        self.seat
-            .call(&call, infer, |_| MediaUsage {
-                audio_ms,
-                ..MediaUsage::default()
-            })
-            .map_err(|error| match error {
-                WireCallError::Refused(_) => host_error("transcribe_pack", "RunAdmissionRefused"),
-                WireCallError::Failed(error) => error,
-            })
     }
 }
 
@@ -343,17 +330,16 @@ impl MeetingAudioHost for CommandMeetingAudioHost {
         }
         // Only acoustic word alignment can produce AsrWord values. An absent
         // pinned runtime or unsupported alignment language refuses the call.
-        let reply = self.admitted_pack(&request, || {
-            self.pcm_call(
-                "transcribe_pack",
-                request.audio,
-                request.audio_sha256,
-                json!({
-                    "model_id": request.route.model_id, "glossary": request.glossary,
-                    "language_hint": request.language_hint,
-                }),
-            )
-        })?;
+        // Its ASR and each alignment window are units of their own.
+        let reply = self.pcm_call(
+            "transcribe_pack",
+            request.audio,
+            request.audio_sha256,
+            json!({
+                "model_id": request.route.model_id, "glossary": request.glossary,
+                "language_hint": request.language_hint,
+            }),
+        )?;
         let words = array(&reply.result, "words")?
             .iter()
             .map(|word| {
@@ -448,6 +434,7 @@ fn validate_runtime_profile(path: &Path, digest: &str) -> AudioResult<()> {
     Ok(())
 }
 
+/// The request's private file; the process reads it by its path.
 struct RequestFile(PathBuf);
 
 impl RequestFile {

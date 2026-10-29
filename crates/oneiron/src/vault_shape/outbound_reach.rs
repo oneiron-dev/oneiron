@@ -1,0 +1,121 @@
+//! The reach's standing outbound grant rows (ARCH-0070 `shape:reach-line`,
+//! FIX 2801). A standing outbound grant lets the actor it was minted for act
+//! without asking, as the gate's grant match reads it: a grant on a channel,
+//! or on the send verb class, covers that actor's sends there; a contact's
+//! or a brief's grant covers only sends that name them, which no path does,
+//! so it moves no verdict. A scoped MCP grant is a path of its own: an
+//! external tool its actor calls without asking. A grant counts only under
+//! the policy frontier it was minted at, so a plan that changes a manifest
+//! leaves none counting.
+use super::ShapeTarget;
+use super::live::ShapeSources;
+use super::plan::ShapePlanItem;
+use super::reach::{ReachActor, ShapeReachFact, ShapeReachVerdict};
+use crate::error::Result;
+use crate::outbound_grant::{StandingOutboundGrantScope, decode_standing_outbound_grant_body};
+use crate::registry::ENTITY_TYPE_OUTBOUND_GRANT;
+use crate::{EntityId, Vault};
+
+/// The channel a scoped MCP grant's path names: the external tool rides the
+/// MCP server the grant scopes.
+const MCP_CHANNEL: &str = "mcp";
+
+/// One standing outbound grant that counts now, as the reach reads it.
+#[derive(Debug, Clone)]
+pub(super) struct ReachOutbound {
+    pub(super) grant: EntityId,
+    /// The actor it lets act, by the principal ref it was minted for.
+    pub(super) principal: String,
+    pub(super) scope: StandingOutboundGrantScope,
+    /// Its stored body's digest, which the frontier pins.
+    pub(super) digest: [u8; 32],
+}
+
+/// Whether one of `outbound` lets `actor_ref` do `verb` on `channel` without
+/// asking, for an effect that names no counterparty and no brief.
+pub(super) fn outbound_covers(
+    outbound: &[ReachOutbound],
+    actor_ref: &str,
+    verb: &str,
+    channel: &str,
+) -> bool {
+    outbound.iter().any(|grant| {
+        grant.principal == actor_ref && grant.scope.matches_effect(verb, channel, None, None)
+    })
+}
+
+/// The external tool paths the scoped MCP grants among `outbound` hold: one
+/// per grant, for the actor it was minted for, running without asking. A
+/// disabled roster actor is not dispatched, so it holds none.
+pub(super) fn scoped_mcp_paths(
+    outbound: &[ReachOutbound],
+    actors: &[ReachActor],
+) -> Vec<ShapeReachFact> {
+    outbound
+        .iter()
+        .filter_map(|grant| {
+            let StandingOutboundGrantScope::ScopedMcp { server, tool, .. } = &grant.scope else {
+                return None;
+            };
+            let actor = actors
+                .iter()
+                .find(|actor| actor.entity.to_hex() == grant.principal);
+            if actor.is_some_and(|actor| !actor.enabled) {
+                return None;
+            }
+            Some(ShapeReachFact {
+                actor: grant.principal.clone(),
+                actor_name: actor.map(|actor| actor.agent_id.clone()),
+                verb: tool.clone(),
+                channel: MCP_CHANNEL.to_owned(),
+                sender: server.clone(),
+                identity: grant.grant.to_hex(),
+                class: None,
+                audience: Vec::new(),
+                audience_names: Vec::new(),
+                verdict: ShapeReachVerdict::Can,
+            })
+        })
+        .collect()
+}
+
+/// `outbound` once `items` are in place: a plan that changes a manifest
+/// moves the policy frontier, and no grant minted at the old one counts.
+pub(super) fn outbound_after_plan(outbound: &mut Vec<ReachOutbound>, items: &[ShapePlanItem]) {
+    if items
+        .iter()
+        .any(|item| matches!(item.target, ShapeTarget::Manifest { .. }))
+    {
+        outbound.clear();
+    }
+}
+
+impl Vault {
+    /// Every standing outbound grant that counts under `policy_frontier`, on
+    /// the caller's snapshot. Each grant read is listed in `sources`.
+    ///
+    /// # Errors
+    ///
+    /// A read failure or an undecodable grant.
+    pub(super) fn reach_outbound_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy_frontier: &[u8; 32],
+        sources: &mut ShapeSources,
+    ) -> Result<Vec<ReachOutbound>> {
+        let mut grants = Vec::new();
+        for (id, body) in self.shape_bodies_in_txn(txn, ENTITY_TYPE_OUTBOUND_GRANT)? {
+            sources.list(id);
+            let grant = decode_standing_outbound_grant_body(&body)?;
+            if grant.is_active_under_policy(policy_frontier) {
+                grants.push(ReachOutbound {
+                    grant: id,
+                    principal: grant.principal_ref,
+                    scope: grant.scope,
+                    digest: *blake3::hash(&body).as_bytes(),
+                });
+            }
+        }
+        Ok(grants)
+    }
+}
