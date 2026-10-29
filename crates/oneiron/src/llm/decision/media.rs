@@ -15,6 +15,9 @@ use std::collections::BTreeSet;
 pub const MAX_DECISION_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 /// The long edge a seat is sent unless it states its own.
 pub const DECISION_IMAGE_EDGE: u32 = 2_048;
+/// The short edge a seat is sent at least: Jev refuses smaller images, so a small crop
+/// is upscaled to it, keeping its aspect ratio.
+pub const JEV_MIN_EDGE: u32 = 280;
 
 /// One image a question reads. The question names it in backticks, as in "where is
 /// `mug` in `camera`?"; a reference image is one more named image. The image fills the
@@ -76,9 +79,10 @@ impl DecisionImage {
         }
     }
 
-    /// The image with its long edge at most `max_edge` pixels, in its own format, at
-    /// [`fitted_size`]. A box is in fractions of the image, so it reads the same on the
-    /// smaller copy; small text may still need a crop before the call.
+    /// The image at [`fitted_size`], in its own format: its long edge at most `max_edge`
+    /// pixels, its short edge at least [`JEV_MIN_EDGE`]. A box is in fractions of the
+    /// image, so it reads the same on the resized copy; small text may still need a crop
+    /// before the call.
     pub fn fitted(&self, max_edge: u32) -> LlmResult<ImageBytes> {
         let format = match self.format() {
             Some("png") => image::ImageFormat::Png,
@@ -91,9 +95,9 @@ impl DecisionImage {
         if (width, height) == (decoded.width(), decoded.height()) {
             return Ok(self.image.clone());
         }
-        let smaller = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
+        let resized = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
         let mut bytes = std::io::Cursor::new(Vec::new());
-        smaller
+        resized
             .write_to(&mut bytes, format)
             .map_err(|_| FatalLlmError::InvalidRequest)?;
         Ok(ImageBytes {
@@ -127,14 +131,22 @@ impl DecisionImage {
 }
 
 /// The size [`DecisionImage::fitted`] sends a `width` by `height` image at under
-/// `max_edge`: unchanged when its long edge fits, else scaled to fit with its aspect
-/// kept, each side rounded and at least one pixel.
+/// `max_edge`: unchanged when its long edge fits and its short edge reaches
+/// [`JEV_MIN_EDGE`], else scaled with its aspect kept, each side rounded and at least
+/// one pixel. A short side under the floor is upscaled to it, as Jev refuses smaller
+/// images; the long edge never passes `max_edge`, which wins on a side that cannot meet
+/// both.
 pub fn fitted_size(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
     let edge = max_edge.max(1);
-    if width.max(height) <= edge {
+    let longest = width.max(height);
+    let shortest = width.min(height);
+    let floor = JEV_MIN_EDGE.min(edge);
+    if longest == 0 || (longest <= edge && shortest >= floor) {
         return (width, height);
     }
-    let ratio = f64::from(edge) / f64::from(width.max(height));
+    let down = f64::from(edge) / f64::from(longest);
+    let up = f64::from(floor) / f64::from(shortest.max(1));
+    let ratio = down.min(up.max(1.0));
     let side = |length: u32| ((f64::from(length) * ratio).round() as u32).clamp(1, edge);
     (side(width), side(height))
 }
