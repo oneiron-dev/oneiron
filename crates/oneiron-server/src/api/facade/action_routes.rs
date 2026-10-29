@@ -500,7 +500,7 @@ pub(super) async fn attach_run_as(
         .map_err(refused)?;
     let runs = Arc::clone(&server.live_runs);
     let vault = Arc::clone(&server.vault);
-    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, attaching, rebind))
+    let handle = super::clock_ingress::run_blocking(move || runs.attach(&vault, attaching, rebind))
         .await
         .map_err(|_| internal())?
         .map_err(engine)?

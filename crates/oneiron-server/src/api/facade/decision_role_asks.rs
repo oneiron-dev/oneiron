@@ -44,7 +44,7 @@ async fn asks(
 ) -> Result<Json<Vec<DecisionAsk>>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     let (actor, _) = facade_actor(&server, &auth)?;
-    let asks = tokio::task::spawn_blocking(move || -> Result<_, FacadeApiError> {
+    let asks = super::clock_ingress::run_blocking(move || -> Result<_, FacadeApiError> {
         let asks = server.vault.decision_asks_held_by(actor).map_err(engine)?;
         // FIX 8174: of the asks at a role the principal holds, the ones the
         // credential's own lane reads whole, at its destination.
@@ -83,7 +83,7 @@ async fn answer(
     auth.require_unrestricted_record_scope()?;
     let (actor, class) = facade_actor(&server, &auth)?;
     let request: AnswerAsk = facade_input(facade_json(payload)?)?;
-    let ask = tokio::task::spawn_blocking(move || {
+    let ask = super::clock_ingress::run_blocking(move || {
         let asks = server.decision_host().asks();
         if asks.get(request.seq)?.is_none() {
             return Ok(None);

@@ -121,7 +121,7 @@ pub(crate) async fn vault_hooks_replay_as_owner(
 ) -> MemoryResult<(HooksReplayPage, Option<Vec<EntityId>>)> {
     let verdict = replay_verdict(server);
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    crate::api::facade::clock_ingress::run_blocking(move || {
         // The sandbox serve's runner runs on, taken here when no runner took
         // it: `--no-hooks` stops the runner, not an explicit replay.
         let runtime = crate::commands::hook_sandbox(&server).map_err(no_hook_sandbox)?;

@@ -47,9 +47,11 @@ async fn vault_questions_answers_answer(
     const VERB: &str = "vault.questions.answers";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionAnswersReply> {
-        Ok(question_answers(server.vault(), principal, &input)?)
-    })
+    crate::api::facade::clock_ingress::run_blocking(
+        move || -> MemoryResult<QuestionAnswersReply> {
+            Ok(question_answers(server.vault(), principal, &input)?)
+        },
+    )
     .await
     .map_err(|_| internal(VERB))?
 }
