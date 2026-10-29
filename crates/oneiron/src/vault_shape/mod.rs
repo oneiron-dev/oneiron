@@ -22,6 +22,7 @@ mod channel;
 mod connector_reach;
 mod grant;
 mod group;
+mod item_refs;
 mod live;
 mod live_source;
 mod manifest;

@@ -126,6 +126,7 @@ impl<Q: VoiceMediaQueue> HostedTransport for HostedMediaQueue<Q> {
                     submission: render.submission,
                     request,
                     voice: Some(render.voice),
+                    fallbacks: Vec::new(),
                 })
             }
             HostedWork::Cancel { generation } => {

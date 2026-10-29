@@ -27,16 +27,7 @@ use crate::{EntityId, Error, Result, Vault};
 /// One private thread turn a proposal's words were drawn from when its
 /// digest was assembled (FIX 6411).
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct DigestPrivateSource {

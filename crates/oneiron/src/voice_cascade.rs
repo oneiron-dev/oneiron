@@ -67,6 +67,7 @@ mod speakable;
 mod stream;
 pub use stream::{VoiceStreamConfig, VoiceStreamFailure, drive_voice_stream};
 pub mod soniox;
+pub mod spilled_audio;
 
 pub mod tts_spikes;
 #[cfg(unix)]
