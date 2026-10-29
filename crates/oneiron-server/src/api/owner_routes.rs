@@ -57,7 +57,7 @@ pub(super) mod connector_subscription_routes;
 pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
 pub(super) mod craft_candidate_routes;
-mod decision_ask_routes;
+pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
