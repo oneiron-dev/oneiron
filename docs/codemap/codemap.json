@@ -6670,7 +6670,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "mod": 1,
       "re-export": 3
      }
@@ -7062,6 +7062,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/lift_history/repo_rows.rs",
+     "purpose": "Repo-mutation oplog and proposal rows (FIX 2890)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/lift_history/retained.rs",
      "purpose": "Retained carriers with a door of their own (OF-067, Engine ruling D = a)",
      "surface": {
@@ -7112,6 +7122,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/batch/secret_scan/mask/escaped_span.rs",
+     "purpose": "A structured value's JSON-escaped span in its leaf (FIX 1369)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/batch/secret_scan/mask/file_plane.rs",
      "purpose": "Body files with keys in them (FIX 5507)",
      "surface": {
@@ -7126,6 +7146,16 @@
      "purpose": "A file's marks for the values custody came to know after it was stored (FIX 2781)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/known_note.rs",
+     "purpose": "The found-key notice for a known value in a file (FIX 2780): a file's key custody already holds is marked…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -7215,7 +7245,17 @@
      "path": "src/batch/secret_scan/shapes.rs",
      "purpose": "Credential-shape detection shared by write, serve, and export",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/shapes/mnemonic_spans.rs",
+     "purpose": "Where [`super::mnemonic`] finds each recovery phrase in `text` (FIX 1099)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -7390,7 +7430,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -46171,8 +46211,8 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 9,
-      "re-export": 3
+      "crate-vis": 10,
+      "re-export": 4
      }
     },
     {
@@ -46472,6 +46512,21 @@
      "purpose": "Idempotency validators: turn/message existence, parent/actor binding, order collision axes",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TurnProgramWakeOutcome",
+      "UnpersistedWakeReason"
+     ],
+     "path": "src/memory/witness/wake_outcome.rs",
+     "purpose": "What a landed turn's program wake came to (DOOR-141, FIX 9970): the accepted turn's receipt says it, and a…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 2
      }
     },
     {
@@ -59055,13 +59110,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/known_values/forms.rs",
      "purpose": "A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 12
      }
     },
     {
@@ -64573,6 +64628,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/active_write_txn.rs",
+     "purpose": "The calling thread's open write-transaction depth: a guard raises it while a vault write runs its closure…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/archive_scratch.rs",
      "purpose": "FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in",
      "surface": {
@@ -65246,7 +65311,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 25,
       "struct": 4
      }
     },
@@ -65856,9 +65921,20 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "mod": 1,
       "re-export": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/notification_updates.rs",
+     "purpose": "The vault's one committed-notification signal (FIX 3084)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -73641,7 +73717,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault/transactions.rs",
@@ -73697,6 +73773,16 @@
      "purpose": "A host's telemetry rows put only where none rests (FIX 10300, 9392): a wire window's first call-volume…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/transactions/write_door.rs",
+     "purpose": "The vault's classed write door: one logical write in the single writer's group commit, and the work its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -80448,7 +80534,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 147,
+     "files": 151,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81218,7 +81304,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 289,
+     "files": 290,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81673,7 +81759,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 172,
+     "files": 174,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81813,7 +81899,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81904,9 +81990,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 117,
+   "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5457,
+   "source_files": 5465,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91833,7 +91919,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LocalFileKeystore"
@@ -91913,7 +91999,7 @@
     "file": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Unix (not Apple): one 0600 file per slot in a 0700 directory of its own"
     },
@@ -94122,6 +94208,7 @@
       "NapiStructuralPutInput",
       "NapiTemporalHint",
       "NapiTextIndexField",
+      "NapiTurnProgramWakeOutcome",
       "NapiWitnessMessage",
       "NapiWitnessReceipt",
       "NapiWitnessTurn"
@@ -94130,7 +94217,7 @@
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
       "crate-vis": 2,
-      "struct": 60
+      "struct": 61
      }
     },
     {
@@ -103079,7 +103166,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/vault_key_routes.rs",
@@ -107725,6 +107812,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/connection/refresh_loop.rs",
+     "purpose": "The hub's refresh loop: one task per hub, driving every kept session's refresh on a short tick and, at once…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -108053,7 +108150,7 @@
      "path": "src/livequery/subscriptions/mod.rs",
      "purpose": "Coarse derivation, retained rings and cumulative cursor acknowledgements",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -110998,7 +111095,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -111048,7 +111145,7 @@
      "path": "src/owner/backup/custody/anchor_transport.rs",
      "purpose": "A vault VM's way to its custody anchor door (FIX 6517): the guest has no network, so its bootstrap serves a…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -111068,7 +111165,7 @@
      "path": "src/owner/backup/handoff.rs",
      "purpose": "The prune pin (LC backup shipper rows, Engine 10-20)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -113717,7 +113814,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -113915,7 +114012,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1382,
+   "source_files": 1383,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -114056,6 +114153,8 @@
       "StructuralPutInput",
       "TemporalHint",
       "TextIndexField",
+      "TurnProgramWakeOutcome",
+      "UnpersistedWakeReason",
       "WireJson",
       "WitnessAuthor",
       "WitnessMessage",
@@ -114065,7 +114164,7 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 11,
+      "enum": 13,
       "struct": 54
      }
     },
@@ -118305,6 +118404,8 @@
       "WireRetrievalQuality",
       "WireThresholds",
       "WireThresholdsReceipt",
+      "WireTurnProgramWakeOutcome",
+      "WireUnpersistedWakeReason",
       "WireWitnessAuthor",
       "WireWitnessMessage",
       "WireWitnessReceipt",
@@ -118367,7 +118468,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1040,
+      "enum": 1042,
       "struct": 3210
      }
     },
