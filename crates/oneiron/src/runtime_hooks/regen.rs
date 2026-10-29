@@ -137,7 +137,9 @@ impl HookGoldenFingerprint {
                 } if outcome.as_str() == "failed" => {
                     fingerprint.execution_failed.insert(
                         run.clone(),
-                        reason.clone().unwrap_or_else(|| "the body failed".to_owned()),
+                        reason
+                            .clone()
+                            .unwrap_or_else(|| "the body failed".to_owned()),
                     );
                 }
                 HookReplayResult::Ran {
@@ -198,12 +200,12 @@ impl HookGoldenDiff {
         let changed: Vec<String> = runs
             .iter()
             .copied()
-            .filter(|run| {
-                match (last_good.cases.get(*run), candidate.cases.get(*run)) {
+            .filter(
+                |run| match (last_good.cases.get(*run), candidate.cases.get(*run)) {
                     (Some(before), Some(after)) => before != after,
                     _ => false,
-                }
-            })
+                },
+            )
             .cloned()
             .collect();
         let execution_failed: Vec<String> = runs
@@ -225,8 +227,7 @@ impl HookGoldenDiff {
             .iter()
             .copied()
             .filter(|run| {
-                last_good.missing_history.contains(*run)
-                    || candidate.missing_history.contains(*run)
+                last_good.missing_history.contains(*run) || candidate.missing_history.contains(*run)
             })
             .cloned()
             .collect();

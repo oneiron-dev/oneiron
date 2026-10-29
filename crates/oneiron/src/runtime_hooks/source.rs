@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::ports::{ChangeLogStore, ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::vault::RevisionRef;
 use crate::side_table::{self, Named, SideTable};
+use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
 
 // The claim changelog, read through `ChangeLogStoreRead`: the mutation-audit
@@ -455,7 +455,10 @@ fn settlements_after(
         batch.through = Some(position);
         let revision = match settled.body_hash.as_ref() {
             Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
-                vault, &rtxn, &settled.proposal, body_hash,
+                vault,
+                &rtxn,
+                &settled.proposal,
+                body_hash,
             )?,
             None => None,
         };

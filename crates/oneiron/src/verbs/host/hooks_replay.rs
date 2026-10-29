@@ -127,9 +127,7 @@ impl From<crate::runtime_hooks::HookReplayEntry> for HookReplayRow {
                     from_memo,
                     reads_live,
                 },
-                HookReplayResult::Withheld { reason } => {
-                    HookReplayOutcome::Withheld { reason }
-                }
+                HookReplayResult::Withheld { reason } => HookReplayOutcome::Withheld { reason },
                 HookReplayResult::MissingHistory { reason } => {
                     HookReplayOutcome::MissingHistory { reason }
                 }
