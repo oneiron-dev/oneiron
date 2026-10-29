@@ -214,8 +214,11 @@ impl EngineNativeExecutor<'_> {
                 &wire_prompt.stamp.resolved_fingerprint,
             );
             let response = {
+                let sources = self.step_source_rows(config, &record);
                 let _generating = self.gated_write.activity_generating();
-                self.backend.generate(request, self.lease).await
+                self.backend
+                    .generate_sourced(request, self.lease, sources)
+                    .await
             }?;
             let execution_text = self.post_turn_hooks(turn, &response)?;
             // Only the post-hook execution view is healed below. The raw
