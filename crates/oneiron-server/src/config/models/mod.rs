@@ -276,10 +276,10 @@ impl Default for BrokerConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerSettings {
     pub enabled: bool,
-    /// A sitting with no activity for this long ends, and its turns dream.
-    pub idle_floor_secs: u64,
-    /// Hard ceiling on one session's life, independent of activity.
-    pub session_ceiling_secs: u64,
+    /// The host's idle floor, narrowing the vault's (FIX 8600); `None` keeps its row.
+    pub idle_floor_secs: Option<u64>,
+    /// The host's hard session ceiling, narrowing the vault's; `None` keeps its row.
+    pub session_ceiling_secs: Option<u64>,
     /// Budget units each wake pass may spend.
     pub pass_budget_units: u64,
     /// The instruction the Dreamer writes declared scope summaries with.
@@ -379,7 +379,6 @@ impl Default for CodeCheckSettings {
     }
 }
 
-const DEFAULT_SESSION_CEILING_SECS: u64 = 12 * 60 * 60;
 const DEFAULT_PASS_BUDGET_UNITS: u64 = 400_000;
 const DEFAULT_TURN_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
@@ -421,14 +420,8 @@ impl ModelsFile {
         let aliases = resolve_aliases(self.aliases, &providers, &roles)?;
         let dreamer = DreamerSettings {
             enabled: self.dreamer.enabled.unwrap_or(true),
-            idle_floor_secs: self
-                .dreamer
-                .idle_floor_secs
-                .unwrap_or(oneiron_driver::DEFAULT_SESSION_IDLE_FLOOR_SECS),
-            session_ceiling_secs: self
-                .dreamer
-                .session_ceiling_secs
-                .unwrap_or(DEFAULT_SESSION_CEILING_SECS),
+            idle_floor_secs: self.dreamer.idle_floor_secs,
+            session_ceiling_secs: self.dreamer.session_ceiling_secs,
             pass_budget_units: self
                 .dreamer
                 .pass_budget_units
@@ -470,7 +463,13 @@ impl ModelsFile {
                 .policy()
                 .map_err(|error| anyhow::anyhow!("models.dreamer.runner_seats: {error}"))?;
         }
-        if dreamer.idle_floor_secs == 0 || dreamer.session_ceiling_secs <= dreamer.idle_floor_secs {
+        let (idle, ceiling) = (dreamer.idle_floor_secs, dreamer.session_ceiling_secs);
+        if idle == Some(0)
+            || ceiling == Some(0)
+            || idle
+                .zip(ceiling)
+                .is_some_and(|(idle, ceiling)| ceiling <= idle)
+        {
             anyhow::bail!(
                 "models.dreamer: idle_floor_secs must be > 0 and session_ceiling_secs must exceed it"
             );
