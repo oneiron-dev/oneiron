@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use crate::runtime_hooks::outcome::HookOutcome;
 use crate::runtime_hooks::runner::{Verdict, bounded, judge};
-use crate::runtime_hooks::store::{HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey};
+use crate::runtime_hooks::store::{
+    HookDependency, HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey,
+};
 use crate::runtime_hooks::{
     HookBodyUsage, HookBudgetOverrun, HookPreparation, HookRunContext, apply, grant, read,
 };
@@ -173,6 +175,16 @@ impl<'c> Chain<'c> {
                     _ => None,
                 };
                 let intent = HookIntent {
+                    dependencies: run
+                        .dependencies
+                        .iter()
+                        .chain(run.reads.iter().flat_map(|pin| pin.rows.iter().map(|row| &row.id)))
+                        .map(|id| HookDependency {
+                            id: *id,
+                            revision: None,
+                            body_hash: None,
+                        })
+                        .collect(),
                     binding: id,
                     author: binding.author_id(),
                     outcome_json: verdict.outcome_json.clone().unwrap_or_default(),

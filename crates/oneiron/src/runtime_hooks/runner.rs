@@ -515,7 +515,7 @@ impl Pass<'_> {
         let vault = self.vault;
         let at = vault.store.clock.now_recorded_at();
         let key = run.key;
-        let queued = verdict.outcome.as_ref().is_some_and(HookOutcome::is_queued);
+        let mut queued = verdict.outcome.as_ref().is_some_and(HookOutcome::is_queued);
         let proposal = match &verdict.outcome {
             Some(HookOutcome::Propose { .. }) => Some(apply::proposal_id(&key)?),
             _ => None,
@@ -541,11 +541,26 @@ impl Pass<'_> {
             entity: run.entry.entity,
             position: run.entry.position.hex(),
         };
-        let memo = HookRunRecord {
+        let mut memo = HookRunRecord {
             committed_at: at.saturating_mul(1_000),
             ..memo
         };
         let check = vault.with_write_txn_grouped(|txn| {
+            // A body that ran across a permanent erase keeps its content-free
+            // run identity, never the erased bytes or a pending effect.
+            let erased = store::dependencies_erased_in_txn(
+                vault,
+                txn,
+                &memo.derivation.dependencies,
+            )?;
+            if erased {
+                store::scrub_memo_payload(&mut memo);
+                queued = false;
+                if let Some(mut intent) = store::INTENTS.get(&vault.store, txn, &key)? {
+                    store::scrub_intent_payload(&mut intent, at);
+                    store::INTENTS.put(vault, txn, &key, &intent)?;
+                }
+            }
             let parent = lineage::chain_of(vault, txn, &run.entry.entity)?;
             let (chain, check) = lineage::extend(&parent, link);
             if let Some(reason) = check {
@@ -558,15 +573,18 @@ impl Pass<'_> {
                 };
                 lineage::raise_check_in_txn(vault, txn, &key, &raised)?;
             }
-            if let Some((id, added)) = &added {
-                block::put_block_in_txn(vault, txn, *id, added)?;
-                lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
-            }
-            if let Some(id) = proposal {
-                lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
+            if !erased {
+                if let Some((id, added)) = &added {
+                    block::put_block_in_txn(vault, txn, *id, added)?;
+                    lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
+                }
+                if let Some(id) = proposal {
+                    lineage::put_in_txn(vault, txn, id.as_bytes(), &chain)?;
+                }
             }
             if queued {
                 let intent = HookIntent {
+                    dependencies: memo.derivation.dependencies.clone(),
                     binding: run.binding_id,
                     author: run.binding.author_id(),
                     outcome_json: verdict.outcome_json.clone().unwrap_or_default(),
@@ -591,7 +609,10 @@ impl Pass<'_> {
                 memo.committed_at,
                 HookRunRef::Fact(key),
             )?;
-            let hook_receipt = receipt(run, verdict, check, rows_read, duration_ms, now);
+            let mut hook_receipt = receipt(run, verdict, check, rows_read, duration_ms, now);
+            if erased {
+                store::scrub_receipt_payload(&mut hook_receipt);
+            }
             store::RECEIPTS.put(vault, txn, &key, &hook_receipt)?;
             store::advance_cursor_in_txn(vault, txn, run.binding_id, run.entry.position, at)?;
             Ok(check)

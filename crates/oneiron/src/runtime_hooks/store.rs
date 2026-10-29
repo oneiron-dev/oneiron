@@ -2,6 +2,8 @@
 //! Hook receipts and the run index (ARCH-0080 §4 Delivery, Crash-safe
 //! outcomes; §6 receipt; §8 golden set).
 
+mod erase;
+
 use serde::{Deserialize, Serialize};
 
 use crate::receipt::{ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
@@ -15,6 +17,11 @@ use super::grant::HookGrant;
 use super::lineage::LineageLink;
 use super::source::{
     ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
+};
+
+pub(crate) use erase::scrub_hook_source_in_txn;
+pub(super) use erase::{
+    dependencies_erased_in_txn, scrub_intent_payload, scrub_memo_payload, scrub_receipt_payload,
 };
 
 /// A run's identity: BLAKE3 over its derivation envelope and its position.
@@ -297,6 +304,9 @@ pub(super) struct HookRunDerivation {
     pub(super) hook_version: String,
     pub(super) selector_hash: String,
     pub(super) grant_hash: String,
+    /// Every verdict evidence id, including evidence whose text pin did not fit.
+    #[serde(with = "crate::serialize::entity_ref::sequence")]
+    pub(super) verdict_evidence: Vec<EntityId>,
     /// The runtime's own stable identity, separate from source preparation.
     pub(super) runtime_identity: Option<String>,
     pub(super) dependencies: Vec<HookDependency>,
@@ -309,7 +319,7 @@ impl HookRunDerivation {
         grant: &HookGrant,
         entry: &FactEntry,
         reads: &[HookReadPin],
-        verdicts: &[HookVerdictPin],
+        verdict_evidence: &[EntityId],
         runtime_identity: Option<String>,
     ) -> Result<Self> {
         let selector = serde_json::to_vec(&binding.selector)
@@ -329,16 +339,10 @@ impl HookRunDerivation {
                 body_hash: Some(row.body_hash),
             })
         }));
-        dependencies.extend(verdicts.iter().flat_map(|pin| {
-            pin.evidence
-                .as_deref()
-                .unwrap_or_default()
-                .iter()
-                .map(|id| HookDependency {
-                    id: *id,
-                    revision: None,
-                    body_hash: None,
-                })
+        dependencies.extend(verdict_evidence.iter().map(|id| HookDependency {
+            id: *id,
+            revision: None,
+            body_hash: None,
         }));
         dependencies.sort();
         dependencies.dedup();
@@ -350,6 +354,7 @@ impl HookRunDerivation {
             hook_version: binding.hook_version.clone(),
             selector_hash: params.finalize().to_hex().to_string(),
             grant_hash: grant.digest(),
+            verdict_evidence: verdict_evidence.to_vec(),
             runtime_identity,
             dependencies,
         })
@@ -372,6 +377,7 @@ struct HookDerivationMaterial<'a> {
     reads: &'a [HookReadPin],
     verdicts: &'a [HookVerdictPin],
     verdicts_complete: bool,
+    verdict_evidence: &'a [EntityId],
     verdict_calls: &'a [HookSettledCallRef],
     preparation: Option<&'a HookPreparation>,
     hook_version: &'a str,
@@ -398,6 +404,7 @@ pub(super) fn finalize_derivation(memo: &mut HookRunRecord) -> Result<()> {
         reads: &memo.reads,
         verdicts: &memo.verdicts,
         verdicts_complete: memo.verdicts_complete,
+        verdict_evidence: &memo.derivation.verdict_evidence,
         verdict_calls: &memo.verdict_calls,
         preparation: memo.preparation.as_ref(),
         hook_version: &memo.derivation.hook_version,
@@ -510,6 +517,8 @@ pub(super) enum HookIntentState {
 /// Queued work a run saved before its cursor moved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HookIntent {
+    /// Source bodies whose erasure retires this intent's saved payload.
+    pub(super) dependencies: Vec<HookDependency>,
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) binding: EntityId,
     /// The hook's author: the outcome runs as this actor.
