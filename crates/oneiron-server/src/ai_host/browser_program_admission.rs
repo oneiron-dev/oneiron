@@ -23,8 +23,8 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
 };
 use oneiron::browser_library::{
-    PROGRAM_ADMISSION_KIND, ProgramAdmissionJob, ProgramAdmissionOutcome, admission_readiness,
-    admission_sources, program_admission_job_id, record_program_admission,
+    PROGRAM_ADMISSION_KIND, ProgramAdmissionJob, ProgramAdmissionOutcome, admission_sources,
+    program_admission_job_id, record_program_admission, record_undecodable_program_admission,
 };
 use tokio::sync::broadcast;
 
@@ -133,7 +133,10 @@ fn run(
     runtime: &tokio::runtime::Handle,
     attempt: &AttemptRecord,
 ) -> Result<(), String> {
-    let job = ProgramAdmissionJob::decode(attempt).map_err(|error| error.to_string())?;
+    let job = match ProgramAdmissionJob::decode(attempt) {
+        Ok(job) => job,
+        Err(error) => return run_undecodable(server, attempt, error.to_string()),
+    };
     let job_id = program_admission_job_id(attempt).map_err(|error| error.to_string())?;
     let outcome = if attempt.attempt_count > 1 {
         ProgramAdmissionOutcome::Interrupted { filed: None }
@@ -150,8 +153,47 @@ fn run(
     Ok(())
 }
 
+/// Records a job whose payload does not decode and fails its attempt
+/// (FIX 10716): a receipt with the undecodable outcome, and its sources'
+/// kept bindings dropped. A job id that itself fails keeps today's
+/// fail-only path: no receipt key exists.
+fn run_undecodable(
+    server: &Arc<SyncServer>,
+    attempt: &AttemptRecord,
+    reason: String,
+) -> Result<(), String> {
+    let job_id = program_admission_job_id(attempt).map_err(|error| error.to_string())?;
+    let sources = undecodable_sources(attempt);
+    let now = server.vault.now_recorded_at();
+    let receipt = record_undecodable_program_admission(&server.vault, job_id, &sources, now)
+        .map_err(|error| error.to_string())?;
+    tracing::info!(job = %job_id.to_hex(), outcome = ?receipt.outcome, "browser program admission ended");
+    Err(reason)
+}
+
+/// The source evidence ids a payload that does not decode still names
+/// (FIX 10716): `source_evidence` hex ids only; anything else is unread.
+fn undecodable_sources(attempt: &AttemptRecord) -> Vec<oneiron::EntityId> {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&attempt.payload) else {
+        return Vec::new();
+    };
+    let Some(list) = value
+        .get("source_evidence")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|id| {
+            id.as_str()
+                .and_then(|hex| oneiron::EntityId::from_hex(hex).ok())
+        })
+        .collect()
+}
+
 /// What job `job` comes to: its sources and their caller as they stand
-/// now, what its proposal lacks, then its run as that caller.
+/// now, then its run as that caller, which judges the proposal's
+/// readiness once the caller stands.
 fn job_outcome(
     server: &Arc<SyncServer>,
     runtime: &tokio::runtime::Handle,
@@ -169,10 +211,15 @@ fn job_outcome(
             };
         }
     };
-    if let Some(lacking) = admission_readiness(job, &sources.evidence) {
-        return lacking;
-    }
-    RunGuests::admit_program(server, runtime, attempt, job_id, job, &sources.caller)
+    RunGuests::admit_program(
+        server,
+        runtime,
+        attempt,
+        job_id,
+        job,
+        &sources.caller,
+        &sources.evidence,
+    )
 }
 
 /// Completes or fails the attempt; either is terminal.

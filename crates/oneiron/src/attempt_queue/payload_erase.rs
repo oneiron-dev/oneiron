@@ -38,6 +38,7 @@ use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, AGENT_DISPATCH_INPUT_KEYS, agent_dispatch_actor,
     decode_agent_dispatch_input, record_dispatch_input,
 };
+use crate::browser_library::{PROGRAM_ADMISSION_KIND, admission_payload_actor};
 use crate::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt};
 use crate::dispatch_byoa::{
     BYOA_ATTEMPT_KIND, ByoaAttemptPayload, ByoaConnectorSpec, RunnerTaskSource, StagedInputPin,
@@ -217,10 +218,12 @@ pub(crate) fn erase_attempt_payload_actor_in_txn(
 /// without its instructions, briefing and ask text, every one whose asker is
 /// among them, or whose planned intent an asker's erase took, without its
 /// ask and briefing (FIX 9181), and every BYOA copy of a TASK
-/// among them without its task (FIX 7502), in the erase's transaction: one
-/// pass over the whole ledger, every state and retry generation, and an
+/// among them without its task (FIX 7502), in the erase's transaction,
+/// walking the whole ledger, every state and retry generation, and an
 /// archived row's marker follows its row when it archived it as it stood,
-/// as does its run's snapshot. A Dreamer row that does not decode names no
+/// as does its run's snapshot. A second walk empties whole every
+/// `browser.program.admit` payload captured under one of them (FIX 10718).
+/// A Dreamer row that does not decode names no
 /// owner and stays; a matching row that cannot be rewritten, or a storage
 /// error, fails the erase. Only an id stored as AGENT_DEF, or a missing one,
 /// is a dispatch target; any erased id may be a BYOA row's task.
@@ -291,6 +294,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
             rewrites.push((raw.into_owned(), record));
         }
     }
+    erase_program_admission_payloads_in_txn(store, txn, actors, &mut rewrites)?;
     let jobs = byoa.erase_copies(store, txn, &mut rewrites)?;
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
@@ -314,6 +318,44 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     }
     // Each rewritten row's run snapshot moves with its mark (FIX 7517).
     crate::vault_cleanup::erase_attempt_references_in_txn(store, txn, &rewritten)
+}
+
+/// Empties whole every `browser.program.admit` payload captured under one
+/// of `actors` (FIX 10718): the payload holds the source scope's actor
+/// and the proposal's literal args, so an erased actor's goes whole, as
+/// an erased task's undecodable payload does (FIX 5736). Each emptied row
+/// joins `rewrites`; a payload that does not decode names no actor and
+/// stays. The emptied job decode-fails into the undecodable receipt path
+/// (FIX 10716).
+///
+/// # Errors
+///
+/// Storage errors.
+fn erase_program_admission_payloads_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actors: &BTreeSet<EntityId>,
+    rewrites: &mut Vec<(Vec<u8>, AttemptRecord)>,
+) -> Result<()> {
+    for row in store.attempt_records.iter(txn)? {
+        let (key, raw) = row?;
+        let Ok(id) = AttemptId::from_bytes(&key) else {
+            continue;
+        };
+        let Ok(mut record) = decode_record(&raw, id) else {
+            continue;
+        };
+        if record.kind != PROGRAM_ADMISSION_KIND {
+            continue;
+        }
+        let owned =
+            admission_payload_actor(&record.payload).is_some_and(|actor| actors.contains(&actor));
+        if owned && !record.payload.is_empty() {
+            record.payload.clear();
+            rewrites.push((raw.into_owned(), record));
+        }
+    }
+    Ok(())
 }
 
 /// The BYOA rows the pass's cursor kept: each row of an erased task, and

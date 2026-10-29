@@ -301,6 +301,39 @@ impl Vault {
         }
         Ok(erased)
     }
+
+    /// Hard-erases every run-bound record every run's seat left behind, as
+    /// the host starts: no run guest outlives a restart, so a host that
+    /// stopped mid-run leaves its `browser-run/` and `desktop-run/` names
+    /// behind (FIX 8335). Each record and its sealed value, its short id
+    /// and its name, in one transaction, each fenced and every key its id
+    /// names staged to retire before its row goes, then retired after the
+    /// commit. The count erased.
+    ///
+    /// # Errors
+    /// A legal hold on a record; storage faults. Nothing is erased then.
+    pub fn erase_all_run_secrets(&self) -> Result<usize> {
+        let erased = self.with_write_txn(|wtxn| {
+            let mut erased = 0;
+            for seat in RUN_SEATS {
+                let prefix = format!("{}/", seat.word());
+                let held = NAME_INDEX.scan_from(&self.store, &*wtxn, prefix.as_bytes())?;
+                for (name, entry) in &held {
+                    self.fence_credential_in_txn(wtxn, &entry.id);
+                    crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
+                    // A run-bound name names its one record and is never
+                    // reclaimed: its high-water goes with it.
+                    NAME_INDEX.delete(&self.store, wtxn, name)?;
+                }
+                erased += held.len();
+            }
+            Ok(erased)
+        })?;
+        if erased > 0 {
+            self.finish_credential_retirements_after_commit();
+        }
+        Ok(erased)
+    }
 }
 
 /// What a run-bound Gate record says happened.
