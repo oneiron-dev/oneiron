@@ -62,6 +62,9 @@ pub(super) struct LlamaIdentityManifest {
     /// The target GGUF's bytes.
     #[serde(default)]
     model: Option<CacheDigest>,
+    /// The draft GGUF's bytes, when the launch runs a drafter.
+    #[serde(default)]
+    draft_weights_digest: Option<String>,
     /// The target's typed tokenizer metadata, chat templates aside.
     #[serde(default)]
     tokenizer: Option<CacheDigest>,
@@ -84,7 +87,16 @@ struct ManifestWire {
     backend: String,
     backend_epoch: CacheEpoch,
     configured_wire_id: String,
+    #[serde(default)]
+    draft: Option<ManifestDraft>,
     identity: LlamaIdentityManifest,
+}
+
+/// The launch's draft GGUF, as its manifest lists it.
+#[derive(Deserialize)]
+struct ManifestDraft {
+    #[serde(default)]
+    sha256: Option<String>,
 }
 
 /// The identity one answer's own alias names: the launch's epoch, and its
@@ -124,6 +136,7 @@ impl AnsweringIdentity {
         let manifest = self.manifest.as_deref().cloned().unwrap_or_default();
         CacheIdentity {
             model: manifest.model,
+            draft_weights_digest: manifest.draft_weights_digest,
             tokenizer: manifest.tokenizer,
             runtime: manifest.runtime,
             template: manifest.template,
@@ -226,9 +239,17 @@ fn verify(bytes: &[u8], alias: &LlamaAlias, target: &str) -> Option<LlamaIdentit
         return None;
     }
     let manifest: ManifestWire = serde_json::from_slice(bytes).ok()?;
-    (manifest.schema_version == SCHEMA_VERSION
-        && manifest.backend == BACKEND
-        && manifest.backend_epoch == alias.epoch
-        && manifest.configured_wire_id == target)
-        .then_some(manifest.identity)
+    if manifest.schema_version != SCHEMA_VERSION
+        || manifest.backend != BACKEND
+        || manifest.backend_epoch != alias.epoch
+        || manifest.configured_wire_id != target
+    {
+        return None;
+    }
+    let mut identity = manifest.identity;
+    identity.draft_weights_digest = manifest
+        .draft
+        .and_then(|draft| draft.sha256)
+        .filter(|digest| !digest.is_empty());
+    Some(identity)
 }
