@@ -184,8 +184,8 @@ pub(crate) fn queue_pad_tombstone_window(store: &Store, txn: &RwTxn<'_>, window:
 }
 
 /// The rows `ops` write: each put, and the source of each edge they write or
-/// remove, whose window carries the edge. A removal's source wakes the live
-/// mirror, which takes the removal from its durable marker (FIX 9599).
+/// remove, whose window carries the edge: an edge-only batch wakes the live
+/// mirror too (FIX 9599).
 pub(super) fn ops_written_rows(ops: &[BatchOp]) -> BTreeSet<EntityId> {
     ops.iter()
         .filter_map(|op| match op {
