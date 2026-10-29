@@ -78,7 +78,7 @@ pub(super) async fn rendered(
             media
                 .run_admitted(run, request, voices.as_ref(), replay)
                 .await
-        },
+        }
         None => {
             media
                 .run_replayed(request, voices.as_ref(), None, sources, None, replay)

@@ -552,7 +552,14 @@ pub(crate) fn answer_as_agent(
             sdk::validate_input(name, &input)?;
             HELD_IMAGE.sync_scope(held, || {
                 host_row(
-                    server, actor, &memory, verb, input, line, attempt, &mut evidence,
+                    server,
+                    actor,
+                    &memory,
+                    verb,
+                    input,
+                    line,
+                    attempt,
+                    &mut evidence,
                 )
             })
         })?

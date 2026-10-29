@@ -166,9 +166,7 @@ impl MediaRuntime {
         // A repeat under its step key answers the first's ticket, and
         // nothing is sent again (FIX 2245).
         let claimed = replay.is_some();
-        if claimed
-            && let Some(model) = self.claim_submit(&id, &request.model, true)
-        {
+        if claimed && let Some(model) = self.claim_submit(&id, &request.model, true) {
             return Ok(MediaTicket {
                 job: id,
                 model: model.to_string(),

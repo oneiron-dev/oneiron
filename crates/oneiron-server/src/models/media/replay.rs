@@ -185,10 +185,7 @@ impl MediaRuntime {
     /// The answer the call `key` knows keeps for its repeats, when one
     /// answers: the first's answer while it is fresh, or that an erase
     /// took it. None when nothing kept answers, or nothing is kept.
-    pub(super) fn replay_answer(
-        &self,
-        key: &MediaReplayKey,
-    ) -> Option<LlmResult<MediaResponse>> {
+    pub(super) fn replay_answer(&self, key: &MediaReplayKey) -> Option<LlmResult<MediaResponse>> {
         let store = self.store.as_ref()?;
         let id = format!("{REPLAY_TICKET}{}", key.memo_id());
         match store.get(&id) {
