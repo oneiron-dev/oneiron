@@ -12713,7 +12713,7 @@ impl AgentVerb {
                 "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."
             }
             Self::VaultAgentsGrantsMint => {
-                "The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant."
+                "The owner grants one named agent explicit verbs in his scope, with optional repo bounds, until revoked or expiry; each mint adds one. An explicit ai.text, ai.image, ai.speech, ai.transcribe, ai.embed or ai.video grants that door."
             }
             Self::VaultAgentsGrantsRevoke => {
                 "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."
@@ -13238,13 +13238,13 @@ impl AgentVerb {
                 "Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."
             }
             Self::AiOptions => {
-                "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
+                "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. An agent whose owner agent Grant names ai operations sees its granted rows."
             }
             Self::AiImage => {
-                "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."
+                "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. The owner calls it, or an agent whose Grant names ai.image, as his call."
             }
             Self::AiSpeech => {
-                "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."
+                "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. The owner calls it, or an agent whose Grant names ai.speech, as his call."
             }
             Self::VaultVoicesPacksPut => {
                 "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."
@@ -13265,18 +13265,20 @@ impl AgentVerb {
                 "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."
             }
             Self::AiTranscribe => {
-                "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."
+                "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. The owner calls it, or an agent whose Grant names ai.transcribe, as his call."
             }
             Self::AiEmbed => {
-                "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."
+                "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. The owner calls it, or an agent whose Grant names ai.embed, as his call."
             }
             Self::AiVideo => {
-                "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."
+                "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. The owner calls it, or an agent whose Grant names ai.video, as his call."
             }
             Self::AiVideoPoll => {
-                "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
+                "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. The owner polls every job; an agent whose owner agent Grant names ai.video polls only the jobs it asked for."
             }
-            Self::AiVideoCancel => "Stops a video job at its provider.",
+            Self::AiVideoCancel => {
+                "Stops a video job at its provider. The owner cancels any job; an agent whose owner agent Grant names ai.video cancels only the jobs it asked for."
+            }
             Self::AiAskImage => {
                 "One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt."
             }

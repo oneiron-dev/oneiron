@@ -36,7 +36,8 @@ pub(crate) struct CoreProposeResponse {
     responses((status=200,description="A new Proposed claim; no prior head closed.",body=CoreProposeResponse),
         (status=400,description="Invalid proposal.",body=ApiErrorEnvelope),
         (status=401,description="Authentication required.",body=ApiErrorEnvelope),
-        (status=403,description="core:propose or core:write required.",body=ApiErrorEnvelope)))]
+        (status=403,description="core:propose or core:write required.",body=ApiErrorEnvelope),
+        (status=409,description="The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.",body=ApiErrorEnvelope)))]
 pub(crate) async fn core_propose(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

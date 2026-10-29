@@ -1,6 +1,10 @@
 # Memory Wire typed errors
 
 Every SDK failure carries `code`, `message`, and nonempty `suggestions`.
+A refusal whose producer named stable reason codes also carries them, in that
+producer's order (FIX 7398): `reasonCodes` on a JS `MemoryError` and in an HTTP
+error body, `reason_codes` on a Python `MemoryError` and in an MCP error's
+`data.reason_codes`. Read them there, never out of `message`.
 Use the returned suggestions; do not parse message prose. No adapter swallows
 or downgrades the engine's refusal. Future remote codes pass through verbatim.
 
