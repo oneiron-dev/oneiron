@@ -396,7 +396,7 @@ pub(super) async fn run_code_mode_verb(
     let origin = run.origin.clone();
     // A media call spends on the run's own line, as its steps do (FIX 780).
     let line = media_line(server, tool.name, run.run_id);
-    let (output, ..) = crate::api::facade::host_doors::with_calling_origin(
+    let (output, ..) = crate::api::facade::host_doors::support::with_calling_origin(
         origin,
         crate::api::facade::host_doors::with_calling_line(
             line,

@@ -289,7 +289,7 @@ pub(super) fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), 
         // The attested owner carries no slip: its request's own owner
         // proof, as the export revalidates it in its snapshot.
         if auth.managed_owner().is_some() {
-            let owner = host_doors::owner_proof(auth, server, "vault.export")?;
+            let owner = host_doors::support::owner_proof(auth, server, "vault.export")?;
             server.vault.admit_authenticated_owner_export(&owner)?;
         }
         return Ok(());
