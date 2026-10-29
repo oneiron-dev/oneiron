@@ -345,8 +345,9 @@ impl AgentDispatcher<'_> {
 
     /// A guard a host runs `scope`'s model calls under: its limit is what the
     /// scope may still spend, and it suspends at that limit. Built only from
-    /// the existing guard API; record what it used with
-    /// [`Self::record_guard_spend`].
+    /// the existing guard API; a live lease books what it used in parts with
+    /// [`Self::record_guard_spend`], each look its part and the rest at the
+    /// try's end.
     pub fn guard_for_scope(&self, scope: &SpendScopeId) -> Result<BudgetGuard> {
         let txn = self.vault.store.env.read_txn()?;
         let booking = self.booking_in_txn(&txn, scope)?;
@@ -358,10 +359,12 @@ impl AgentDispatcher<'_> {
         ))
     }
 
-    /// Records what a guard from [`Self::guard_for_scope`] used, once, when
-    /// the guard is done. The spend already happened, so it is recorded whole:
-    /// the chain gives what it has, and any excess stays on `scope` past its
-    /// cap. The signal tells the host to wrap up or that the cap is reached.
+    /// Records what a guard from [`Self::guard_for_scope`] used (FIX 11459):
+    /// a live lease books each look's part through here, and the rest at the
+    /// try's end (`book_rest`). The spend already happened, so each part is
+    /// recorded whole: the chain gives what it has, and any excess stays on
+    /// `scope` past its cap. The signal tells the host to wrap up or that
+    /// the cap is reached.
     pub fn record_guard_spend(
         &self,
         scope: &SpendScopeId,

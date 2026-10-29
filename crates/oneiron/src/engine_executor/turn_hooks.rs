@@ -13,7 +13,9 @@ use super::driver::EngineNativeExecutor;
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::ExecutorStorage;
 use crate::runtime_hooks::verb::RoomHookCall;
-use crate::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
+use crate::runtime_hooks::{
+    HookTurnTarget, InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop,
+};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{ContentPart, LlmResponse};
 
@@ -55,9 +57,17 @@ impl EngineNativeExecutor<'_> {
             class: HookActorClass::System,
             scope: None,
             board_epoch: None,
+            turn: Some(HookTurnTarget {
+                run: config.run_id,
+                session: self.storage.session_ref().map(str::to_owned),
+                recipient: Some(self.gated_write.actor().entity_ref().to_hex()),
+                step: step_seq,
+                next: false,
+            }),
             domain: VerbDomain::Write,
-            // A host's own call reads as its actor.
-            reader: None,
+            // The run's verified credential-bound key, independent of the
+            // host's System write attribution (FIX 9841).
+            reader: Some(self.gated_write.host_turn_read_key()),
         };
         let check = |rewritten: &Value| host_args_kept(&args, rewritten);
         Ok(match &self.storage {
@@ -92,7 +102,7 @@ impl EngineNativeExecutor<'_> {
         &self,
         turn: TurnHooks,
         response: &LlmResponse,
-    ) -> EngineExecutorResult<()> {
+    ) -> EngineExecutorResult<String> {
         let text: String = response
             .message
             .content
@@ -103,22 +113,34 @@ impl EngineNativeExecutor<'_> {
             })
             .collect();
         let result = json!({
-            "text": text,
+            "text": text.as_str(),
             "finish_reason": response.finish_reason,
             "usage": response.usage,
         });
-        match (turn, &self.storage) {
+        let view = match (turn, &self.storage) {
             (TurnHooks::Vault(pre), ExecutorStorage::Canonical(vault)) => {
-                let _ = vault.post_verb_hooks(pre, result)?;
+                vault.post_verb_hooks(pre, result)?
             }
             (TurnHooks::Room(pre), ExecutorStorage::Session(binding)) => {
                 let session = &binding.session;
-                let _ = session.post_verb_hooks_in_room(&binding.route, pre, result, true)?;
+                let (view, _) =
+                    session.post_verb_hooks_in_room(&binding.route, pre, result, true)?;
+                view
             }
             // A turn's storage is its run's, which never changes mid-run.
-            (TurnHooks::Vault(_) | TurnHooks::Room(_), _) => {}
-        }
-        Ok(())
+            (TurnHooks::Vault(_) | TurnHooks::Room(_), _) => return Ok(text),
+        };
+        // A post-hook stop keeps today's original-response behavior. A
+        // successful view, including a null or empty redaction, is the only
+        // text the executor may heal and run (FIX 9840).
+        Ok(match view {
+            Ok(view) => view
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            Err(_) => text,
+        })
     }
 }
 
