@@ -1,6 +1,7 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
+mod checkpoint_payload;
 mod coop_delivery;
 mod coop_reply;
 mod coop_request;
@@ -45,7 +46,7 @@ pub use coop_reply::{
 };
 pub use coop_request::{
     COOP_DELETION_REQUEST_BODY_KEYS, COOP_DELETION_REQUEST_DOMAIN,
-    COOP_DELETION_REQUEST_SCHEMA_VERSION, CooperativeDeletionRequest, MAX_COOP_DELETION_WORLDS,
+    COOP_DELETION_REQUEST_SCHEMA_VERSION, CooperativeDeletionRequest, MAX_COOP_DELETION_PAGE_WORLDS,
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     decode_self_signed_cooperative_deletion_request, encode_cooperative_deletion_request_body,
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
