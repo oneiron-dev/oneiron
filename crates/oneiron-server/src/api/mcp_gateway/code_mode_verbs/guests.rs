@@ -709,29 +709,9 @@ impl RunGuests {
         verb: AgentVerb,
         server: &SyncServer,
     ) -> Result<(), AgentVerbRefusal> {
-        // The browser runs as its connector pack: no installed pack, no browser.
-        if server
-            .vault
-            .require_builtin_channel_pack("browser")
-            .is_err()
-        {
-            return Err(AgentVerbRefusal {
-                code: "browser_pack_not_installed".to_owned(),
-            });
-        }
         // A desktop row drives the run's desktop; every other row its browser.
         let desktop = verb.as_str().starts_with("self.desktop.");
-        // The browser guest runs only once its setup connection is checked.
-        if !desktop
-            && server
-                .vault
-                .require_pack_connection_verified("oneiron.browser", "browser-guest")
-                .is_err()
-        {
-            return Err(AgentVerbRefusal {
-                code: "browser_connection_unchecked".to_owned(),
-            });
-        }
+        Self::guest_admits(&server.vault, desktop)?;
         let run_id = if desktop {
             self.desktop.as_ref().map(|desktop| desktop.run_id)
         } else {

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4181 declarations.
+Census: 1162 facade rows, 4183 declarations.
 Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -21064,8 +21064,7 @@ class SessionManifest(TypedDict):
     generation: str
     fence_proof: NotRequired[SessionFenceProof | None]
     fence_unproven: NotRequired[bool]
-BrowserAnswerItem = dict[str, Any]
-BrowserAnswer = BrowserAnswerItem
+PressOutcome = Literal["delivered", "refused", "delivery_unknown"]
 class RowSplice(TypedDict):
     start: int
     delete_count: int
@@ -21260,6 +21259,14 @@ class VerbsObservation(TypedDict):
     site_skill_notes: NotRequired[list[SiteSkillError]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
+class PressAnswer(TypedDict):
+    wait: str
+    outcome: PressOutcome
+    reasons: NotRequired[list[str]]
+    step: NotRequired[ObservationPage | None]
+    receipt: NotRequired[EffectReceipt | None]
+BrowserAnswerItem = dict[str, Any]
+BrowserAnswer = BrowserAnswerItem
 BrowserObservationPage = BrowserAnswer
 class ObservationBase(TypedDict):
     scope: str

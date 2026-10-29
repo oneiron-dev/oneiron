@@ -59,11 +59,10 @@ pub(crate) trait SeatGuest: Send + Sized + 'static {
     /// Who has the guest now.
     fn takeover(&self) -> &Takeover;
 
-    /// Whether the guest's agent waits on its owner's answer about an act
-    /// the guest held (FIX 10423), as an open ask does; none for a guest
-    /// that holds none.
-    fn awaits_owner(&self) -> bool {
-        false
+    /// The code consent wait, by its id, an act the guest held is bound to
+    /// (FIX 10423); none for a guest that holds none.
+    fn press_wait(&self) -> Option<EntityId> {
+        None
     }
 
     /// Ends a takeover still asked or held as the guest goes away.
@@ -127,9 +126,8 @@ const REAP_TICK: Duration = Duration::from_secs(30);
 /// How long a parked run guest waits, with no door of its run bound and no
 /// act of the owner on it, before it ends (CALLS, open): 30 minutes while
 /// its agent has it, 24 hours while the agent's ask waits, the owner holds
-/// it, or an act it held waits on the owner's answer (`awaits_owner`, FIX
-/// 10423). The owner watching its frames is no act. A desktop and a browser
-/// wait alike.
+/// it, or the wait an act it held is bound to is still open (FIX 10423). The
+/// owner watching its frames is no act. A desktop and a browser wait alike.
 fn idle_limit(takeover: &Takeover, awaits_owner: bool) -> Duration {
     match takeover {
         Takeover::Agent if !awaits_owner => Duration::from_secs(30 * 60),
@@ -377,12 +375,21 @@ fn reap_loop<S: SeatGuest>(seats: &Weak<RunSeats<S>>) {
 /// to keep.
 fn idle_past<S: SeatGuest>(entry: &RunSeat<S>, now: Instant) -> bool {
     match RunSeats::<S>::peek(&entry.seat, |session| {
-        session.map(|s| idle_limit(s.takeover(), s.awaits_owner()))
+        session.map(|s| idle_limit(s.takeover(), press_wait_open(&entry.vault, s)))
     }) {
         None => false,
         Some(None) => true,
         Some(Some(limit)) => now.saturating_duration_since(entry.touched) >= limit,
     }
+}
+
+/// Whether the code consent wait an act `session` held is bound to is
+/// still open (FIX 10423): a denied, refused or settled one keeps no seat
+/// up. One whose row does not read keeps it up, as an open one does.
+fn press_wait_open<S: SeatGuest>(vault: &Vault, session: &S) -> bool {
+    session
+        .press_wait()
+        .is_some_and(|wait| vault.code_consent_browser_wait_open(wait).unwrap_or(true))
 }
 
 /// Ends a seat taken out of the registry: a takeover still asked or held

@@ -1,11 +1,13 @@
 //! The served host's answered pass over a held browser act (FIX 10423).
 //!
-//! The engine admits the act once: the answer's approve-once marker is
-//! spent beside the wait's admission, so a retried pass never runs it
-//! again. This host then runs that act on the run's own live browser, the
-//! seat its run's doors share, under one press armed for exactly it: the
-//! same act and input, resolved to the same row on the same page of the
-//! same guest. The press is a person's, per send, and pays no reviewed
+//! The vault's own admission of a guest verb is met again first (the
+//! browser's pack installed and its connection checked), as every guest
+//! call meets it. The engine then admits the act once: the answer's
+//! approve-once marker is spent beside the wait's admission, so a retried
+//! pass never runs it again. This host runs that act on the run's own live
+//! browser, the seat its run's doors share, under one press armed for
+//! exactly it: the same act and input, resolved to the same row in the same
+//! document of the same tab, on the same page of the same guest. The press is a person's, per send, and pays no reviewed
 //! batch. A row, page or guest that changed runs nothing: the press never
 //! moves to another target. What the act came to settles the wait, and its
 //! reply wakes the run with the act's own answer.
@@ -40,6 +42,11 @@ pub(super) fn resume_answered_browser(
     vault: &Vault,
     wait_id: EntityId,
 ) -> oneiron::Result<()> {
+    if let Err(refused) = crate::api::RunGuests::guest_admits(vault, false) {
+        let outcome = CodeConsentBrowserOutcome::Refused(vec![refused.code]);
+        vault.settle_browser_code_consent_wait(wait_id, outcome)?;
+        return Ok(());
+    }
     let Some(admitted) = vault.admit_browser_code_consent_wait(wait_id)? else {
         return Ok(());
     };
@@ -112,6 +119,8 @@ fn held_press(action: &CodeConsentBrowserAction) -> Option<HeldPress> {
         name: action.name.clone(),
         locator: action.locator.clone(),
         page: action.page.clone(),
+        tab: action.tab.clone(),
+        document: action.document.clone(),
         generation: action.session.clone(),
         need: match action.need.as_str() {
             "batch_spent" => PressNeed::BatchSpent,

@@ -3,22 +3,23 @@
 //!
 //! A classified act whose grant gives it no press is refused as before, and
 //! the session keeps what that act was: its verb and its own input, the row
-//! it resolved to, the page it began on, the guest it ran in, and why its
-//! grant gave no press. The host takes it after the call ([`take_held_press`])
-//! and may bind it to a consent wait.
+//! it resolved to, the page, tab and document it began on, the guest it ran
+//! in, and why its grant gave no press. The host takes it after the call
+//! ([`take_held_press`]) and may bind it to a consent wait.
 //!
 //! An owner's answer arms one press for that exact act ([`arm_press`]). The
 //! next press check takes it, whatever it meets: the same act, with the same
-//! input, resolved to the same row on the same page of the same guest, runs
-//! under that person's press, which pays no reviewed batch; any other act is
-//! refused as needing a press, so the press never moves to another target. A
-//! payment is a person's own act: no answer arms a press for it.
+//! input, resolved to the same row in the same document of the same tab, on
+//! the same page of the same guest, runs under that person's press, which
+//! pays no reviewed batch; any other act is refused as needing a press, so
+//! the press never moves to another target. A payment is a person's own act:
+//! no answer arms a press for it.
 //!
 //! [`take_held_press`]: BrowserSession::take_held_press
 //! [`arm_press`]: BrowserSession::arm_press
 
 use super::BrowserSession;
-use crate::{BrowserError, PressMode, Row, SendPolicy};
+use crate::{BrowserDriver, BrowserError, PressMode, Row, SendPolicy};
 use serde::{Deserialize, Serialize};
 
 /// Why a held act's grant gave it no press.
@@ -61,6 +62,12 @@ pub struct HeldPress {
     pub locator: String,
     /// The page the act began on.
     pub page: Option<String>,
+    /// The tab in front when the act began.
+    pub tab: String,
+    /// The documents the row's live handle was read from (its read's scope:
+    /// the tab, its frames' loaders and the main document's root); none for
+    /// a row no handle names.
+    pub document: Option<String>,
     /// The guest the act ran in, by its manifest's generation.
     pub generation: String,
     pub need: PressNeed,
@@ -73,8 +80,9 @@ pub(super) struct Holds {
     last: Option<HeldPress>,
     /// The one press an owner's answer armed, for its exact act.
     armed: Option<HeldPress>,
-    /// The host bound a held act to a wait its owner has not answered.
-    awaiting: bool,
+    /// The wait the host bound a held act to, by its id, until a press is
+    /// armed or the run calls again.
+    awaiting: Option<String>,
 }
 
 impl BrowserSession {
@@ -91,22 +99,23 @@ impl BrowserSession {
         if SendPolicy::person_only(&held.class) {
             return false;
         }
-        self.held.awaiting = false;
+        self.held.awaiting = None;
         self.held.armed = Some(held);
         true
     }
 
-    /// Records whether an act this session held waits on its owner's
-    /// answer: the host sets it once it bound the act to a wait, and clears
-    /// it when its run calls again. An armed press clears it too.
-    pub fn await_press_answer(&mut self, awaiting: bool) {
-        self.held.awaiting = awaiting;
+    /// Records the wait, by its id, an act this session held is bound to:
+    /// the host sets it once it bound the act, and clears it when its run
+    /// calls again. An armed press clears it too.
+    pub fn await_press_answer(&mut self, wait: Option<String>) {
+        self.held.awaiting = wait;
     }
 
-    /// Whether an act this session held waits on its owner's answer.
+    /// The wait an act this session held is bound to, by its id; whether
+    /// its owner still has to answer is the wait's own to say.
     #[must_use]
-    pub const fn awaits_press_answer(&self) -> bool {
-        self.held.awaiting
+    pub fn press_wait(&self) -> Option<&str> {
+        self.held.awaiting.as_deref()
     }
 
     /// Drops an armed press no press check took. `true` when one was armed.
@@ -136,6 +145,8 @@ impl BrowserSession {
                     && armed.name == row.name
                     && armed.locator == row.locator
                     && armed.page.as_deref() == page
+                    && armed.tab == self.driver.front_target()
+                    && armed.document == self.handle_info(&row.target).map(|info| info.scope)
                     && armed.generation == self.manifest.generation
                     && serde_json::to_value(operands).is_ok_and(|given| given == armed.operands)
             });
@@ -172,6 +183,8 @@ impl BrowserSession {
                 name: row.name.clone(),
                 locator: row.locator.clone(),
                 page: page.map(str::to_owned),
+                tab: self.driver.front_target().to_owned(),
+                document: self.handle_info(&row.target).map(|info| info.scope),
                 generation: self.manifest.generation.clone(),
                 need,
             });

@@ -27,7 +27,7 @@
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use oneiron::code_run::AgentVerbRefusalWords;
+use oneiron::code_run::{AgentVerbRefusal, AgentVerbRefusalWords};
 use oneiron::code_sandbox::egress::EgressConfig;
 use oneiron::{EntityId, Vault};
 use oneiron_browser::{
@@ -135,6 +135,32 @@ pub(super) fn start_run_browser(
 fn guest_argv(engine: BrowserEngine) -> Result<[OsString; 3], BrowserError> {
     let egress = EgressConfig::from_env().map_err(|e| BrowserError::Unavailable(e.to_string()))?;
     Ok(engine.guest_argv(egress.max_response_bytes))
+}
+
+impl super::RunGuests {
+    /// The vault's own admission of a run guest's verb: the browser's
+    /// connector pack installed, and for a browser verb its setup connection
+    /// checked. Every guest call meets it, and so does the act a held press
+    /// runs once its owner answered (FIX 10423).
+    pub(crate) fn guest_admits(vault: &Vault, desktop: bool) -> Result<(), AgentVerbRefusal> {
+        // The browser runs as its connector pack: no installed pack, no browser.
+        if vault.require_builtin_channel_pack("browser").is_err() {
+            return Err(AgentVerbRefusal {
+                code: "browser_pack_not_installed".to_owned(),
+            });
+        }
+        // The browser guest runs only once its setup connection is checked.
+        if !desktop
+            && vault
+                .require_pack_connection_verified("oneiron.browser", "browser-guest")
+                .is_err()
+        {
+            return Err(AgentVerbRefusal {
+                code: "browser_connection_unchecked".to_owned(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// The verb an engine's refusal names as the way out, as its bare

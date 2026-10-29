@@ -284,12 +284,13 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
                 &action.role,
                 &action.name,
                 &action.locator,
+                &action.tab,
                 &action.session,
                 &action.need,
             ] {
                 field(text.as_bytes());
             }
-            for text in [&action.page, &action.stopped] {
+            for text in [&action.page, &action.document, &action.stopped] {
                 field(&[u8::from(text.is_some())]);
                 field(text.as_deref().unwrap_or_default().as_bytes());
             }

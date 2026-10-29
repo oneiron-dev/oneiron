@@ -38,6 +38,7 @@ mod mcp;
 mod observation;
 #[cfg(feature = "driver")]
 mod outline;
+mod press_answer;
 mod programs;
 mod progress;
 mod receipt_evidence;
@@ -89,6 +90,7 @@ pub use observation::{
 };
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
+pub use press_answer::{PressAnswer, PressOutcome};
 pub use progress::NO_PROGRESS_STEPS;
 use progress::Progress;
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};

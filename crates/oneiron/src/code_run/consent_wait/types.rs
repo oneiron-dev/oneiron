@@ -174,10 +174,11 @@ pub(crate) struct CodeConsentConnectorCall {
 }
 
 /// The browser act a press held, as its run's session froze it (FIX
-/// 10423): the act and its own input, the row it resolved to, the page and
-/// guest it ran in, and why its grant gave no press. A held batch step keeps
-/// the batch's answer at its stop, so its completed steps and receipts reach
-/// the run with the step's own result.
+/// 10423): the act and its own input, the row it resolved to, the page, tab,
+/// document and guest it ran in, and why its grant gave no press. It keeps
+/// the call's answer as the held act found it, which the run resumes with
+/// when the act does not run: a batch's answer at its stop, whose completed
+/// steps and receipts stand, or the page a lone act began on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeConsentBrowserAction {
     /// The verb row of the held act: `self.browser.click` or
@@ -194,12 +195,18 @@ pub struct CodeConsentBrowserAction {
     pub locator: String,
     /// The page the act began on.
     pub page: Option<String>,
+    /// The tab in front when the act began.
+    pub tab: String,
+    /// The documents the row's live handle was read from; none for a row no
+    /// handle names.
+    pub document: Option<String>,
     /// The browser guest the act ran in, by its manifest's generation.
     pub session: String,
     /// Why the grant gave no press: `per_send`, or `batch_spent` for a
     /// reviewed batch whose sends were spent.
     pub need: String,
-    /// A held batch's answer at its stop, as JSON text; none for a lone act.
+    /// The call's answer as the held act found it, as JSON text: a batch's
+    /// answer at its stop, or the page a lone act began on.
     pub stopped: Option<String>,
 }
 

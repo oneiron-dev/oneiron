@@ -3,10 +3,10 @@
 //! A code-mode browser click, click at a point or batch whose grant gave one
 //! act no press (a press per send, or a reviewed batch whose sends are
 //! spent) binds that exact act to a wait minted at the call's own site: the
-//! act and its own input, the row it resolved to, and the page and guest it
-//! ran in. The wait asks the vault's owner, and the run parks on it. A
-//! payment, which only a person's press in the browser runs, binds none: it
-//! stays the person's, as before.
+//! act and its own input, the row it resolved to, and the page, tab,
+//! document and guest it ran in. The wait asks the vault's owner, and the
+//! run parks on it. A payment, which only a person's press in the browser
+//! runs, binds none: it stays the person's, as before.
 //!
 //! An approving answer is driven by the served host
 //! ([`super::CodeConsentEffectHost`]). It admits the act once, in the writer
@@ -17,8 +17,14 @@
 //! person's, per send: it pays no reviewed batch's send. A pass admitted
 //! before and never settled may have run: it settles as of unknown delivery
 //! and runs nothing.
+//!
+//! The run resumes with the answer its call's verb declares, with `press`
+//! (the wait, what the answer came to and why) beside it: the act's own
+//! answer once it ran, else the call's answer as the held act found it (the
+//! page a lone act began on, or a batch's answer at its stop, its held
+//! step's own answer as `press.step` once it ran).
 
-use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::Vault;
 use crate::consent::{ComposedEffect, EffectDigest, EffectFacts, UndoFidelity};
@@ -82,24 +88,6 @@ pub struct AdmittedBrowserAct {
     /// The run whose browser the act runs in.
     pub run_id: EntityId,
     pub action: CodeConsentBrowserAction,
-}
-
-/// What a held browser act's parked run is given (FIX 10423): its call's
-/// verb and the held act, what the act came to, the act's own answer when
-/// it ran, the reasons when it did not, and a held batch's answer at its
-/// stop, whose completed steps and receipts stand and whose steps after the
-/// held one the run may send again.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct CodeConsentBrowserReply {
-    pub(crate) verb: String,
-    pub(crate) act: String,
-    pub(crate) outcome: CodeConsentSettleOutcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) answer: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) reasons: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) stopped: Option<serde_json::Value>,
 }
 
 impl Memory<'_> {
@@ -192,6 +180,22 @@ impl Vault {
         let row =
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
         Ok(row.binding.pending.browser_action().cloned())
+    }
+
+    /// Whether wait `wait_id` binds a held browser act its owner's answer
+    /// has not settled (FIX 10423): a host keeps the act's browser up while
+    /// it is open, and lets it go once it was answered, refused or settled.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn code_consent_browser_wait_open(&self, wait_id: EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(
+            read_code_consent_wait_in_txn(self, &txn, wait_id)?.is_some_and(|row| {
+                row.settlement.is_none() && row.binding.pending.browser_action().is_some()
+            }),
+        )
     }
 
     /// Admits wait `wait_id`'s held browser act for its host's answered
@@ -341,9 +345,11 @@ pub(super) fn refuse_browser_wait_in_txn(
     settle_browser_in_txn(vault, txn, row, CodeConsentBrowserOutcome::Refused(reasons))
 }
 
-/// Settles `row`'s held browser act with `outcome`, in the caller's writer:
-/// its reply names the call's verb, the act, what it came to, and a held
-/// batch's answer at its stop. A settled wait keeps its first settlement.
+/// Settles `row`'s held browser act with `outcome`, in the caller's writer.
+/// Its reply is the answer the call's verb declares, with `press` beside
+/// it: a lone act's own answer once it ran, else the call's answer as the
+/// held act found it, a batch's held step's own answer as `press.step`. A
+/// settled wait keeps its first settlement.
 fn settle_browser_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -360,32 +366,51 @@ fn settle_browser_in_txn(
         .ok_or(Error::InvariantViolation(
             "a browser outcome settles only a held browser act",
         ))?;
-    let (settled, answer, reasons) = match outcome {
+    let (settled, answer, receipt, reasons) = match outcome {
         CodeConsentBrowserOutcome::Delivered(answer) => (
             CodeConsentSettleOutcome::Delivered,
             Some(answer),
+            None,
             Vec::new(),
         ),
         CodeConsentBrowserOutcome::Refused(reasons) => {
-            (CodeConsentSettleOutcome::Refused, None, reasons)
+            (CodeConsentSettleOutcome::Refused, None, None, reasons)
         }
-        CodeConsentBrowserOutcome::DeliveryUnknown { reasons, receipt } => {
-            (CodeConsentSettleOutcome::DeliveryUnknown, receipt, reasons)
+        CodeConsentBrowserOutcome::DeliveryUnknown { reasons, receipt } => (
+            CodeConsentSettleOutcome::DeliveryUnknown,
+            None,
+            receipt,
+            reasons,
+        ),
+    };
+    let mut press = serde_json::Map::new();
+    press.insert("wait".into(), Value::from(row.binding.wait_id.to_hex()));
+    press.insert("outcome".into(), Value::from(settled.as_str()));
+    if !reasons.is_empty() {
+        press.insert("reasons".into(), json!(reasons));
+    }
+    if let Some(receipt) = receipt {
+        press.insert("receipt".into(), receipt);
+    }
+    let held: Option<Value> = action
+        .stopped
+        .as_deref()
+        .and_then(|stopped| serde_json::from_str(stopped).ok());
+    let lone = row.binding.verb_row == action.act;
+    let mut reply = match answer {
+        Some(answer) if lone => answer,
+        Some(answer) => {
+            press.insert("step".into(), answer);
+            held.unwrap_or_else(|| json!({}))
         }
+        None => held.unwrap_or_else(|| json!({})),
     };
-    let reply = CodeConsentBrowserReply {
-        verb: row.binding.verb_row.clone(),
-        act: action.act.clone(),
-        outcome: settled,
-        answer,
-        reasons: reasons.clone(),
-        stopped: action
-            .stopped
-            .as_deref()
-            .and_then(|stopped| serde_json::from_str(stopped).ok()),
-    };
-    let reply = serde_json::to_value(reply)
-        .map_err(|_| Error::InvalidConfig("a code consent reply is not JSON".to_owned()))?;
+    if !reply.is_object() {
+        reply = json!({});
+    }
+    if let Some(object) = reply.as_object_mut() {
+        object.insert("press".into(), Value::Object(press));
+    }
     settle_with_reply_in_txn(vault, txn, row, settled, reasons, &reply, None)
 }
 
