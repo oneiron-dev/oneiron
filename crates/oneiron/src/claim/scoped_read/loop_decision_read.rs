@@ -7,6 +7,7 @@
 //! it stands under, and the read returns what it admitted: it never fails
 //! a report and never widens one.
 
+use super::access_gate::HeldAuthority;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod context;
@@ -191,10 +192,13 @@ impl LoopReader {
 
 /// One read's admission state: the lane's policy and floor, resolved once,
 /// and the answers it already has.
-struct LoopRead {
+struct LoopRead<'v> {
     reader: LoopReader,
     policy: PolicyManifestResolution,
     filter: ResolvedRetrievalFilter,
+    /// One relationship authority for every row this read checks in its
+    /// txn, not one per row (FIX 11648).
+    held: HeldAuthority<'v>,
     /// Each actor row's floor answer; `None` did not answer.
     floor: BTreeMap<EntityId, Option<bool>>,
     /// The subject's projects, read once on first need.
@@ -224,7 +228,7 @@ fn answered<T>(check: Result<Option<T>>, what: &'static str) -> Option<Option<T>
     dead_code,
     reason = "L07-A's weave adapter (OF-499 A2) is its first caller"
 )]
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// Every loop decision `reader` may see, admitted and refused alike, in
     /// ledger order (OF-499 A2). The reader binds in `txn` as the live weave
     /// report binds it: a person or an agent to this lane's actor, an owner
@@ -284,7 +288,7 @@ impl ScopedRead<'_> {
     fn walk_loop_decisions_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        mut read: LoopRead,
+        mut read: LoopRead<'v>,
     ) -> Vec<ReadableLoopDecision> {
         let mut count = ScanCount::start(&self.vault.store, txn, EngineScan::GateDecisionRows, &[])
             .unwrap_or_else(|_| {
@@ -321,7 +325,7 @@ impl ScopedRead<'_> {
     /// Binds `reader` in `txn` and resolves this lane's policy and floor:
     /// `None` when the reader is not this lane's actor, its proof is not
     /// current, or the lane reads no row at all.
-    fn loop_read_in(&self, txn: &heed::RoTxn<'_>, reader: WeaveReader<'_>) -> Option<LoopRead> {
+    fn loop_read_in(&self, txn: &heed::RoTxn<'_>, reader: WeaveReader<'_>) -> Option<LoopRead<'v>> {
         let bound = match reader {
             WeaveReader::Person(id) | WeaveReader::Agent(id) => {
                 (self.actor_key.actor_ref() == id.to_hex()).then_some(LoopReader::Subject(id))
@@ -368,7 +372,7 @@ impl ScopedRead<'_> {
 
     /// Resolves this lane's policy and floor for a reader `bound` in `txn`:
     /// `None` when the lane reads no row at all.
-    fn loop_read_bound_in(&self, txn: &heed::RoTxn<'_>, bound: LoopReader) -> Option<LoopRead> {
+    fn loop_read_bound_in(&self, txn: &heed::RoTxn<'_>, bound: LoopReader) -> Option<LoopRead<'v>> {
         let (filter, policy) = match self.resolve_retrieval_filter_in(txn, None) {
             Ok(resolved) => resolved,
             Err(error) => {
@@ -386,6 +390,7 @@ impl ScopedRead<'_> {
             reader: bound,
             policy,
             filter,
+            held: HeldAuthority::default(),
             floor: BTreeMap::new(),
             projects: None,
         })
@@ -411,7 +416,7 @@ impl ScopedRead<'_> {
     fn admit_loop_decision_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &mut LoopRead,
+        read: &mut LoopRead<'v>,
         record: GateDecisionRecord,
     ) -> Option<ReadableLoopDecision> {
         let family = context::record_family(&record)?;
@@ -481,10 +486,10 @@ impl ScopedRead<'_> {
     fn loop_entity_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &LoopRead,
+        read: &LoopRead<'v>,
         id: EntityId,
     ) -> Result<Option<Vec<EntityId>>> {
-        if !self.is_entity_retrievable_with_policy_in(txn, &read.policy, &read.filter, &id)? {
+        if !self.is_entity_retrievable_held_in(txn, &read.policy, &read.filter, &id, &read.held)? {
             return Ok(None);
         }
         let Some(record) = self.entity_record_in(txn, &id)? else {
@@ -512,7 +517,7 @@ impl ScopedRead<'_> {
     fn loop_subject_admits_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &mut LoopRead,
+        read: &mut LoopRead<'v>,
         subject: EntityId,
         actor: Option<EntityId>,
         about: Option<&[EntityId]>,
@@ -528,8 +533,13 @@ impl ScopedRead<'_> {
             return Some(None);
         }
         if read.projects.is_none() {
-            read.projects =
-                Some(self.loop_subject_projects_in(txn, &read.policy, &read.filter, subject));
+            read.projects = Some(self.loop_subject_projects_in(
+                txn,
+                &read.policy,
+                &read.filter,
+                subject,
+                &read.held,
+            ));
         }
         let projects = read.projects.get_or_insert_default();
         about
@@ -544,7 +554,7 @@ impl ScopedRead<'_> {
     fn loop_actor_ref_in(
         &self,
         txn: &heed::RoTxn<'_>,
-        read: &mut LoopRead,
+        read: &mut LoopRead<'v>,
         actor: Option<EntityId>,
     ) -> Option<Option<EntityId>> {
         let Some(actor) = actor else {
@@ -557,11 +567,12 @@ impl ScopedRead<'_> {
             Some(answer) => *answer,
             None => {
                 let answer = answered(
-                    self.is_entity_retrievable_with_policy_in(
+                    self.is_entity_retrievable_held_in(
                         txn,
                         &read.policy,
                         &read.filter,
                         &actor,
+                        &read.held,
                     )
                     .map(|admitted| admitted.then_some(())),
                     "actor floor",
@@ -590,6 +601,7 @@ impl ScopedRead<'_> {
         policy: &PolicyManifestResolution,
         filter: &ResolvedRetrievalFilter,
         subject: EntityId,
+        held: &HeldAuthority<'v>,
     ) -> BTreeSet<EntityId> {
         let mut projects = BTreeSet::new();
         let Ok(kind) = self.vault.project_type_byte() else {
@@ -631,7 +643,7 @@ impl ScopedRead<'_> {
         for row in rows {
             count.row();
             let member = row.and_then(|id| {
-                if !self.is_entity_retrievable_with_policy_in(txn, policy, filter, &id)? {
+                if !self.is_entity_retrievable_held_in(txn, policy, filter, &id, held)? {
                     return Ok(None);
                 }
                 let Some(record) = self.entity_record_in(txn, &id)? else {

@@ -176,6 +176,20 @@ pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::StoreRead<'_>, &heed
     + Sync
     + 'a;
 
+/// A [`CandidateFilter`] for one retrieval snapshot, used on the thread that
+/// opened its transaction, so it need be neither `Send` nor `Sync`.
+pub(crate) type SnapshotCandidateFilter<'a> =
+    dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool> + 'a;
+
+/// A candidate admission that holds state for one read transaction (FIX
+/// 11648): a run asks it once for each snapshot it opens, beside that
+/// snapshot's transaction, and judges every candidate of the snapshot with
+/// the filter it returns. What the filter holds is dropped with the
+/// snapshot, so it never serves another transaction.
+pub(crate) trait CandidateGate: Send + Sync {
+    fn in_txn<'t>(&'t self, txn: &'t heed::RoTxn<'t>) -> Box<SnapshotCandidateFilter<'t>>;
+}
+
 /// What a run does with a MESSAGE hit
 /// (`PipelineBuilder::fold_messages_into_turns`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,7 +218,7 @@ impl TurnFold {
 #[derive(Clone, Copy)]
 pub(super) struct PipelineFilterConfig<'a> {
     pub(super) authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
-    pub(super) candidate_filter: Option<&'a CandidateFilter<'a>>,
+    pub(super) candidate_filter: Option<&'a SnapshotCandidateFilter<'a>>,
     pub(super) type_filter: Option<&'a [u8]>,
     pub(super) criticality: Option<bool>,
     pub(super) since_filter: Option<u64>,

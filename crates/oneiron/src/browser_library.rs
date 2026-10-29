@@ -42,6 +42,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::task_type::TaskTypeRef;
 
 mod admission;
+mod coverage;
 mod erase;
 mod evidence;
 mod index;
@@ -54,12 +55,15 @@ pub use admission::{
     program_admission_job_id, program_admission_queued, program_admission_receipt,
     record_program_admission, record_undecodable_program_admission,
 };
+pub use coverage::solved_group_coverage_read;
+pub(crate) use coverage::{program_seen_in, solved_group_coverage_in};
 pub(crate) use erase::{erase_retired_actor_in_txn, erase_workflow_actor_in_txn};
 pub use evidence::{
     CANDIDATE_DOMAIN, FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,
     SOLVED_RUN_PREDICATE, SOLVED_SCOPE_DOMAIN, SavedBrowserCaller, ScopedSolvedGroupKey,
     SolvedCaptureGap, SolvedCaptureReceipt, SolvedGroupKey, SolvedRunCapture, SolvedRunEvidence,
-    SolvedRunScope, SolvedSource,
+    SolvedRunScope, SolvedSource, WORKFLOW_FILING_DOMAIN, WORKFLOW_FILING_PREDICATE,
+    WorkflowFiling, workflow_filing_id,
 };
 pub use index::all_groups::all_solved_groups;
 pub use index::{
@@ -79,6 +83,18 @@ pub use records::{
 /// The library's programs. Key: the site's BLAKE3 hash, then the program's id.
 const WORKFLOWS: SideTable<([u8; 32], EntityId), WorkflowRecord, Named> =
     SideTable::new(&side_table::BROWSER_WORKFLOW);
+
+/// Each live program's site hash, by its id alone (FIX 7880): the by-id
+/// reading of a table keyed site first. Written and dropped in the same
+/// writes as its program's row.
+const WORKFLOWS_BY_ID: SideTable<EntityId, WorkflowSite, Named> =
+    SideTable::new(&side_table::BROWSER_WORKFLOW_BY_ID);
+
+/// The site hash a live program is filed under.
+#[derive(Serialize, Deserialize)]
+struct WorkflowSite {
+    site: [u8; 32],
+}
 
 /// What each retire took out. Key: the program's id (a refile after a retire
 /// takes a new one).

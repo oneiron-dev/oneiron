@@ -302,6 +302,9 @@ side_tables! {
     /// CUA E8a: one solved run's evidence claim in its group: its run and capture time, never its
     /// body. Key: hash32 (group) + id16.
     BROWSER_SOLVED_GROUP: VaultMeta b"browser.solved.group.v1\0" Named Engine;
+    /// FIX 7880: a live replay library program's site hash, by its id alone, for resolving it
+    /// without scanning the site-first program table. Key: id16.
+    BROWSER_WORKFLOW_BY_ID: VaultMeta b"browser.workflow.by_id.v1\0" Named Engine;
     /// A replay library program a retire took out, with whose word, when and why. Key: id16.
     BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored
         => crate::browser_library::erase_retired_actor_in_txn;
@@ -323,4 +326,6 @@ side_tables! {
     /// In-flight reservation marker preventing duplicate dispatch of the same build/verify action.
     /// Key: bytes32 (action key).
     BUILD_CACHE_RUNNING_RESERVATION: VaultMeta b"build_cache:running:v2:" Raw;
+    /// A staged-job artifact erase owed after its legal hold lifts. Key: hash32 (job digest).
+    BYOA_STAGED_INPUT_ERASE: VaultMeta b"byoa:staged_input_erase:v1:" Named;
 }

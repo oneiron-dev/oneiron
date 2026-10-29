@@ -19,7 +19,7 @@ use crate::{Result, Vault};
 use serde::{Deserialize, Serialize};
 
 /// The standing grant an owner's reason drafted from an ask about one consent effect.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AskGrantDraft {
     /// Drafted from the reason, by the bound's digest: it grants nothing until the owner

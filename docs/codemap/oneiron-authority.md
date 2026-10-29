@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/wire_decode.rs` | src | m | 13 fn · 1 crate-vis | — | `rmpv::Value` decoding for every authority type |
 | `src/authority/wire_encode.rs` | src | m | 7 fn · 1 crate-vis | — | `rmpv::Value` encoding for every authority type |
 | `src/authority/world_key_wraps.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 const · 3 crate-vis | PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient | A private world's key records and their wire codec (world privacy P6b) |
-| `src/authority/world_privacy.rs` | src | s | 2 struct · 4 enum · 3 fn · 2 const · 2 crate-vis | ModelOrder, PrivacyDirection, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
+| `src/authority/world_privacy.rs` | src | m | 2 struct · 4 enum · 3 fn · 2 const · 2 crate-vis | ModelOrder, PrivacyDirection, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
 | `src/federation/git_push.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 const | FederationGrantKind, GitPushBounds, GitPushRepo | The `git_push` Grant capability (FIX 6867, owner ruling G1-PUSH = D, as the owner refined it 10-21): raw git… |

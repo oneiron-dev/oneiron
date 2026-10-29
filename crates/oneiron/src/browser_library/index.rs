@@ -46,12 +46,12 @@ const FAILURES: SideTable<EntityId, FailureMark, Named> =
     SideTable::new(&side_table::BROWSER_PROGRAM_FAILURE);
 
 /// Each candidate the Coach proposed. Key: its input fingerprint.
-const SEEN: SideTable<[u8; 32], ProgramSeen, Named> =
+pub(super) const SEEN: SideTable<[u8; 32], ProgramSeen, Named> =
     SideTable::new(&side_table::BROWSER_PROGRAM_SEEN);
 
 /// The live programs filed in a group. Key: the group's digest, then the
 /// program's id.
-const COVERAGE: SideTable<([u8; 32], EntityId), CoverageRef, Named> =
+pub(super) const COVERAGE: SideTable<([u8; 32], EntityId), CoverageRef, Named> =
     SideTable::new(&side_table::BROWSER_SOLVED_COVERAGE);
 
 /// Each group's key and generations. Key: the group's digest.
@@ -74,7 +74,7 @@ struct FailureMark {
 
 /// A live program in a group.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CoverageRef {
+pub(super) struct CoverageRef {
     filed_at: u64,
 }
 
@@ -175,16 +175,25 @@ fn bump_dirty_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     key: &ScopedSolvedGroupKey,
 ) -> Result<()> {
-    let digest = key.digest();
+    // The row the wall stores holds the key as it masks it: read the key
+    // admitted before its digest is taken, so the digest the row is
+    // keyed by is the stored key's, and a later clean recomputing it from
+    // the stored key finds the row (FIX 10515).
+    let mut admitted = DirtyRow {
+        key: key.clone(),
+        changed: 0,
+        processed: 0,
+    };
+    DIRTY.admit(vault, wtxn, &key.digest(), &mut admitted)?;
+    let digest = admitted.key.digest();
     let row = match DIRTY.get(&vault.store, wtxn, &digest)? {
         Some(mut row) => {
             row.changed = row.changed.saturating_add(1);
             row
         }
         None => DirtyRow {
-            key: key.clone(),
             changed: 1,
-            processed: 0,
+            ..admitted
         },
     };
     DIRTY.put(vault, wtxn, &digest, &row)
@@ -701,11 +710,7 @@ pub fn mark_group_clean(
 /// Storage errors.
 pub fn solved_group_coverage(vault: &Vault, digest: &[u8; 32]) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(COVERAGE
-        .scan_keys(&vault.store, &rtxn, digest)?
-        .into_iter()
-        .map(|(_, id)| id)
-        .collect())
+    super::coverage::solved_group_coverage_in(vault, &rtxn, digest)
 }
 
 /// The Coach's mark for the candidate `fingerprint` names (CUA E8), if it
@@ -716,7 +721,7 @@ pub fn solved_group_coverage(vault: &Vault, digest: &[u8; 32]) -> Result<Vec<Ent
 /// Storage errors.
 pub fn program_seen(vault: &Vault, fingerprint: &[u8; 32]) -> Result<Option<ProgramSeen>> {
     let rtxn = vault.store.env.read_txn()?;
-    SEEN.get(&vault.store, &rtxn, fingerprint)
+    super::coverage::program_seen_in(vault, &rtxn, fingerprint)
 }
 
 /// Marks the candidate `fingerprint` names proposed, in the caller's write
