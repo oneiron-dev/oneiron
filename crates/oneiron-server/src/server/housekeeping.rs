@@ -124,6 +124,12 @@ impl HousekeepingPasses {
         HousekeepingBudget::within(time).stop_when(Arc::clone(&self.stop))
     }
 
+    /// A support holder's one repair (FIX 4407): the owner's pass budget,
+    /// and it stops when the host stops.
+    pub(crate) fn support_repair_budget(&self) -> HousekeepingBudget {
+        self.budget(OWNER_PASS_BUDGET)
+    }
+
     pub(super) fn stopping(&self) -> bool {
         self.stop.load(Ordering::Acquire)
     }
