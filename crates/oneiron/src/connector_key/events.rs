@@ -84,6 +84,11 @@ pub struct ConnectorSubscription {
     pub filter: ConnectorEventFilter,
     pub active: bool,
 }
+/// The key of a connector wake's payload input that carries the budget
+/// steering messages its charge fired (FIX 3761), an array of strings,
+/// present only when one fired.
+pub const CONNECTOR_WAKE_BUDGET_STEERING: &str = "budget_steering";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectorWakeStatus {
@@ -422,21 +427,30 @@ impl Vault {
                 decisions.push(old);
                 continue;
             }
-            let status = self.admit_connector_event_wake(txn, &row, now)?;
+            let (status, budget_steering) = self.admit_connector_event_wake(txn, &row, now)?;
             let attempt_id = if status == ConnectorWakeStatus::Enqueued {
+                let mut input = vec![
+                    (
+                        Value::from("agent_ref"),
+                        Value::Binary(row.agent.as_bytes().to_vec()),
+                    ),
+                    (
+                        Value::from("connector_event"),
+                        Value::from(String::from_utf8(frozen.clone()).map_err(|_| invalid())?),
+                    ),
+                    (Value::from("source"), Value::from("tool_output")),
+                ];
+                // The budget messages the wake's charge fired ride the wake
+                // to the agent it wakes (FIX 3761).
+                if !budget_steering.is_empty() {
+                    input.push((
+                        Value::from(CONNECTOR_WAKE_BUDGET_STEERING),
+                        Value::Array(budget_steering.into_iter().map(Value::from).collect()),
+                    ));
+                }
                 let payload = DreamerAttemptPayload {
                     attempt_type: "connector_event".into(),
-                    input: Value::Map(vec![
-                        (
-                            Value::from("agent_ref"),
-                            Value::Binary(row.agent.as_bytes().to_vec()),
-                        ),
-                        (
-                            Value::from("connector_event"),
-                            Value::from(String::from_utf8(frozen.clone()).map_err(|_| invalid())?),
-                        ),
-                        (Value::from("source"), Value::from("tool_output")),
-                    ]),
+                    input: Value::Map(input),
                     parent_attempt: None,
                 };
                 let outcome = crate::dreamer_wake::request_wake_in_txn(
@@ -499,21 +513,23 @@ impl Vault {
         Ok(decisions)
     }
 
+    /// Admits one wake of `row`'s agent on its key's budget, with the
+    /// steering messages the charge fired (FIX 3761).
     fn admit_connector_event_wake(
         &self,
         txn: &mut heed::RwTxn<'_>,
         row: &ConnectorSubscription,
         now: u64,
-    ) -> Result<ConnectorWakeStatus> {
+    ) -> Result<(ConnectorWakeStatus, Vec<String>)> {
         let Some(mut key) = read_connector_key_in_txn(&self.store, &*txn, &row.connector_key)?
         else {
-            return Ok(ConnectorWakeStatus::KeyInactive);
+            return Ok((ConnectorWakeStatus::KeyInactive, Vec::new()));
         };
         if key.status != ConnectorKeyStatus::Active
             || key.connector != row.filter.connector
             || key.actor_entity_ref.is_some_and(|actor| actor != row.agent)
         {
-            return Ok(ConnectorWakeStatus::KeyInactive);
+            return Ok((ConnectorWakeStatus::KeyInactive, Vec::new()));
         }
         match charge_effector_budgets(
             &self.store,
@@ -524,8 +540,9 @@ impl Vault {
             false,
             now,
         )? {
-            EffectorBudgetChargeOutcome::Charged(_) | EffectorBudgetChargeOutcome::NoRows(_) => {
-                Ok(ConnectorWakeStatus::Enqueued)
+            EffectorBudgetChargeOutcome::Charged(charge)
+            | EffectorBudgetChargeOutcome::NoRows(charge) => {
+                Ok((ConnectorWakeStatus::Enqueued, charge.steering_messages()))
             }
             EffectorBudgetChargeOutcome::Exhausted {
                 location,
@@ -553,7 +570,7 @@ impl Vault {
                         now,
                     )?;
                 }
-                Ok(ConnectorWakeStatus::BudgetExhausted)
+                Ok((ConnectorWakeStatus::BudgetExhausted, Vec::new()))
             }
         }
     }

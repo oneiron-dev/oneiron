@@ -152,9 +152,15 @@ fn settle_connector_calls(
         .0
         .retain(|call_ref, _| pending.iter().any(|call| call.call_ref == *call_ref));
     let now = Instant::now();
+    // A call a budget window paces waits for the window, and goes in the
+    // first pass after it opens, whatever its backoff (FIX 8686).
     let due: Vec<_> = pending
         .into_iter()
-        .filter(|call| call.settled || backoffs.due(call.call_ref, now))
+        .filter(|call| match call.paced {
+            _ if call.settled => true,
+            Some(shut) => !shut,
+            None => backoffs.due(call.call_ref, now),
+        })
         .collect();
     if due.is_empty() {
         return Ok(0);

@@ -174,8 +174,13 @@ impl Vault {
             return Ok(None);
         };
         // A call whose connector asked for input was sent: no hold to ask
-        // about (FIX 3837).
-        if pending.settled.is_some() || pending.owner_ask_seq.is_some() || pending.input.is_some() {
+        // about (FIX 3837). A call a budget window paces waits for the
+        // window, not for its owner (FIX 8686).
+        if pending.settled.is_some()
+            || pending.owner_ask_seq.is_some()
+            || pending.input.is_some()
+            || pending.paced_until.is_some()
+        {
             return Ok(None);
         }
         let Ok(principal) = EntityId::from_hex(&pending.principal_ref) else {
