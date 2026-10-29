@@ -203,7 +203,7 @@ impl PackFitPolicy for QualifiedPackFitPolicy<'_> {
 }
 
 /// One hook's replay in its pack's test.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct PackHookReplay {
     pub hook: String,
     pub entries: Vec<crate::runtime_hooks::HookReplayEntry>,

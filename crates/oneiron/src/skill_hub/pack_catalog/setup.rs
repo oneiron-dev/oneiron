@@ -29,7 +29,7 @@ const MAX_SETUP_TEXT_BYTES: usize = 1024;
 const MAX_SETUP_LINK_BYTES: usize = 512;
 
 /// What a pack needs before it can work, as its PACK.md declares it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetup {
     /// The bundled skill folder, `skills/<skill>/SKILL.md`, that walks the
@@ -44,7 +44,7 @@ pub struct PackSetup {
 
 /// An account the owner must hold with a provider. Display text and a
 /// sign-up link only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupAccount {
     pub id: String,
@@ -58,7 +58,7 @@ pub struct PackSetupAccount {
 }
 
 /// One connection the pack makes to a provider.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupConnection {
     pub id: String,
@@ -83,7 +83,7 @@ pub struct PackSetupConnection {
 }
 
 /// How a connection signs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PackSetupAuth {
     Oauth,
@@ -126,7 +126,7 @@ impl PackSetupAuth {
 }
 
 /// One credential's custody name. Never its value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupSecret {
     /// The custody name the owner registers it under.
@@ -142,7 +142,7 @@ pub struct PackSetupSecret {
 
 /// One permission a connection asks for, shown to the owner like an app
 /// install shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupPermission {
     pub id: String,
@@ -163,7 +163,10 @@ pub struct PackSetupPermission {
     pub optional: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PackSetupRisk {
     Low,
