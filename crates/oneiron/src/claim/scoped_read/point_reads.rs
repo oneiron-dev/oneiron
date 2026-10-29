@@ -195,7 +195,7 @@ impl ReadRow {
     }
 }
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     /// Compatibility projection of point rows; policy and body share the read snapshot.
     pub fn get_entity_parts_with_receipt(
         &self,
@@ -311,12 +311,15 @@ impl ScopedRead<'_> {
     ) -> std::result::Result<ScopedReadResult<T>, E> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, requested)?;
+        // One relationship authority for every id of this read (FIX 11648).
+        let authority = HeldAuthority::default();
         let mut value = Vec::with_capacity(reads.len());
         let mut suppressed = 0;
         for read in reads {
             let (row, withheld) = match read.target {
                 ReadTarget::Id(id) => {
-                    let (row, withheld) = self.id_row_in(&txn, &policy, &filter, id, read.mode)?;
+                    let (row, withheld) =
+                        self.id_row_held_in(&txn, &policy, &filter, id, read.mode, &authority)?;
                     if withheld > 0 && opaque(&txn, &id)? {
                         (row, 0)
                     } else {
@@ -350,8 +353,22 @@ impl ScopedRead<'_> {
         id: EntityId,
         mode: ReadMode,
     ) -> Result<(Option<ReadRow>, usize)> {
+        self.id_row_held_in(txn, policy, filter, id, mode, &HeldAuthority::default())
+    }
+
+    /// [`Self::id_row_in`] under the relationship authority its read holds
+    /// for every id it reads in `txn` (FIX 11648).
+    pub(super) fn id_row_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &crate::gate::PolicyManifestResolution,
+        filter: &crate::gate::ResolvedRetrievalFilter,
+        id: EntityId,
+        mode: ReadMode,
+        authority: &HeldAuthority<'v>,
+    ) -> Result<(Option<ReadRow>, usize)> {
         let admitted = self.admit_in(txn, &id, || {
-            self.entity_raw_with_mode_in(txn, policy, filter, &id, mode)
+            self.entity_raw_with_mode_held_in(txn, policy, filter, &id, mode, authority)
         })?;
         let withheld = admitted.suppression();
         let row = admitted
