@@ -115,7 +115,9 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(folder.is_dir(), "{} is not a folder", path.display());
     let mut counts = NoteCounts::default();
-    let mut notes = read_folder(&folder, &mut counts)?;
+    // A one-shot import lands notes only: the files held by name keep no
+    // original here, with no ledger row to name one on.
+    let (mut notes, _) = read_folder(&folder, &mut counts)?;
     super::progress(&format!("read {} note(s)", notes.len()));
     let folder = folder
         .to_str()
