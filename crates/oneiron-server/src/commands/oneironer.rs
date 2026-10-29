@@ -124,7 +124,7 @@ pub struct QualifyArgs {
     #[arg(long)]
     pub inputs: PathBuf,
     /// Where each case's `{"id", "output"}` line is appended, or
-    /// `{"id", "error"}` for a case the tagger failed.
+    /// `{"id", "error", "diagnostic"}` for a case the tagger failed.
     #[arg(long)]
     pub out: PathBuf,
     /// The decode layers: `e4` (E4's baseline, with no DATE snap after
@@ -341,14 +341,18 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
         // A parse error can quote the line, so the refusal names its number.
         let case: Case = serde_json::from_str(&line)
             .map_err(|_| anyhow::anyhow!("qualify input line {number} is not a case"))?;
-        let row = match tagger.infer(&case.input.into()) {
+        let row = match tagger.infer_with_diagnostic(&case.input.into()) {
             Ok(output) => {
                 answered += 1;
                 serde_json::json!({ "id": case.id, "output": output })
             }
-            Err(error) => {
+            Err((error, diagnostic)) => {
                 failed += 1;
-                serde_json::json!({ "id": case.id, "error": error.to_string() })
+                serde_json::json!({
+                    "id": case.id,
+                    "error": error.to_string(),
+                    "diagnostic": diagnostic.as_str(),
+                })
             }
         };
         writeln!(out, "{row}")?;
