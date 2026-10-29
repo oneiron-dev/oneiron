@@ -197,13 +197,14 @@ pub(crate) use backup_change::telemetry_batch_class;
 pub(crate) use backup_change::{BackupWriteClass, backup_content_txn_in_txn};
 #[cfg(unix)]
 pub(crate) use body_envelope::{
-    BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_KEYS, BodyFile, BodyKeyRow, BodyMint,
-    BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope, SealedStream,
-    SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn, body_instances_in_rows,
-    body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable, erase_bodies_in_txn,
-    instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
+    BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_INSTANCES, BODY_KEYS, BodyFile, BodyKeyRow,
+    BodyMint, BodySeal, BodySealSlot, BodySpill, DirSeal, FileKey, INLINE_ASSETS, KeyScope,
+    SealedStream, SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn,
+    body_instances_in_rows, body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable,
+    erase_bodies_in_txn, instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
     prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
-    require_body_instances, retire_body_key_in_txn, sealed_body_file_name,
+    remembered_body_instances_in_txn, require_body_instances, retire_body_key_in_txn,
+    sealed_body_file_name,
 };
 // FIX 6225: a step response's ASSET under its claim's erase, and the debt
 // a shared one's final teardown settles.
