@@ -13,38 +13,39 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/answer.rs` | src | s | 6 struct · 2 enum · 2 fn | BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp, TakeoverRecord, WindowSwitch, WindowSwitchCause | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
 | `src/capture.rs` | src | s | 11 crate-vis | — | Repeat screenshots (AB-004) |
-| `src/cdp.rs` | src | m | 14 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
+| `src/cdp.rs` | src | m | 15 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
 | `src/cdp/deep.rs` | src | s | 3 crate-vis | — | A CDP message nested past serde_json's recursion limit (FIX 6963): a `DOM.getDocument` at `depth: -1` of a… |
 | `src/cdp/overrun.rs` | src | m | 14 crate-vis | — | A message past the pipe's framing threshold, and one it cannot read (FIX 6851, FIX 7988, FIX 6860, FIX 7410) |
+| `src/cdp/parsed.rs` | src | s | 4 crate-vis | — | A reply read past the pipe's framing threshold, once parsed (FIX 7988): its raw bytes were charged to the… |
 | `src/cdp/paused.rs` | src | s | 4 crate-vis | — | Each paused request's host worker (FIX 7651, FIX 6302) |
-| `src/cdp/recorder.rs` | src | m | 18 crate-vis | — | The road a demonstration's page events take to the host (CUA E9): the recorder's own binding, never the… |
+| `src/cdp/recorder.rs` | src | m | 20 crate-vis | — | The road a demonstration's page events take to the host (CUA E9): the recorder's own binding, never the… |
 | `src/cdp/requests.rs` | src | s | 7 crate-vis | — | Each paused request's custody (FIX 7122), on the routing of both transports |
-| `src/cdp/state.rs` | src | m | 17 crate-vis | — | What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each… |
-| `src/cdp/storage.rs` | src | s | 6 crate-vis | — | What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the… |
+| `src/cdp/state.rs` | src | m | 21 crate-vis | — | What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each… |
+| `src/cdp/storage.rs` | src | s | 7 crate-vis | — | What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the… |
 | `src/cdp/websocket.rs` | src | m | 1 crate-vis | — | CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT) |
 | `src/cdp/websocket/gate.rs` | src | s | 3 crate-vis | — | The frame gate between a Lightpanda guest's bytes and its WebSocket (FIX 6851, FIX 7988). tungstenite cannot… |
 | `src/contract.rs` | src | m | 1 trait · 1 fn | BrowserDriver | — |
-| `src/demonstration.rs` | src | m | 6 struct · 4 enum · 1 type · 14 crate-vis | DemonstrationOutput, DemonstrationSource, DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput, LocatorGap, RecordedStep +2 | A demonstration (CUA E9; DESIGN-2 "The owner, by demonstration"): one opted-in span of a browser session… |
+| `src/demonstration.rs` | src | m | 6 struct · 4 enum · 1 type · 15 crate-vis | DemonstrationOutput, DemonstrationSource, DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput, LocatorGap, RecordedStep +2 | A demonstration (CUA E9; DESIGN-2 "The owner, by demonstration"): one opted-in span of a browser session… |
 | `src/desktop.rs` | src | m | 1 struct · 1 re-export | DesktopSession | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
-| `src/desktop/acts.rs` | src | s | 8 crate-vis | — | — |
+| `src/desktop/acts.rs` | src | s | 9 crate-vis | — | — |
 | `src/desktop/images.rs` | src | s | 2 crate-vis | — | — |
 | `src/desktop/point.rs` | src | s | 1 crate-vis | — | A click at a point of a held screenshot (OF-523; FIX 5740, FIX 5741) |
 | `src/desktop/reads.rs` | src | m | 12 crate-vis | — | — |
 | `src/desktop/session.rs` | src | m | 2 struct · 2 enum · 18 fn | AbandonedTakeover, DesktopGuest, PersonInput, Takeover | — |
 | `src/desktop/tree.rs` | src | m | 1 crate-vis | — | — |
 | `src/desktop/verbs.rs` | src | m | — | — | — |
-| `src/driver.rs` | src | m | 13 crate-vis | — | The CDP driver: one page in a browser guest, read as an outline and acted on by ref |
+| `src/driver.rs` | src | m | 14 crate-vis | — | The CDP driver: one page in a browser guest, read as an outline and acted on by ref |
 | `src/driver/acts.rs` | src | m | 7 crate-vis | — | — |
 | `src/driver/change.rs` | src | s | 8 crate-vis | — | The change check (FIX 6680, BROWSER-SPLIT) |
 | `src/driver/document.rs` | src | s | 2 crate-vis | — | What the driver reads for a host's rendered document, and its load wait with the host's custody of the… |
 | `src/driver/frames.rs` | src | s | 3 crate-vis | — | The front tab's in-page frames, read into its outline (FIX 205, FIX 8336) |
-| `src/driver/handles.rs` | src | m | 8 crate-vis | — | Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows |
+| `src/driver/handles.rs` | src | m | 9 crate-vis | — | Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows |
 | `src/driver/lightpanda.rs` | src | s | 5 crate-vis | — | Where a Lightpanda guest differs from a Chromium one (FIX 6680, BROWSER-SPLIT), on Lightpanda 1.0.0's CDP… |
-| `src/driver/pages.rs` | src | m | 28 crate-vis | — | The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last… |
+| `src/driver/pages.rs` | src | m | 30 crate-vis | — | The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last… |
 | `src/driver/person.rs` | src | s | 3 crate-vis | — | — |
 | `src/driver/recorder.rs` | src | m | 6 crate-vis | — | A demonstration's capture on a Chromium guest (CUA E9): the listeners a recording puts in each page and… |
 | `src/driver/row_metadata.rs` | src | m | 5 crate-vis | — | Where a link row goes, a heading row's level and a row's datetimes, from the outline's own candidates and… |
-| `src/driver/secrets.rs` | src | m | 4 crate-vis | — | A page read's secrets (FIX 8028, OF-560; ARCH-0069): found on the outline's own candidates, before any row… |
+| `src/driver/secrets.rs` | src | m | 5 crate-vis | — | A page read's secrets (FIX 8028, OF-560; ARCH-0069): found on the outline's own candidates, before any row… |
 | `src/driver/state.rs` | src | m | 17 crate-vis | — | A page's state as an engine switch reads it off the source and writes it into the target (FIX 6680… |
 | `src/driver/storage.rs` | src | m | 15 crate-vis | — | The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both… |
 | `src/driver/tabs.rs` | src | s | 6 crate-vis | — | — |
@@ -63,14 +64,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/library/targets.rs` | src | s | 2 crate-vis | — | The elements a batch step names (CUA E6 split): a program names them by locator, and its proposal's handles… |
 | `src/mcp.rs` | src | s | 5 crate-vis | — | MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader… |
 | `src/observation.rs` | src | s | 5 struct · 1 fn · 3 crate-vis | HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound | The observation contract both drivers answer (AB-001, AB-002) |
-| `src/outline.rs` | src | m | 13 crate-vis | — | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
+| `src/outline.rs` | src | m | 16 crate-vis | — | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
 | `src/press_answer.rs` | src | s | 1 struct · 1 enum | PressAnswer, PressOutcome | What a press a browser act waited on came to (FIX 10423), as the answer a code run's parked call resumes… |
 | `src/programs.rs` | src | m | 14 struct · 5 enum · 1 trait · 3 fn · 9 const | BatchInput, BatchOutput, BatchStep, BrowserPersonInput, BrowserTab, DecideStep, DesktopWindow, HandoverInput +12 | — |
 | `src/progress.rs` | src | s | 1 fn · 1 const · 6 crate-vis | — | A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]… |
 | `src/receipt_evidence.rs` | src | s | 1 enum · 1 trait | ReceiptEvidence, ReceiptEvidenceSink | An effect receipt's screenshot kept past its session (FIX 2150) |
 | `src/replay.rs` | src | s | 1 struct · 3 enum · 1 fn | OperandGap, ReplayAction, StepStop, TypeOperand | What an effect's receipt keeps for a replay program (CUA E7): the act's own operands as its verb took them… |
 | `src/request.rs` | src | s | 2 struct · 1 trait · 6 crate-vis | BrowserRequestHandler, DestinationRefusal, RenderedDocument | A host's custody of a browser session's requests (FIX 7122) |
-| `src/retention.rs` | src | s | 1 trait | HandleRetention | The host's memory floor, as a browser session's live-handle registry meets it (C013) |
+| `src/retention.rs` | src | s | 1 trait · 1 crate-vis | HandleRetention | The host's memory floor, as a browser session's live-handle registry meets it (C013) |
 | `src/row.rs` | src | s | 2 struct · 2 enum | Row, RowFieldGap, RowGapField, RowGapReason | A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX… |
 | `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 13 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
 | `src/secret_fields.rs` | src | m | 1 struct · 2 enum · 11 crate-vis | RowSecret, SecretKind, SecretNote | One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card… |
@@ -85,10 +86,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session/request.rs` | src | s | 2 fn · 2 crate-vis | — | The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination… |
 | `src/session/site.rs` | src | s | 1 fn · 8 crate-vis | — | The session's site skills (CUA E10, `crate::site`): the host's loader, the last open's matches waiting for… |
 | `src/session/solved.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 const | CapturedSolvedSpan, SolvedSnapshotGap | A solved run's span as evidence keeps it (CUA E8a; DESIGN-2 "The Coach"): the checks the caller names are… |
-| `src/session/storage.rs` | src | m | 23 crate-vis | — | The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of… |
+| `src/session/storage.rs` | src | m | 25 crate-vis | — | The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of… |
 | `src/session/switch.rs` | src | m | 7 crate-vis | — | The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b), under the seat lock the call already… |
 | `src/session/trail.rs` | src | s | 17 crate-vis | — | The session's one history (CUA E7): each effect's receipt and each step that stopped, in order, on the… |
 | `src/site.rs` | src | s | 6 struct · 2 enum · 1 trait · 5 fn | OriginError, SeedBody, SeedCandidate, SiteOrigin, SiteSkillError, SiteSkillErrorCode, SiteSkillLoader, SiteSkillMatch +1 | Site skills (CUA E10; DESIGN-2 §3 "hub seed"): the knowledge a hub skill holds for one exact site, and the… |
 | `src/stop.rs` | src | m | 3 struct · 4 enum · 3 fn · 1 const · 9 crate-vis | AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, StrictDenial, StrictDenied | Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already… |
-| `src/switch.rs` | src | s | 5 struct · 5 enum | EngineSwitchRecord, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput, SwitchEngineOutput, SwitchLoss, SwitchNotCarried +2 | An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine… |
-| `src/verbs.rs` | src | m | 26 struct · 3 enum · 7 fn | ClickInput, CropInput, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HotkeyInput +21 | — |
+| `src/switch.rs` | src | s | 6 struct · 5 enum | EngineSwitchRecord, SnapshotBounds, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput, SwitchEngineOutput, SwitchLoss +3 | An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine… |
+| `src/verbs.rs` | src | m | 26 struct · 4 enum · 7 fn | ClickInput, CropInput, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HotkeyInput +22 | — |
