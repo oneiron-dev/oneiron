@@ -1760,7 +1760,9 @@ On the install you are signed in on, while its server runs:
   `passphrase`, and answers the pieces to you alone. `confirm` takes two pieces (or one and the
   passphrase) and `carry`. `restore` takes the pieces. `anchor` takes the pieces, the machine's
   `enrolment` and the `code` that machine shows. `restore` and `anchor` take `fingerprint` or
-  `confirm_root` for a kit opened with one piece. Each answers as a request's run answers.
+  `confirm_root` for a kit opened with one piece. A kit this install cannot verify is refused as
+  `kit_unverified`, and a go-ahead for another root as `kit_confirmation_stale`. Each refusal
+  names the root the pieces rebuild. Each door answers as a request's run answers.
 - The CLI asks the running server the same, with the credential `oneiron api` reads
   (`--url`, `ONEIRON_SECRET`, `ONEIRON_BINDING_KEY`):
 
@@ -1828,10 +1830,17 @@ granted. The answer lists by generation what was `offered`, what is `usable` her
 `pending` for an older machine to grant. An offered grant is not yet access.
 
 `GET /v1/owner/recovery-kit/upkeep` (or `oneiron recovery-kit upkeep`) shows what the sealed
-bundle upkeep last did on this install: the last relay that finished, with its `pending_pad_access`
-and `pending_erases` counts, the last relay that failed, and the last kit grant answered here, each
-with its time. Before the first one it says `unobserved`, which is not zero. The counts are what
-the upkeep saw, not promises; the upkeep never waits for them. A server restart starts unobserved.
+bundle upkeep last did on this install, each part with its time:
+
+- `relay`: the last relay that reached the home, and what it moved. A tick that did not reach the
+  home changes nothing here.
+- `pending`: `pending_pad_access` and `pending_erases`, from the last relay whose erase sweep
+  counted them.
+- `relay_failure`: the last relay that failed, and its error.
+- `grant`: the last kit grant answered here.
+
+A part with no observation yet says `unobserved`, which is not zero. The counts are what the
+upkeep saw, not promises, and the upkeep never waits for them. A server restart starts unobserved.
 
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own: the
