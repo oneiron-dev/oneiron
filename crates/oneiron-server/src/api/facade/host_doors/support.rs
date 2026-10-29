@@ -14,6 +14,7 @@ use oneiron::memory::{
 use oneiron::task_verb::sdk::AiAnswer;
 use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmError};
 
+use crate::api::clock_ingress;
 use crate::api::facade::facade_actor;
 use crate::auth::CoreAuth;
 use crate::models::RungVoices;
@@ -251,7 +252,7 @@ pub(in crate::api::facade) async fn off_runtime_listing<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&ProducerRows) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let producers = ProducerRows::default();
         let answer = act(&producers);
         (answer, producers.take())

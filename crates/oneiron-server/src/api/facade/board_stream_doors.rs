@@ -23,6 +23,7 @@ use oneiron::task_verb::sdk::{
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde_json::Value;
 
+use super::clock_ingress;
 use super::host_doors::support::internal;
 use super::live_run_doors::hold_live_run;
 use crate::auth::CoreAuth;
@@ -161,7 +162,7 @@ pub(crate) async fn self_focus_wakes(
     // and under this credential, and a wake whose scope the connection no
     // longer holds, or whose TASK either no longer reads, is dropped.
     let (server, auth) = (Arc::clone(server), auth.clone());
-    let wakes = tokio::task::spawn_blocking(move || -> MemoryResult<Vec<WakeEnvelope>> {
+    let wakes = clock_ingress::run_blocking(move || -> MemoryResult<Vec<WakeEnvelope>> {
         let memory = crate::api::credential_memory(
             server.vault(),
             Some(&auth),

@@ -27016,9 +27016,9 @@ pub fn vault_authority_clock_repair(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AuthorityClockRepair> {
-    crate::task_verb::sdk::repair_authority_clock_as_owner(
+    crate::task_verb::sdk::repair_authority_clock_as(
         memory.vault(),
-        &memory.embedded_owner("vault.authority.clock.repair")?,
+        memory.embedded_clock_repair_caller("vault.authority.clock.repair")?,
     )
 }
 pub fn vault_wire_health_thresholds_get(

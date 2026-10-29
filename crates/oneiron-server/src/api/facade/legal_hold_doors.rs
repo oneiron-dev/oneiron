@@ -17,6 +17,7 @@ use oneiron::task_verb::sdk::{
     LegalHoldPlaceRequest, LegalHoldWidenRequest,
 };
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, off_runtime_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -41,7 +42,7 @@ pub(super) async fn as_owner<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let owner = owner_proof(server, auth, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&*server, &owner))
+    clock_ingress::run_blocking(move || act(&*server, &owner))
         .await
         .map_err(|_| internal(verb))?
 }

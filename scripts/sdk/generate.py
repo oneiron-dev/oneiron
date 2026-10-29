@@ -938,7 +938,10 @@ pub(super) async fn execute_mcp_agent_verb(
         execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
     }
 
-fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
+/// The typed input a `tools/call` of `tool` assembles from its arguments: the
+/// one projection the call runs on, and the one the binding door classifies
+/// a call over a damaged authority clock floor by (FIX 11201).
+pub(crate) fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
 '''
     result += invalid + 'match tool {\n' + ''.join(mcp_input_projection(row) for row in mcp_rows()) + '_ => Err(invalid()), } }\n'
     result += '''/// The `tools/call` arguments one verb input projects onto, so a call that
@@ -966,7 +969,10 @@ pub(crate) async fn execute_agent_verb_input(
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
-        let produced = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks)).await;
+        // An owner's erase or revoke reads the restriction-only clock through
+        // its hooks and door, as the engine classifies it (FIX 11201).
+        let restrictive = crate::api::clock_ingress::restrictive_call(server, tool, Some(&input));
+        let produced = crate::api::clock_ingress::scoped(restrictive, super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks))).await;
         served.extend(producers.take());
         produced
     }
@@ -1624,8 +1630,15 @@ def facade_dispatch(facade_rows):
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
 /// other name is refused as an unknown verb, with its correction when it is a
-/// canonical verb under the wrong root.
+/// canonical verb under the wrong root. An owner's erase or revoke, as the
+/// engine classifies the verb and its own input, reads the restriction-only
+/// clock through its owner proof, hooks and door (FIX 11201).
 pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
+let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
+super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
+}}
+/// [`call_verb`]'s row for `verb`.
+async fn call_verb_row(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
 match verb {{
 '''
     dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)

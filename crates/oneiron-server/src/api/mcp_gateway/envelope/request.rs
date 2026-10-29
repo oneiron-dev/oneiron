@@ -88,6 +88,18 @@ pub(crate) async fn handle_mcp_request(
             }))
         }
         "tools/call" => {
+            // The owner's clock repair the binding door left unjudged: its
+            // caller is judged in the repair's own writer (FIX 11190).
+            if let Some(repaired) = crate::api::clock_ingress::mcp_repair_call(
+                server,
+                headers,
+                connection,
+                request.params.as_ref(),
+            )
+            .await
+            {
+                return repaired;
+            }
             // A stale owner sign-in's booking tool call is his (FIX 5327).
             let actor = super::booking_call::resolve_tool_caller(
                 mode,

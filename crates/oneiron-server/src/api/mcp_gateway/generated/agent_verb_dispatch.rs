@@ -30,7 +30,10 @@ pub(super) async fn execute_mcp_agent_verb(
     .await
 }
 
-fn mcp_agent_verb_input(
+/// The typed input a `tools/call` of `tool` assembles from its arguments: the
+/// one projection the call runs on, and the one the binding door classifies
+/// a call over a damaged authority clock floor by (FIX 11201).
+pub(crate) fn mcp_agent_verb_input(
     tool: &str,
     a: &crate::mcp::McpVerbArguments,
 ) -> Result<Value, McpGatewayError> {
@@ -5017,8 +5020,12 @@ pub(crate) async fn execute_agent_verb_input(
     McpGatewayError,
 > {
     let producers = oneiron::memory::ProducerRows::default();
-    let produced = super::skill_execution::CALLER
-        .scope(
+    // An owner's erase or revoke reads the restriction-only clock through
+    // its hooks and door, as the engine classifies it (FIX 11201).
+    let restrictive = crate::api::clock_ingress::restrictive_call(server, tool, Some(&input));
+    let produced = crate::api::clock_ingress::scoped(
+        restrictive,
+        super::skill_execution::CALLER.scope(
             actor.clone(),
             execute_agent_verb_listing(
                 server,
@@ -5030,8 +5037,9 @@ pub(crate) async fn execute_agent_verb_input(
                 served,
                 board_hooks,
             ),
-        )
-        .await;
+        ),
+    )
+    .await;
     served.extend(producers.take());
     produced
 }

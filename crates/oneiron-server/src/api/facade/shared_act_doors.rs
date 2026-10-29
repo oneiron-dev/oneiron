@@ -42,6 +42,7 @@ use oneiron::task_verb::sdk::{
     SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
+use super::clock_ingress;
 use super::host_doors::support::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -126,7 +127,7 @@ async fn off_runtime<T: Send + 'static>(
     act: impl FnOnce(&Arc<SyncServer>) -> MemoryResult<T> + Send + 'static,
 ) -> MemoryResult<T> {
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&server))
+    clock_ingress::run_blocking(move || act(&server))
         .await
         .map_err(|_| internal(verb))?
 }

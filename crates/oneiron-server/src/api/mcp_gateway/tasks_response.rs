@@ -705,7 +705,9 @@ use super::{board_setup, skill_execution, verb_hooks};
 #[path = "generated/agent_verb_dispatch.rs"]
 mod agent_verb_dispatch;
 use agent_verb_dispatch::execute_mcp_agent_verb;
-pub(crate) use agent_verb_dispatch::{execute_agent_verb_input, mcp_agent_verb_arguments};
+pub(crate) use agent_verb_dispatch::{
+    execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
+};
 
 #[cfg(test)]
 mod tests {
