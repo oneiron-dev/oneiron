@@ -113,6 +113,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.shape.apply" => a.spec.clone().ok_or_else(invalid),
         "self.message" => a.spec.clone().ok_or_else(invalid),
         "self.grants.ask" => a.spec.clone().ok_or_else(invalid),
+        "self.grants.asked" => a.spec.clone().ok_or_else(invalid),
         "vault.companions.access_requests.answer" => a.spec.clone().ok_or_else(invalid),
         "self.grants.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.preview" => a.spec.clone().ok_or_else(invalid),
@@ -1614,6 +1615,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.grants.ask" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.grants.asked" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.companions.access_requests.answer" => {
@@ -5937,6 +5941,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::GrantAskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_grants_ask(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.grants.asked" => {
+            let input: oneiron::memory::GrantAskedRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_grants_asked(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

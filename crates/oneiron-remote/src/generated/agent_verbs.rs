@@ -174,6 +174,9 @@ impl OneironClient {
                 "self.grants.ask" => remote_agent_verb_output::<oneiron::memory::GrantAskReceipt>(
                     client, verb, &input,
                 ),
+                "self.grants.asked" => remote_agent_verb_output::<oneiron::memory::GrantAskedPage>(
+                    client, verb, &input,
+                ),
                 "vault.companions.access_requests.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CompanionAccessRequestAnswered,
                 >(client, verb, &input),
@@ -4270,6 +4273,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.grants.ask", value)
+    }
+    pub fn self_grants_asked(
+        &self,
+        input: &oneiron::memory::GrantAskedRequest,
+    ) -> Result<oneiron::memory::GrantAskedPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.grants.asked", value)
     }
     pub fn vault_companions_access_requests_answer(
         &self,

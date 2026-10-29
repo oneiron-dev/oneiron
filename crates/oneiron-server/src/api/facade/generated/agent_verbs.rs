@@ -47,6 +47,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shape.apply", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
+        .route("/self.grants.asked", post(facade_route))
         .route(
             "/vault.companions.access_requests.answer",
             post(facade_route),

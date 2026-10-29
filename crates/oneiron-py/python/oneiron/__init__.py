@@ -5667,6 +5667,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+        def asked(self, spec):
+            """Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."""
+            return json.loads(_translate(lambda: self._client.self_grants_asked(json.dumps(spec))))
         def answer(self, spec):
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
             return json.loads(_translate(lambda: self._client.self_grants_answer(json.dumps(spec))))

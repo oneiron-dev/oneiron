@@ -79,6 +79,7 @@ vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
+selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown

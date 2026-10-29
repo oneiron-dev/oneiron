@@ -343,6 +343,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_grants_asked(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.grants.asked", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_companions_access_requests_answer(
         &self,
         input: serde_json::Value,

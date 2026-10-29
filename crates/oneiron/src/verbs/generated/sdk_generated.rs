@@ -259,6 +259,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
             ),
             (
+                "self.grants.asked",
+                crate::code_run::vault_read::request_schema::<crate::memory::GrantAskedRequest>(),
+            ),
+            (
                 "vault.companions.access_requests.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
@@ -10624,6 +10628,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.grants.asked" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.companions.access_requests.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18812,6 +18823,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.grants.ask" => {
             let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
         }
+        "self.grants.asked" => {
+            let _input: crate::memory::GrantAskedRequest = decode(value.clone())?;
+        }
         "vault.companions.access_requests.answer" => {
             let _input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest =
                 decode(value.clone())?;
@@ -22925,6 +22939,7 @@ pub fn invoke(
         "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
+        "self.grants.asked" => encode(self_grants_asked(memory, decode(value)?)?),
         "vault.companions.access_requests.answer" => encode(
             vault_companions_access_requests_answer(memory, decode(value)?)?,
         ),
@@ -25710,6 +25725,12 @@ pub fn self_grants_ask(
     input: crate::memory::GrantAskRequest,
 ) -> MemoryResult<crate::memory::GrantAskReceipt> {
     memory.grants_ask(&input)
+}
+pub fn self_grants_asked(
+    memory: &Memory<'_>,
+    input: crate::memory::GrantAskedRequest,
+) -> MemoryResult<crate::memory::GrantAskedPage> {
+    memory.grants_asked(&input)
 }
 pub fn vault_companions_access_requests_answer(
     memory: &Memory<'_>,

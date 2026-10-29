@@ -225,6 +225,11 @@ export_facade! {
     let output = client.self_grants_ask(&input)?;
     crate::codec::lift_record("self.grants.ask", &output)
 };
+"self.grants.asked" => fn self_grants_asked(&self, input: GrantAskedRequest) -> GrantAskedPage = |client| {
+    let input: oneiron::memory::GrantAskedRequest = crate::codec::lower_record("self.grants.asked", input)?;
+    let output = client.self_grants_asked(&input)?;
+    crate::codec::lift_record("self.grants.asked", &output)
+};
 "vault.companions.access_requests.answer" => fn vault_companions_access_requests_answer(&self, input: CompanionAccessRequestAnswerRequest) -> CompanionAccessRequestAnswered = |client| {
     let input: oneiron::task_verb::sdk::CompanionAccessRequestAnswerRequest = crate::codec::lower_record("vault.companions.access_requests.answer", input)?;
     let output = client.vault_companions_access_requests_answer(&input)?;
