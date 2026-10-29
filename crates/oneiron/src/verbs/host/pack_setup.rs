@@ -3,12 +3,13 @@
 //! for the owner on the owner's proof, or for an agent acting for the owner.
 use serde::{Deserialize, Serialize};
 
-use crate::connector_key::{PackConnectionVerifier, ProviderConnectionChecks};
+use crate::connector_key::{PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks};
 use crate::consent::AuthenticatedOwner;
 use crate::lens::GeneratedUiStateSnapshot;
-use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL};
-use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
+use crate::memory::{MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult};
+use crate::skill_hub::pack_catalog::{
+    PackSetupActor, PackSetupAnswer, PackSetupCardAction, PackSetupView,
+};
 
 /// Where a credential value goes during a pack's setup: the owner secrets
 /// door. No `vault.packs.setup.*` verb and no card ever carries a value.
@@ -45,8 +46,8 @@ pub struct PackSetupAnswerRequest {
     #[serde(default)]
     pub source: Option<String>,
     /// `secret_stored` (pins the custody record the owner stored at the
-    /// secrets door) or `bind_key`. An `allow` is the owner's own decision
-    /// and this verb refuses it.
+    /// secrets door), `bind_key`, or `allow`, which is the owner's own
+    /// decision: this verb puts it to the owner as an ask.
     #[serde(default)]
     #[schemars(with = "Option<serde_json::Map<String, serde_json::Value>>")]
     pub answer: Option<PackSetupAnswer>,
@@ -77,6 +78,10 @@ pub struct PackSetupReceipt {
     /// value at `door`, then a `secret_stored` answer pins its record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_secret: Option<PackSetupStoreSecret>,
+    /// Set when an `allow` was put to the owner as an ask: the owner's yes
+    /// at its door lands exactly its permissions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_ask: Option<PackSetupOwnerAsk>,
 }
 
 /// The owner secrets door to open for one declared credential name.
@@ -108,6 +113,7 @@ impl PackSetupReceipt {
             text: setup.text(),
             setup,
             store_secret: None,
+            owner_ask: None,
         })
     }
 }
@@ -120,7 +126,22 @@ pub fn prepare_pack_setup_as_owner(
     owner: &AuthenticatedOwner,
     input: &PackSetupRequest,
 ) -> MemoryResult<PackSetupReceipt> {
-    PackSetupReceipt::new(vault.prepare_pack_setup(owner, &input.pack, input.source.as_deref())?)
+    prepare_pack_setup_as_actor(vault, PackSetupActor::Owner(owner), input)
+}
+
+/// `vault.packs.setup.prepare` for `actor`: the owner, or an agent acting
+/// for the owner, which opens or resumes the owner's session
+/// ([`crate::Vault::prepare_pack_setup_as`]).
+pub fn prepare_pack_setup_as_actor(
+    vault: &crate::Vault,
+    actor: PackSetupActor<'_>,
+    input: &PackSetupRequest,
+) -> MemoryResult<PackSetupReceipt> {
+    PackSetupReceipt::new(vault.prepare_pack_setup_as(
+        actor,
+        &input.pack,
+        input.source.as_deref(),
+    )?)
 }
 
 /// `vault.packs.setup.get` under the owner's proof: the setup as it stands.
@@ -129,7 +150,17 @@ pub fn pack_setup_as_owner(
     owner: &AuthenticatedOwner,
     input: &PackSetupRequest,
 ) -> MemoryResult<PackSetupReceipt> {
-    PackSetupReceipt::new(vault.pack_setup(owner, &input.pack, input.source.as_deref())?)
+    pack_setup_as_actor(vault, PackSetupActor::Owner(owner), input)
+}
+
+/// `vault.packs.setup.get` for `actor`: an agent acting for the owner reads
+/// the owner's session.
+pub fn pack_setup_as_actor(
+    vault: &crate::Vault,
+    actor: PackSetupActor<'_>,
+    input: &PackSetupRequest,
+) -> MemoryResult<PackSetupReceipt> {
+    PackSetupReceipt::new(vault.pack_setup_as(actor, &input.pack, input.source.as_deref())?)
 }
 
 /// `vault.packs.setup.verify` under the owner's proof: the host's fixed
@@ -140,9 +171,20 @@ pub fn verify_pack_setup_as_owner(
     input: &PackSetupVerifyRequest,
     checks: &dyn PackConnectionVerifier,
 ) -> MemoryResult<PackSetupReceipt> {
-    verify_pack_connection_as_owner(
+    verify_pack_setup_as_actor(vault, PackSetupActor::Owner(owner), input, checks)
+}
+
+/// `vault.packs.setup.verify` for `actor`: an agent acting for the owner
+/// checks the connection in the owner's session.
+pub fn verify_pack_setup_as_actor(
+    vault: &crate::Vault,
+    actor: PackSetupActor<'_>,
+    input: &PackSetupVerifyRequest,
+    checks: &dyn PackConnectionVerifier,
+) -> MemoryResult<PackSetupReceipt> {
+    verify_pack_connection_as_actor(
         vault,
-        owner,
+        actor,
         &input.pack,
         input.source.as_deref(),
         &input.connection,
@@ -150,15 +192,28 @@ pub fn verify_pack_setup_as_owner(
     )
 }
 
-/// `vault.packs.setup.answer` under the owner's proof. A verb is an agent's
-/// door, so it never answers `allow`: allowing a connection's permissions
-/// mints standing consent grants, and that review is the owner's own, on the
-/// setup's review card or at `POST /v1/owner/packs/setup/answer`. A card's
-/// store action answers with the owner secrets door to open; a value never
-/// passes here.
+/// `vault.packs.setup.answer` under the owner's proof, as
+/// [`answer_pack_setup_as_actor`] takes it.
 pub fn answer_pack_setup_as_owner(
     vault: &crate::Vault,
     owner: &AuthenticatedOwner,
+    input: &PackSetupAnswerRequest,
+    checks: &dyn PackConnectionVerifier,
+) -> MemoryResult<PackSetupReceipt> {
+    answer_pack_setup_as_actor(vault, PackSetupActor::Owner(owner), input, checks)
+}
+
+/// `vault.packs.setup.answer` for `actor`. A verb is an agent's door, so it
+/// never lands `allow`: allowing a connection's permissions mints the
+/// owner's standing consent grants. It puts the allow to the owner as an
+/// ask ([`crate::Vault::ask_owner_to_allow_pack_connection`]) and answers
+/// with it; the owner's yes at the ask's door lands exactly those
+/// permissions, and the owner can still allow on the setup's review card or
+/// at `POST /v1/owner/packs/setup/answer`. A card's store action answers
+/// with the owner secrets door to open; a value never passes here.
+pub fn answer_pack_setup_as_actor(
+    vault: &crate::Vault,
+    actor: PackSetupActor<'_>,
     input: &PackSetupAnswerRequest,
     checks: &dyn PackConnectionVerifier,
 ) -> MemoryResult<PackSetupReceipt> {
@@ -166,13 +221,13 @@ pub fn answer_pack_setup_as_owner(
     let answer = match (&input.answer, &input.card_action) {
         (Some(answer), None) => answer.clone(),
         (None, Some(card)) => {
-            let view = vault.pack_setup(owner, &input.pack, source)?;
+            let view = vault.pack_setup_as(actor, &input.pack, source)?;
             match view.card_action(&card.action_id, &card.state)? {
                 PackSetupCardAction::Answer(answer) => answer,
                 PackSetupCardAction::Verify { connection } => {
-                    return verify_pack_connection_as_owner(
+                    return verify_pack_connection_as_actor(
                         vault,
-                        owner,
+                        actor,
                         &input.pack,
                         source,
                         &connection,
@@ -201,27 +256,34 @@ pub fn answer_pack_setup_as_owner(
             ));
         }
     };
-    if let PackSetupAnswer::Allow { connection, .. } = &answer {
-        return Err(MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("allowing the permissions of {connection} is the owner's own decision"),
-            &[
-                "Show the owner the setup's review card; the owner allows there or at POST /v1/owner/packs/setup/answer.",
-            ],
-        ));
+    if let PackSetupAnswer::Allow {
+        connection,
+        permissions,
+    } = &answer
+    {
+        let (view, owner_ask) = vault.ask_owner_to_allow_pack_connection(
+            actor,
+            &input.pack,
+            source,
+            connection,
+            permissions,
+        )?;
+        let mut receipt = PackSetupReceipt::new(view)?;
+        receipt.owner_ask = owner_ask;
+        return Ok(receipt);
     }
-    PackSetupReceipt::new(vault.answer_pack_setup(owner, &input.pack, source, &answer)?)
+    PackSetupReceipt::new(vault.answer_pack_setup_as(actor, &input.pack, source, &answer)?)
 }
 
-fn verify_pack_connection_as_owner(
+fn verify_pack_connection_as_actor(
     vault: &crate::Vault,
-    owner: &AuthenticatedOwner,
+    actor: PackSetupActor<'_>,
     pack: &str,
     source: Option<&str>,
     connection: &str,
     checks: &dyn PackConnectionVerifier,
 ) -> MemoryResult<PackSetupReceipt> {
-    PackSetupReceipt::new(vault.verify_pack_connection(owner, pack, source, connection, checks)?)
+    PackSetupReceipt::new(vault.verify_pack_connection_as(actor, pack, source, connection, checks)?)
 }
 
 /// `vault.packs.setup.prepare` on an embedded handle, as the vault's
@@ -245,7 +307,7 @@ pub fn pack_setup_embedded(
 }
 
 /// `vault.packs.setup.answer` on an embedded handle, as the vault's
-/// embedded owner; `allow` is refused here too.
+/// embedded owner; an `allow` is put to the owner as an ask here too.
 pub fn answer_pack_setup_embedded(
     memory: &Memory<'_>,
     input: PackSetupAnswerRequest,

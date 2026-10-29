@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1202 facade rows, 4344 declarations.
+Census: 1202 facade rows, 4345 declarations.
 Inputs: 1130 of 1202 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1041 of 1202 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
@@ -6297,11 +6297,17 @@ class PackSetupStoreSecret(TypedDict):
     connection: str
     name: str
     effector: str
+class PackSetupOwnerAsk(TypedDict):
+    seq: int
+    door: str
+    connection: str
+    permissions: list[str]
 class PackSetupReceipt(TypedDict):
     setup: PackSetupView
     cards: list[Any]
     text: str
     store_secret: NotRequired[PackSetupStoreSecret | None]
+    owner_ask: NotRequired[PackSetupOwnerAsk | None]
 class PackSetupAnswerSecretStored(TypedDict):
     answer: Literal["secret_stored"]
     connection: str
