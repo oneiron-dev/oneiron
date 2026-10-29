@@ -14,6 +14,7 @@ use super::store::{
 use super::types::{EngineExecutorConfig, EngineExecutorResult};
 use crate::code_run::{CodeRunHistoryTurn, CodeRunReplayRecord};
 use crate::compaction::{CompactHooks, FoldMark, FoldRecord, GatedCompaction, fold_handle};
+use crate::runtime_hooks::VerbHookStop;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmMessage, LlmMessageRole, LlmRequest};
 
@@ -106,10 +107,12 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
         record: &CodeRunReplayRecord,
         request: &LlmRequest,
-    ) -> EngineExecutorResult<Option<super::compaction::WindowFullReason>> {
+    ) -> EngineExecutorResult<
+        std::result::Result<Option<super::compaction::WindowFullReason>, VerbHookStop>,
+    > {
         let completed = completed_step_count(record)?;
         if self.compaction.is_none() {
-            return Ok(None);
+            return Ok(Ok(None));
         }
         let run_id = config.run_id;
         let ledger = self.storage.code_run_folds(run_id)?;
@@ -126,7 +129,7 @@ impl EngineNativeExecutor<'_> {
             ledger.applicable(completed, prefix_end, asked.is_some())
         };
         let Some(seat) = self.compaction.take() else {
-            return Ok(None);
+            return Ok(Ok(None));
         };
         // A run whose compaction is off folds nothing: its asks end with why,
         // which `self.folds()` shows.
@@ -155,11 +158,23 @@ impl EngineNativeExecutor<'_> {
                 // FIX 4465 C: the live request as its rung sends it sizes and rides the flight.
                 let (live, room) = super::compaction::live_fork::capture(driver, request);
                 let (epoch, hooks) = match watermark {
-                    Some(at) => self
-                        .seal_compaction_window(driver, config, record, at, note.clone(), room)?
-                        .map_or((None, CompactHooks::default()), |(request, hooks)| {
-                            (Some(request), hooks)
-                        }),
+                    Some(at) => match self.seal_compaction_window(
+                        driver,
+                        config,
+                        record,
+                        at,
+                        note.clone(),
+                        room,
+                    )? {
+                        Ok(Some((request, hooks))) => (Some(request), hooks),
+                        Ok(None) => (None, CompactHooks::default()),
+                        Err(stop) => {
+                            return Ok(super::compaction::Flight {
+                                pending: Some(stop),
+                                ..super::compaction::Flight::default()
+                            });
+                        }
+                    },
                     None => (None, CompactHooks::default()),
                 };
                 let folds =
@@ -479,7 +494,12 @@ impl EngineNativeExecutor<'_> {
         watermark: u64,
         note: Option<String>,
         room: Option<u64>,
-    ) -> EngineExecutorResult<Option<(crate::compaction::CompactionRequest, CompactHooks)>> {
+    ) -> EngineExecutorResult<
+        std::result::Result<
+            Option<(crate::compaction::CompactionRequest, CompactHooks)>,
+            VerbHookStop,
+        >,
+    > {
         let run_id = config.run_id;
         let run_ref = self.gated_write.run_ref();
         // The run's position is its coverage rows, withdrawn summaries
@@ -489,7 +509,7 @@ impl EngineNativeExecutor<'_> {
         let prior = newest.map(|row| (row.epoch(), row.last()));
         let start = prior.map_or(0, |(_, last)| last.saturating_add(1));
         if start > watermark {
-            return Ok(None);
+            return Ok(Ok(None));
         }
         let session = crate::code_run::executor_compaction_session_id(run_ref, run_id)?;
         let turn_id = crate::code_run::executor_speech_turn_id_for_run(run_ref, run_id)?;
@@ -624,6 +644,9 @@ impl EngineNativeExecutor<'_> {
             ),
             crate::code_run::ExecutorStorage::Session(_) => CompactHooks::default(),
         };
+        if let Some(stop) = hooks.pending() {
+            return Ok(Err(stop.clone()));
+        }
         // Nested provenance: the newest epoch stands for every id the calls
         // before its count served, and for the epochs before it, since those
         // are its own sources. Only the calls since then are read here, so a
@@ -668,7 +691,7 @@ impl EngineNativeExecutor<'_> {
         let request = driver.request_for_log(
             request_id, &session, window, pins, sources, prior, calls, note, run_id,
         )?;
-        Ok(Some((request, hooks)))
+        Ok(Ok(Some((request, hooks))))
     }
 
     /// This run's swapped epochs with their summaries' prose, and its fold
