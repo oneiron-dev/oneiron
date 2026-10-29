@@ -1,6 +1,8 @@
 use crate::task_verb::sdk::AgentVerb;
 use rmpv::Value;
 
+mod hook_effect;
+
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };

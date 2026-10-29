@@ -40,6 +40,7 @@ mod scoped_child;
 mod scoped_child_io;
 pub mod shadow_runner;
 mod spawn_replay;
+pub(crate) use self::spawn_replay::barrier_spawn_call;
 mod storage;
 mod support;
 mod team_submit;

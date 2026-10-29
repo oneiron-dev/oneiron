@@ -64,9 +64,18 @@ const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
 /// path.
 const OWNER_VERBS: [(&str, &str); 4] = [
     ("/v1/owner/guests/revoke", "vault.guests.revoke"),
-    ("/v1/owner/support-grants/revoke", "vault.support_grants.revoke"),
-    ("/v1/owner/legal-holds/lift-and-erase", "vault.legal_holds.lift_and_erase"),
-    ("/v1/owner/embedding-spaces/probes/delete", "vault.embedding_spaces.probes.delete"),
+    (
+        "/v1/owner/support-grants/revoke",
+        "vault.support_grants.revoke",
+    ),
+    (
+        "/v1/owner/legal-holds/lift-and-erase",
+        "vault.legal_holds.lift_and_erase",
+    ),
+    (
+        "/v1/owner/embedding-spaces/probes/delete",
+        "vault.embedding_spaces.probes.delete",
+    ),
 ];
 
 /// The facade verb of an owner route in [`OWNER_VERBS`], if it names one.
@@ -237,11 +246,7 @@ pub(crate) fn restrictive_call(server: &SyncServer, verb: &str, input: Option<&V
 /// authority readings refuse, and only for a call whose row the app's table
 /// resolves and the engine classifies as wholly an erase or a revoke. Any
 /// other action keeps today's path, and a mixed action today's refusal.
-pub(crate) fn restrictive_action(
-    server: &SyncServer,
-    verb: &str,
-    args: &[ActionArgument],
-) -> bool {
+pub(crate) fn restrictive_action(server: &SyncServer, verb: &str, args: &[ActionArgument]) -> bool {
     // The app's table is read only while the readings refuse.
     let refuses = server
         .vault()

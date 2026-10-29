@@ -151,6 +151,12 @@ impl AgentVerbDoor for OffRecordRunDoor {
         }
     }
 
+    /// The host turn's hooks read under the caller's own key, as the run's
+    /// own search does (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.caller_key().ok()
+    }
+
     /// The keyed search drops only rows the caller may not read.
     fn keyed_search_surfaceable_only(&self) -> bool {
         false
