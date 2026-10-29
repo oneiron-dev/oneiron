@@ -498,6 +498,10 @@ fn media_refusal(error: crate::error::ApiError) -> MemoryError {
     let code = match error.code() {
         ErrorCode::BadRequest => MEMORY_CODE_BAD_REQUEST,
         ErrorCode::Forbidden => MEMORY_CODE_FORBIDDEN,
+        // The engine's own refusal codes keep their name (FIX 6032).
+        code @ (ErrorCode::HostActionRequiresSupportGrant | ErrorCode::OwnerBindingRequired) => {
+            code.as_str()
+        }
         ErrorCode::EmbedderUnavailable => MEMORY_CODE_MODEL_UNAVAILABLE,
         _ => MEMORY_CODE_INTERNAL,
     };
