@@ -975,7 +975,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.weave.lens",
-                crate::code_run::vault_read::request_schema::<crate::claim::WeaveReportRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::lens::WeaveLensRequest>(),
             ),
             (
                 "vault.weave.link.wrong",
@@ -18840,7 +18840,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::claim::WeaveDigestRequest = decode(value.clone())?;
         }
         "vault.weave.lens" => {
-            let _input: crate::claim::WeaveReportRequest = decode(value.clone())?;
+            let _input: crate::lens::WeaveLensRequest = decode(value.clone())?;
         }
         "vault.weave.link.wrong" => {
             let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
@@ -26281,7 +26281,7 @@ pub fn vault_weave_digest(
 }
 pub fn vault_weave_lens(
     memory: &Memory<'_>,
-    input: crate::claim::WeaveReportRequest,
+    input: crate::lens::WeaveLensRequest,
 ) -> MemoryResult<crate::lens::LensFrameCard> {
     crate::task_verb::sdk::host_only(memory, "vault.weave.lens", &input)
 }

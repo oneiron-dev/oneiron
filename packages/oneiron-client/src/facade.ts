@@ -186,7 +186,7 @@ export interface FacadeInputs {
   "self.saved_query.evaluate": Facade.SavedQueryEvaluateRequest;
   "vault.weave.report": Facade.WeaveReportRequest;
   "vault.weave.digest": Facade.WeaveDigestRequest;
-  "vault.weave.lens": Facade.WeaveReportRequest;
+  "vault.weave.lens": Facade.WeaveLensRequest;
   "vault.weave.link.wrong": Facade.WeaveWrongLinkRequest;
   "vault.weave.owner.link.wrong": Facade.WeaveWrongLinkRequest;
   "vault.weave.item.wrong": Facade.WeaveWrongItemRequest;
@@ -2544,7 +2544,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.saved_query.evaluate": { description: "Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.report": { description: "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.weave.digest": { description: "One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.weave.lens": { description: "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.weave.lens": { description: "Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.weave.link.wrong": { description: "A person labels a link in their own lens as wrong; the label teaches the loops and the link stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.owner.link.wrong": { description: "The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.weave.item.wrong": { description: "A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4064,8 +4064,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
           render: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.weave.digest.render">[K] => invoke("vault.weave.digest.render", input, options, newInvocation()),
         }),
-        /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
-        lens: (input: Facade.WeaveReportRequest, options?: O): FacadeReturns<"vault.weave.lens">[K] => invoke("vault.weave.lens", input, options, newInvocation()),
+        /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events. */
+        lens: (input: Facade.WeaveLensRequest, options?: O): FacadeReturns<"vault.weave.lens">[K] => invoke("vault.weave.lens", input, options, newInvocation()),
         link: {
           /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
           wrong: (input: Facade.WeaveWrongLinkRequest, options?: O): FacadeReturns<"vault.weave.link.wrong">[K] => invoke("vault.weave.link.wrong", input, options, newInvocation()),

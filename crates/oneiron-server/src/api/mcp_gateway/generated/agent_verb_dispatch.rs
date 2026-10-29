@@ -7658,10 +7658,16 @@ async fn execute_agent_verb_row(
             oneiron::task_verb::sdk::validate_input("vault.weave.lens", &input)
                 .map_err(mcp_facade_error)?;
             let owner = surface.lens_owner("vault.weave.lens", &input);
-            let input: oneiron::claim::WeaveReportRequest =
+            let input: oneiron::lens::WeaveLensRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_lens(server, auth, owner, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_weave_lens(
+                server,
+                auth,
+                owner,
+                actor.client_surface.clone(),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
@@ -13360,9 +13366,14 @@ async fn execute_agent_verb_row(
             let owner = surface.lens_owner("vault.lenses.default", &input);
             let input: oneiron::lens::LensDefaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_lenses_default(server, auth, owner, input)
-                    .await;
+            let (output, listed) = crate::api::facade::host_doors::vault_lenses_default(
+                server,
+                auth,
+                owner,
+                actor.client_surface.clone(),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

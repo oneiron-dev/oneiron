@@ -5320,6 +5320,7 @@ async fn vault_weave_lens(
             server,
             auth,
             call.lens_owner(),
+            None,
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -17624,6 +17625,7 @@ async fn vault_lenses_default(
             server,
             auth,
             call.lens_owner(),
+            None,
             facade_door_input(&mut hooks)?,
         )
         .await;

@@ -896,8 +896,8 @@ export_facade! {
     let output = client.vault_weave_digest(&input)?;
     crate::codec::lift_record("vault.weave.digest", &output)
 };
-"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveReportRequest) -> LensFrameCard = |client| {
-    let input: oneiron::claim::WeaveReportRequest = crate::codec::lower_record("vault.weave.lens", input)?;
+"vault.weave.lens" => fn vault_weave_lens(&self, input: WeaveLensRequest) -> LensFrameCard = |client| {
+    let input: oneiron::lens::WeaveLensRequest = crate::codec::lower_record("vault.weave.lens", input)?;
     let output = client.vault_weave_lens(&input)?;
     crate::codec::lift_record("vault.weave.lens", &output)
 };

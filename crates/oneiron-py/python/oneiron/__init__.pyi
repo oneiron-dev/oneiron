@@ -1160,8 +1160,8 @@ class Oneiron:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
         @property
         def digest(self) -> "Oneiron._VaultWeaveDigestVerbs": ...
-        def lens(self, spec: Facade.WeaveReportRequest) -> Facade.LensFrameCard:
-            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
+        def lens(self, spec: Facade.WeaveLensRequest) -> Facade.LensFrameCard:
+            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events."""
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs": ...
         @property

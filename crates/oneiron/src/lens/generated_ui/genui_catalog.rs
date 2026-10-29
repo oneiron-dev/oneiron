@@ -1,21 +1,32 @@
-//! Closed primitive catalog, surface capability negotiation, and prebuilt card expansion.
+//! The built-in primitive catalog, surface capability negotiation, and prebuilt card expansion.
 
-use crate::Result;
+use super::genui_app_catalog::catalog_version_or_kit;
+use super::{
+    GeneratedUiCatalog, GeneratedUiCatalogDescriptor, GeneratedUiCatalogVersion,
+    GeneratedUiComponentAtom, GeneratedUiComponentSchema, GeneratedUiStreamProfile,
+};
 use crate::lens::atom::{
     CollectionAtom, LENS_ATOM_KIT_VERSION, LensAtom, LensNode, LensText, LensTextSpan,
     MetaLineAtom, RESULT_SET_ATOM_KIND, TextBlockAtom,
 };
 use crate::lens::validate::{validate_lens_tree, validate_required_lens_text};
 use crate::lens::wire_ids::LensAtomId;
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GeneratedUiCatalog {
-    LensAtomKit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedUiPrimitive {
     TextBlock,
@@ -45,9 +56,15 @@ pub enum GeneratedUiPrimitive {
     SelfUi,
     Media,
     ResultSet,
+    /// A component an app catalog declares (FIX 9891). A surface supports one
+    /// by declaring it ([`GeneratedUiSurfaceCapabilities::components`]), never
+    /// through `primitives`.
+    Component,
 }
 
 impl GeneratedUiPrimitive {
+    /// Every built-in primitive. [`Self::Component`] is not among them: a
+    /// surface supports a component by declaring it.
     pub const ALL: &'static [Self] = &[
         Self::TextBlock,
         Self::LedgerRow,
@@ -108,6 +125,7 @@ impl GeneratedUiPrimitive {
             Self::SelfUi => "self_ui",
             Self::Media => "media",
             Self::ResultSet => RESULT_SET_ATOM_KIND,
+            Self::Component => "component",
         }
     }
 
@@ -117,7 +135,7 @@ impl GeneratedUiPrimitive {
     #[must_use]
     pub const fn minimum_catalog_version(self) -> u16 {
         match self {
-            Self::ResultSet => 3,
+            Self::ResultSet | Self::Component => 3,
             Self::TextBlock
             | Self::LedgerRow
             | Self::ClaimLine
@@ -148,13 +166,72 @@ impl GeneratedUiPrimitive {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// A surface's capability profile (ARCH-0048 G3): the catalog it draws and
+/// that catalog's semver, the built-in primitives it draws up to a kit
+/// stamp, the app components it declares, and its stream profile. The engine
+/// lowers each card to it in one pass; a profile nobody negotiated is
+/// [`Self::all_atom_kit`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(
+    rename_all = "camelCase",
+    deny_unknown_fields,
+    try_from = "GeneratedUiSurfaceCapabilitiesWire"
+)]
 pub struct GeneratedUiSurfaceCapabilities {
     pub catalog: GeneratedUiCatalog,
+    /// The semver of the component set this surface declares (FIX 9893). It
+    /// defaults to the built-in kit's [`GeneratedUiCatalogVersion::lens_atom_kit`];
+    /// an app catalog names its own.
+    #[serde(default)]
+    pub catalog_version: GeneratedUiCatalogVersion,
+    /// The highest built-in kit stamp whose primitives this surface draws.
+    #[serde(default = "lens_atom_kit_stamp")]
     pub max_catalog_version: u16,
     #[serde(default)]
     pub primitives: Vec<GeneratedUiPrimitive>,
+    /// The components the app catalog declares, with their props schemas
+    /// (FIX 9891).
+    #[serde(default)]
+    pub components: Vec<GeneratedUiComponentSchema>,
+    #[serde(default)]
+    pub stream: GeneratedUiStreamProfile,
+}
+
+const fn lens_atom_kit_stamp() -> u16 {
+    LENS_ATOM_KIT_VERSION
+}
+
+/// The profile as it arrives: an app catalog must name its semver, the
+/// built-in kit's defaults to its own.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GeneratedUiSurfaceCapabilitiesWire {
+    catalog: GeneratedUiCatalog,
+    #[serde(default)]
+    catalog_version: Option<GeneratedUiCatalogVersion>,
+    #[serde(default = "lens_atom_kit_stamp")]
+    max_catalog_version: u16,
+    #[serde(default)]
+    primitives: Vec<GeneratedUiPrimitive>,
+    #[serde(default)]
+    components: Vec<GeneratedUiComponentSchema>,
+    #[serde(default)]
+    stream: GeneratedUiStreamProfile,
+}
+
+impl TryFrom<GeneratedUiSurfaceCapabilitiesWire> for GeneratedUiSurfaceCapabilities {
+    type Error = Error;
+
+    fn try_from(wire: GeneratedUiSurfaceCapabilitiesWire) -> Result<Self> {
+        Ok(Self {
+            catalog_version: catalog_version_or_kit(&wire.catalog, wire.catalog_version)?,
+            catalog: wire.catalog,
+            max_catalog_version: wire.max_catalog_version,
+            primitives: wire.primitives,
+            components: wire.components,
+            stream: wire.stream,
+        })
+    }
 }
 
 impl GeneratedUiSurfaceCapabilities {
@@ -166,8 +243,28 @@ impl GeneratedUiSurfaceCapabilities {
     ) -> Self {
         Self {
             catalog,
+            catalog_version: GeneratedUiCatalogVersion::lens_atom_kit(),
             max_catalog_version,
             primitives,
+            components: Vec::new(),
+            stream: GeneratedUiStreamProfile::default(),
+        }
+    }
+
+    /// A surface drawing an app's declared catalog, beside the built-in
+    /// `primitives` it also draws at the current kit stamp.
+    #[must_use]
+    pub fn for_catalog(
+        descriptor: GeneratedUiCatalogDescriptor,
+        primitives: Vec<GeneratedUiPrimitive>,
+    ) -> Self {
+        Self {
+            catalog: descriptor.catalog,
+            catalog_version: descriptor.catalog_version,
+            max_catalog_version: LENS_ATOM_KIT_VERSION,
+            primitives,
+            components: descriptor.components,
+            stream: GeneratedUiStreamProfile::default(),
         }
     }
 
@@ -190,11 +287,50 @@ impl GeneratedUiSurfaceCapabilities {
     }
 
     #[must_use]
+    pub fn with_stream(mut self, stream: GeneratedUiStreamProfile) -> Self {
+        self.stream = stream;
+        self
+    }
+
+    /// The descriptor this profile names inline: its catalog, semver and
+    /// declared components.
+    #[must_use]
+    pub fn descriptor(&self) -> GeneratedUiCatalogDescriptor {
+        GeneratedUiCatalogDescriptor {
+            catalog: self.catalog.clone(),
+            catalog_version: self.catalog_version.clone(),
+            components: self.components.clone(),
+        }
+    }
+
+    /// Whether this surface draws a built-in primitive. Text always renders.
+    /// An app component is decided by [`Self::supports_atom`].
+    #[must_use]
     pub fn supports(&self, primitive: GeneratedUiPrimitive) -> bool {
         primitive == GeneratedUiPrimitive::TextBlock
-            || (self.catalog == GeneratedUiCatalog::LensAtomKit
+            || (primitive != GeneratedUiPrimitive::Component
                 && self.max_catalog_version >= primitive.minimum_catalog_version()
                 && self.primitives.contains(&primitive))
+    }
+
+    /// Whether this surface draws `atom` as it is: a built-in primitive it
+    /// supports, or a component its own catalog declares whose props meet
+    /// the declared schema.
+    #[must_use]
+    pub fn supports_atom(&self, atom: &LensAtom) -> bool {
+        match atom {
+            LensAtom::Component(component) => self.supports_component(component),
+            other => self.supports(other.primitive()),
+        }
+    }
+
+    fn supports_component(&self, component: &GeneratedUiComponentAtom) -> bool {
+        matches!(&self.catalog, GeneratedUiCatalog::App(name) if name == &component.catalog)
+            && self
+                .components
+                .iter()
+                .find(|declared| declared.name == component.name)
+                .is_some_and(|declared| declared.admits(&component.props))
     }
 }
 
