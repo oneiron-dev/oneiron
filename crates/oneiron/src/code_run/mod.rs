@@ -17,6 +17,7 @@ pub(crate) mod activity;
 // The guest authoring request is decoded at the typed component bridge, and
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
+mod callable_rows;
 mod codec;
 mod compaction_fork;
 mod compaction_home;
@@ -53,6 +54,7 @@ mod tests;
 
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
+pub use self::callable_rows::CodeRunCallableRows;
 pub(crate) use self::codec::encode_code_run_replay_value;
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,

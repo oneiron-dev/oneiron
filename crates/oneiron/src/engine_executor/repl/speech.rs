@@ -182,7 +182,7 @@ impl EngineNativeExecutor<'_> {
             ImplicitSpeechIntent::Result { attachment } => self.witness_result_for_run_at(
                 config.run_id,
                 attachment,
-                record.agent_verb_rows().as_deref(),
+                record.result_rows().as_deref(),
                 occurred_at,
                 order,
             )?,
