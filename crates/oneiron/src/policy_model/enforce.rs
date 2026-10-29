@@ -195,8 +195,15 @@ impl Vault {
         // writes the row for the verdicts it hands out bare, and this flow
         // records its own below. Routing through it would ledger one decision
         // twice.
-        let verdict = self.owner_pattern_only_pass(&request, config)?;
-        self.enforcement_from_verdict(request, config, verdict, false, DecisionLedger::Record)
+        let pass = self.owner_pattern_only_pass(&request, config)?;
+        self.enforcement_from_verdict(
+            request,
+            config,
+            pass.verdict,
+            pass.examined,
+            false,
+            DecisionLedger::Record,
+        )
     }
 
     /// Enforce with the owner's safeguard model available.
@@ -241,7 +248,14 @@ impl Vault {
                 return self.stale_owner_plane_fail_open(request, config);
             }
         }
-        self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
+        self.enforcement_from_verdict(
+            request,
+            config,
+            pass.verdict,
+            pass.examined,
+            false,
+            DecisionLedger::Record,
+        )
     }
 
     /// [`Self::enforce_policy_model_with_backend`] for a caller that holds a
@@ -268,7 +282,14 @@ impl Vault {
                 return self.stale_owner_plane_fail_open(request, config);
             }
         }
-        self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
+        self.enforcement_from_verdict(
+            request,
+            config,
+            pass.verdict,
+            pass.examined,
+            false,
+            DecisionLedger::Record,
+        )
     }
 
     /// The owner plane could not pin a verdict to the policy in force, so it
@@ -433,6 +454,7 @@ impl Vault {
             request,
             config,
             verdict,
+            false,
             custom_tier_skipped,
             DecisionLedger::AlreadyRecorded,
         )
@@ -443,6 +465,7 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
         verdict: PolicyClassifyVerdict,
+        examined: bool,
         custom_tier_skipped: bool,
         ledger: DecisionLedger,
     ) -> Result<PolicyModelEnforcement> {
@@ -452,21 +475,22 @@ impl Vault {
             DecisionLedger::AlreadyRecorded => super::in_force::SettlingDoor::EnforceRecorded,
         });
         // A clean allow the owner plane gave is one hash-only row (FIX 7805),
-        // as the bare doors write it; only an off plane's allow, which
-        // examined nothing, is not receipted. An allow that DID learn
-        // something — a pattern fired and the model overruled it, say — is
-        // exactly the row the substrate owner needs, so it is. The door that
-        // writes the row drops only such an allow still in force; anything
-        // else it settles against the policy in force in the row's own
-        // transaction, as the bare doors do, so a manifest that moved after
-        // the pass is never answered with the decision it replaced. A door
-        // enforcing a verdict another door recorded writes no second row.
+        // as the bare doors write it; only an allow from a plane that was off
+        // for the pass, which examined nothing, is not receipted. An allow
+        // that DID learn something — a pattern fired and the model overruled
+        // it, say — is exactly the row the substrate owner needs, so it is.
+        // The door that writes the row drops only such an allow still in
+        // force; anything else it settles against the policy in force in the
+        // row's own transaction, as the bare doors do, so a manifest that
+        // moved after the pass is never answered with the decision it
+        // replaced. A door enforcing a verdict another door recorded writes
+        // no second row.
         let silent = verdict.decision == PolicyClassifyDecision::Allow
             && verdict.audit.is_none()
             && match ledger {
                 DecisionLedger::Record => {
                     !self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)?
-                        && !self.owner_plane_examines()?
+                        && !examined
                 }
                 DecisionLedger::AlreadyRecorded => true,
             };

@@ -192,11 +192,12 @@ pub use dreamer::{
     ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView, DreamerParkCauseView,
     DreamerParkedAttemptView,
 };
+pub use conflict_settle::DreamerDecidedCandidateView;
 pub use dreamer_wake_read::{
     ConsolidationWakeStatusRequest, DreamerWakeCallEndView, DreamerWakeCallStateView,
-    DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeEndView, DreamerWakeGenerationView,
-    DreamerWakeHeaderView, DreamerWakeLeaseView, DreamerWakeLiveCallView, DreamerWakeLiveView,
-    DreamerWakeResumeView, DreamerWakeView,
+    DreamerWakeCallView, DreamerWakeCheckpointView, DreamerWakeClaimAuthoringFallbackView,
+    DreamerWakeEndView, DreamerWakeGenerationView, DreamerWakeHeaderView, DreamerWakeLeaseView,
+    DreamerWakeLiveCallView, DreamerWakeLiveView, DreamerWakeResumeView, DreamerWakeView,
 };
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,

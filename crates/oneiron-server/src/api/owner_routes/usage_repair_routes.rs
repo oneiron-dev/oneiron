@@ -10,13 +10,13 @@
 //! of his authority answers 403, and a reviewed row that changed or decodes
 //! now names which in the conflict's `state` (FIX 7038). A removal's receipt
 //! records where his request reached this install
-//! (`machine_routes::act_surface`).
+//! (`machine_routes::act_surface_admitted`).
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::edge::EdgeActorClass;
@@ -80,11 +80,13 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<UsageRepairRemoveRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let scope = metered(&server)?;
     let response = blocking(move || {
@@ -122,10 +124,7 @@ async fn remove(
 /// for this server's metering scope, in key order, as its write kept it; a
 /// kept row that no longer decodes is counted in `undecodable`, never read
 /// as a receipt (FIX 11302).
-async fn receipts(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Value> {
+async fn receipts(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let scope = metered(&server)?;
     let response = blocking(move || {

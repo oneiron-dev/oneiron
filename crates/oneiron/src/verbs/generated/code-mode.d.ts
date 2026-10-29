@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1232 code-mode rows (1192 host rows, 40 run rows), 4323 declarations.
-// Replies: 1060 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1234 code-mode rows (1194 host rows, 40 run rows), 4331 declarations.
+// Replies: 1062 fully typed, 171 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 113; unread shapes: none.
 declare namespace Sdk {
@@ -450,6 +450,10 @@ declare namespace Sdk {
   type RsiLineView = { work_line: RsiWorkLineView; shares: RsiShareView[]; exposure_line: RsiExposureLineView; suspended: boolean };
   type RsiLineRequest = Record<string, never>;
   type RsiTopUp = { line: "tokens"; units: number } | { line: "exploration"; units: number } | { line: "share"; share: string; units: number };
+  type ResidentSharesRequest = Record<string, never>;
+  type ResidentShareView = { resident: string; units?: number | null; pinned: boolean; allocation?: string | null; allocation_generation?: number | null; used_units: number; overdraft_units: number; overdrafts: number };
+  type ResidentSharesView = { residents: ResidentShareView[] };
+  type SetResidentShareRequest = { resident: string; units?: number | null; pinned?: boolean };
   type SeatAuth = "vendor_login" | "api_key";
   type RunnerSeat = { runner: string; auth: SeatAuth; egress_profile_ref: string; credential_handles?: string[] };
   type RunnerSeatQuotasRequest = { seats: RunnerSeat[] };
@@ -1066,7 +1070,8 @@ declare namespace Sdk {
   type GoalAxisSpec = { name: string; kind: GoalAxisKind };
   type SkillOptimizeGoalView = { goal_id: EntityId; goal_revision: string; axes: GoalAxisSpec[]; project?: EntityId | null; goal_claim?: EntityId | null };
   type SkillOptimizeGoalBindRequest = { skill: EntityId; project?: EntityId | null };
-  type SkillOptimizeGoalRevision = { goal_revision: string };
+  type TradeoffCapacityAdvisory = { authored_rules: { held: number; limit: number } } | { learned_rules: { held: number; limit: number } };
+  type SkillOptimizeGoalRevision = { goal_revision: string; tradeoff_capacity_advisory?: TradeoffCapacityAdvisory[] | null };
   type TradeoffChoice = "approve" | "reject";
   type TradeoffRule = { gains: string[]; losses: string[]; choice: TradeoffChoice };
   type DecisionBand = { low: number; high: number };
@@ -1077,7 +1082,7 @@ declare namespace Sdk {
   type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; project?: EntityId | null; roles: TradeoffRole[]; proposal: EntityId; proposal_digest: string; target_digest: string; evidence_digest: string; world_digest: string; axes: Record<string, GoalAxisScore>; gains: string[]; losses: string[] };
   type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin };
   type SkillTradeoffAsk = { pending: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number };
-  type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk };
+  type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk; tradeoff_capacity_advisory?: TradeoffCapacityAdvisory[] | null };
   type SkillOptimizeTradeoffPickRequest = { proposal: EntityId; question_digest: string; choice: TradeoffChoice };
   type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null };
   type HubHookBindRequest = { pack: string };
@@ -3397,7 +3402,8 @@ declare namespace Sdk {
   type TextReference = { id: string; text: string };
   type FieldSpec = { supplied?: string | null; references?: TextReference[]; template?: string | null; generate?: boolean; instruction?: string | null; enum_values?: string[] | null; secret?: string | null };
   type ReplayAction = { action: "open"; url: string } | { action: "click"; locator: string } | { action: "type"; locator: string; operand: TypeOperand; clear?: boolean } | { action: "select"; locator: string; option: string } | { action: "fill"; locator: string; field: FieldSpec };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; duration_ms: number };
+  type ReceiptOutcome = "unknown";
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null; engine?: BrowserEngine | null; fact?: ActionFact | null; engine_switch?: EngineSwitchRecord | null; text_source?: TextSource | null; text_ref?: string | null; action?: ReplayAction | null; source_url?: string | null; source_origin?: string | null; source_title?: string | null; tab?: string | null; result_tab?: string | null; result_unread?: string | null; outcome?: ReceiptOutcome | null; duration_ms: number };
   type SecretParam = { name: string; kind: SecretKind };
   type RecentCounts = { pass: number; miss: number; repair: number; of: number };
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
@@ -3835,7 +3841,8 @@ declare namespace Sdk {
   type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
   type ConsolidationWakeStatusRequest = { job_ref?: string | null; wake_ref?: string | null; limit?: number | null; cursor?: string | null };
-  type DreamerWakeEndView = { unix_ms: number; elapsed_ms: number; stop?: string | null };
+  type DreamerWakeClaimAuthoringFallbackView = { ambiguous_campaigns: { roots: string[] } };
+  type DreamerWakeEndView = { unix_ms: number; elapsed_ms: number; stop?: string | null; claim_authoring_fallback?: DreamerWakeClaimAuthoringFallbackView | null };
   type DreamerWakeHeaderView = { trigger: string; scope: string; worker: string; node_id: string; budget_id: string; origin_unix_ms?: number | null; ceiling_ms: number; ceiling_unix_ms?: number | null; entered_unix_ms: number; entered_elapsed_ms: number; ended?: DreamerWakeEndView | null };
   type DreamerWakeResumeView = { wake_ref: string; at: number; worker: string };
   type DreamerWakeCheckpointView = { park_ref: string; job_ref: string; attempt_count: number; wake_ref: string; parked_at: number; saved_steps: string[]; resumed?: DreamerWakeResumeView | null };
@@ -4248,7 +4255,8 @@ declare namespace Sdk {
   type LibraryRunOutput = { workflow: string; status: SubgoalStatus; mode: LibraryRunMode; model_free: boolean; model_free_unproven?: number | null; unmet?: number[]; batch: BatchOutput };
   type BrowserLibraryRunOutput = BrowserAnswer<LibraryRunOutput>;
   type BrowserHandoverOutput = BrowserAnswer<HandoverOutput>;
-  type SwitchEngineInput = { engine: BrowserEngine; reason: string };
+  type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null };
+  type SwitchEngineInput = { engine: BrowserEngine; reason: string; snapshot_bounds?: SnapshotBounds | null };
   type SwitchEngineOutput = { receipt: EffectReceipt; observation?: ObservationPage | null };
   type BrowserSwitchEngineOutput = BrowserAnswer<SwitchEngineOutput>;
   type BoardRefreshRequest = { frame_epoch?: number | null };
@@ -4584,7 +4592,7 @@ declare namespace self {
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.BrowserScreenshotOutput | StoredResult>;
     /** Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor. */
     select(input: Sdk.SelectInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
-    /** Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself. */
+    /** Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds. */
     switch_engine(input: Sdk.SwitchEngineInput): Promise<Sdk.BrowserSwitchEngineOutput | StoredResult>;
     /** Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page. */
     type(input: Sdk.TypeInput): Promise<Sdk.BrowserObservationPage | StoredResult>;
@@ -5138,6 +5146,11 @@ declare const vault: Sdk.VaultHost & {
     local(input: Sdk.LocalRunnerBudgetRequest): Promise<Sdk.LocalRunnerBudgetView | StoredResult>;
     /** The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it. */
     reservations(input: Sdk.RunnerBudgetReservationsRequest): Promise<Sdk.RunnerBudgetReservationsView | StoredResult>;
+    /** The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on. */
+    resident_shares: ((input: Sdk.ResidentSharesRequest) => Promise<Sdk.ResidentSharesView | StoredResult>) & {
+      /** The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands. */
+      set(input: Sdk.SetResidentShareRequest): Promise<Sdk.ResidentSharesView | StoredResult>;
+    };
     /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
     rsi: ((input: Sdk.RsiLineRequest) => Promise<Sdk.RsiLineView | StoredResult>) & {
       /** The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend. */

@@ -2,6 +2,8 @@
 //! with its trace, each in one transaction. A prepared marker settles here
 //! whichever path its call took, so there is one settlement path.
 
+use std::cell::Cell;
+
 use super::call::Called;
 use super::claim::PreparedCall;
 use super::coordinator::{PreparedTagging, TaggingReconciler};
@@ -48,6 +50,21 @@ impl TaggingReconciler {
         Ok(trace)
     }
 
+    /// A re-tag whose `surprise` beside the set it replaced reaches the wake
+    /// policy's floor wakes, at its save, every agent a surprise may wake
+    /// (FIX 11317), through the turn wake. The save has committed: a wake
+    /// that fails is logged, and the re-dirty carrier still puts the turn in
+    /// the next turn wake's window.
+    fn wake_on_surprise(&self, surprise: f32, trace: &TaggingTrace) {
+        if let Err(error) = self.vault.wake_agents_on_surprise(surprise, self.now()) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                attempt = %trace.attempt,
+                "a surprising save's agent wake was not queued; the next turn wake reads it"
+            );
+        }
+    }
+
     /// Settles an answer that passed every check. It stands only for the
     /// text it tagged: the settling transaction reads the turn's own text
     /// again; the window was context, which it never reads. In save mode the
@@ -66,8 +83,12 @@ impl TaggingReconciler {
     ) -> Result<TaggingTrace> {
         let turn = call.payload.turn;
         let made_by = self.encoder.model_id().as_str().to_owned();
-        self.vault
+        // A re-tag's surprise, for the wake its save owes once it commits.
+        let retag = Cell::new(None);
+        let trace = self
+            .vault
             .try_with_write_txn_grouped(|txn| -> Result<TaggingTrace> {
+                retag.set(None);
                 // Inference ran outside this writer: a MESSAGE the saved set
                 // was read from may have left this replica since.
                 if tagged_messages_absent_in_txn(&self.vault.store, txn, &turn)? {
@@ -103,6 +124,7 @@ impl TaggingReconciler {
                         };
                         let now = self.stamp_in_txn(txn)?;
                         let saved = save::save_in_txn(&self.vault, txn, answer, &self.config, now)?;
+                        retag.set(saved.surprise.filter(|_| saved.retagged));
                         TaggingOutcome::Saved {
                             spans: output.spans.len(),
                             links: output.links.len(),
@@ -119,7 +141,11 @@ impl TaggingReconciler {
                 };
                 self.settle_in_txn(txn, &call.record, &trace)?;
                 Ok(trace)
-            })
+            })?;
+        if let Some(surprise) = retag.get() {
+            self.wake_on_surprise(surprise, &trace);
+        }
+        Ok(trace)
     }
 
     /// Waits out a turn whose tagged MESSAGE is away from this replica

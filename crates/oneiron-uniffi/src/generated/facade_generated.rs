@@ -368,6 +368,16 @@ export_facade! {
     let output = client.vault_budgets_rsi_hold_resume(&input)?;
     crate::codec::lift_record("vault.budgets.rsi.hold.resume", &output)
 };
+"vault.budgets.resident_shares" => fn vault_budgets_resident_shares(&self) -> ResidentSharesView = |client| {
+    let input: oneiron::llm::run_admission::resident_doors::ResidentSharesRequest = crate::codec::lower_empty("vault.budgets.resident_shares")?;
+    let output = client.vault_budgets_resident_shares(&input)?;
+    crate::codec::lift_record("vault.budgets.resident_shares", &output)
+};
+"vault.budgets.resident_shares.set" => fn vault_budgets_resident_shares_set(&self, input: SetResidentShareRequest) -> ResidentSharesView = |client| {
+    let input: oneiron::llm::run_admission::resident_doors::SetResidentShareRequest = crate::codec::lower_record("vault.budgets.resident_shares.set", input)?;
+    let output = client.vault_budgets_resident_shares_set(&input)?;
+    crate::codec::lift_record("vault.budgets.resident_shares.set", &output)
+};
 "vault.runners.seats.quotas" => fn vault_runners_seats_quotas(&self, input: RunnerSeatQuotasRequest) -> RunnerSeatQuotasView = |client| {
     let input: oneiron::dispatch_byoa::RunnerSeatQuotasRequest = crate::codec::lower_record("vault.runners.seats.quotas", input)?;
     let output = client.vault_runners_seats_quotas(&input)?;

@@ -202,7 +202,8 @@ pub(crate) use export_transfer::ExportTransfers;
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
-    ai_media_as_owner, ai_video_as_owner, ai_video_cancel_as_owner, ai_video_poll_as_owner,
+    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
+    ai_video_cancel_as_owner, ai_video_for_run, ai_video_poll_as_owner,
     vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
@@ -222,7 +223,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
@@ -319,6 +320,7 @@ async fn facade_route(
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
     let auth = match caller {
@@ -328,7 +330,7 @@ async fn facade_route(
         }
     };
     super::answer_hold::until_encoded(async move {
-        let call = FacadeCall::http(&server, &auth, &headers);
+        let call = FacadeCall::http(&server, &auth, &headers, &extensions);
         let verb = uri.path().trim_start_matches('/');
         match call_verb(&server, &call, verb, facade_json(payload)).await {
             Ok(output) => released_reply(&server, &auth, verb, output).into_response(),

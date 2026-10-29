@@ -3,7 +3,9 @@
 //! spool file as it is built and answers with an [`ExportTransfer`] naming
 //! it, so no reply, replay or hook holds the archive whole.
 //! `GET /v1/core/export-transfers/{transfer_ref}` reads it whole or one byte
-//! range at a time (`Range: bytes=`), and `DELETE` lets it go.
+//! range at a time (`Range: bytes=`), and `DELETE` lets it go. One whose
+//! reply the destination release withholds is dropped at once, since no
+//! caller learns its handle (FIX 11178).
 //!
 //! Each read and release admits its caller again as the export admitted its
 //! exporter: the scope, an unattenuated owner credential outside a room
@@ -105,6 +107,16 @@ impl ExportTransfers {
             .map_err(|_| transfers_unreadable())?
             .remove(transfer_ref);
         Ok(())
+    }
+
+    /// Drops the kept export `withheld` names, when it names one (FIX 11178):
+    /// a transfer-delivered `vault.export` whose reply the destination
+    /// release withholds leaves no spool behind, since no caller learns its
+    /// handle. A value naming no transfer drops nothing.
+    pub(super) fn drop_withheld(&self, withheld: &Value) {
+        if let Some(transfer_ref) = withheld.get("transfer_ref").and_then(Value::as_str) {
+            let _ = self.release(transfer_ref);
+        }
     }
 }
 
@@ -232,8 +244,9 @@ async fn read_transfer(
     State(server): State<Arc<SyncServer>>,
     Path(transfer_ref): Path<String>,
     headers: HeaderMap,
+    extensions: Extensions,
 ) -> Response {
-    let call = FacadeCall::http(&server, &auth, &headers);
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
     let kept = match admitted(&server, &call, &transfer_ref) {
         Ok(kept) => kept,
         Err(refused) => return refused.into_response(),
@@ -277,8 +290,9 @@ async fn release_transfer(
     State(server): State<Arc<SyncServer>>,
     Path(transfer_ref): Path<String>,
     headers: HeaderMap,
+    extensions: Extensions,
 ) -> Response {
-    let call = FacadeCall::http(&server, &auth, &headers);
+    let call = FacadeCall::http(&server, &auth, &headers, &extensions);
     match admitted(&server, &call, &transfer_ref)
         .and_then(|_| server.export_transfers.release(&transfer_ref))
     {

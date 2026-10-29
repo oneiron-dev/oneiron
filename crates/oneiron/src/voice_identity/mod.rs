@@ -40,6 +40,8 @@ mod lifetime;
 // Residual clustering in bounded tiles over one union-find (FIX 10216).
 mod match_work;
 mod math_keys;
+// The owner's typed question a third party's print owes (FIX 10789).
+mod print_ask;
 // Recognition bound to its world and consented purpose (FIX 10215, FIX 10217).
 mod recognition;
 pub mod ref_bank;

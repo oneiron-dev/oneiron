@@ -23,6 +23,7 @@ mod media_job;
 mod permit;
 mod receipt;
 mod resident;
+pub mod resident_doors;
 mod settle;
 mod wire;
 

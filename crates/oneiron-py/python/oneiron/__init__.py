@@ -367,6 +367,21 @@ class Oneiron:
         """
         return json.loads(_translate(lambda: self._client.close_lens_frame(card_id)))
 
+    def export_to(
+        self, path: str | os.PathLike[str], format: str | None = None
+    ) -> dict[str, Any]:
+        """Exports the whole vault into the file at ``path``, owner only.
+
+        As ``vault.export`` does: ``format`` is ``"archive"`` (the default)
+        or ``"okf"``. The file is created or truncated; the answer is the
+        archive's receipt, ``{"format", "bytes", "digest"}``. Over a server
+        the archive streams through a kept transfer, so no ceiling on a
+        reply applies to it. A path whose file cannot be created raises
+        ``BAD_REQUEST``.
+        """
+        resolved = os.fspath(path)
+        return json.loads(_translate(lambda: self._client.export_to(resolved, format)))
+
     # BEGIN GENERATED FACADE VERBS
     @property
     def vault(self) -> "Oneiron._VaultVerbs":
@@ -1119,6 +1134,9 @@ class Oneiron:
         @property
         def rsi(self) -> "Oneiron._VaultBudgetsRsiVerbs":
             return Oneiron._VaultBudgetsRsiVerbs(self._client)
+        @property
+        def resident_shares(self) -> "Oneiron._VaultBudgetsResidentSharesVerbs":
+            return Oneiron._VaultBudgetsResidentSharesVerbs(self._client)
     class _VaultBudgetsLeaseVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1164,6 +1182,15 @@ class Oneiron:
         def resume(self, spec):
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
             return json.loads(_translate(lambda: self._client.vault_budgets_rsi_hold_resume(json.dumps(spec))))
+    class _VaultBudgetsResidentSharesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_resident_shares(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_resident_shares_set(json.dumps(spec))))
     class _VaultRunnersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5776,7 +5803,7 @@ class Oneiron:
             """Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
         def switch_engine(self, spec):
-            """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
+            """Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds."""
             return json.loads(_translate(lambda: self._client.self_browser_switch_engine(json.dumps(spec))))
     class _SelfBrowserLibraryVerbs:
         def __init__(self, client: _NativeClient) -> None:

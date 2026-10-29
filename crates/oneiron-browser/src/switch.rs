@@ -27,6 +27,32 @@ use serde::{Deserialize, Serialize};
 pub struct SwitchEngineInput {
     pub engine: BrowserEngine,
     pub reason: String,
+    /// The bounds the session's per-origin storage snapshots keep from this
+    /// call on, each named one in place of its default (FIX 10335); absent,
+    /// they stay as they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_bounds: Option<SnapshotBounds>,
+}
+
+/// The bounds of the session's per-origin storage snapshots: the other
+/// origins' stores a switch or a proposal's fresh guest carries (FIX 8008,
+/// FIX 10335). Each named one stands in place of its default
+/// (`snapshot_bounds_policy`, CALLS row); none is a cap on the agent, and
+/// a store past a bound is not kept, its record naming it, as before.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotBounds {
+    /// UTF-16 code units of both stores of one origin that one read after
+    /// an act, at hand-back or as a Chromium document is left carries;
+    /// 4,194,304 by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_chars: Option<u64>,
+    /// Origins one tab's snapshots keep; 64 by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_origins: Option<u64>,
+    /// Bytes all the session's snapshots hold; 64 MiB by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_bytes: Option<u64>,
 }
 
 /// A switch's answer: its receipt, which carries the switch's record, and,

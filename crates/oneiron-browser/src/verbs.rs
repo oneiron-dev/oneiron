@@ -208,10 +208,29 @@ pub struct EffectReceipt {
     /// input is never sent again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_unread: Option<String>,
+    /// What the receipt knows of the act's outcome, where its input was
+    /// not sent whole (FIX 10426): `unknown` when a call of its input
+    /// failed after the browser was sent one, so the input may have taken
+    /// effect, wholly or in part. `result_unread` names the failure's code.
+    /// Absent where the input was sent whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ReceiptOutcome>,
     /// How long the effect took, in milliseconds of the monotonic clock:
     /// from its verb's entry through its screenshot and this receipt,
     /// before the host keeps the screenshot.
     pub duration_ms: u64,
+}
+
+/// What a receipt knows of its act's outcome where its input was not sent
+/// whole (`unknown_outcome_policy`, CALLS row, FIX 10426).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiptOutcome {
+    /// A call of the act's input failed after the browser was sent one of
+    /// its calls (a timeout, the guest lost, or the browser's error): the
+    /// input may have taken effect, wholly or in part, and is never sent
+    /// again.
+    Unknown,
 }
 
 /// Observes the page: as an edit of `base`, or, with none named, of the last

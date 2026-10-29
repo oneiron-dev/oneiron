@@ -74,8 +74,11 @@ impl AiHost {
         // D4), settled whether or not the code sandbox binds.
         let shared =
             compaction::CodeModeCompaction::bind_shared(&server, &host.handle.runtime, models);
-        if let Some((compaction, _)) = &shared {
+        if let Some((compaction, guard)) = &shared {
             let _ = host.handle.writer_compaction.set(compaction.clone());
+            // A program's media jobs live on code mode's meter, its run's
+            // line (FIX 780, 6083): a restart takes them up there again.
+            host.handle.runtime.bind_program_media_line(guard.clone());
         }
         #[cfg(feature = "code-sandbox-wasmtime")]
         let server = code_mode::bind(
@@ -191,8 +194,9 @@ impl AiHost {
     ) -> Self {
         let device = attached.as_ref().is_some_and(|attached| attached.device);
         recover_dead_leases(&vault);
-        let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
         let budgets = budgets.unwrap_or_else(crate::models::ModelHostBudgets::unhosted);
+        // Its ladders read chat replies on the vault's line (FIX 10626).
+        let rests = OfferCooldowns::in_vault_with(Arc::clone(&vault), budgets.clone());
         let mut runtime = ModelRuntime::build_hosted_on(models, broker, rests, &budgets)
             .with_receipts(receipts)
             .with_media_vault(Arc::clone(&vault));
@@ -213,6 +217,9 @@ impl AiHost {
         }
         let mut handle = AiHandle::unstarted(Arc::clone(&runtime), models);
         handle.device = device;
+        handle.dreamer_control = attached
+            .as_ref()
+            .and_then(|attached| attached.control.clone());
         let mut host = Self {
             handle: handle.clone(),
             dreamer: None,

@@ -78,6 +78,8 @@ pub enum AgentVerb {
     VaultBudgetsRsiTopUp,
     VaultBudgetsRsiHold,
     VaultBudgetsRsiHoldResume,
+    VaultBudgetsResidentShares,
+    VaultBudgetsResidentSharesSet,
     VaultRunnersSeatsQuotas,
     VaultRunnersSeatsTopUp,
     VaultFanoutResume,
@@ -1284,6 +1286,8 @@ impl AgentVerb {
         Self::VaultBudgetsRsiTopUp,
         Self::VaultBudgetsRsiHold,
         Self::VaultBudgetsRsiHoldResume,
+        Self::VaultBudgetsResidentShares,
+        Self::VaultBudgetsResidentSharesSet,
         Self::VaultRunnersSeatsQuotas,
         Self::VaultRunnersSeatsTopUp,
         Self::VaultFanoutResume,
@@ -2493,6 +2497,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => "vault.budgets.rsi.top_up",
             Self::VaultBudgetsRsiHold => "vault.budgets.rsi.hold",
             Self::VaultBudgetsRsiHoldResume => "vault.budgets.rsi.hold.resume",
+            Self::VaultBudgetsResidentShares => "vault.budgets.resident_shares",
+            Self::VaultBudgetsResidentSharesSet => "vault.budgets.resident_shares.set",
             Self::VaultRunnersSeatsQuotas => "vault.runners.seats.quotas",
             Self::VaultRunnersSeatsTopUp => "vault.runners.seats.top_up",
             Self::VaultFanoutResume => "vault.fanout.resume",
@@ -3729,6 +3735,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultBudgetsResidentShares
+                | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
@@ -4964,6 +4972,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultBudgetsResidentShares
+                | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
@@ -6343,6 +6353,8 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultBudgetsResidentShares
+                | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsQuotas
                 | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
@@ -7435,6 +7447,7 @@ impl AgentVerb {
                 | Self::VaultBudgetsRsiTopUp
                 | Self::VaultBudgetsRsiHold
                 | Self::VaultBudgetsRsiHoldResume
+                | Self::VaultBudgetsResidentSharesSet
                 | Self::VaultRunnersSeatsTopUp
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
@@ -8226,6 +8239,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => &["spec"],
             Self::VaultBudgetsRsiHold => &["spec"],
             Self::VaultBudgetsRsiHoldResume => &["spec"],
+            Self::VaultBudgetsResidentShares => &["spec"],
+            Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
             Self::VaultFanoutResume => &["spec"],
@@ -9433,6 +9448,8 @@ impl AgentVerb {
             Self::VaultBudgetsRsiTopUp => &["spec"],
             Self::VaultBudgetsRsiHold => &["spec"],
             Self::VaultBudgetsRsiHoldResume => &["spec"],
+            Self::VaultBudgetsResidentShares => &["spec"],
+            Self::VaultBudgetsResidentSharesSet => &["spec"],
             Self::VaultRunnersSeatsQuotas => &["spec"],
             Self::VaultRunnersSeatsTopUp => &["spec"],
             Self::VaultFanoutResume => &["spec"],
@@ -10782,6 +10799,12 @@ impl AgentVerb {
             }
             Self::VaultBudgetsRsiHoldResume => {
                 "The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."
+            }
+            Self::VaultBudgetsResidentShares => {
+                "The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on."
+            }
+            Self::VaultBudgetsResidentSharesSet => {
+                "The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands."
             }
             Self::VaultRunnersSeatsQuotas => {
                 "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."
@@ -14037,7 +14060,7 @@ impl AgentVerb {
                 "Asks a person to take the browser over, saying why (to sign in or pay); until they hand it back, browser verbs refuse browser_taken_over and the answer after carries the record. With demonstrate: true the handback returns their span's draft."
             }
             Self::SelfBrowserSwitchEngine => {
-                "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."
+                "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds."
             }
             Self::VaultClaimsSupersede => {
                 "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."

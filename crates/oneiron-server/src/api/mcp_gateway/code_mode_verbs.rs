@@ -6,7 +6,9 @@
 //! one generated dispatcher every MCP door shares. Code mode holds no
 //! authority a direct tool call lacks; only the paging envelope is left out,
 //! since the guest receives the verb's whole output. Its writes carry the
-//! run's host-owned origin, not a source the guest's input names.
+//! run's host-owned origin, not a source the guest's input names. Its `ai.*`
+//! media calls spend on the run's own line, code mode's meter, which its
+//! steps spend on, rather than the owner's media meter (FIX 780).
 //!
 //! A browser row (`self.browser.*`) is no tool. The run's own browser
 //! answers it: one guest per run, started on the run's first admitted

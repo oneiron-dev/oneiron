@@ -59,10 +59,13 @@ mod fit;
 mod job_lifecycle;
 mod jobs;
 mod options;
+// FIX 780, 6083: a program's media jobs on its run's line.
+mod run_line;
 // FIX 9517: every reference upload under the bank's current reference.
 mod voice_reference;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
+use run_line::{JobLine, ProgramLine};
 pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
 
 /// The run every media call is admitted under, one run per call.
@@ -272,6 +275,9 @@ pub struct MediaRuntime {
     /// The guard each reference-rendering backend asks before an upload,
     /// bound to the runtime's vault (FIX 9517).
     voice_refs: VoiceReferenceUploadGuard,
+    /// The line a program's run spends its media calls on (FIX 780, 6083),
+    /// which its jobs are taken up on again after a restart.
+    program_line: ProgramLine,
 }
 
 impl MediaRuntime {
@@ -295,9 +301,10 @@ impl MediaRuntime {
         request: MediaRequest,
         voices: Option<&'a RungVoices>,
         payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<impl std::future::Future<Output = LlmResult<MediaAnswer>> + Send + 'a> {
         let ladder = self.ladder(&request)?;
-        let run = self.media_run(payer)?;
+        let run = self.media_run(payer, sources)?;
         // A media call's one deadline is its caller's (FIX 8134): no host
         // wait ends it before an offer it waits for is back.
         let deadline = super::CallDeadline::Open;
@@ -307,8 +314,14 @@ impl MediaRuntime {
     /// A run of its own on the media meter, for one call or stream, billed
     /// to `payer` when a room pays for it (FIX 805): each permit binds the
     /// PERSON and account its caller resolved before the call. `None` is
-    /// the vault owner's run.
-    fn media_run(&self, payer: Option<PayerPerson>) -> LlmResult<RunAdmission> {
+    /// the vault owner's run. Its permits carry `sources`, the rows its
+    /// caller read the request from (FIX 11311); `None` when they are not
+    /// known whole.
+    fn media_run(
+        &self,
+        payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
+    ) -> LlmResult<RunAdmission> {
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
         Ok(funded_run(
             MEDIA_RUN,
@@ -316,7 +329,8 @@ impl MediaRuntime {
             self.host.clone(),
             Arc::clone(&self.receipts),
             payer,
-        ))
+        )
+        .sourced(sources))
     }
 
     async fn run_in(
@@ -324,8 +338,9 @@ impl MediaRuntime {
         request: MediaRequest,
         voices: Option<&RungVoices>,
         payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaResponse> {
-        let run = self.media_run(payer)?;
+        let run = self.media_run(payer, sources)?;
         self.run_admitted(&run, request, voices).await
     }
 
@@ -391,8 +406,9 @@ impl MediaRuntime {
     /// submit. It carries the served receipt it went out with, and its end
     /// counts toward its offer's health as a sent request's does: a
     /// recovering offer's one probation request when that slot is free. It
-    /// bills the payer its submit bound, whoever polls it. A job whose rung
-    /// left the config cannot be taken up.
+    /// bills the payer its submit bound, whoever polls it, on the line its
+    /// submit spent on: a program's run's, else the media meter (FIX 780,
+    /// 6083). A job whose rung left the config cannot be taken up.
     fn take_up(&self, row: &JobRow) -> LlmResult<HeldJob> {
         let rung = self
             .job_rungs
@@ -402,7 +418,7 @@ impl MediaRuntime {
         let mut bound = row.request.clone();
         bound.model = rung.model.clone();
         bound.envelope.locality = rung.offer.binding.locality;
-        let run = self.media_run(row.payer.clone())?;
+        let run = self.job_run(row)?;
         let selector = Some(row.request.model.as_str());
         let permit = run.admit_media(selector, &bound, &rung.offer.binding)?;
         let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
@@ -676,12 +692,13 @@ impl MediaRuntime {
         request: MediaRequest,
         bound_ms: u64,
         payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
         if request.operation != AiOperation::Transcribe || bound_ms == 0 {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let ladder = self.ladder(&request)?;
-        let run = self.media_run(payer)?;
+        let run = self.media_run(payer, sources)?;
         ladder.open_media_stream(&run, request, bound_ms)
     }
 }

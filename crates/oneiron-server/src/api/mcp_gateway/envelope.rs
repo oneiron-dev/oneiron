@@ -104,6 +104,10 @@ pub(crate) struct McpGatewayError {
     /// (FIX 3194), surfaced as `error.data.retry_after`; a code-mode door
     /// hands it back to the run as the typed outage.
     pub(super) retry_after: Option<u64>,
+    /// Each time a refused call's limit resets, as Unix seconds in its
+    /// source's order (FIX 8190, 11199), surfaced as `error.data.resets_at`.
+    /// Boxed for size, as `effective_scope` is.
+    pub(super) resets_at: Option<Box<Vec<u64>>>,
     /// A failed code run's kept type feedback, released apart from the
     /// refusal (FIX 10389, 10390), surfaced as `error.data.program_steps`.
     /// Never among the words its release reads. Boxed for size, as
@@ -130,6 +134,7 @@ impl McpGatewayError {
             row_receipt: None,
             hook: None,
             retry_after: None,
+            resets_at: None,
             program_steps: None,
             reason_codes: Vec::new(),
         }
