@@ -53,6 +53,7 @@ pub use admission::{
     program_admission_job_id, program_admission_queued, program_admission_receipt,
     record_program_admission, record_undecodable_program_admission,
 };
+pub(crate) use admission::admission_payload_actor;
 pub(crate) use erase::{erase_retired_actor_in_txn, erase_workflow_actor_in_txn};
 pub use evidence::{
     CANDIDATE_DOMAIN, FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,
