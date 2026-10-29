@@ -73,6 +73,37 @@ impl Vault {
             .map(|head| step_body_ref(&artifact_id, head.version)))
     }
 
+    /// The versioned ref of the latest filed body for one outbound step, but
+    /// only when the latest filed bytes equal `expected`: the leg pins the
+    /// body's ref against the program row it is about to send, so a blob
+    /// whose latest version ran ahead of the accepted row (an update files
+    /// the new body before the program write is validated) reads as absent
+    /// and the send waits instead of carrying words the program never
+    /// accepted (FIX 11513 K11). `None` before any is filed, when no version
+    /// stays, or when the latest bytes differ.
+    ///
+    /// # Errors
+    /// The artifact's version chain does not read.
+    pub fn campaign_step_body_latest_ref_if_matches(
+        &self,
+        program_ref: EntityId,
+        step_ref: EntityId,
+        call_seq: u64,
+        expected: &[u8],
+    ) -> Result<Option<String>> {
+        let artifact_id = campaign_step_body_artifact_id(program_ref, step_ref, call_seq)?;
+        let Some(head) = self.blob_artifact_head(&artifact_id)? else {
+            return Ok(None);
+        };
+        let Some(latest) = self.read_blob_artifact_version(&artifact_id, head.version)? else {
+            return Ok(None);
+        };
+        if latest.as_slice() != expected {
+            return Ok(None);
+        }
+        Ok(Some(step_body_ref(&artifact_id, head.version)))
+    }
+
     /// Files `body` as one outbound step's words, as `actor`: the first
     /// write creates the artifact and appends version 1, a later write
     /// appends a new version only when the bytes differ from the latest,
