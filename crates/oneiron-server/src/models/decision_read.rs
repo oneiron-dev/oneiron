@@ -372,7 +372,8 @@ impl DecisionReader {
     /// one position.
     async fn token_id(&self, text: &str, special: bool) -> LlmResult<u64> {
         let body = json!({"content": text, "add_special": false, "parse_special": special});
-        let sent = self.http.post_json(TOKENIZE_PATH, &BTreeMap::new(), &body);
+        let headers = BTreeMap::new();
+        let sent = self.http.post_json(TOKENIZE_PATH, &headers, &body);
         // Read whole on the served vault's chat-reply line (FIX 11412).
         let reply = match self.host.get() {
             Some(host) => super::http::holding_chat_replies(&host.budgets, sent).await,
