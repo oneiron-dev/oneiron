@@ -184,6 +184,13 @@ impl Vault {
                 let digest = sample_digest(&subject, &sample.sample_id);
                 SAMPLE.put(store, wtxn, &digest, sample)?;
             }
+            // The owner's typed question a third party's print owes, kept with
+            // it (FIX 10789). An ask, never a block: a question that does not
+            // queue leaves the print as it is.
+            if let Err(error) = super::print_ask::queue_print_owner_ask_in_txn(self, wtxn, &record)
+            {
+                tracing::warn!(kind = ?error.kind(), "a voice print's owner question was not queued");
+            }
             Ok(record)
         })
     }

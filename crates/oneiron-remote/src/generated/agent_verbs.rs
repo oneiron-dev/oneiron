@@ -265,6 +265,12 @@ impl OneironClient {
                 "vault.budgets.rsi.hold.resume" => remote_agent_verb_output::<
                     oneiron::llm::rsi_doors::RsiLineView,
                 >(client, verb, &input),
+                "vault.budgets.resident_shares" => remote_agent_verb_output::<
+                    oneiron::llm::run_admission::resident_doors::ResidentSharesView,
+                >(client, verb, &input),
+                "vault.budgets.resident_shares.set" => remote_agent_verb_output::<
+                    oneiron::llm::run_admission::resident_doors::ResidentSharesView,
+                >(client, verb, &input),
                 "vault.runners.seats.quotas" => remote_agent_verb_output::<
                     oneiron::dispatch_byoa::RunnerSeatQuotasView,
                 >(client, verb, &input),
@@ -4599,6 +4605,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.budgets.rsi.hold.resume", value)
+    }
+    pub fn vault_budgets_resident_shares(
+        &self,
+        input: &oneiron::llm::run_admission::resident_doors::ResidentSharesRequest,
+    ) -> Result<oneiron::llm::run_admission::resident_doors::ResidentSharesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.resident_shares", value)
+    }
+    pub fn vault_budgets_resident_shares_set(
+        &self,
+        input: &oneiron::llm::run_admission::resident_doors::SetResidentShareRequest,
+    ) -> Result<oneiron::llm::run_admission::resident_doors::ResidentSharesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.resident_shares.set", value)
     }
     pub fn vault_runners_seats_quotas(
         &self,

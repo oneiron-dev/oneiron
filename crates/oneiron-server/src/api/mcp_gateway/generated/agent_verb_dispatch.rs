@@ -201,6 +201,8 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.budgets.rsi.top_up" => a.spec.clone().ok_or_else(invalid),
         "vault.budgets.rsi.hold" => a.spec.clone().ok_or_else(invalid),
         "vault.budgets.rsi.hold.resume" => a.spec.clone().ok_or_else(invalid),
+        "vault.budgets.resident_shares" => a.spec.clone().ok_or_else(invalid),
+        "vault.budgets.resident_shares.set" => a.spec.clone().ok_or_else(invalid),
         "vault.runners.seats.quotas" => a.spec.clone().ok_or_else(invalid),
         "vault.runners.seats.top_up" => a.spec.clone().ok_or_else(invalid),
         "vault.fanout.resume" => a.spec.clone().ok_or_else(invalid),
@@ -1735,6 +1737,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.budgets.rsi.hold.resume" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.budgets.resident_shares" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.budgets.resident_shares.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runners.seats.quotas" => {
@@ -6316,6 +6324,38 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_rsi_hold_resume(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.budgets.resident_shares" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.budgets.resident_shares", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::run_admission::resident_doors::ResidentSharesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_budgets_resident_shares(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.budgets.resident_shares.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.budgets.resident_shares.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::run_admission::resident_doors::SetResidentShareRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_budgets_resident_shares_set(
+                    server, auth, input,
+                )
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

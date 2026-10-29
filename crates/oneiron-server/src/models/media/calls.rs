@@ -42,13 +42,15 @@ impl Drop for MediaRuntime {
 impl MediaRuntime {
     /// One call to its answer, on a run of its own on the media meter,
     /// billed to `payer` when a room pays for it (FIX 805); `None` is the
-    /// vault owner's.
+    /// vault owner's. Its permits carry `sources`, the rows the caller read
+    /// the request from (FIX 11311), `None` when not known whole.
     pub async fn run(
         &self,
         request: MediaRequest,
         payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaResponse> {
-        self.run_in(request, None, payer).await
+        self.run_in(request, None, payer, sources).await
     }
 
     /// [`Self::run`] for a speech call in a banked voice (FIX 1746): it goes
@@ -59,8 +61,9 @@ impl MediaRuntime {
         request: MediaRequest,
         voices: &RungVoices,
         payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaResponse> {
-        self.run_in(request, Some(voices), payer).await
+        self.run_in(request, Some(voices), payer, sources).await
     }
 
     /// When `request` may be sent again if no offer answers it (FIX 3194):
@@ -114,6 +117,7 @@ impl MediaRuntime {
         request: MediaRequest,
         payer: Option<PayerPerson>,
         actor: Option<oneiron::EntityId>,
+        sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaTicket> {
         if !request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
@@ -124,7 +128,7 @@ impl MediaRuntime {
             .store
             .as_ref()
             .map(|_| (request.clone(), payer.clone()));
-        let MediaAnswer::Job(job) = self.walk(request, None, payer)?.await? else {
+        let MediaAnswer::Job(job) = self.walk(request, None, payer, sources)?.await? else {
             return Err(FatalLlmError::EmptyResponse.into());
         };
         let id = job_ticket(&job.provider_job);

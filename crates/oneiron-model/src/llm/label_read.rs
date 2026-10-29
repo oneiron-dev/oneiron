@@ -99,6 +99,11 @@ pub trait LabelReadModel: Send + Sync {
     fn max_labels(&self) -> usize {
         64
     }
+    /// What a read costs per thousand units it reads, as the reader's host knows its price
+    /// (FIX 11305); none when it knows none, as for a model served on the host itself.
+    fn cost_per_thousand(&self) -> Option<f64> {
+        None
+    }
     fn read(
         &self,
         request: &LabelReadRequest<'_>,
