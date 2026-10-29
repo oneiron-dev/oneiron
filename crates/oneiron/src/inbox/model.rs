@@ -213,6 +213,12 @@ impl InboxGroupCursor {
         }
     }
 
+    /// When the row at this position was proposed: its group's source time.
+    #[must_use]
+    pub(super) const fn created_at(&self) -> u64 {
+        self.created_at
+    }
+
     /// The cursor as a page's `next` carries it: 80 lowercase hex.
     #[must_use]
     pub fn to_token(&self) -> String {

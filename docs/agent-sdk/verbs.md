@@ -49,6 +49,10 @@ both bindings and their export-census tests in one change.
 - `vault.shape.read`
 - `vault.shape.plan`
 - `vault.shape.apply`
+- `vault.shape.plan.card`
+- `vault.shape.items.receipt`
+- `vault.shape.groups`
+- `vault.shape.groups.resolve`
 - `self.message`
 - `self.grants.ask`
 - `vault.companions.access_requests.answer`
@@ -205,6 +209,7 @@ both bindings and their export-census tests in one change.
 - `vault.inbox.concerns.review`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
+- `vault.inbox.groups.resolve`
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`

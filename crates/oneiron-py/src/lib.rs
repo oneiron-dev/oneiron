@@ -746,6 +746,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shape_plan_card(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shape.plan.card")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shape.plan.card", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shape_items_receipt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shape.items.receipt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shape.items.receipt", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shape_groups(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shape.groups")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shape.groups", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shape_groups_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shape.groups.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shape.groups.resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_message(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.message")?;
         let output = py
@@ -2052,6 +2080,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.inbox.groups")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.inbox.groups", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_inbox_groups_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.inbox.groups.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.inbox.groups.resolve", input))
             .map_err(raise)?;
         encode(&output)
     }

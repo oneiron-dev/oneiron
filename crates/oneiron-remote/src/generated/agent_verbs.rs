@@ -166,6 +166,18 @@ impl OneironClient {
                 "vault.shape.apply" => remote_agent_verb_output::<
                     oneiron::vault_shape::ShapeApplyReceipt,
                 >(client, verb, &input),
+                "vault.shape.plan.card" => remote_agent_verb_output::<
+                    oneiron::memory::ShapePlanCardView,
+                >(client, verb, &input),
+                "vault.shape.items.receipt" => remote_agent_verb_output::<
+                    Option<oneiron::memory::ShapeItemReceipt>,
+                >(client, verb, &input),
+                "vault.shape.groups" => remote_agent_verb_output::<
+                    Vec<oneiron::vault_shape::ShapeInboxGroup>,
+                >(client, verb, &input),
+                "vault.shape.groups.resolve" => remote_agent_verb_output::<
+                    oneiron::vault_shape::ShapeApplyReceipt,
+                >(client, verb, &input),
                 "self.message" => {
                     remote_agent_verb_output::<oneiron::memory::MessagePersonReceipt>(
                         client, verb, &input,
@@ -645,9 +657,12 @@ impl OneironClient {
                 "vault.inbox.lens" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
-                "vault.inbox.groups" => {
-                    remote_agent_verb_output::<oneiron::inbox::InboxGroupPage>(client, verb, &input)
-                }
+                "vault.inbox.groups" => remote_agent_verb_output::<
+                    oneiron::inbox::UnifiedInboxGroupPage,
+                >(client, verb, &input),
+                "vault.inbox.groups.resolve" => remote_agent_verb_output::<
+                    oneiron::inbox::InboxGroupResolution,
+                >(client, verb, &input),
                 "vault.weave.digest.render" => remote_agent_verb_output::<
                     Option<oneiron::claim::WeaveDigestRendered>,
                 >(client, verb, &input),
@@ -4247,6 +4262,54 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.shape.apply", value)
     }
+    pub fn vault_shape_plan_card(
+        &self,
+        input: &oneiron::vault_shape::ShapePlanRequest,
+    ) -> Result<oneiron::memory::ShapePlanCardView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.plan.card", value)
+    }
+    pub fn vault_shape_items_receipt(
+        &self,
+        input: &oneiron::memory::ShapeItemReceiptRequest,
+    ) -> Result<Option<oneiron::memory::ShapeItemReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.items.receipt", value)
+    }
+    pub fn vault_shape_groups(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::vault_shape::ShapeInboxGroup>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.groups", value)
+    }
+    pub fn vault_shape_groups_resolve(
+        &self,
+        input: &oneiron::memory::ShapeGroupResolveRequest,
+    ) -> Result<oneiron::vault_shape::ShapeApplyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shape.groups.resolve", value)
+    }
     pub fn self_message(
         &self,
         input: &oneiron::memory::MessagePersonRequest,
@@ -6243,7 +6306,7 @@ impl OneironClient {
     pub fn vault_inbox_groups(
         &self,
         input: &oneiron::agent_inbox_lens::InboxRunGroupsRequest,
-    ) -> Result<oneiron::inbox::InboxGroupPage, MemoryError> {
+    ) -> Result<oneiron::inbox::UnifiedInboxGroupPage, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -6251,6 +6314,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.inbox.groups", value)
+    }
+    pub fn vault_inbox_groups_resolve(
+        &self,
+        input: &oneiron::inbox::InboxGroupResolveRequest,
+    ) -> Result<oneiron::inbox::InboxGroupResolution, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.inbox.groups.resolve", value)
     }
     pub fn vault_weave_digest_render(
         &self,

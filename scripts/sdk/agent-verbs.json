@@ -688,6 +688,62 @@
       "section": false
     },
     {
+      "name": "vault.shape.plan.card",
+      "description": "The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read.",
+      "input": "crate::vault_shape::ShapePlanRequest",
+      "output": "crate::memory::ShapePlanCardView",
+      "call": "memory.shape_plan_card_view(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shape.items.receipt",
+      "description": "Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable.",
+      "input": "crate::memory::ShapeItemReceiptRequest",
+      "output": "Option<crate::memory::ShapeItemReceipt>",
+      "call": "memory.shape_item_receipt(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.shape.groups",
+      "description": "Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::vault_shape::ShapeInboxGroup>",
+      "call": "memory.shape_inbox_groups(&memory.embedded_owner(\"vault.shape.groups\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.shape.groups.resolve",
+      "description": "The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged.",
+      "input": "crate::memory::ShapeGroupResolveRequest",
+      "output": "crate::vault_shape::ShapeApplyReceipt",
+      "call": "memory.resolve_shape_inbox_group(&memory.embedded_owner(\"vault.shape.groups.resolve\")?, None, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.message",
       "description": "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.",
       "input": "crate::memory::MessagePersonRequest",
@@ -3296,10 +3352,10 @@
     },
     {
       "name": "vault.inbox.groups",
-      "description": "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it.",
+      "description": "Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it.",
       "input": "crate::agent_inbox_lens::InboxRunGroupsRequest",
-      "output": "crate::inbox::InboxGroupPage",
-      "call": "memory.inbox_run_groups(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
+      "output": "crate::inbox::UnifiedInboxGroupPage",
+      "call": "memory.inbox_groups_page(&memory.embedded_owner(\"vault.inbox.groups\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
@@ -3312,6 +3368,22 @@
         "cursor": "next",
         "resume": "spec",
         "within": "after"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.inbox.groups.resolve",
+      "description": "The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items.",
+      "input": "crate::inbox::InboxGroupResolveRequest",
+      "output": "crate::inbox::InboxGroupResolution",
+      "call": "memory.resolve_inbox_group_of_kind(&memory.embedded_owner(\"vault.inbox.groups.resolve\")?, None, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
       },
       "section": false,
       "openapi": true

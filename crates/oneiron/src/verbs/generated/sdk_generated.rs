@@ -250,6 +250,26 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.shape.plan.card",
+                crate::code_run::vault_read::request_schema::<crate::vault_shape::ShapePlanRequest>(
+                ),
+            ),
+            (
+                "vault.shape.items.receipt",
+                crate::code_run::vault_read::request_schema::<crate::memory::ShapeItemReceiptRequest>(
+                ),
+            ),
+            (
+                "vault.shape.groups",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.shape.groups.resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ShapeGroupResolveRequest,
+                >(),
+            ),
+            (
                 "self.message",
                 crate::code_run::vault_read::request_schema::<crate::memory::MessagePersonRequest>(
                 ),
@@ -1070,6 +1090,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_inbox_lens::InboxRunGroupsRequest,
                 >(),
+            ),
+            (
+                "vault.inbox.groups.resolve",
+                crate::code_run::vault_read::request_schema::<crate::inbox::InboxGroupResolveRequest>(
+                ),
             ),
             (
                 "vault.weave.digest.render",
@@ -6883,6 +6908,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.people.create",
     "vault.entities.look_before_mint",
     "vault.identity.mention",
+    "vault.shape.groups",
+    "vault.shape.groups.resolve",
     "vault.companions.access_requests.answer",
     "vault.personas.preview",
     "vault.personas.export",
@@ -6998,6 +7025,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.inbox.concerns.review",
     "vault.inbox.lens",
     "vault.inbox.groups",
+    "vault.inbox.groups.resolve",
     "vault.weave.digest.render",
     "vault.weave.link.corrections",
     "self.inbox.lens",
@@ -7772,6 +7800,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.identity.mention" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::maintenance::identity::IdentityMentionView,
         >(),
+        "vault.shape.groups" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::vault_shape::ShapeInboxGroup>,
+        >(),
+        "vault.shape.groups.resolve" => {
+            crate::code_run::vault_read::request_schema::<crate::vault_shape::ShapeApplyReceipt>()
+        }
         "vault.companions.access_requests.answer" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CompanionAccessRequestAnswered,
         >(),
@@ -8109,7 +8143,10 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
         }
         "vault.inbox.groups" => {
-            crate::code_run::vault_read::request_schema::<crate::inbox::InboxGroupPage>()
+            crate::code_run::vault_read::request_schema::<crate::inbox::UnifiedInboxGroupPage>()
+        }
+        "vault.inbox.groups.resolve" => {
+            crate::code_run::vault_read::request_schema::<crate::inbox::InboxGroupResolution>()
         }
         "vault.weave.digest.render" => crate::code_run::vault_read::request_schema::<
             Option<crate::claim::WeaveDigestRendered>,
@@ -10610,6 +10647,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.shape.plan.card" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.items.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.groups" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shape.groups.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.message" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11754,6 +11819,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.inbox.groups" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inbox.groups.resolve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18806,6 +18878,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shape.apply" => {
             let _input: crate::vault_shape::ShapeApplyRequest = decode(value.clone())?;
         }
+        "vault.shape.plan.card" => {
+            let _input: crate::vault_shape::ShapePlanRequest = decode(value.clone())?;
+        }
+        "vault.shape.items.receipt" => {
+            let _input: crate::memory::ShapeItemReceiptRequest = decode(value.clone())?;
+        }
+        "vault.shape.groups" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.shape.groups.resolve" => {
+            let _input: crate::memory::ShapeGroupResolveRequest = decode(value.clone())?;
+        }
         "self.message" => {
             let _input: crate::memory::MessagePersonRequest = decode(value.clone())?;
         }
@@ -19338,6 +19422,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.inbox.groups" => {
             let _input: crate::agent_inbox_lens::InboxRunGroupsRequest = decode(value.clone())?;
+        }
+        "vault.inbox.groups.resolve" => {
+            let _input: crate::inbox::InboxGroupResolveRequest = decode(value.clone())?;
         }
         "vault.weave.digest.render" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -22923,6 +23010,10 @@ pub fn invoke(
         "vault.shape.read" => encode(vault_shape_read(memory, decode(value)?)?),
         "vault.shape.plan" => encode(vault_shape_plan(memory, decode(value)?)?),
         "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
+        "vault.shape.plan.card" => encode(vault_shape_plan_card(memory, decode(value)?)?),
+        "vault.shape.items.receipt" => encode(vault_shape_items_receipt(memory, decode(value)?)?),
+        "vault.shape.groups" => encode(vault_shape_groups(memory, decode(value)?)?),
+        "vault.shape.groups.resolve" => encode(vault_shape_groups_resolve(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
         "vault.companions.access_requests.answer" => encode(
@@ -23172,6 +23263,7 @@ pub fn invoke(
         }
         "vault.inbox.lens" => encode(vault_inbox_lens(memory, decode(value)?)?),
         "vault.inbox.groups" => encode(vault_inbox_groups(memory, decode(value)?)?),
+        "vault.inbox.groups.resolve" => encode(vault_inbox_groups_resolve(memory, decode(value)?)?),
         "vault.weave.digest.render" => encode(vault_weave_digest_render(memory, decode(value)?)?),
         "vault.weave.link.corrections" => {
             encode(vault_weave_link_corrections(memory, decode(value)?)?)
@@ -25699,6 +25791,34 @@ pub fn vault_shape_apply(
 ) -> MemoryResult<crate::vault_shape::ShapeApplyReceipt> {
     memory.shape_apply(&input)
 }
+pub fn vault_shape_plan_card(
+    memory: &Memory<'_>,
+    input: crate::vault_shape::ShapePlanRequest,
+) -> MemoryResult<crate::memory::ShapePlanCardView> {
+    memory.shape_plan_card_view(&input)
+}
+pub fn vault_shape_items_receipt(
+    memory: &Memory<'_>,
+    input: crate::memory::ShapeItemReceiptRequest,
+) -> MemoryResult<Option<crate::memory::ShapeItemReceipt>> {
+    memory.shape_item_receipt(&input)
+}
+pub fn vault_shape_groups(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::vault_shape::ShapeInboxGroup>> {
+    memory.shape_inbox_groups(&memory.embedded_owner("vault.shape.groups")?)
+}
+pub fn vault_shape_groups_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::ShapeGroupResolveRequest,
+) -> MemoryResult<crate::vault_shape::ShapeApplyReceipt> {
+    memory.resolve_shape_inbox_group(
+        &memory.embedded_owner("vault.shape.groups.resolve")?,
+        None,
+        &input,
+    )
+}
 pub fn self_message(
     memory: &Memory<'_>,
     input: crate::memory::MessagePersonRequest,
@@ -27014,8 +27134,18 @@ pub fn vault_inbox_lens(
 pub fn vault_inbox_groups(
     memory: &Memory<'_>,
     input: crate::agent_inbox_lens::InboxRunGroupsRequest,
-) -> MemoryResult<crate::inbox::InboxGroupPage> {
-    memory.inbox_run_groups(&memory.embedded_owner("vault.inbox.groups")?, &input)
+) -> MemoryResult<crate::inbox::UnifiedInboxGroupPage> {
+    memory.inbox_groups_page(&memory.embedded_owner("vault.inbox.groups")?, &input)
+}
+pub fn vault_inbox_groups_resolve(
+    memory: &Memory<'_>,
+    input: crate::inbox::InboxGroupResolveRequest,
+) -> MemoryResult<crate::inbox::InboxGroupResolution> {
+    memory.resolve_inbox_group_of_kind(
+        &memory.embedded_owner("vault.inbox.groups.resolve")?,
+        None,
+        &input,
+    )
 }
 pub fn vault_weave_digest_render(
     memory: &Memory<'_>,

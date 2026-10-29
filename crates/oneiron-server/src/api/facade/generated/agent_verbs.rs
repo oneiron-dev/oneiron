@@ -45,6 +45,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shape.read", post(facade_route))
         .route("/vault.shape.plan", post(facade_route))
         .route("/vault.shape.apply", post(facade_route))
+        .route("/vault.shape.plan.card", post(facade_route))
+        .route("/vault.shape.items.receipt", post(facade_route))
+        .route("/vault.shape.groups", post(facade_route))
+        .route("/vault.shape.groups.resolve", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
         .route(
@@ -207,6 +211,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.inbox.concerns.review", post(facade_route))
         .route("/vault.inbox.lens", post(facade_route))
         .route("/vault.inbox.groups", post(facade_route))
+        .route("/vault.inbox.groups.resolve", post(facade_route))
         .route("/vault.weave.digest.render", post(facade_route))
         .route("/vault.weave.link.corrections", post(facade_route))
         .route("/self.inbox.lens", post(facade_route))
