@@ -11,6 +11,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, RegistryError, Result};
 use crate::ppr;
 use crate::store::Store;
+use crate::write_envelope::ClaimCandidate;
 
 mod edge;
 mod indexes;
@@ -178,7 +179,7 @@ pub(super) fn apply_ops_with_origin(
     // and the mode it was admitted under are one snapshot. A secret the door
     // places goes to custody and leaves its handle (OF-560); a file keeps
     // its bytes and is marked.
-    let masked_files = secret_scan::mask_batch_ops(
+    let (masked_files, masked_claim_pre) = secret_scan::mask_batch_ops(
         store,
         config,
         analyzer,
@@ -188,6 +189,14 @@ pub(super) fn apply_ops_with_origin(
         !replay,
         mutation_recorded_at,
     )?;
+    // The pre-mask body of each MACHINE candidate the mask rewrote in this
+    // transaction (FIX 11356), in op order per id: the candidate apply
+    // renews a proof only over its verified pre-mask body. A replayed batch
+    // reports none, so its proofs stay byte for byte.
+    let mut masked_claims: HashMap<EntityId, VecDeque<ClaimCandidate>> = HashMap::new();
+    for (id, pre) in masked_claim_pre {
+        masked_claims.entry(id).or_default().push_back(pre);
+    }
     // FIX 5507: a body file a mark names bands its record as a marked row does.
     let masked_files =
         masked_files.with_marked_body_files(store, &*wtxn, &ops.ops, &asset_files)?;
@@ -566,6 +575,7 @@ pub(super) fn apply_ops_with_origin(
                 put_options.consent.can_resolve_pending =
                     pending_gate_consent_at_batch_start.contains(&id);
                 put_options.decision.preflight = preflight_decision_id;
+                let pre_mask = masked_claims.get_mut(&id).and_then(VecDeque::pop_front);
                 let applied = apply_claim_candidate(
                     store,
                     config,
@@ -583,6 +593,7 @@ pub(super) fn apply_ops_with_origin(
                         write_policy: write_policy.as_ref(),
                         owner_authored: gate_mode.owner_authored.as_ref(),
                     },
+                    pre_mask,
                 )?;
                 consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
                 if !internal_lexical_query_hint {

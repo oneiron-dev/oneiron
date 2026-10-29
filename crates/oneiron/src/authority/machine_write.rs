@@ -22,7 +22,10 @@ use super::{
     ActorBindingStatus, AuthorityKey, AuthorityOp, AuthorityTier, HostSlipIssuer, ROLE_AGENT,
 };
 
+mod after_mask;
 mod successor;
+
+pub(crate) use after_mask::resign_machine_claim_after_mask_in_txn;
 
 const DOMAIN: &[u8] = b"oneiron/machine-claim/v1";
 const SIGNATURE_KEY: &str = "machine_signature";
