@@ -35,7 +35,7 @@ use zeroize::Zeroizing;
 use super::discover_local_window_keys;
 use crate::Vault;
 use crate::authority::{
-    AuthorityEntryHash, Destination, EditOrigin, EffectiveRead, decode_authority_log_entry_body,
+    AuthorityEntryHash, Destination, EffectiveRead, decode_authority_log_entry_body,
     side_world,
 };
 use crate::consent::AuthenticatedOwner;
@@ -358,7 +358,7 @@ impl WindowManager {
         restore_pads::admit_kit_pads(vault, &mut pads);
         restore.pads = vault.restore_key_pads(&pads)?;
         restore_pads::reconcile_owed_epochs(vault);
-        restore.keys = vault.restore_world_keys(owner, EditOrigin::ThisMachine, seed, confirm)?;
+        restore.keys = vault.restore_world_keys(owner, seed, confirm)?;
         for section in vault.open_vault_bundle_sections_with_kit(&opened, &pads, seed)? {
             self.take_section(&section, true, &mut restore.take);
         }
