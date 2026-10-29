@@ -30008,7 +30008,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/escalation/policy.rs",
@@ -39425,7 +39425,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/learning/scope_erase.rs",
-     "purpose": "A project's learning scope goes with the project (FIX 6038)",
+     "purpose": "An erased scope's learning goes with it (FIX 6038, FIX 11533)",
      "surface": {
       "crate-vis": 2
      }
@@ -39489,7 +39489,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/learning_setting/scope_erase.rs",
-     "purpose": "A project's owner rows and fits go with the project (FIX 6038): its erase deletes every seed and pin laid…",
+     "purpose": "An erased scope's owner rows and fits go with it (FIX 6038, FIX 11533): its erase deletes every seed and pin…",
      "surface": {
       "crate-vis": 2
      }
