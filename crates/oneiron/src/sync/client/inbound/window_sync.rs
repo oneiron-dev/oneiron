@@ -1,209 +1,28 @@
-//! Inbound wire dispatch, window-update import, and bulk history transfer.
+//! The window-sync message family.
+//! The entry point is `SyncClient::handle_window_sync`.
+//! Dispatched by `super::handle_server_message`.
 
 use std::cmp::Ordering::{Equal, Less};
 
 use loro::VersionVector;
 
-use super::base::{SyncClient, load_root_doc};
-use super::types::SyncResidenceMode;
+use super::super::base::SyncClient;
+use super::super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError, SyncProtocolValidation};
 use crate::sync::SyncEvent;
 use crate::sync::bridge::persist_window_update;
 use crate::sync::loro_support::{doc_version_vector, export_updates_since};
-use crate::sync::quarantine;
 use crate::sync::schema::create_window_doc;
 use crate::sync::transport;
-use crate::sync::transport::{
-    LEASE_STATUS_GRANTED, MAX_DECODED_PAYLOAD_BYTES, TAG_BULK_TRANSFER, TAG_BULK_TRANSFER_DONE,
-    TAG_EPHEMERAL, TAG_LEASE_GRANTED, TAG_SYNC_UPDATE, TAG_VERSION_VECTOR, TAG_WINDOW_SYNC,
-    TransportError, window_sub_tags,
-};
+use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, TransportError, window_sub_tags};
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
     LoadedWindow, WindowExport, apply_pending_window_updates, load_window_from_state,
     persisted_window_pads,
 };
-use crate::sync::window_rows::BULK_TRANSFER_MARKER;
 
 impl SyncClient {
-    /// Handles an incoming wire message from the server.
-    pub fn handle_server_message(
-        &mut self,
-        data: &[u8],
-    ) -> std::result::Result<Vec<Vec<u8>>, TransportError> {
-        if data.is_empty() {
-            return Err(TransportError::InvalidPayload("empty message"));
-        }
-
-        let tag = data[0];
-        if self.config.federation_peer.is_some()
-            && matches!(tag, TAG_BULK_TRANSFER | TAG_BULK_TRANSFER_DONE)
-        {
-            return Err(TransportError::InvalidPayload(
-                "full-window bulk transfer on federation lane",
-            ));
-        }
-        let payload = &data[1..];
-        let mut responses = Vec::new();
-
-        match tag {
-            transport::TAG_LFS_CHUNK_SYNC => {
-                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
-                    return Err(TransportError::FrameTooLarge {
-                        size: payload.len(),
-                        max: MAX_DECODED_PAYLOAD_BYTES,
-                    });
-                }
-                responses.extend(self.handle_lfs_chunk_reply(payload)?);
-            }
-            transport::TAG_RPC if self.config.note_session.is_some() => {
-                super::note_session::accept_bind_reply(payload)?;
-                self.note_session_bound = true;
-            }
-            transport::TAG_DOCUMENT => {
-                responses.extend(self.handle_document_frame(transport::decode_document(payload)?)?);
-            }
-            transport::TAG_BATCH => {
-                for frame in transport::decode_document_batch(payload)? {
-                    responses.extend(self.handle_document_frame(frame)?);
-                }
-            }
-            TAG_SYNC_UPDATE => {
-                // Root doc update/snapshot from server — cap before import so a
-                // hostile/buggy server cannot force an unbounded allocation.
-                // Reuses the bulk-transfer 8 MB cap (ONE-1127).
-                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
-                    return Err(TransportError::FrameTooLarge {
-                        size: payload.len(),
-                        max: MAX_DECODED_PAYLOAD_BYTES,
-                    });
-                }
-                // Import, then persist so the imported state survives
-                // restart (d:root).
-                let frontiers_before = self.root_doc.state_frontiers();
-                self.root_doc
-                    .import(payload)
-                    .map_err(|_| TransportError::InvalidPayload("root doc import failed"))?;
-                // A federation peer's root names its windows for this lane to
-                // follow; it is not this vault's root, so none of it reaches
-                // the owner's d:root or lease mirror (OF-149).
-                let persisted = if self.config.federation_peer.is_some() {
-                    Ok(())
-                } else {
-                    self.persist_root_state()
-                };
-                if let Err(err) = persisted {
-                    if let Err(revert_err) = self.root_doc.revert_to(&frontiers_before) {
-                        return Err(TransportError::Storage(format!(
-                            "persist root doc: {err}; root revert after import persist failure: {revert_err}"
-                        )));
-                    }
-                    let restored = load_root_doc(&self.vault).map_err(|reload_err| {
-                        TransportError::Storage(format!(
-                            "persist root doc: {err}; reload root doc after persist failure: {reload_err}"
-                        ))
-                    })?;
-                    restored.set_peer_id(self.client_id).map_err(|peer_err| {
-                        TransportError::Storage(format!(
-                            "persist root doc: {err}; restore root peer id after persist failure: {peer_err}"
-                        ))
-                    })?;
-                    self.root_doc = restored;
-                    return Err(TransportError::Storage(format!("persist root doc: {err}")));
-                }
-                responses.extend(self.newly_followed_window_requests()?);
-            }
-            TAG_EPHEMERAL => {
-                if payload.len() > MAX_DECODED_PAYLOAD_BYTES {
-                    return Err(TransportError::FrameTooLarge {
-                        size: payload.len(),
-                        max: MAX_DECODED_PAYLOAD_BYTES,
-                    });
-                }
-                self.ephemeral_store
-                    .apply(payload)
-                    .map_err(|_| TransportError::InvalidPayload("ephemeral import failed"))?;
-            }
-            TAG_LEASE_GRANTED => {
-                // ONE-1140 (OD-5): the server's ack for this connect's lease
-                // request. Exhaustive frame validation; a frame echoing a
-                // DIFFERENT client id is a protocol violation (the server
-                // direct-replies to the requester), fail closed.
-                let (status, client_id, expires_at) = transport::decode_lease_granted(payload)?;
-                if client_id != self.client_id {
-                    return Err(TransportError::InvalidPayload(
-                        "LeaseGranted echoes a foreign client id",
-                    ));
-                }
-                if status == LEASE_STATUS_GRANTED {
-                    tracing::debug!(
-                        client_id = format!("{client_id:016x}"),
-                        expires_at,
-                        "sync: lease granted/renewed"
-                    );
-                } else {
-                    // Rejection is surfaced as a typed event and sync
-                    // PROCEEDS: fail-closed lives at the replay doors
-                    // (peers quarantine this device's NEW receipts), not
-                    // the pipe.
-                    tracing::warn!(
-                        client_id = format!("{client_id:016x}"),
-                        "sync: lease request REJECTED (binding conflict or revoked)"
-                    );
-                    let _ = self.event_tx.send(SyncEvent::LeaseDenied { client_id });
-                }
-            }
-            TAG_VERSION_VECTOR => {
-                // Server's root VV. Root is server-authoritative, so there is
-                // nothing to send back — but the payload must still be valid
-                // Loro binary VV bytes. Malformed VV → typed error, fail-closed.
-                VersionVector::decode(payload).map_err(|_| TransportError::VersionVectorDecode)?;
-            }
-            TAG_WINDOW_SYNC => {
-                let (window_key, sub_tag, inner) = transport::decode_window_sync(payload)?;
-                responses.extend(self.handle_window_sync(window_key, sub_tag, inner)?);
-            }
-            TAG_BULK_TRANSFER => {
-                if self.config.residence_mode == SyncResidenceMode::Opened {
-                    return Err(TransportError::InvalidPayload(
-                        "full-window bulk transfer on opened-item lane",
-                    ));
-                }
-                let (window_key, compressed) = transport::decode_bulk_transfer(payload)?;
-                let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
-                if !Self::follows_window(&key, &self.effective_worlds()?) {
-                    return Err(TransportError::InvalidPayload("unfollowed world window"));
-                }
-                self.handle_bulk_transfer(window_key, compressed)?;
-            }
-            TAG_BULK_TRANSFER_DONE => {
-                if self.config.residence_mode == SyncResidenceMode::Opened {
-                    return Err(TransportError::InvalidPayload(
-                        "full-window bulk transfer on opened-item lane",
-                    ));
-                }
-                let (window_key, doc_state) = transport::decode_bulk_transfer_done(payload)?;
-                let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
-                if !Self::follows_window(&key, &self.effective_worlds()?) {
-                    return Err(TransportError::InvalidPayload("unfollowed world window"));
-                }
-                self.handle_bulk_transfer_done(window_key, doc_state)?;
-            }
-            _ => return Err(TransportError::UnknownTag(tag)),
-        }
-
-        // A successfully decoded control/root frame can advance one retained
-        // update. Malformed/oversized messages never trigger replay side effects.
-        // Window updates leave newly deferred bytes for the next timer tick.
-        if tag != TAG_WINDOW_SYNC {
-            self.replay_deferred_federation_update()?;
-        } else {
-            responses.extend(self.owner_note_requests()?);
-        }
-        Ok(responses)
-    }
-
-    fn handle_window_sync(
+    pub(super) fn handle_window_sync(
         &mut self,
         window_key: &str,
         sub_tag: u8,
@@ -401,7 +220,7 @@ impl SyncClient {
                     )?;
                     return Ok(Vec::new());
                 }
-                match self.import_window_update(window_key, payload, super::ImportTier::OwnDevice) {
+                match self.import_window_update(window_key, payload, super::super::ImportTier::OwnDevice) {
                     Ok(()) => Ok(Vec::new()),
                     // The update builds on history this window's own shallow root cut away: no
                     // update can bring it level, the server's replacement can.
@@ -553,7 +372,7 @@ impl SyncClient {
         Ok(evidence)
     }
 
-    pub(super) fn drain_staged_world_updates(&mut self) -> std::result::Result<(), TransportError> {
+    pub(in crate::sync::client) fn drain_staged_world_updates(&mut self) -> std::result::Result<(), TransportError> {
         let mut healed = Vec::new();
         loop {
             if self.staged_world_updates.is_empty() {
@@ -619,7 +438,7 @@ impl SyncClient {
         Ok(())
     }
 
-    pub(super) fn import_accepted_window_update(
+    pub(in crate::sync::client) fn import_accepted_window_update(
         &mut self,
         window_key: &str,
         window: &LoadedWindow,
@@ -773,7 +592,7 @@ impl SyncClient {
                 Ok(missing) => missing,
                 Err(e) => {
                     self.manager.discard_window(&key);
-                    return Err(map_delta_export_err(e));
+                    return Err(super::map_delta_export_err(e));
                 }
             };
             // Its pads persist by reference where custody here holds them
@@ -815,253 +634,6 @@ impl SyncClient {
         Ok(())
     }
 
-    fn handle_bulk_transfer(
-        &mut self,
-        window_key: &str,
-        compressed: &[u8],
-    ) -> std::result::Result<(), TransportError> {
-        // Streaming decompression with size limit to prevent decompression bombs.
-        let mut decoder = zstd::Decoder::new(compressed)
-            .map_err(|_| TransportError::InvalidPayload("zstd decoder init failed"))?;
-        let mut buf = Vec::with_capacity(std::cmp::min(
-            compressed.len().saturating_mul(2),
-            MAX_DECODED_PAYLOAD_BYTES,
-        ));
-        let mut chunk = [0u8; 8192];
-        loop {
-            let n = std::io::Read::read(&mut decoder, &mut chunk)
-                .map_err(|_| TransportError::InvalidPayload("zstd decompress failed"))?;
-            if n == 0 {
-                break;
-            }
-            if buf.len() + n > MAX_DECODED_PAYLOAD_BYTES {
-                return Err(TransportError::FrameTooLarge {
-                    size: buf.len() + n,
-                    max: MAX_DECODED_PAYLOAD_BYTES,
-                });
-            }
-            buf.extend_from_slice(&chunk[..n]);
-        }
-
-        // Persist the in-progress marker (ARCH-0023b key table:
-        // `bulk:w:{key}`, device only) so a crash between BulkTransfer and
-        // BulkTransferDone is observable on restart.
-        let marker_key = window_key.to_owned();
-        self.vault
-            .with_write_txn_grouped(|wtxn| {
-                BULK_TRANSFER_MARKER.put(&self.vault.store, wtxn, &marker_key, &[1u8])?;
-                Ok(())
-            })
-            .map_err(|e| TransportError::Storage(format!("persist bulk marker: {e}")))?;
-
-        // The decompressed MessagePack payload (LMDB row application) is
-        // deliberately NOT applied here: the Phase-3 server-side sender does
-        // not exist yet, and building a speculative applier against an
-        // unexercised wire peer is riskier than deferring. Re-ticketed for
-        // the M5/M6 Phase-3 work (see ONE-1126 PR body).
-        let _ = buf;
-        Ok(())
-    }
-
-    fn handle_bulk_transfer_done(
-        &mut self,
-        window_key: &str,
-        doc_state: &[u8],
-    ) -> std::result::Result<(), TransportError> {
-        let marker_key = window_key.to_owned();
-
-        if !doc_state.is_empty() {
-            // The state comes in its envelope, its pads installed here first (FIX 7107).
-            let state = self.bulk_window_state(&WindowKey::new(window_key), doc_state)?;
-            let doc_state = state.as_slice();
-            if let Some(window) = self.window(window_key) {
-                // Window is live: import through the observed doc so
-                // Observer B materializes, then persist the merged state.
-                crate::sync::window::validate_window_update_residence_with_vault(
-                    &self.vault,
-                    &window.doc,
-                    doc_state,
-                    &window.key,
-                )
-                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
-                window
-                    .doc
-                    .import(doc_state)
-                    .map_err(|_| TransportError::InvalidPayload("bulk doc state import failed"))?;
-                if let Err(e) = window.persist_state(&self.vault) {
-                    // Never leave RAM ahead of durable state on a FAILED
-                    // persist (same discipline as the WindowSync UPDATE
-                    // arm above): the bulk import advanced this doc's
-                    // version vector, so keeping the doc registered would
-                    // tell the server — on the next VV exchange — that we
-                    // already hold bytes that never became durable; they
-                    // would never be re-sent and would vanish from the doc
-                    // on restart. Discard the live window WITHOUT
-                    // persisting (a persist would durably commit the
-                    // unconfirmed import); the next open reloads from
-                    // durable state and the ONE-1127/1128 VV exchange
-                    // re-delivers the missing ops. The `bulk:w:`
-                    // in-progress marker stays set for retry (fail-closed:
-                    // the clear below only runs after a successful
-                    // persist).
-                    self.manager.discard_window(&WindowKey::new(window_key));
-                    return Err(TransportError::Storage(format!("persist bulk window: {e}")));
-                }
-            } else {
-                // Window is ON-DISK (cold): route the snapshot through the
-                // SAME gated machinery as every other remote import
-                // (ONE-1156(a), WAVE-C OD-12). The previous arm parsed the
-                // snapshot structure-only (`doc_from_snapshot`) and then
-                // wrote raw `d:w:`/`sv:w:`/`svf:w:` rows — remote bytes
-                // becoming the next open's doc state WITHOUT Observer B
-                // ever seeing them: no tombstone never-downgrade, no `dt:`
-                // gate, no receipt immutability, no quarantine. Fail-closed
-                // replacement:
-                //
-                //   1. full pinned open (pt → pm → reverse → forward remat,
-                //      observers attached LAST) — `ensure_window`;
-                //   2. OBSERVED import — Observer B fires synchronously, so
-                //      EVERY entity/edge/tombstone door runs on the remote
-                //      ops;
-                //   3. inline `ra:` drain scoped to this window — doc-side
-                //      tombstone re-assertion at a safe commit point
-                //      (handler context, OUTSIDE observer callbacks),
-                //      BEFORE the persist so the persisted `d:w:` is
-                //      already re-asserted (ONE-1156(c));
-                //   4. `persist_state` — anti-clobber merge + the pinned
-                //      `d:`/`sv:`/`svf:` triple (which subsumes the old
-                //      arm's bespoke svf freshness logic);
-                //   5. unload — bulk targets cold historical windows; the
-                //      memory budget is restored after the persist.
-                //
-                // Every failure path leaves `bulk:w:{key}` set for retry
-                // (the clear below only runs after success) and DISCARDS
-                // the just-opened window so RAM never runs ahead of
-                // durable state (same discipline as the live arm and the
-                // WindowSync UPDATE arm).
-                let key = WindowKey::new(window_key);
-                let candidate = match load_window_from_state(&self.vault, "local", &key) {
-                    Ok(doc) => doc,
-                    Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
-                        let doc = create_window_doc("local", &key);
-                        apply_pending_window_updates(&self.vault, &doc, &key)
-                            .map_err(|e| TransportError::Storage(e.to_string()))?;
-                        doc
-                    }
-                    Err(e) => return Err(TransportError::Storage(e.to_string())),
-                };
-                crate::sync::window::validate_window_update_residence_with_vault(
-                    &self.vault,
-                    &candidate,
-                    doc_state,
-                    &key,
-                )
-                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
-                let window = self.ensure_window(window_key)?;
-                crate::sync::window::validate_window_update_residence_with_vault(
-                    &self.vault,
-                    &window.doc,
-                    doc_state,
-                    &key,
-                )
-                .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
-                if window.doc.import(doc_state).is_err() {
-                    self.manager.discard_window(&WindowKey::new(window_key));
-                    return Err(TransportError::InvalidPayload(
-                        "bulk doc state import failed",
-                    ));
-                }
-                // "local" mirrors the vault's own transient window-doc user
-                // id (`Vault::write_crdt_tombstone`); `create_window_doc`
-                // ignores it. A `false` return (malformed `ra:` rows kept,
-                // fail closed) is NOT a bulk failure: the well-formed
-                // markers drained, and the kept rows stay doctor-visible
-                // via `pending_reassert_windows` — failing the transfer
-                // could never clear them.
-                if let Err(e) = quarantine::drain_reassert_markers_for_window(
-                    &self.vault,
-                    "local",
-                    &self.manager,
-                    &WindowKey::new(window_key),
-                ) {
-                    self.manager.discard_window(&WindowKey::new(window_key));
-                    return Err(TransportError::Storage(format!(
-                        "bulk ra: re-assertion drain: {e}"
-                    )));
-                }
-                if let Err(e) = window.persist_state(&self.vault) {
-                    self.manager.discard_window(&WindowKey::new(window_key));
-                    return Err(TransportError::Storage(format!("persist bulk window: {e}")));
-                }
-                // Drop our handle BEFORE the unload: the manager refuses /
-                // warns on outstanding external holders (ONE-1150).
-                drop(window);
-                self.manager
-                    .unload_window(&WindowKey::new(window_key))
-                    .map_err(|e| TransportError::Storage(format!("unload bulk window: {e}")))?;
-            }
-        }
-
-        // Clear the in-progress marker only after persistence succeeded
-        // (fail-closed: a failed persist leaves the marker set for retry).
-        self.vault
-            .with_write_txn_grouped(|wtxn| {
-                BULK_TRANSFER_MARKER.delete(&self.vault.store, wtxn, &marker_key)?;
-                Ok(())
-            })
-            .map_err(|e| TransportError::Storage(format!("clear bulk marker: {e}")))?;
-
-        let _ = self.event_tx.send(SyncEvent::BulkTransferComplete {
-            window_key: window_key.to_string(),
-        });
-        Ok(())
-    }
-
-    /// Whether `window_key`'s local doc is VV-identical to the most recent
-    /// server VV observed for that window (ONE-1128).
-    ///
-    /// `None` means there is no local doc or no server VV witness yet —
-    /// callers MUST treat `None` as NOT converged (fail-closed). A window
-    /// without a server witness can never vouch for queued updates.
-    pub fn window_converged(&self, window_key: &str) -> Option<bool> {
-        let window = self.window(window_key)?;
-        let server_vv = self.server_vvs.get(window_key)?;
-        Some(window.doc.oplog_vv() == *server_vv)
-    }
-
-    /// Imports a queued offline update into the LOCAL window doc before it is
-    /// replayed to the server (ONE-1128).
-    ///
-    /// Convergence is confirmed by VV equality with the server, and equality
-    /// only vouches for ops the local doc contains. Skipping this import
-    /// would let a server that never received the queued ops compare
-    /// VV-equal against a fresh local doc — and the queue would be cleared
-    /// with the ops lost in flight (for a delete-bearing update, a vanished
-    /// GDPR tombstone).
-    ///
-    /// An opened-item machine mirrors queued bytes only into a window it
-    /// still holds promoted, judged again once the handle is held: a copy
-    /// that outlived its queue row does not reopen a window a demotion
-    /// emptied. An ungranted window's rows stay queued, unsent.
-    pub fn import_queued_update(
-        &mut self,
-        window_key: &str,
-        update: &[u8],
-    ) -> std::result::Result<(), TransportError> {
-        if !self.full_window_exchange_allowed(window_key)? {
-            return Ok(());
-        }
-        let window = self.ensure_window(window_key)?;
-        if !self.full_window_exchange_allowed(window_key)? {
-            return Ok(());
-        }
-        window
-            .doc
-            .import(update)
-            .map_err(|_| TransportError::InvalidPayload("queued update import failed"))?;
-        Ok(())
-    }
-
     /// What this device sends the server for `window` past the server's vector: the update
     /// bytes, or `None` when only a replacement could bring the server level. A device never
     /// pushes a replacement on the hub; it asks for the hub's and writes its own state on top
@@ -1081,7 +653,7 @@ impl SyncClient {
             None,
             crate::sync::window::Withhold::Peer(self.home_peer),
         )
-        .map_err(map_delta_export_err)?;
+        .map_err(super::map_delta_export_err)?;
         Ok(match export {
             WindowExport::Update(delta) => Some(delta),
             WindowExport::Replacement(snapshot) if server_vv.is_empty() => Some(snapshot),
@@ -1110,17 +682,4 @@ impl SyncClient {
 fn replacement_request(window_key: &str) -> std::result::Result<Vec<u8>, TransportError> {
     transport::encode_window_sync(window_key, window_sub_tags::REPLACEMENT_REQUEST, &[])
         .into_result()
-}
-
-/// Maps a delta-export error onto the transport taxonomy.
-///
-/// Malformed inbound VV bytes (`CrdtDecodeError`) get the dedicated
-/// fail-closed variant; anything else is an export-side failure.
-fn map_delta_export_err(e: crate::error::Error) -> TransportError {
-    match e {
-        crate::error::Error::Sync(crate::error::SyncError::CrdtDecodeError { .. }) => {
-            TransportError::VersionVectorDecode
-        }
-        _ => TransportError::InvalidPayload("delta export failed"),
-    }
 }
