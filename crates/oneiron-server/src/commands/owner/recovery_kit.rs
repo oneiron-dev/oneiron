@@ -13,7 +13,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use oneiron::authority::EditOrigin;
 use oneiron::error::SecretError;
 use oneiron::recovery::{KitError, KitPassphrase, KitPiece, KitSecretKind, restore_kit};
 use oneiron::sync::WindowManager;
@@ -236,7 +235,6 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let confirmed = vault.confirm_world_kit(
         &owner,
-        EditOrigin::ThisMachine,
         &pieces,
         passphrase.as_ref(),
         &carry,
@@ -314,7 +312,6 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
     let restored = vault
         .restore_world_kit(
             &owner,
-            EditOrigin::ThisMachine,
             &pieces,
             passphrase.as_ref(),
             confirm,
