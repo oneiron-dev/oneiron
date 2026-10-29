@@ -1240,6 +1240,130 @@ async fn vault_shape_apply(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_shape_plan_card(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.shape.plan.card",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_shape_items_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.shape.items.receipt",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_shape_groups(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shape.groups")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shape.groups", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.shape.groups", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shape_groups(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_shape_groups_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shape.groups.resolve")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shape.groups.resolve", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.shape.groups.resolve", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shape_groups_resolve(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn self_message(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -6020,6 +6144,46 @@ async fn vault_inbox_groups(
     let mut hooks = facade_hooks_pre(server, call, "vault.inbox.groups", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_inbox_groups(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_inbox_groups_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.inbox.groups.resolve")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.inbox.groups.resolve", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.inbox.groups.resolve", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_inbox_groups_resolve(
             server,
             auth,
             caller,
@@ -37867,6 +38031,10 @@ async fn call_verb_row(
         "vault.shape.read" => vault_shape_read(server, call, input).await,
         "vault.shape.plan" => vault_shape_plan(server, call, input).await,
         "vault.shape.apply" => vault_shape_apply(server, call, input).await,
+        "vault.shape.plan.card" => vault_shape_plan_card(server, call, input).await,
+        "vault.shape.items.receipt" => vault_shape_items_receipt(server, call, input).await,
+        "vault.shape.groups" => vault_shape_groups(server, call, input).await,
+        "vault.shape.groups.resolve" => vault_shape_groups_resolve(server, call, input).await,
         "self.message" => self_message(server, call, input).await,
         "self.grants.ask" => self_grants_ask(server, call, input).await,
         "vault.companions.access_requests.answer" => {
@@ -38067,6 +38235,7 @@ async fn call_verb_row(
         "vault.inbox.concerns.review" => vault_inbox_concerns_review(server, call, input).await,
         "vault.inbox.lens" => vault_inbox_lens(server, call, input).await,
         "vault.inbox.groups" => vault_inbox_groups(server, call, input).await,
+        "vault.inbox.groups.resolve" => vault_inbox_groups_resolve(server, call, input).await,
         "vault.weave.digest.render" => vault_weave_digest_render(server, call, input).await,
         "vault.weave.link.corrections" => vault_weave_link_corrections(server, call, input).await,
         "self.inbox.lens" => self_inbox_lens(server, call, input).await,
