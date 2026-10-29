@@ -670,6 +670,11 @@ fn mcp_agent_verb_input(
         "vault.settings.learning.put" => a.spec.clone().ok_or_else(invalid),
         "vault.settings.learning.clear" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.lift_history" => a.spec.clone().ok_or_else(invalid),
+        "vault.secrets.register" => a.spec.clone().ok_or_else(invalid),
+        "vault.secrets.rotate" => a.spec.clone().ok_or_else(invalid),
+        "vault.secrets.rewrap" => a.spec.clone().ok_or_else(invalid),
+        "vault.secrets.custody.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.secrets.custody.submit" => a.spec.clone().ok_or_else(invalid),
         "vault.widen_proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.widen_proposals.approve" => a.spec.clone().ok_or_else(invalid),
         "vault.widen_proposals.decline" => a.spec.clone().ok_or_else(invalid),
@@ -3071,6 +3076,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.secrets.lift_history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.secrets.register" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.secrets.rotate" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.secrets.rewrap" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.secrets.custody.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.secrets.custody.submit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.widen_proposals" => {
@@ -13064,6 +13084,97 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_secrets_lift_history(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.secrets.register" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.secrets.register", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SecretRegisterRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_secrets_register(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.secrets.rotate" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.secrets.rotate", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SecretRotateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_secrets_rotate(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.secrets.rewrap" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.secrets.rewrap", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SecretRewrapRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_secrets_rewrap(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.secrets.custody.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.secrets.custody.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SecretCustodyGetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_secrets_custody_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.secrets.custody.submit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.secrets.custody.submit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SecretCustodySubmitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_secrets_custody_submit(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

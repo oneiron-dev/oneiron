@@ -603,7 +603,12 @@ pub(in crate::api::facade) fn door_admits(
         | "ai.voice.usage"
         | "ai.voice.tool"
         | "ai.voice.end"
-        | "ai.voice.close" => owner_proof(auth, server, verb).map(drop),
+        | "ai.voice.close"
+        | "vault.secrets.register"
+        | "vault.secrets.rotate"
+        | "vault.secrets.rewrap"
+        | "vault.secrets.custody.get"
+        | "vault.secrets.custody.submit" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

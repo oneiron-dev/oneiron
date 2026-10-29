@@ -302,10 +302,21 @@ class UniffiTypes:
 
     def record(self, name, owner, ir, subst):
         fields, tag = self.fields(owner, ir, subst, True)
-        head = f'#[derive({DERIVES}, uniffi::Record)]\n'
+        # A struct whose engine Debug is written by hand keeps a value out of
+        # it (a secret's value or a sealed input, FIX 4993): its mirror's
+        # Debug names the type alone.
+        redacted = owner in self.inv.redacted
+        derives = DERIVES.replace('Debug, ', '') if redacted else DERIVES
+        head = f'#[derive({derives}, uniffi::Record)]\n'
         if tag: head += f'#[serde(tag = {literal(tag[0])}, rename = {literal(tag[1])})]\n'
         if owner in self.inv.closed: head += '#[serde(deny_unknown_fields)]\n'
-        return head + f'pub struct {name} {{\n' + ''.join(fields) + '}\n'
+        record = head + f'pub struct {name} {{\n' + ''.join(fields) + '}\n'
+        if redacted:
+            record += (f'impl std::fmt::Debug for {name} {{\n'
+                       "    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n"
+                       f'        f.debug_struct({literal(name)}).finish_non_exhaustive()\n'
+                       '    }\n}\n')
+        return record
 
     def enum(self, name, owner, meta, subst):
         tag, content, untagged = meta['tag'], meta['content'], meta['untagged']

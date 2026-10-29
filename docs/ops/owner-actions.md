@@ -2332,6 +2332,17 @@ manifest check". `custody.manifest` names the manifests when this install is the
 one it attached when another install is. Send `"manifest_ref"` whenever the record names a
 manifest; a stated ref keeps its check and its refusal.
 
+The SDK rows `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
+`vault.secrets.custody.get` and `vault.secrets.custody.submit` take the same bodies and give the
+same answers, under the same owner credential. In Rust, `oneiron::task_verb::sdk::seal_custody_submit`
+seals the input on your side from the `custody.get` answer: pass the change, the holder and the
+recipients, and the body. A register's body is its whole record
+(`oneiron::secret_custody::encode_secret_custody_body`) and a rotate's is the new value. It returns
+the `custody.submit` input, so only ciphertext leaves your device. Register, rotate and submit keep
+no call receipt (`x-oneiron-receipt-ref: none; no-record`): their record is the custody request's
+receipt in the reply. A sealed input sent through the SDK row meets the facade's 64 MiB body
+limit; a larger one goes to `POST /v1/owner/secrets/custody`, which takes any length.
+
 A revoke erases the secret's value at rest on each install that holds it and keeps its name and
 generation. Its reply's `custody` says whether it went to your other machines or why it stayed
 here. Copies already exported, in a checkpoint or delivered elsewhere are not recalled.

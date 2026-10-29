@@ -5129,6 +5129,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_secrets_register(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.register")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.register", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_secrets_rotate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.rotate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.rotate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_secrets_rewrap(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.rewrap")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.rewrap", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_secrets_custody_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.custody.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.custody.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_secrets_custody_submit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.custody.submit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.custody.submit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_widen_proposals(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.widen_proposals")?;
         let output = py

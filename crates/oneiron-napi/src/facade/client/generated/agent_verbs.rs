@@ -4632,6 +4632,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_secrets_register(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.register", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_rotate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.rotate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_rewrap(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.rewrap", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_custody_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.custody.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_custody_submit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.custody.submit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_widen_proposals(
         &self,
         input: serde_json::Value,

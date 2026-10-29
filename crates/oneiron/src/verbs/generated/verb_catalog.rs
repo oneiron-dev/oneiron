@@ -536,6 +536,11 @@ pub enum AgentVerb {
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
     VaultSecretsLiftHistory,
+    VaultSecretsRegister,
+    VaultSecretsRotate,
+    VaultSecretsRewrap,
+    VaultSecretsCustodyGet,
+    VaultSecretsCustodySubmit,
     VaultWidenProposals,
     VaultWidenProposalsApprove,
     VaultWidenProposalsDecline,
@@ -1729,6 +1734,11 @@ impl AgentVerb {
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
         Self::VaultSecretsLiftHistory,
+        Self::VaultSecretsRegister,
+        Self::VaultSecretsRotate,
+        Self::VaultSecretsRewrap,
+        Self::VaultSecretsCustodyGet,
+        Self::VaultSecretsCustodySubmit,
         Self::VaultWidenProposals,
         Self::VaultWidenProposalsApprove,
         Self::VaultWidenProposalsDecline,
@@ -2937,6 +2947,11 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
             Self::VaultSecretsLiftHistory => "vault.secrets.lift_history",
+            Self::VaultSecretsRegister => "vault.secrets.register",
+            Self::VaultSecretsRotate => "vault.secrets.rotate",
+            Self::VaultSecretsRewrap => "vault.secrets.rewrap",
+            Self::VaultSecretsCustodyGet => "vault.secrets.custody.get",
+            Self::VaultSecretsCustodySubmit => "vault.secrets.custody.submit",
             Self::VaultWidenProposals => "vault.widen_proposals",
             Self::VaultWidenProposalsApprove => "vault.widen_proposals.approve",
             Self::VaultWidenProposalsDecline => "vault.widen_proposals.decline",
@@ -4148,6 +4163,11 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsLiftHistory
+                | Self::VaultSecretsRegister
+                | Self::VaultSecretsRotate
+                | Self::VaultSecretsRewrap
+                | Self::VaultSecretsCustodyGet
+                | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -5370,6 +5390,11 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsLiftHistory
+                | Self::VaultSecretsRegister
+                | Self::VaultSecretsRotate
+                | Self::VaultSecretsRewrap
+                | Self::VaultSecretsCustodyGet
+                | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -6719,6 +6744,11 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsLiftHistory
+                | Self::VaultSecretsRegister
+                | Self::VaultSecretsRotate
+                | Self::VaultSecretsRewrap
+                | Self::VaultSecretsCustodyGet
+                | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposals
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
@@ -7644,6 +7674,10 @@ impl AgentVerb {
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsLiftHistory
+                | Self::VaultSecretsRegister
+                | Self::VaultSecretsRotate
+                | Self::VaultSecretsRewrap
+                | Self::VaultSecretsCustodySubmit
                 | Self::VaultWidenProposalsApprove
                 | Self::VaultWidenProposalsDecline
                 | Self::VaultClaimsSettle
@@ -8599,6 +8633,11 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultSecretsLiftHistory => &["spec"],
+            Self::VaultSecretsRegister => &["spec"],
+            Self::VaultSecretsRotate => &["spec"],
+            Self::VaultSecretsRewrap => &["spec"],
+            Self::VaultSecretsCustodyGet => &["spec"],
+            Self::VaultSecretsCustodySubmit => &["spec"],
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
@@ -9793,6 +9832,11 @@ impl AgentVerb {
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
             Self::VaultSecretsLiftHistory => &["spec"],
+            Self::VaultSecretsRegister => &["spec"],
+            Self::VaultSecretsRotate => &["spec"],
+            Self::VaultSecretsRewrap => &["spec"],
+            Self::VaultSecretsCustodyGet => &["spec"],
+            Self::VaultSecretsCustodySubmit => &["spec"],
             Self::VaultWidenProposals => &["spec"],
             Self::VaultWidenProposalsApprove => &["spec"],
             Self::VaultWidenProposalsDecline => &["spec"],
@@ -12023,6 +12067,21 @@ impl AgentVerb {
             }
             Self::VaultSecretsLiftHistory => {
                 "The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."
+            }
+            Self::VaultSecretsRegister => {
+                "The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call."
+            }
+            Self::VaultSecretsRotate => {
+                "The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call."
+            }
+            Self::VaultSecretsRewrap => {
+                "The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown."
+            }
+            Self::VaultSecretsCustodyGet => {
+                "The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to."
+            }
+            Self::VaultSecretsCustodySubmit => {
+                "The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call."
             }
             Self::VaultWidenProposals => {
                 "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."

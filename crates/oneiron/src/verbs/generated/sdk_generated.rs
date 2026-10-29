@@ -2870,6 +2870,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.secrets.register",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretRegisterRequest,
+                >(),
+            ),
+            (
+                "vault.secrets.rotate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretRotateRequest,
+                >(),
+            ),
+            (
+                "vault.secrets.rewrap",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretRewrapRequest,
+                >(),
+            ),
+            (
+                "vault.secrets.custody.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretCustodyGetRequest,
+                >(),
+            ),
+            (
+                "vault.secrets.custody.submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SecretCustodySubmitRequest,
+                >(),
+            ),
+            (
                 "vault.widen_proposals",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::widen_doors::WidenProposalsRequest,
@@ -10004,6 +10034,9 @@ pub const NO_RECORD_ROWS: &[&str] = &[
     "vault.off_record.rooms.suggest_save",
     "vault.off_record.rooms.confirm_save",
     "vault.off_record.rooms.decline_save",
+    "vault.secrets.register",
+    "vault.secrets.rotate",
+    "vault.secrets.custody.submit",
     "ai.anonymous_chat",
 ];
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
@@ -13742,6 +13775,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.secrets.lift_history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.register" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.rotate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.rewrap" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.custody.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.secrets.custody.submit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19968,6 +20036,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.secrets.lift_history" => {
             let _input: crate::policy_model::SecretLiftRequest = decode(value.clone())?;
         }
+        "vault.secrets.register" => {
+            let _input: crate::task_verb::sdk::SecretRegisterRequest = decode(value.clone())?;
+        }
+        "vault.secrets.rotate" => {
+            let _input: crate::task_verb::sdk::SecretRotateRequest = decode(value.clone())?;
+        }
+        "vault.secrets.rewrap" => {
+            let _input: crate::task_verb::sdk::SecretRewrapRequest = decode(value.clone())?;
+        }
+        "vault.secrets.custody.get" => {
+            let _input: crate::task_verb::sdk::SecretCustodyGetRequest = decode(value.clone())?;
+        }
+        "vault.secrets.custody.submit" => {
+            let _input: crate::task_verb::sdk::SecretCustodySubmitRequest = decode(value.clone())?;
+        }
         "vault.widen_proposals" => {
             let _input: crate::agent_dispatch::widen_doors::WidenProposalsRequest =
                 decode(value.clone())?;
@@ -23387,6 +23470,13 @@ pub fn invoke(
             encode(vault_settings_learning_clear(memory, decode(value)?)?)
         }
         "vault.secrets.lift_history" => encode(vault_secrets_lift_history(memory, decode(value)?)?),
+        "vault.secrets.register" => encode(vault_secrets_register(memory, decode(value)?)?),
+        "vault.secrets.rotate" => encode(vault_secrets_rotate(memory, decode(value)?)?),
+        "vault.secrets.rewrap" => encode(vault_secrets_rewrap(memory, decode(value)?)?),
+        "vault.secrets.custody.get" => encode(vault_secrets_custody_get(memory, decode(value)?)?),
+        "vault.secrets.custody.submit" => {
+            encode(vault_secrets_custody_submit(memory, decode(value)?)?)
+        }
         "vault.widen_proposals" => encode(vault_widen_proposals(memory, decode(value)?)?),
         "vault.widen_proposals.approve" => {
             encode(vault_widen_proposals_approve(memory, decode(value)?)?)
@@ -29297,6 +29387,60 @@ pub fn vault_secrets_lift_history(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_secrets_register(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretRegisterRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretRegisterReply> {
+    crate::task_verb::sdk::register_secret_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.register")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_secrets_rotate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretRotateRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretRotateReply> {
+    crate::task_verb::sdk::rotate_secret_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.rotate")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_secrets_rewrap(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretRewrapRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretCustodyReply> {
+    crate::task_verb::sdk::rewrap_secret_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.rewrap")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_secrets_custody_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretCustodyGetRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretCustodyViewReply> {
+    crate::task_verb::sdk::secret_custody_get_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.custody.get")?,
+        input,
+    )
+}
+pub fn vault_secrets_custody_submit(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SecretCustodySubmitRequest,
+) -> MemoryResult<crate::task_verb::sdk::SecretCustodyReply> {
+    crate::task_verb::sdk::submit_sealed_custody_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.secrets.custody.submit")?,
+        crate::authority::ActSurface::ThisInstall,
+        input,
+    )
 }
 pub fn vault_widen_proposals(
     memory: &Memory<'_>,

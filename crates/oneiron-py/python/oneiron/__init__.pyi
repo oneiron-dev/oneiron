@@ -2169,6 +2169,19 @@ class Oneiron:
     class _VaultSecretsVerbs:
         def lift_history(self, spec: Facade.SecretLiftRequest) -> Facade.SecretLiftStatus:
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
+        def register(self, spec: Facade.SecretRegisterRequest) -> Facade.SecretRegisterReply:
+            """The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call."""
+        def rotate(self, spec: Facade.SecretRotateRequest) -> Facade.SecretRotateReply:
+            """The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call."""
+        def rewrap(self, spec: Facade.SecretRewrapRequest) -> Facade.SecretCustodyReply:
+            """The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown."""
+        @property
+        def custody(self) -> "Oneiron._VaultSecretsCustodyVerbs": ...
+    class _VaultSecretsCustodyVerbs:
+        def get(self, spec: Facade.SecretCustodyGetRequest) -> Facade.SecretCustodyViewReply:
+            """The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to."""
+        def submit(self, spec: Facade.SecretCustodySubmitRequest) -> Facade.SecretCustodyReply:
+            """The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call."""
     class _VaultWidenProposalsVerbs:
         def __call__(self, spec: Facade.WidenProposalsRequest) -> Facade.WidenProposalsView:
             """The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined."""

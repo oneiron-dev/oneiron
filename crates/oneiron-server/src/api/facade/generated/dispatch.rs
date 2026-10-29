@@ -16979,6 +16979,180 @@ async fn vault_secrets_lift_history(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_secrets_register(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.register")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.register", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.register", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_register(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_rotate(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.rotate")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.rotate", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.rotate", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_rotate(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_rewrap(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.rewrap")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.rewrap", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.rewrap", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_rewrap(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_custody_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.custody.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.custody.get", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.custody.get", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_custody_get(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_custody_submit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.custody.submit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.custody.submit", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.custody.submit", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_custody_submit(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_widen_proposals(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37858,6 +38032,11 @@ pub(crate) async fn call_verb(
         "vault.settings.learning.put" => vault_settings_learning_put(server, call, input).await,
         "vault.settings.learning.clear" => vault_settings_learning_clear(server, call, input).await,
         "vault.secrets.lift_history" => vault_secrets_lift_history(server, call, input).await,
+        "vault.secrets.register" => vault_secrets_register(server, call, input).await,
+        "vault.secrets.rotate" => vault_secrets_rotate(server, call, input).await,
+        "vault.secrets.rewrap" => vault_secrets_rewrap(server, call, input).await,
+        "vault.secrets.custody.get" => vault_secrets_custody_get(server, call, input).await,
+        "vault.secrets.custody.submit" => vault_secrets_custody_submit(server, call, input).await,
         "vault.widen_proposals" => vault_widen_proposals(server, call, input).await,
         "vault.widen_proposals.approve" => vault_widen_proposals_approve(server, call, input).await,
         "vault.widen_proposals.decline" => vault_widen_proposals_decline(server, call, input).await,

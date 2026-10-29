@@ -8197,6 +8197,83 @@
       "section": false
     },
     {
+      "name": "vault.secrets.register",
+      "description": "The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call.",
+      "input": "crate::task_verb::sdk::SecretRegisterRequest",
+      "output": "crate::task_verb::sdk::SecretRegisterReply",
+      "call": "crate::task_verb::sdk::register_secret_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.register\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.rotate",
+      "description": "The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call.",
+      "input": "crate::task_verb::sdk::SecretRotateRequest",
+      "output": "crate::task_verb::sdk::SecretRotateReply",
+      "call": "crate::task_verb::sdk::rotate_secret_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.rotate\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.rewrap",
+      "description": "The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown.",
+      "input": "crate::task_verb::sdk::SecretRewrapRequest",
+      "output": "crate::task_verb::sdk::SecretCustodyReply",
+      "call": "crate::task_verb::sdk::rewrap_secret_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.rewrap\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.custody.get",
+      "description": "The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to.",
+      "input": "crate::task_verb::sdk::SecretCustodyGetRequest",
+      "output": "crate::task_verb::sdk::SecretCustodyViewReply",
+      "call": "crate::task_verb::sdk::secret_custody_get_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.custody.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.secrets.custody.submit",
+      "description": "The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call.",
+      "input": "crate::task_verb::sdk::SecretCustodySubmitRequest",
+      "output": "crate::task_verb::sdk::SecretCustodyReply",
+      "call": "crate::task_verb::sdk::submit_sealed_custody_as(memory.vault(), &memory.embedded_owner(\"vault.secrets.custody.submit\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.widen_proposals",
       "description": "The owner lists the context-widen proposals agents raised, newest first, or only those pending, approved or declined.",
       "input": "crate::agent_dispatch::widen_doors::WidenProposalsRequest",

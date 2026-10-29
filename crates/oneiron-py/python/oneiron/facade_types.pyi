@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4188 declarations.
-Inputs: 1094 of 1161 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1038 of 1161 fully typed, 123 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 110; unread shapes: 0.
+Census: 1167 facade rows, 4196 declarations.
+Inputs: 1102 of 1167 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1045 of 1167 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -10132,6 +10132,86 @@ class SecretLiftStatus(TypedDict):
     open_by_cause: list[LiftCauseCount]
     closed_proposals: int
     proposals: list[SecretLiftHistoryProposal]
+class SecretRegisterBinding(TypedDict):
+    effector: str
+    scopes: NotRequired[list[str]]
+    tier_ceiling: NotRequired[int | None]
+class SecretManifestSource(TypedDict):
+    repo: str
+    ref: NotRequired[str | None]
+SecretRegisterRequest = TypedDict("SecretRegisterRequest", {"name": str, "class": str, "rung": int, "device_only": NotRequired[bool], "bindings": NotRequired[list[SecretRegisterBinding]], "manifest": NotRequired[SecretManifestSource | None], "value_base64": str, "holder": NotRequired[str | None], "recipients": NotRequired[list[str]]})
+class SecretRegisteredBinding(TypedDict):
+    effector: str
+    tier_ceiling: int
+    scopes: list[str]
+class SecretCustodyReply(TypedDict):
+    work: NotRequired[OwnerWorkReceipt | None]
+    kept_here: NotRequired[str | None]
+    delivery: str
+    said: str
+    manifest: NotRequired[str | None]
+SecretRegisterReply = TypedDict("SecretRegisterReply", {"secret_id": str, "name": str, "class": str, "device_only": bool, "rotation_generation": int, "registered_at": int, "bindings": list[SecretRegisteredBinding], "manifest_ref": str, "declared_paths": list[str], "custody": SecretCustodyReply})
+class SecretRotateRequest(TypedDict):
+    name: str
+    value_base64: str
+    holder: NotRequired[str | None]
+    recipients: NotRequired[list[str]]
+class SecretRotationReceipt(TypedDict):
+    receipt_id: str
+    name: str
+    from_generation: int
+    to_generation: int
+    rotated_at: int
+    kind: str
+class SecretRotateReply(TypedDict):
+    receipt_id: NotRequired[str]
+    name: NotRequired[str]
+    from_generation: NotRequired[int]
+    to_generation: NotRequired[int]
+    rotated_at: NotRequired[int]
+    kind: NotRequired[str]
+    custody: SecretCustodyReply
+class SecretRewrapRequest(TypedDict):
+    name: str
+    holder: NotRequired[str | None]
+    recipients: list[str]
+class SecretCustodyGetRequest(TypedDict):
+    name: str
+class SecretCustodyLiveRequest(OwnerWorkReceipt):
+    manifest_text: NotRequired[str | None]
+class SecretCustodyCandidateReply(TypedDict):
+    machine: str
+    profile: str
+    encryption_key_digest: str
+    suite: int
+    encryption_key_base64: str
+    this_install: bool
+class SecretCustodyViewReply(TypedDict):
+    vault_id: str
+    secret_id: str
+    name: str
+    known: bool
+    held_here: bool
+    portable: bool
+    status: NotRequired[str | None]
+    generation: int
+    seen: str
+    live: list[SecretCustodyLiveRequest]
+    candidates: list[SecretCustodyCandidateReply]
+    delivery: str
+class SecretCustodyPermit(TypedDict):
+    machine: str
+    profile: str
+    encryption_key_digest: str
+class SecretCustodySubmitRequest(TypedDict):
+    change: str
+    secret_id: str
+    generation: int
+    seen: str
+    holder: str
+    recipients: list[SecretCustodyPermit]
+    manifest_ref: NotRequired[str | None]
+    input_base64: str
 WidenProposalState = Literal["pending", "approved", "declined"]
 class WidenProposalsRequest(TypedDict):
     state: NotRequired[WidenProposalState | None]
