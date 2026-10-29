@@ -684,8 +684,10 @@ export type BriefConstraints = { notes?: string[]; policy_refs?: EntityId[]; bud
 export type PinnedPack = { pack_ref: EntityId; context_version?: number | null; retrieval_run_id?: EntityId | null; digest: string }
 /** `oneiron::task_verb::brief::PinnedRef` */
 export type PinnedRef = { target: EntityId; frontier?: number[] | null; digest: string }
+/** `oneiron_browser::library::live_run::SecretArg` */
+export type SecretArg = { handle: string } | { text: string }
 /** `oneiron::task_verb::brief::WorkflowBinding` */
-export type WorkflowBinding = { handle: string; args?: Record<string, string> }
+export type WorkflowBinding = { handle: string; args?: Record<string, string>; secret_args?: Record<string, SecretArg> }
 /** `oneiron::task_verb::brief::BriefContext` */
 export type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null }
 /** `oneiron::llm::decision::questions::criteria::QuestionCriteria` */
@@ -8302,8 +8304,6 @@ export type DecideStep = { question: string; targets?: string[]; role?: string |
 export type BatchStep = { step: "open"; url: string } | { step: "click"; ref: string } | { step: "type"; ref: string; text?: string | null; secret?: string | null; clear?: boolean } | { step: "select"; ref: string; option: string } | { step: "wait_for"; targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null } | { step: "expect"; ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean } | { step: "screenshot"; trigger: ScreenshotTrigger } | { step: "key"; key: string; modifiers?: string[]; ref?: string | null } | { step: "hotkey"; keys: string[] } | { step: "scroll"; direction: ScrollDirection; amount?: number | null; ref?: string | null } | (DecideStep & { step: "decide" }) | { step: "fill"; ref: string; field: FieldSpec }
 /** `oneiron_browser::library::admission::WorkflowSeed` */
 export type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string }
-/** `oneiron_browser::library::live_run::SecretArg` */
-export type SecretArg = { handle: string } | { text: string }
 /** `oneiron_browser::switch::SnapshotBounds` */
 export type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null }
 /** `oneiron_browser::library::propose::ProposeInput` */
