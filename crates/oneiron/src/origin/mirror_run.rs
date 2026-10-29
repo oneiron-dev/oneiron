@@ -4,12 +4,13 @@
 //! A run takes the mirror's own push hold, never the repository's
 //! coordinator: inbound pushes, landings and cutovers never wait on an
 //! outbound child, and the child inherits the hold, so one that outlives a
-//! crashed host keeps the mirror held until it exits. An interval or event
-//! run finds the hold taken and leaves the mirror for the next pass; a
-//! push-now waits for it. Under the hold the mirror's open plan settles
-//! first (`publish::mirror_plan_run`), and a run that continued one reports
-//! that plan alone: the next plan is frozen at a later cadence or event
-//! (`full_auto`: the next wake or tick). Only a mirror with no open plan
+//! crashed host keeps the mirror held until it exits. An exact publish takes
+//! the same hold, so it and a run never reach one mirror at once. An
+//! interval or event run finds the hold taken and leaves the mirror for the
+//! next pass; a push-now waits for it. Under the hold the mirror's open
+//! plan settles first (`publish::mirror_plan_run`), and a run that continued
+//! one reports that plan alone: the next plan is frozen at a later cadence
+//! or event (`full_auto`: the next wake or tick). Only a mirror with no open plan
 //! reads its published refs and deletions, there, under the hold, and
 //! freezes a new one. A `schedule` run plans exactly the selection the
 //! scheduled mirror always pushed. A `full_auto` run plans its green selection
@@ -214,7 +215,8 @@ impl Vault {
 }
 
 /// The directory whose lock is one mirror's push hold, made when missing.
-fn mirror_hold_dir(handle: &GitWireRepo) -> Result<PathBuf> {
+/// An exact publish takes the same hold (`publish::dispatch`).
+pub(super) fn mirror_hold_dir(handle: &GitWireRepo) -> Result<PathBuf> {
     let dir = handle.common_dir().join(ORIGIN_MIRROR_HOLD_DIR);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)

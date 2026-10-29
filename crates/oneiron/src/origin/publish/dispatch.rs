@@ -9,11 +9,14 @@
 //! cutover takes, admits the caller again, finds the request unexpired at
 //! the vault's time, the mirror unchanged, this host still the origin and
 //! the approval's owner or Grant still standing, and claims the request
-//! `dispatching`. Only then does its one push run, and its outcome settles
-//! the request (`reconcile`), unless the publication gate holds the commit's
-//! history first: a public or unstated mirror never takes a marked live key,
-//! and the request settles refused, typed (`secret_hold`). The strategy is
-//! never read: an approved request executes once on a mirror of either.
+//! `dispatching`. The mirror's push hold is held from that read to the
+//! push's end, so no automatic run reaches the mirror between the lease's
+//! read and the push (FIX 7174). Only then does its one push run, and its
+//! outcome settles the request (`reconcile`), unless the publication gate
+//! holds the commit's history first: a public or unstated mirror never
+//! takes a marked live key, and the request settles refused, typed
+//! (`secret_hold`). The strategy is never read: an approved request executes
+//! once on a mirror of either.
 
 use super::authority::{OriginPublishCaller, PublishAnswer, PublishTarget};
 use super::inputs::OriginPublishIdRequest;
@@ -26,6 +29,7 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, lock_repository};
 use crate::origin::mirror::{OriginMirrorTarget, TARGETS};
+use crate::origin::mirror_run::mirror_hold_dir;
 use crate::origin::smart_http::push_queue_key;
 
 const APPROVED: [OriginPublishState; 1] = [OriginPublishState::Approved];
@@ -97,6 +101,12 @@ impl Vault {
                 self.settle_publish(&view, &APPROVED, OriginPublishState::Refused, Some(moved))?;
             return Ok(Ok(refused));
         }
+        // The mirror's push hold, from the read the lease stands on to the
+        // push's end: no automatic run reaches the mirror meanwhile, and the
+        // push's child inherits it, so a claim is settled elsewhere only once
+        // no push of it runs. Taken before the coordinator, as a run does.
+        let hold = mirror_hold_dir(&handle)?;
+        let _held = lock_repository(&hold)?;
         let observed = self
             .read_publish_remote(&scope.wire, &handle, &view.destination, &name)
             .map_err(|error| super::remote_tip_unknown(&view.ref_name, &error))?;
@@ -179,6 +189,7 @@ impl Vault {
             &name,
             &commit,
             expected.as_ref(),
+            &hold,
         );
         Ok(Ok(
             self.settle_publish_push(&scope, &handle, &claimed, outcome)?

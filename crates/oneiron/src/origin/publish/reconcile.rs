@@ -8,7 +8,11 @@
 //! second send: the commit there is `observed_published`; the leased tip
 //! there is `rejected` after the mirror's own refusal, else
 //! `outcome_unknown`; anything else is `remote_moved`. A branch that cannot
-//! be read leaves the request dispatching until a later call reads it.
+//! be read leaves the request dispatching until a later call reads it. A
+//! claimed request is settled by another call only once the mirror's push
+//! hold, which its push's child inherits, is free (FIX 7045).
+
+use std::path::Path;
 
 use base64::Engine as _;
 
@@ -21,15 +25,11 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GitOid, GitPublishPushOutcome, GitRefName, GitRemoteTip, GitWire, GitWireRepo,
+    try_lock_repository,
 };
 use crate::origin::mirror::ORIGIN_MIRROR_PUSH_EFFECTOR;
+use crate::origin::mirror_run::mirror_hold_dir;
 use crate::origin::publication::OriginKeepRefKind;
-
-/// How long after its claim a dispatching request is left to its own push
-/// before another call settles it from the mirror: the push's own runtime
-/// bound (ten minutes) and a minute more. A push still running is never
-/// raced, and none is sent again (CALLS "FIX 6866 dispatch settle wait").
-pub const ORIGIN_PUBLISH_DISPATCH_SETTLE_SECS: u64 = 11 * 60;
 
 /// The longest redacted cause a refusal carries.
 const MAX_DETAIL_BYTES: usize = 256;
@@ -51,7 +51,11 @@ impl Vault {
     }
 
     /// The request's one push: exactly `commit` to `name`, leased on
-    /// `expected`.
+    /// `expected`, in a child that inherits the mirror's push hold `hold`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one exact push binds its repository, mirror, branch, commit, lease and hold"
+    )]
     pub(super) fn push_publish_once(
         &self,
         wire: &GitWire<'_>,
@@ -60,10 +64,19 @@ impl Vault {
         name: &GitRefName,
         commit: &GitOid,
         expected: Option<&GitOid>,
+        hold: &Path,
     ) -> Result<GitPublishPushOutcome> {
         let mut answer = Err(Error::InvariantViolation("publish push never ran"));
         self.with_publish_credential(destination, &mut |header| {
-            answer = wire.push_publish(handle, &destination.url, name, commit, expected, header);
+            answer = wire.push_publish(
+                handle,
+                &destination.url,
+                name,
+                commit,
+                expected,
+                hold,
+                header,
+            );
         })?;
         answer
     }
@@ -119,18 +132,21 @@ impl Vault {
         self.settle_from_mirror(scope, handle, view, rejected, Some(detail))
     }
 
-    /// A dispatching request whose claim is older than the push's bound,
-    /// settled from the mirror; a younger one is answered as it stands.
+    /// A dispatching request settled from the mirror once its push has
+    /// ended: the mirror's push hold is free. The dispatch held it from its
+    /// claim to its push's end and the push's child inherited it, so a free
+    /// hold proves no push of it still runs, a child orphaned by its host's
+    /// death included. While another holds it, the request is answered as
+    /// it stands; none is sent again.
     pub(super) fn settle_stale_dispatch(
         &self,
         scope: &PublishScope<'_>,
         view: OriginPublishRequestView,
     ) -> Result<OriginPublishRequestView> {
-        let claimed = view.dispatched.as_ref().map_or(0, |act| act.at);
-        if self.now_recorded_at().saturating_sub(claimed) < ORIGIN_PUBLISH_DISPATCH_SETTLE_SECS {
-            return Ok(view);
-        }
         let Ok(handle) = scope.handle_at(&GitOid::parse_hex(view.commit.clone())?) else {
+            return Ok(view);
+        };
+        let Some(_held) = try_lock_repository(&mirror_hold_dir(&handle)?)? else {
             return Ok(view);
         };
         self.settle_from_mirror(scope, &handle, &view, false, None)
