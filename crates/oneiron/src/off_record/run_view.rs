@@ -136,7 +136,7 @@ impl SessionCodeRun<'_> {
         withholds: impl FnOnce(Option<&[EntityId]>) -> Result<bool>,
     ) -> MemoryResult<SessionRunCards> {
         let record = self.record()?;
-        let served_rows = record.agent_verb_rows();
+        let served_rows = record.result_rows();
         let count = record.bindings.len();
         if withholds(served_rows.as_deref())? {
             return Ok(SessionRunCards {
@@ -176,7 +176,7 @@ impl SessionCodeRun<'_> {
         withholds: impl FnOnce(Option<&[EntityId]>) -> Result<bool>,
     ) -> MemoryResult<SessionRunRead> {
         let record = self.record()?;
-        let served_rows = record.agent_verb_rows();
+        let served_rows = record.result_rows();
         // A session run keeps no type diagnostics beside its results.
         let reply = read_result_in(
             &self.storage,
