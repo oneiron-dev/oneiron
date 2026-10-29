@@ -62,7 +62,7 @@ impl Memory<'_> {
         let record = self.vault.get_code_run_replay_record(&input.run_id)?;
         let rows = record
             .as_ref()
-            .and_then(CodeRunReplayRecord::result_rows);
+            .and_then(CodeRunReplayRecord::agent_verb_rows);
         if self.result_sources(rows.as_deref())? {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
@@ -235,7 +235,7 @@ impl Memory<'_> {
                     generation: reference.generation,
                 })
                 .collect(),
-            source_rows: record.result_rows(),
+            source_rows: record.agent_verb_rows(),
         })
     }
 }
