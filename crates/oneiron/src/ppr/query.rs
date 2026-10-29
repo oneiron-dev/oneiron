@@ -443,7 +443,7 @@ fn read_servable_cache_row(
 /// 3. NO graph-version write. This is a read.
 ///
 /// Seed handling is the scope boundary's first half: unreadable seeds are
-/// dropped BEFORE [`seed_weights`] runs, so the personalization vector
+/// dropped BEFORE `seed_weights_with_deadline` runs, so the personalization vector
 /// renormalizes over the readable seeds and still sums to 1.0. An all-denied
 /// seed set yields no scores at all rather than an unpersonalized walk.
 #[expect(

@@ -139,20 +139,6 @@ pub(crate) fn ppr_compute_weighted(
     )?
     .scores)
 }
-pub(super) fn ppr_compute_state_weighted(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    seeds: &[EntityId],
-    weighting: SeedWeighting,
-    depth: u32,
-    alphas: PprAlphas,
-    visibility: Option<&dyn PprNodeVisibility>,
-) -> Result<PprCacheState> {
-    ppr_compute_state_weighted_with_deadline(
-        store, txn, seeds, weighting, depth, alphas, visibility, None,
-    )
-}
-
 #[expect(clippy::too_many_arguments)]
 pub(super) fn ppr_compute_state_weighted_with_deadline(
     store: &impl ManifestDbs,

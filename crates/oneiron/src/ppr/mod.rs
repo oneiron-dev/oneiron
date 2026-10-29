@@ -16,9 +16,9 @@ pub(crate) use self::community::{
     CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
     ppr_query_in_txn_with_community_deferred_cache,
 };
-pub(crate) use self::policy::{SeedWeighting, canonical_vad_alpha};
 #[cfg(test)]
-pub(crate) use self::policy::{lambda_for_kind, specificity_seed_weights};
+pub(crate) use self::policy::lambda_for_kind;
+pub(crate) use self::policy::{SeedWeighting, canonical_vad_alpha};
 pub(crate) use self::query::{
     DeferredPprCacheWrite, ppr_query_in_txn_with_diagnostics,
     ppr_query_in_txn_with_diagnostics_and_deadline, ppr_query_in_txn_with_vad_deferred_cache,

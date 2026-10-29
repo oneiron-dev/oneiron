@@ -140,18 +140,6 @@ pub(crate) const fn lambda_for_kind(kind: EdgeKind) -> Option<f32> {
 pub(crate) fn canonical_vad_alpha(alpha: f32) -> f32 {
     if alpha == 0.0 { 0.0 } else { alpha }
 }
-/// Resolves the normalized per-seed mass vector for `weighting`. Always sums
-/// to 1.0 (up to f32 rounding) and every entry is strictly positive.
-pub(super) fn seed_weights(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    seeds: &[EntityId],
-    weighting: SeedWeighting,
-    visibility: Option<&dyn PprNodeVisibility>,
-) -> Result<Vec<f32>> {
-    seed_weights_with_deadline(store, txn, seeds, weighting, visibility, None)
-}
-
 pub(super) fn seed_weights_with_deadline(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -180,15 +168,6 @@ pub(super) fn seed_weights_with_deadline(
 /// `(0, 1/ln(2)]` and the admitted seed vector is finite, so the normalizer
 /// is finite and strictly positive — the division below cannot
 /// produce NaN or infinity.
-pub(crate) fn specificity_seed_weights(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    seeds: &[EntityId],
-    visibility: Option<&dyn PprNodeVisibility>,
-) -> Result<Vec<f32>> {
-    specificity_seed_weights_with_deadline(store, txn, seeds, visibility, None)
-}
-
 fn specificity_seed_weights_with_deadline(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
