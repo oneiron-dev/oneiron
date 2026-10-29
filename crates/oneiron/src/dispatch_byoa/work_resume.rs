@@ -117,8 +117,9 @@ where
             return Ok(RunnerWorkResume::Gone);
         };
         let attempt = AttemptId::from_bytes(&head.attempt)?;
-        let reported = seat_index(head.seat);
-        let remapped = remap_seat(policy, &head, reported)?;
+        let stored = seat_index(head.seat);
+        let remapped = remap_seat(policy, &head, stored)?;
+        let reported = remapped.unwrap_or(stored);
         if attempt != request.expected_attempt {
             return Ok(RunnerWorkResume::Current {
                 seat: reported,

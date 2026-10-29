@@ -47,7 +47,7 @@ use super::validate::{
     validate_endpoint, validate_execution_budget, validate_exhaust,
 };
 use super::work_binding::{
-    RunnerWorkBinding, SpentCapture, capture_hop_quota_in_txn, capture_seat_in_txn,
+    RunnerWorkBinding, SpentCapture, capture_hop_seat_quota_in_txn, capture_seat_in_txn,
     note_spent_hop_in_txn,
 };
 use super::work_resume::moved_on_in_txn;
@@ -440,7 +440,6 @@ where
             {
                 return Ok(route);
             }
-            let caller = seat;
             let seat = capture_seat_in_txn(self.vault, wtxn, policy, &receipt, seat)?;
             let ran = match seat {
                 Some(index) => Some(policy.seat(index)?),
@@ -478,10 +477,7 @@ where
             if !matches!(route, SeatRoute::NextSeat { .. }) {
                 let (seat, quota) = match seat {
                     Some(index) => (index, *seat_quota_id(policy.seat(index)?)?.as_bytes()),
-                    None => (
-                        caller,
-                        capture_hop_quota_in_txn(self.vault, wtxn, route.receipt())?,
-                    ),
+                    None => capture_hop_seat_quota_in_txn(self.vault, wtxn, route.receipt())?,
                 };
                 note_spent_hop_in_txn(self.vault, wtxn, route.receipt(), seat, quota, &spent)?;
             }
