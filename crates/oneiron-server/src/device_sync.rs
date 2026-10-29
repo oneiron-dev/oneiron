@@ -400,7 +400,7 @@ impl Link {
         home: &str,
     ) {
         loop {
-            let config = {
+            let (config, committed) = {
                 let (end, ended) = oneshot::channel();
                 let observed = connection.run_observed(
                     ended,
@@ -461,7 +461,7 @@ impl Link {
                     tracing::info!(%home, "device sync stopped");
                     return;
                 }
-                config
+                (config, committed)
             };
             drop(connection);
             connection = match self.connection(config) {
