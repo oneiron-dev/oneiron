@@ -198,6 +198,11 @@ pub struct SlateToolManifest {
     pub read_only: bool,
     #[serde(default)]
     pub idempotent: bool,
+    /// The price one call of this tool declares (FIX 8689): its connector's,
+    /// or the owner's at registration where the connector declares none. A
+    /// Spend row that preauthorizes reserves it before the call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price: Option<super::ConnectorSpendEstimate>,
 }
 impl SlateToolManifest {
     /// Irreversible or header-bearing: `auto` already asks per call for these.

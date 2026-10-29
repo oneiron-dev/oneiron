@@ -40,6 +40,7 @@ impl Vault {
         &self,
     ) -> Result<Vec<PendingConnectorCallRef>, IntentLedgerError> {
         let txn = self.store.env.read_txn().map_err(Error::from)?;
+        let now = crate::ports::job_recorded_at_in_txn(&self.store, &txn)?;
         Ok(PENDING_CALLS
             .scan(&self.store, &txn)?
             .into_iter()
@@ -49,6 +50,7 @@ impl Vault {
                 name: pending.name,
                 tool: pending.tool,
                 settled: pending.settled.is_some(),
+                paced: pending.paced_until.map(|until| until > now),
             })
             .collect())
     }

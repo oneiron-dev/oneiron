@@ -174,8 +174,13 @@ impl Vault {
             return Ok(None);
         };
         // A call whose connector asked for input was sent: no hold to ask
-        // about (FIX 3837).
-        if pending.settled.is_some() || pending.owner_ask_seq.is_some() || pending.input.is_some() {
+        // about (FIX 3837). A call a budget window paces waits for the
+        // window, not for its owner (FIX 8686).
+        if pending.settled.is_some()
+            || pending.owner_ask_seq.is_some()
+            || pending.input.is_some()
+            || pending.paced_until.is_some()
+        {
             return Ok(None);
         }
         let Ok(principal) = EntityId::from_hex(&pending.principal_ref) else {
@@ -309,6 +314,15 @@ impl Vault {
         for seq in withdrawn {
             self.signal_decision_answer(*seq);
         }
+    }
+
+    /// Wakes the owner-question waiters once a committed write settled a
+    /// held call a code consent wait owned ([`super::settle_code_owned_call_in_txn`]):
+    /// that write runs in the wait's own writer, which does not carry the
+    /// withdrawn questions out, and every waiter rereads its own question on
+    /// a wake (FIX 2551).
+    pub(crate) fn signal_code_owned_call_asks(&self) {
+        self.signal_decision_answer(0);
     }
 
     /// Queues the owner ask of every held call whose ask was tried and did
