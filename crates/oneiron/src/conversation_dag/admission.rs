@@ -759,7 +759,13 @@ pub(crate) fn pin_typed_record(
     if kind == ENTITY_TYPE_TURN && !store.is_union() {
         let quotes = super::quote::turn_body_quotes(*id, body);
         if !quotes.is_empty() {
-            super::quote::pin_arrived_body_quotes_in_txn(store, txn, quotes);
+            let pinned = super::quote::pin_arrived_body_quotes_in_txn(store, txn, quotes);
+            // FIX 11120: the birth pins reach the live mirror as the room
+            // turn-row path's do.
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows_in_txn(store, txn, pinned);
+            #[cfg(not(feature = "sync"))]
+            drop(pinned);
         }
     }
     // An erased audience edit's pin follows the bytes its erase wrote, the

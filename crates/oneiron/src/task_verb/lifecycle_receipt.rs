@@ -192,6 +192,31 @@ pub(super) fn mark_settled_in(
     Ok(())
 }
 
+/// Names `kind` at `reference` as the anchor of the settled receipt kept
+/// under `id`, in the anchoring write's transaction
+/// ([`super::settlement_anchor`]). A receipt that already names an anchor
+/// keeps it, and one not kept anchors nothing. Only its fields change, so
+/// its index rows stand.
+pub(super) fn anchor_in(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &str,
+    kind: &str,
+    reference: &str,
+) -> MemoryResult<()> {
+    let key = id.to_owned();
+    let Some(mut row) = RECEIPTS.get(&vault.store, &*wtxn, &key)? else {
+        return Ok(());
+    };
+    if super::settlement_anchor::names_anchor(&row.fields) {
+        return Ok(());
+    }
+    row.fields
+        .extend(super::settlement_anchor::anchor_fields(kind, reference));
+    RECEIPTS.put(&vault.store, wtxn, &key, &row)?;
+    Ok(())
+}
+
 /// The receipt of the write that settled `task` at `finished_at` (FIX 3272),
 /// the least id when more than one was marked then: what a replay of that
 /// settlement names. `None` when that write kept none.
