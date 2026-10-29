@@ -10,20 +10,29 @@
 //! its subject's `learning.edit_cost` cell counted rejected. The generating
 //! actor's cell, and the skill's when the proposal rode one, count the
 //! rejection even where no share charges them (FIX 9797).
+//!
+//! The inbox states no cause, so that first judgment holds `unclear`. When
+//! a cause is stated later, [`judge_rejection_with_cause`] re-judges the
+//! same rejection through this same path (FIX 11621): the judgment row and
+//! the evidence row are overwritten under the same keys, the stale unclear
+//! note is withdrawn when nothing is left unclear, and the charge settles
+//! the receipt's rows rather than counting them twice.
 
 use super::cells::{charge_judgment_in_txn, learning_scope};
-use super::evidence_judge::judgment_row;
+use super::evidence_judge::{amendment_judgment_in_txn, judgment_row};
 use super::stored::{EVIDENCE, JUDGMENT, ROW_VERSION, StoredEvidence, normalized_scope};
 use super::taxonomy::{
-    AmendmentEvidence, AmendmentJudgment, AmendmentShare, charges_edit_cost, class_subject,
-    classify_amendment_traced,
+    AmendmentCause, AmendmentEvidence, AmendmentJudgment, AmendmentShare, charges_edit_cost,
+    class_subject, classify_amendment_traced,
 };
 use crate::Vault;
 use crate::edit_distance::delta::MEASUREMENT_ENGINE_VERSION;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning_setting::{ATTRIBUTION_UNCLEAR_FLOOR, setting_value_in_txn};
-use crate::skill_attribution::{AttributionLane, UnclearAttribution, put_unclear_in_txn};
+use crate::skill_attribution::{
+    AttributionLane, UnclearAttribution, delete_unclear_in_txn, put_unclear_in_txn,
+};
 
 /// The edit mass a rejection carries: the decider discarded the whole
 /// proposal. Canon gives a rejection no Δ; the whole proposal's mass is the
@@ -62,10 +71,86 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     rejection: &Rejection<'_>,
 ) -> Result<Option<AmendmentJudgment>> {
+    judge_rejection_cause_in_txn(vault, wtxn, rejection, None)
+}
+
+/// [`judge_rejection_in_txn`] with the rejection's cause stated (FIX 11621):
+/// the cause rides the evidence into the same classify path an amendment
+/// takes, so a settled cause labels the rejection instead of holding it
+/// `unclear`, and `proposal_wrong` reaches the judge with facts.
+///
+/// # Errors
+///
+/// Storage errors, an unusable scope, and whatever the decision path or the
+/// learning door refuses.
+pub(in crate::edit_distance) fn judge_rejection_with_cause_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    rejection: &Rejection<'_>,
+    cause: AmendmentCause,
+) -> Result<Option<AmendmentJudgment>> {
+    judge_rejection_cause_in_txn(vault, wtxn, rejection, Some(cause))
+}
+
+/// Re-judges the rejection recorded against `receipt_id` with `cause`
+/// stated, in one write transaction (FIX 11621) — the intake for facts the
+/// inbox did not have. The facts it replays (actor, skill, scope, project,
+/// decision time) are the stored judgment's own; the stored scope is
+/// already the first pass's normalized form, which the shared path
+/// re-normalizes unchanged. Returns the new judgment, or `None` when no
+/// rejection judgment stands for `receipt_id` or the judge abstains.
+///
+/// Re-judging overwrites rather than freezes, as
+/// [`judge_amendment_hunks`](super::judge_amendment_hunks) does: the charge
+/// settles the receipt's rows onto the new split, so nothing counts twice.
+///
+/// # Errors
+///
+/// Storage errors, an unusable stored scope, and whatever the decision
+/// path or the learning door refuses.
+pub fn judge_rejection_with_cause(
+    vault: &Vault,
+    receipt_id: &str,
+    cause: AmendmentCause,
+) -> Result<Option<AmendmentJudgment>> {
+    let judged = {
+        let rtxn = vault.store.env.read_txn()?;
+        amendment_judgment_in_txn(vault, &rtxn, receipt_id)?
+    };
+    let Some(judged) = judged else {
+        return Ok(None);
+    };
+    if !judged.rejected {
+        return Ok(None);
+    }
+    let Some(actor) = judged.actor else {
+        return Ok(None);
+    };
+    let rejection = Rejection {
+        receipt: receipt_id,
+        actor,
+        skill: judged.skill,
+        scope: &judged.scope,
+        project: judged.project,
+        at: judged.at,
+    };
+    vault.with_write_txn_grouped(|wtxn| {
+        judge_rejection_with_cause_in_txn(vault, wtxn, &rejection, cause)
+    })
+}
+
+/// [`judge_rejection_in_txn`]'s one path, with the cause the door stated.
+fn judge_rejection_cause_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    rejection: &Rejection<'_>,
+    cause: Option<AmendmentCause>,
+) -> Result<Option<AmendmentJudgment>> {
     let scope = normalized_scope(&learning_scope(rejection.scope))?.to_owned();
     let mut evidence =
         AmendmentEvidence::new(rejection.receipt, rejection.actor, scope.as_str()).at(rejection.at);
     evidence.skill = rejection.skill;
+    evidence.cause = cause;
     #[expect(
         clippy::cast_possible_truncation,
         reason = "a unit-interval setting narrowed to the judge's f32 confidence"
@@ -93,9 +178,9 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
         return Ok(None);
     }
     // A rejection keeps the routing facts the inbox truthfully has, in the same
-    // row and under the same key the amendment door writes (FIX 11633): no
-    // cause was observed, and the decision names no attempt, executor or task
-    // type, so those stay unset.
+    // row and under the same key the amendment door writes (FIX 11633): the
+    // decision names no attempt, executor or task type, so those stay unset;
+    // the cause rides the row when the intake stated one (FIX 11621).
     let evidence_row = StoredEvidence {
         v: ROW_VERSION,
         actor: rejection.actor.to_hex(),
@@ -105,7 +190,7 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
         type_ref: None,
         project: rejection.project.map(|id| id.to_hex()),
         scope: scope.clone(),
-        cause: None,
+        cause: cause.map(|cause| cause.as_str().to_owned()),
         followed_skill: None,
         skill_covered_step: None,
         at: rejection.at,
@@ -137,7 +222,9 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
         &judgment_row(&judgment),
     )?;
     // A rejection has no Δ to mine, so a `preference_shift` share files no
-    // preference note, and a `discovery` share mints no edit proposal here.
+    // preference note, and a `discovery` share mints no edit proposal here. A
+    // re-judgment that left nothing unclear withdraws the note the first
+    // pass filed.
     if !split.unclear.is_empty() {
         put_unclear_in_txn(
             vault,
@@ -149,6 +236,13 @@ pub(in crate::edit_distance) fn judge_rejection_in_txn(
                 notes: split.unclear.clone(),
                 at: judgment.at,
             },
+        )?;
+    } else {
+        delete_unclear_in_txn(
+            vault,
+            wtxn,
+            AttributionLane::Amendment,
+            &judgment.receipt_id,
         )?;
     }
     charge_judgment_in_txn(vault, wtxn, &judgment)?;
