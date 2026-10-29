@@ -330,6 +330,64 @@ impl Vault {
         })
     }
 
+    /// [`Self::guest_row_admitted_in_txn`] for the stored row `id`, at the
+    /// position its own row carries (every world a NOTE is in), read only
+    /// once a narrowing reached past the view (FIX 9117). A missing row keeps
+    /// today's path.
+    pub(crate) fn guest_stored_row_admitted_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        id: EntityId,
+    ) -> bool {
+        self.guest_row_admitted_in_txn(txn, claims, || {
+            let Some(raw) = self.get_raw_in(txn, &id)? else {
+                return Ok(None);
+            };
+            crate::federation::record_scope::note_world::blob_scope_every_world(
+                &self.store,
+                txn,
+                id,
+                &raw,
+            )
+        })
+    }
+
+    /// The scope a cached view with `claims` carries in `txn` (FIX 9117): its
+    /// own, met with its guest grant's current effective scope once a later
+    /// narrowing reached past it, as a fresh verification meets it. Every
+    /// non-guest view, and a guest view still inside, keeps its own.
+    pub(crate) fn current_view_scope_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> Scope {
+        match self.guest_view_narrowed_in_txn(txn, claims) {
+            Some(current) => clamp_scope(&claims.scope, &current),
+            None => claims.scope.clone(),
+        }
+    }
+
+    /// Whether a cached view with `claims` still stands inside its guest
+    /// grant's current effective scope (FIX 9117): true for every non-guest
+    /// view and for a guest view no later narrowing reached past. A door
+    /// that skips its per-row judgment for a whole-vault view takes its
+    /// narrowed path once this is false.
+    pub(crate) fn guest_view_current_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+    ) -> bool {
+        self.guest_view_narrowed_in_txn(txn, claims).is_none()
+    }
+
+    /// [`Self::guest_view_current_in_txn`] in its own snapshot, closed before
+    /// it returns.
+    pub(crate) fn guest_view_current(&self, claims: &SlipClaims) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self.guest_view_current_in_txn(&txn, claims))
+    }
+
     /// A slip verified in `txn`: its grant, invitation and delegation still
     /// stand, and a Connect guest's view is met with its grant's current
     /// effective scope (FIX 7929).
