@@ -2,7 +2,7 @@
 //! its proposed craft notes, its landing marker and the progress it read,
 //! in one grouped write.
 
-use super::{DreamCut, LANDED, PADS, PROGRESS, advance, invalid};
+use super::{DreamCut, LANDED, PADS, PROGRESS, READ, ResidentDreamRead, advance, invalid};
 use crate::actor_claims::ResidentCraftCandidate;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::FreeTimeItemBinding;
@@ -44,6 +44,15 @@ pub(super) fn commit_dream(
             .map_err(|error| invalid(&format!("diary entry: {error}")))?;
         propose_craft_notes_in_txn(ctx.vault, txn, resident_id, attempt_id, craft, at)?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
+        READ.put(
+            &ctx.vault.store,
+            txn,
+            &entry_id,
+            &ResidentDreamRead {
+                attempt: attempt_id,
+                sources: cut.read.clone(),
+            },
+        )?;
         if let Some(binding) = free_time {
             crate::dreamer_runner::record_own_time_landed_in_txn(ctx.vault, txn, binding, at)?;
         }
