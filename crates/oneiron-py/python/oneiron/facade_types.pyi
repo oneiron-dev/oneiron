@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1164 facade rows, 4184 declarations.
+Census: 1164 facade rows, 4186 declarations.
 Inputs: 1099 of 1164 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1164 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -15958,6 +15958,10 @@ class FrozenTrialCase(TypedDict):
     derived_from: list[EntityId]
 TrialAdmission = Literal["ready", "ask_exploration"]
 ModelTrialExecutionState = Literal["not_started", "running", "interrupted", "measured"]
+TrialArm = Literal["incumbent", "candidate"]
+class TrialArmKey(TypedDict):
+    answer: EntityId
+    arm: TrialArm
 class ModelTrialEvidence(TypedDict):
     measurements_hash: list[int]
     incumbent_loss: NotRequired[float | None]
@@ -15967,6 +15971,7 @@ class ModelTrialEvidence(TypedDict):
     candidate_cost_per_thousand: float
     trial_cost: float
     unknown_arms: int
+    resent_unknown_arms: int
 class PairedQualityInterval(TypedDict):
     low: float
     high: float
@@ -16006,6 +16011,8 @@ class ModelTrialView(TypedDict):
     execution: ModelTrialExecutionState
     arms_completed: int
     arms_unknown: int
+    unknown_arms: list[TrialArmKey]
+    arms_resent: int
     arms_total: int
     evidence: NotRequired[ModelTrialEvidence | None]
     receipt: NotRequired[ModelTrialReceipt | None]

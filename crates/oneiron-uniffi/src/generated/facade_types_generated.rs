@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1164 facade rows, 4167 generated types.
+// UniFFI census: 1164 facade rows, 4169 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1116.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -49906,6 +49906,25 @@ pub enum ModelTrialExecutionState {
     Measured,
 }
 
+/// `oneiron::llm::model_trials::types::TrialArm`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TrialArm {
+    #[serde(rename = "incumbent")]
+    Incumbent,
+    #[serde(rename = "candidate")]
+    Candidate,
+}
+
+/// `oneiron::llm::model_trials::types::TrialArmKey`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TrialArmKey {
+    #[serde(rename = "answer")]
+    pub answer: String,
+    #[serde(rename = "arm")]
+    pub arm: TrialArm,
+}
+
 /// `oneiron::llm::catalog_doors::types::ModelTrialEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -49934,6 +49953,8 @@ pub struct ModelTrialEvidence {
     pub trial_cost: f64,
     #[serde(rename = "unknown_arms")]
     pub unknown_arms: u64,
+    #[serde(rename = "resent_unknown_arms")]
+    pub resent_unknown_arms: u64,
 }
 
 /// `oneiron::llm::model_trials::types::PairedQualityInterval`.
@@ -50060,6 +50081,10 @@ pub struct ModelTrialView {
     pub arms_completed: u64,
     #[serde(rename = "arms_unknown")]
     pub arms_unknown: u64,
+    #[serde(rename = "unknown_arms")]
+    pub unknown_arms: Vec<TrialArmKey>,
+    #[serde(rename = "arms_resent")]
+    pub arms_resent: u64,
     #[serde(rename = "arms_total")]
     pub arms_total: u64,
     #[serde(rename = "evidence", default, skip_serializing_if = "Option::is_none")]
