@@ -26,11 +26,11 @@ use super::super::protocol::{
     AckPosition, DRAIN_VERSION, DrainAck, DrainTicket, DrainToken, Lineage, TargetId, TargetKind,
     TargetSpec, drain_operation_id, drain_origin, drain_placement, hex,
 };
-use crate::store::Store;
 use super::{
     ACKS, Member, RequiredSet, TARGETS, WIRE_VERSION, decode, encode, journal_corrupt,
     remove_quietly, target_file,
 };
+use crate::store::Store;
 
 const DRAINS: &str = "drains";
 
@@ -296,9 +296,7 @@ impl Store {
             .required_set()?
             .members
             .iter()
-            .find(|member| {
-                member.spec.id() == target && member.spec.kind() == TargetKind::Folder
-            })
+            .find(|member| member.spec.id() == target && member.spec.kind() == TargetKind::Folder)
             .and_then(|member| member.spec.folder_path().map(std::path::Path::to_path_buf))
             .ok_or_else(|| refused("names no folder member"))?;
         let ticket = journal.begin_drain(target, &journal.position()?)?;

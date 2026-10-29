@@ -321,9 +321,7 @@ pub fn open_host_holds_family(
         )?;
         plain.extend_from_slice(&opened);
     }
-    let bound = plain
-        .get(..HOST_HOLDS_BINDING_LEN)
-        .ok_or_else(malformed)?;
+    let bound = plain.get(..HOST_HOLDS_BINDING_LEN).ok_or_else(malformed)?;
     if bound != expected.encode() {
         return Err(malformed());
     }
@@ -354,11 +352,7 @@ fn piece_key_id(digest: &[u8; 32], index: u32, count: u32) -> [u8; 40] {
     out
 }
 
-fn params<'a>(
-    binding: &'a HostHoldsBinding,
-    purpose: Purpose,
-    key_id: &'a [u8],
-) -> SealParams<'a> {
+fn params<'a>(binding: &'a HostHoldsBinding, purpose: Purpose, key_id: &'a [u8]) -> SealParams<'a> {
     SealParams {
         suite: HOST_HOLDS_AEAD,
         purpose,

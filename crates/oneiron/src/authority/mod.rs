@@ -212,6 +212,10 @@ pub use admission::{
     AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
 };
+pub use backup_signer_delegation::{
+    BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
+    BackupSignerStatement,
+};
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
     AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,
@@ -223,10 +227,6 @@ pub use checkpoint_adopt::{
 pub use checkpoint_attest::*;
 pub use checkpoint_choice::CheckpointPolicyHead;
 pub use checkpoint_image::*;
-pub use backup_signer_delegation::{
-    BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots,
-    BackupSignerDelegation, BackupSignerStatement,
-};
 pub use checkpoint_policy::*;
 pub use checkpoint_policy_choice::CheckpointPolicyView;
 pub use checkpoint_root_attest::{

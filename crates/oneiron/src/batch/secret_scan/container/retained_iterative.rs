@@ -177,7 +177,9 @@ impl RetainedLeafTransform for FillPlaces<'_> {
             }
             let texts = self.handles.and_then(|handles| handles.get(index));
             spans.extend(at_spans.iter().enumerate().map(|(key, span)| {
-                let text = texts.and_then(|texts| texts.get(key)).and_then(Option::as_deref);
+                let text = texts
+                    .and_then(|texts| texts.get(key))
+                    .and_then(Option::as_deref);
                 (*span, text)
             }));
             self.met += 1;

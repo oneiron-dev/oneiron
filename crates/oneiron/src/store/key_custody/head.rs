@@ -36,9 +36,7 @@ use crate::error::{Error, Result};
 use super::body_history::HistoryRows;
 use super::erase_evidence::{CredentialFenceFact, FenceFact, fold_fact};
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
-use super::log::{
-    AEAD, CRYPTO_EPOCH, Control, CustodyPosition, open_sym, seal_refused, seal_sym,
-};
+use super::log::{AEAD, CRYPTO_EPOCH, Control, CustodyPosition, open_sym, seal_refused, seal_sym};
 use super::recipients::RecipientRetirement;
 
 mod carried_pads;
@@ -57,11 +55,11 @@ pub(crate) use self::pad_scope::{
     seal_world_pad_compartment,
 };
 pub(crate) use self::scope::{CompartmentScope, CustodyOpener, CustodyRecipients};
-pub(super) use self::wire::{head_position, serde_bytes_vec, staged_position};
 use self::wire::{
     Bodies, BodyWire, CompartmentWire, DigestRoot, EntryWire, EvidenceWire, FactWire, HEAD_MAGIC,
     HEAD_VERSION, HeadWire, HistoryJoin, WrapWire, key_id, parse,
 };
+pub(super) use self::wire::{head_position, serde_bytes_vec, staged_position};
 
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 const DATA_KEY_RECIPIENT: &[u8] = b"oneiron/custody-head/data-key/v1";

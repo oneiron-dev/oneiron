@@ -80,7 +80,10 @@ impl BackupModeRootPolicy {
     pub fn digest(&self) -> Result<[u8; 32]> {
         self.validate()?;
         let bytes = rmp_serde::to_vec_named(self).map_err(|_| invalid_authority())?;
-        Ok(blake3::derive_key("oneiron/backup-mode-root-policy/v1", &bytes))
+        Ok(blake3::derive_key(
+            "oneiron/backup-mode-root-policy/v1",
+            &bytes,
+        ))
     }
 }
 
@@ -227,7 +230,9 @@ impl BackupModeRoots {
                     signatures: delegation
                         .signatures
                         .iter()
-                        .map(|signature| (signature.public_key.clone(), signature.signature.clone()))
+                        .map(|signature| {
+                            (signature.public_key.clone(), signature.signature.clone())
+                        })
                         .collect(),
                 })
                 .collect(),

@@ -38,9 +38,9 @@ use oneiron_vault_contract::restore::{
 use zeroize::Zeroizing;
 
 // A vault VM host proves and takes over its own restore pipes the same way.
+use self::host_holds::AdmittedHostOrderHolds;
 #[cfg(target_os = "linux")]
 pub(super) use self::input::adopt;
-use self::host_holds::AdmittedHostOrderHolds;
 use self::receipt::ReceiptContext;
 pub(super) use self::receipt::RestoreOutcome;
 use self::result::ResultSink;
