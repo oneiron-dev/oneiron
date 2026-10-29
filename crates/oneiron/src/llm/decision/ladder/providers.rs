@@ -148,7 +148,8 @@ impl<'a> DecisionPack<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderCapability {
     /// The most options one choice question may offer it. A choice's contract sets no
-    /// count: a wider one goes to a provider that takes it, never cut to fit (FIX 9908).
+    /// count: a wider one is never cut to fit (FIX 9908); it is read in chunks within this
+    /// bound and a final read among their winners (FIX 11235).
     pub max_options: usize,
     /// Whether it answers score questions.
     pub score: bool,

@@ -16,6 +16,7 @@ mod providers;
 mod roles;
 mod runner;
 mod slots;
+mod tournament;
 
 pub use providers::{
     DecisionCall, DecisionModel, DecisionPack, DecisionProvider, MAX_DECISION_STATE_BYTES,
@@ -28,14 +29,15 @@ pub use roles::{
 };
 
 /// Whether `provider` can take `question` over `images` and `audio`. A call carrying both
-/// needs a provider that reads both; the ladder never drops one to fit.
+/// needs a provider that reads both; the ladder never drops one to fit. A choice wider
+/// than its option bound it reads as a tournament of chunks (FIX 11235).
 fn takes(
     provider: &dyn DecisionProvider,
     question: &DecisionQuestion,
     images: &[DecisionImage],
     audio: &[DecisionAudio],
 ) -> bool {
-    provider.capability().takes(question)
+    (provider.capability().takes(question) || tournament::chunks(provider, question))
         && (images.is_empty() || provider.reads_images())
         && (audio.is_empty() || provider.reads_audio())
 }
