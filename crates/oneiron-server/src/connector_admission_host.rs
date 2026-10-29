@@ -257,7 +257,7 @@ pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnector
 }
 
 /// What the owner names for one tool at registration. MCP declares neither.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ToolClass {
     #[serde(default = "default_data_class")]

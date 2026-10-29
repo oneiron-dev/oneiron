@@ -71,7 +71,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/conversation-learning/receipts", get(receipts))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetLearning {
     /// Whether the vault's conversations count for training. Required.
@@ -84,7 +84,7 @@ struct SetLearning {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct LearningReply {
     /// Whether the setting is on now. No choice, an off and a conflict read
     /// as off.
@@ -118,7 +118,19 @@ fn reply(view: &ConversationLearningView) -> LearningReply {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning`'s body (FIX 11611):
+/// [`SetLearning`].
+pub(crate) fn set_learning_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetLearning>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning`'s answer (FIX 11611):
+/// [`LearningReply`].
+pub(crate) fn learning_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningReply>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetOwn {
     /// Whether the caller's own messages are left out. Required.
@@ -129,7 +141,7 @@ struct SetOwn {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct OwnReply {
     /// The person whose opt-out this is, as 32 hex: the proof's own.
     person: String,
@@ -157,6 +169,18 @@ fn own_reply(view: &ConversationTrainingView) -> OwnReply {
         conflicted: view.conflicted,
         act: view.act.as_ref().map(revision_hex),
     }
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/me`'s body (FIX 11611):
+/// [`SetOwn`].
+pub(crate) fn set_own_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetOwn>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/me`'s answer (FIX 11611):
+/// [`OwnReply`].
+pub(crate) fn own_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OwnReply>()
 }
 
 /// The engine's typed refusals as the caller's: a stale revision is a change

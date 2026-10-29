@@ -40,7 +40,7 @@ struct ConsentQuery {
     actor: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConsentRequest {
     connector: String,
@@ -55,7 +55,7 @@ struct ConsentRequest {
     rows: Vec<ConsentRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConsentRow {
     tool: String,
@@ -80,11 +80,23 @@ struct ConsentRead {
     endpoint: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Consented {
     connector: String,
     endpoint: String,
     grants: Vec<ConnectorToolGrant>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/consent`'s body (FIX 11611):
+/// [`ConsentRequest`].
+pub(crate) fn consent_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConsentRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/consent`'s answer (FIX 11611):
+/// [`Consented`].
+pub(crate) fn consented_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Consented>()
 }
 
 /// The endpoint this host installed under the connector's name.

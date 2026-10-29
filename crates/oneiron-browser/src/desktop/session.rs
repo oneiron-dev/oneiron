@@ -15,7 +15,7 @@ pub struct DesktopGuest {
 
 /// Who has a desktop session (CUA-001): its agent, its agent waiting on the
 /// person it asked, or a person driving it. `by` is the person's id.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Takeover {
     Agent,
@@ -44,7 +44,7 @@ pub struct AbandonedTakeover {
 
 /// One input from the person who holds the desktop, at the pixels of the
 /// whole-display screen they were last shown.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PersonInput {
     Click {

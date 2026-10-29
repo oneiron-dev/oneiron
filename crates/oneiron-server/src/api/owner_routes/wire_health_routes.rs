@@ -35,7 +35,7 @@ struct HealthChecks {
     mesh_pool: ConnectionPoolPressure,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RecordOutcome {
     /// The crossing's unit, as 32 hex (a check's `state.unit`).
@@ -44,9 +44,21 @@ struct RecordOutcome {
     outcome: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct OutcomeRecorded {
     fact: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/wire-health/outcome`'s body (FIX 11103):
+/// [`RecordOutcome`].
+pub(crate) fn record_outcome_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RecordOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/wire-health/outcome`'s answer (FIX 11103):
+/// [`OutcomeRecorded`].
+pub(crate) fn outcome_recorded_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OutcomeRecorded>()
 }
 
 /// `GET /v1/owner/wire-health`: every check this server keeps.

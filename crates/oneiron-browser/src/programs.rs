@@ -59,7 +59,7 @@ pub struct HandoverOutput {
 /// One input from the person who holds a run's browser (CUA-001), at the
 /// pixels of the viewport screen they were last shown, or a page to go to.
 /// No press gates it: the person's own input is their press.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserPersonInput {
     Click {

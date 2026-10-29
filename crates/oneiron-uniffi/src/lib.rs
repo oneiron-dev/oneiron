@@ -24,9 +24,11 @@
 //! crosses through the records and enums generated from the facade type
 //! inventory into `generated/facade_types_generated.rs`: one per engine struct or enum
 //! the rows reach, each with the engine type's own serde wire shape, so a row
-//! converts at its boundary through that shape. Only a shape UniFFI cannot
-//! express (a `serde_json::Value`, a tuple, a type that holds itself by value)
-//! stays a [`WireJson`] field inside its record; a tree that holds itself
+//! converts at its boundary through that shape. A tuple crosses as a
+//! generated record with positional fields whose serde is the tuple's one
+//! JSON array. Only a shape UniFFI cannot express (a `serde_json::Value`
+//! or a type that holds itself by value) stays a [`WireJson`] field inside
+//! its record; a tree that holds itself
 //! only through a list is an ordinary record. A row whose type the inventory
 //! could not read crosses as [`WireJson`] whole. There is no generic
 //! `call(name, json)`; the one name-keyed method is `retry`, which only
@@ -245,8 +247,9 @@ impl Oneiron {
     ///
     /// `request` is the route's `{event, idempotencyKey}` body as its
     /// generated record; the reply is the generated `LensFrameEventReply`:
-    /// `Local` (the card's new `$state`) for a local action, `Tool`
-    /// (`outcome`, `readReceipt`) for a deterministic tool, or `Callback` for
+    /// `Local` (the card's new `$state`, beside the card's refinement for a
+    /// patch-profile caller) for a local action, `Tool` (`outcome`,
+    /// `readReceipt`) for a deterministic tool, or `Callback` for
     /// a model round trip. A card the server no longer holds fails
     /// `NOT_FOUND`: render the lens again. An embedded handle fails
     /// `BAD_REQUEST`: lens frames live on the served host that rendered the

@@ -1700,7 +1700,7 @@ param's when the call names one. The stored-media backfill and the context
 pack's `media` query embed through this row, and each refuses a vector whose
 width is not its space's declared width.
 
-The verbs, each the owner's and checked against the vault's inference policy:
+The verbs, each the owner's call and checked against the vault's inference policy; an agent whose owner agent Grant names an operation calls that door as the owner's call, on the owner's meter:
 
 - `GET /v1/ai/options?operation=image&inputs=text,image`: every row the
   caller could call now (text seats' rungs too), where it runs, what it
@@ -1708,7 +1708,9 @@ The verbs, each the owner's and checked against the vault's inference policy:
   registry holds it; `null` when no registered row prices it), `units_left`
   (what the meter its call spends has left: the raw routes' for a text row,
   the media meter for the rest), and `media_units_left`. A caller the `ai.*`
-  doors refuse (anyone not owner-grade, a run's agent too) gets no rows. A row
+  doors refuse (anyone not owner-grade and with no Grant naming the
+  operation, a run's agent too) gets no rows; an agent whose Grant names
+  operations sees those rows. A row
   the vault's inference policy refuses is left out, as is a rung whose
   provider is down, whose one probation request is out, or that a limit
   holds, until it is back. The facade's and MCP's `ai.options` list the same

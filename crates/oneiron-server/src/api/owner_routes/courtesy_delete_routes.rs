@@ -12,7 +12,8 @@ use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{
-    CourtesyDeleteAnswerRequest, CourtesyDeleteSendRequest, EmptyRequest,
+    CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
+    CourtesyDeleteSent, EmptyRequest,
 };
 use serde_json::Value;
 
@@ -29,6 +30,30 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/courtesy-delete/sent", get(sent))
         .route("/courtesy-delete/incoming", get(incoming))
         .route("/courtesy-delete/answer", post(answer))
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/send`'s body
+/// (FIX 11611): [`CourtesyDeleteSendRequest`].
+pub(crate) fn courtesy_send_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteSendRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/send`'s answer
+/// (FIX 11611): the queued ask, [`CourtesyDeleteSent`].
+pub(crate) fn courtesy_sent_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteSent>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/answer`'s body
+/// (FIX 11611): [`CourtesyDeleteAnswerRequest`].
+pub(crate) fn courtesy_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteAnswerRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/courtesy-delete/answer`'s answer
+/// (FIX 11611): the answered ask, [`CourtesyDeleteIncoming`].
+pub(crate) fn courtesy_incoming_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CourtesyDeleteIncoming>()
 }
 
 /// `POST /v1/owner/courtesy-delete/send`: asks a former peer to drop what

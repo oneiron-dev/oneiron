@@ -60,7 +60,7 @@ struct AnchorLineage {
 
 /// A compare-and-swap advance: the BLAKE3 (64 hex) of the record the caller
 /// read, `null` when it read none, and the record (hex) to make current.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnchorAdvanceRequest {
     expected: Option<String>,
@@ -73,10 +73,22 @@ struct AnchorRecordView {
     record: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct AnchorAdvanceView {
     /// `false` when another writer moved the record first: nothing changed.
     advanced: bool,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/custody-anchor`'s body (FIX 11103):
+/// [`AnchorAdvanceRequest`].
+pub(crate) fn anchor_advance_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnchorAdvanceRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/custody-anchor`'s answer (FIX 11103):
+/// [`AnchorAdvanceView`].
+pub(crate) fn anchor_advance_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnchorAdvanceView>()
 }
 
 /// This server's custody anchor root, refused while none is set up.

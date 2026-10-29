@@ -52,7 +52,7 @@ const EMBEDDING_PROBE: SideTable<[u8; 16], SpaceProbe, Named> =
     SideTable::new(&side_table::EMBEDDING_PROBE);
 
 /// One retrieval probe.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpaceProbe {
     /// The kind of the documents it finds; a move's check runs it for that kind's slot.
     pub kind: InputKind,

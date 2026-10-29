@@ -1,0 +1,5 @@
+DONE ps-voice built by Muse: both rows BUILT, generate.py --check and agent-docs.py --check clean, no cargo run on this machine.
+5815 BUILT: crates/oneiron-server/src/api/facade/live_voice_doors.rs (ai_voice_tool answers MaybeListed<ActAnswer<LiveVoiceToolReply>> via connector_call_listing_as, picked rows merged, session keeps its reply+rows, off-device narrows), crates/oneiron-server/src/api/facade/connector_call_doors.rs (answers_as_before pub(crate); removed now-unused connector_call_reply + orphaned connector_call_as, doc now names connector_call_listing_as), scripts/sdk/agent-verbs.json output + regen (remote/uniffi/napi/py/TS/code-mode/agent-docs mirrors).
+11399 BUILT: crates/oneiron-server/src/api/facade/ui_action_routes.rs (UiEventRequest.stream names the patch profile; Local answers carry refinement: snapshot on the card's first change, patch from the last answer's render after, full-model answers byte-identical), crates/oneiron-remote/src/lens_frames.rs (request.stream + Local.refinement), regen mirrors + hand mirrors (index.ts x2, __init__.pyi/py, napi/py/uniffi docs).
+Seams: none.
+FIX lines to file: none.
