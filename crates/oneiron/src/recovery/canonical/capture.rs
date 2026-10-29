@@ -15,21 +15,22 @@ pub fn capture_canonical_window(
 }
 
 /// Publishes into current custody each pad a row holds that custody lacks,
-/// and reads it back, before a Layer-1 artifact is captured, so the
-/// artifact names it by reference (KS-5, FIX 7313). A pad custody still
-/// does not hold the same rides the artifact as its carrier, warned by
-/// count; a fault preparing them is warned and never stops the capture.
+/// and reads it back, before a Layer-1 artifact is captured or a rebuilt
+/// window keeps its pad rows, so each names its pad by reference (KS-5, FIX
+/// 7313, 7293). A pad custody still does not hold the same keeps its
+/// carrier there, warned by count; a fault preparing them is warned and
+/// never stops the capture.
 pub(crate) fn prepare_artifact_pads(vault: &Vault) {
     match vault.prepare_image_pads() {
         Ok(0) => {}
         Ok(unprepared) => tracing::warn!(
             unprepared,
-            "world key pads current custody does not hold the same ride this artifact as their \
-             carriers"
+            "world key pads current custody does not hold the same keep their carriers in this \
+             capture"
         ),
         Err(error) => tracing::warn!(
             kind = ?error.kind(),
-            "world key pads were not prepared for this artifact; any custody lacks rides as its \
+            "world key pads were not prepared for this capture; any custody lacks keeps its \
              carrier"
         ),
     }
