@@ -22,6 +22,11 @@
 //! TURN whose facts it carries (FIX 3786), and its window alone is opened for
 //! them. So is a cold MESSAGE's window, for the quote pins a local write gave
 //! it (FIX 3462).
+//!
+//! A local write also leaves a durable pending-mirror marker in its own
+//! transaction (FIX 7957, FIX 9599; [`super::pending_mirror`]): each pass
+//! takes what a loaded window's markers owe it, rows and edge removals, and
+//! retires them after. At start the thread opens each window a marker names.
 
 use std::cell::Cell;
 use std::collections::{BTreeSet, VecDeque};
@@ -29,7 +34,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
+use loro::LoroDoc;
+
 use super::WindowManager;
+use super::pending_mirror::{self, Owed};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::sync::types::WindowKey;
@@ -59,9 +67,22 @@ const ROOM_FACT_FLUSH_WINDOWS_KEPT: usize = 4;
 /// window's next open.
 const MESSAGE_PIN_COLD_FLUSH: bool = true;
 
+/// Whether the first pass after start opens each window a pending-mirror
+/// marker names that no loaded window is (FIX 7957; a call, canon is silent):
+/// its open mirrors what a stopped process owed it. It stays loaded as a room
+/// fact flush's does ([`ROOM_FACT_FLUSH_WINDOWS_KEPT`]). Later passes open no
+/// window for a marker. `false` leaves the markers for each window's next
+/// open.
+const PENDING_MIRROR_START_FLUSH: bool = true;
+
 thread_local! {
     /// Set while this thread writes the rows a sync import brought.
     static IMPORTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether this thread writes the rows a sync import brought.
+pub(super) fn importing() -> bool {
+    IMPORTING.with(Cell::get)
 }
 
 /// While it lives, the rows this thread commits are a sync import's: the
@@ -85,12 +106,14 @@ impl Drop for ImportScope {
 }
 
 /// Rows committed and not yet mirrored: every one, and those a local write
-/// changed. `setup_retry` asks for the setup window's waiting rows again.
+/// changed. `setup_retry` asks for the setup window's waiting rows again;
+/// `owed` asks for what the pending-mirror markers owe, at start.
 #[derive(Default)]
 struct Pending {
     rows: BTreeSet<EntityId>,
     edited: BTreeSet<EntityId>,
     setup_retry: bool,
+    owed: bool,
 }
 
 /// Rows committed here and not yet mirrored, and the thread that mirrors them.
@@ -99,6 +122,8 @@ pub(super) struct LiveMirror {
     pending: Mutex<Pending>,
     wake: Condvar,
     started: AtomicBool,
+    /// Whether the start pass over the pending-mirror markers was asked for.
+    driven: AtomicBool,
     /// The windows flushes opened and keep loaded, least recently used first.
     flush_kept: Mutex<VecDeque<WindowKey>>,
 }
@@ -134,6 +159,21 @@ impl WindowManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .setup_retry = true;
+        self.wake_live_mirror();
+    }
+
+    /// Asks the mirror thread, once per manager, for what the pending-mirror
+    /// markers a stopped process left owe their windows (FIX 7957), and
+    /// starts the thread for it.
+    pub(super) fn drive_pending_mirrors(self: &Arc<Self>) {
+        if self.live_mirror.driven.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        self.live_mirror
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .owed = true;
         self.wake_live_mirror();
     }
 
@@ -176,22 +216,7 @@ impl WindowManager {
                 continue;
             };
             let _guard = self.materializer.lock();
-            match super::super::window::reverse_rematerialize_rows(
-                &self.vault,
-                &window.doc,
-                &key,
-                rows,
-                edited,
-            ) {
-                Ok(0) => {}
-                Ok(mirrored) => {
-                    self.touch_flush_window(&key);
-                    tracing::debug!(window = %key, mirrored, "committed rows mirrored into the live window");
-                }
-                Err(error) => {
-                    tracing::warn!(window = %key, %error, "committed rows not mirrored into the live window");
-                }
-            }
+            self.mirror_into_window(&key, &window.doc, rows, edited);
             // FIX 853: a MESSAGE row that lands after its document's head
             // finds the head here.
             crate::sync::message_docs::merge_committed_message_docs(
@@ -211,6 +236,88 @@ impl WindowManager {
             {
                 tracing::warn!(window = %key, %error, "room side rows not mirrored into the live window");
             }
+        }
+    }
+
+    /// Mirrors `rows`, `edited` ones over the carrier the doc holds, into
+    /// `doc`, the live window `key`, with what its pending-mirror markers owe
+    /// it (FIX 7957, FIX 9599): their rows as edited ones, and the removal of
+    /// their edges. The markers retire once all of it is written: Observer A
+    /// persisted each bridge commit's update inside the commit.
+    fn mirror_into_window(
+        &self,
+        key: &WindowKey,
+        doc: &LoroDoc,
+        rows: &BTreeSet<EntityId>,
+        edited: &BTreeSet<EntityId>,
+    ) {
+        let owed = Owed::read(&self.vault, key).unwrap_or_else(|error| {
+            tracing::warn!(window = %key, %error, "pending mirrors not read for the live window");
+            Owed::default()
+        });
+        let rows = owed.rows_with(rows);
+        if !rows.is_empty() {
+            match super::super::window::reverse_rematerialize_rows(
+                &self.vault,
+                doc,
+                key,
+                &rows,
+                &owed.rows_with(edited),
+            ) {
+                Ok(0) => {}
+                Ok(mirrored) => {
+                    self.touch_flush_window(key);
+                    tracing::debug!(window = %key, mirrored, "committed rows mirrored into the live window");
+                }
+                Err(error) => {
+                    tracing::warn!(window = %key, %error, "committed rows not mirrored into the live window");
+                    return;
+                }
+            }
+        }
+        if let Err(error) = owed.remove_edges(&self.vault, doc) {
+            tracing::warn!(window = %key, %error, "removed edges not mirrored into the live window");
+            return;
+        }
+        owed.retire(&self.vault);
+    }
+
+    /// The start pass over the pending-mirror markers (FIX 7957): what they
+    /// owe a loaded window lands in it, and each other window they name
+    /// opens, its open mirroring what it owes ([`PENDING_MIRROR_START_FLUSH`]).
+    fn drive_owed_mirrors(self: &Arc<Self>) {
+        let windows = match pending_mirror::owed_windows(&self.vault) {
+            Ok(windows) => windows,
+            Err(error) => {
+                tracing::warn!(%error, "pending mirrors not read at start");
+                return;
+            }
+        };
+        let loaded = self.loaded_keys();
+        let none = BTreeSet::new();
+        for key in windows {
+            let window = if loaded.contains(&key) {
+                self.window(&key)
+            } else if PENDING_MIRROR_START_FLUSH {
+                match self.open_window_for_room_fact_flush(&key) {
+                    Ok((_, true)) => {
+                        self.keep_flush_window(&key);
+                        None
+                    }
+                    Ok((window, false)) => Some(window),
+                    Err(error) => {
+                        tracing::warn!(window = %key, %error, "window owed pending mirrors not opened");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let Some(window) = window else {
+                continue;
+            };
+            let _guard = self.materializer.lock();
+            self.mirror_into_window(&key, &window.doc, &none, &none);
         }
     }
 
@@ -349,7 +456,7 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
             let (mut guard, _) = mirror
                 .wake
                 .wait_timeout_while(guard, LIVENESS_POLL, |pending| {
-                    pending.rows.is_empty() && !pending.setup_retry
+                    pending.rows.is_empty() && !pending.setup_retry && !pending.owed
                 })
                 .unwrap_or_else(PoisonError::into_inner);
             std::mem::take(&mut *guard)
@@ -357,6 +464,9 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
         let Some(manager) = manager.upgrade() else {
             return;
         };
+        if pending.owed {
+            manager.drive_owed_mirrors();
+        }
         if !pending.rows.is_empty() {
             manager.mirror_committed_rows(&pending.rows, &pending.edited);
         }

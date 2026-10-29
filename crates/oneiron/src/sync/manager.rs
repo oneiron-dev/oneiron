@@ -48,6 +48,7 @@
 
 mod document_api;
 mod live_mirror;
+mod pending_mirror;
 mod promotion;
 mod replacement;
 
@@ -191,6 +192,8 @@ impl WindowManager {
     /// managers over one vault is unsupported — the last attach wins.
     pub fn attach_to_vault(self: &Arc<Self>) {
         self.vault.attach_live_window_manager(Arc::downgrade(self));
+        // FIX 7957: what a stopped process owed its windows is mirrored now.
+        self.drive_pending_mirrors();
     }
 
     /// Opens (or returns the already-live) window for `key`.
@@ -318,10 +321,14 @@ impl WindowManager {
         let deferral = crate::scope_summary::defer_rederive();
         let pending_tombstones = replay_pending_tombstones(&self.vault, &doc, key)?;
         let replayed = replay_pending_mirrors(&self.vault, &doc, key)?;
+        // FIX 7957, 9599: what local writes owe the window lands before the
+        // forward pass could read a stale carrier back; markers go once durable.
+        let owed = pending_mirror::Owed::mirror_on_open(&self.vault, &doc, key)?;
         let mirrored = reverse_rematerialize(&self.vault, &doc, key)?;
         // FIX 3095, 3787: what recovery mirrored is made durable, and sent,
         // before the forward pass clears the marks it mirrored.
         self.route_recovered_delta(&doc, key, &recovered_from)?;
+        owed.retire(&self.vault);
         let materialized = forward_rematerialize(&self.vault, &doc, &self.materializer, key)?;
         drop(deferral);
         // The door re-derives every scope summary after a write: this one
