@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::llm::{BrokerIsolation, SingleRouteBackend};
+use oneiron::llm::{BrokerIsolation, CacheDigest, SingleRouteBackend};
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError,
     LlmGenerateFuture, LlmRequest, LlmResponse, LlmResult, LlmStreamResult, ModelId,
@@ -38,7 +38,7 @@ use oneiron_llm_openai::{
 use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
-use super::llama_identity::AnsweringIdentity;
+use super::llama_identity::{AnsweringIdentity, execution_mode};
 use super::output_cap::OutputCap;
 use crate::config::models::{BrokerConfig, ProviderConfig, ProviderKind, ResponseFormatWire};
 
@@ -312,13 +312,15 @@ impl BrokerBackend {
     /// as a plain reply's: a house llama.cpp launch alias gives its receipt,
     /// with the launch's epoch alone, since a brokered reply comes from no
     /// origin this server fetches a manifest from (FIX 8314). Its receipts
-    /// name `model`, the model the call was admitted for.
+    /// name `model`, the model the call was admitted for, and `execution`,
+    /// the mode of the request it sent (FIX 8329).
     fn answer(
         &self,
         outcome: Outcome,
         body: &[u8],
         wire_model: &str,
         model: &ModelId,
+        execution: Option<&CacheDigest>,
     ) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
@@ -340,11 +342,12 @@ impl BrokerBackend {
                     .get("model")
                     .and_then(JsonValue::as_str)
                     .and_then(AnsweringIdentity::epoch_only);
-                super::openai::carry_reply_evidence(
+                super::openai::carry_sent_reply_evidence(
                     status,
                     &mut body,
                     Some(wire_model),
                     answering.as_ref(),
+                    execution,
                 );
                 let mut answer = parse_openai_chat_response(&body)?;
                 answer.usage.bind_inference_model(model);
@@ -493,12 +496,16 @@ impl LlmBackend for BrokerBackend {
     ) -> LlmGenerateFuture<'a> {
         Box::pin(async move {
             let (header, body) = self.build(&request, false, lease.id())?;
+            let execution = serde_json::from_slice::<JsonValue>(&body)
+                .ok()
+                .and_then(|sent| execution_mode(&sent));
             let reply = self.send(&header, &body).await?;
             self.answer(
                 reply.outcome,
                 &reply.body,
                 &header.wire_model,
                 &request.model,
+                execution.as_ref(),
             )
         })
     }

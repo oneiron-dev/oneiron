@@ -125,8 +125,8 @@ pub(super) fn campaign_enrollment_event_and_hold(
 pub enum EnrollmentDetection {
     /// A transition was recorded and is ready to be enqueued.
     Recorded(Box<CampaignEnrollmentEvent>),
-    /// Nothing to do: the entity does not match, or already holds the cohort
-    /// row this evidence would write.
+    /// Nothing to do: the entity does not match and holds no entry to leave,
+    /// or already holds the cohort row this evidence would write.
     NoTransition,
 }
 
@@ -184,7 +184,8 @@ pub async fn detect_enrollment(
 /// mints its own epoch, so one campaign's entry, settled attempt or failed
 /// attempt never stands in for another's: a campaign already entered on
 /// exactly this evidence records nothing, and every other campaign records
-/// its own event.
+/// its own event. On a non-match, each campaign whose last landed event from
+/// this query is an entry records an exit (FIX 2635).
 pub(super) async fn detect_enrollments(
     evaluator: &SavedQueryEvaluator<'_>,
     owner_actor: EntityId,
@@ -212,26 +213,32 @@ pub(super) async fn detect_enrollments(
         })
         .await?;
     let mut recorded = Vec::new();
-    if outcome.decision.verdict != MatchVerdict::Match {
-        return Ok((recorded, visit));
-    }
+    let matched = outcome.decision.verdict == MatchVerdict::Match;
     let history = membership_events(vault, query_ref, entity_ref)?;
     for campaign_ref in campaign_refs {
-        // A transition is a CHANGE. An entity already entered in this
-        // campaign on exactly this evidence has nothing to transition into,
-        // and minting an epoch for it would churn the cohort head on every
-        // wake.
-        if history
+        let last = history
             .iter()
             .rev()
-            .find(|event| event.campaign_ref == *campaign_ref)
-            .is_some_and(|last| {
-                last.transition == MembershipTransition::Entered
-                    && last.evidence_hash == outcome.evidence_hash
-            })
-        {
+            .find(|event| event.campaign_ref == *campaign_ref);
+        let entered = last.is_some_and(|last| last.transition == MembershipTransition::Entered);
+        let transition = if matched {
+            // A transition is a CHANGE. An entity already entered in this
+            // campaign on exactly this evidence has nothing to transition
+            // into, and minting an epoch for it would churn the cohort head
+            // on every wake.
+            if entered && last.is_some_and(|last| last.evidence_hash == outcome.evidence_hash) {
+                continue;
+            }
+            MembershipTransition::Entered
+        } else if entered {
+            // A member this query entered that it no longer matches leaves
+            // the campaign on this pass's non-match (FIX 2635). Nothing
+            // else exits a member: an entity that never entered, or already
+            // left, records nothing.
+            MembershipTransition::Exited
+        } else {
             continue;
-        }
+        };
         let event = CampaignEnrollmentEvent {
             event_ref: vault.store.clock.entity_id()?,
             query_ref,
@@ -241,7 +248,7 @@ pub(super) async fn detect_enrollments(
             epoch: next_membership_epoch(vault, query_ref, *campaign_ref, entity_ref)?,
             valid_at: now,
             detected_at: now,
-            transition: MembershipTransition::Entered,
+            transition,
             cause,
             evidence_hash: outcome.evidence_hash,
             definition_version,

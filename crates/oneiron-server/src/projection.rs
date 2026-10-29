@@ -140,6 +140,12 @@ impl<'a> BodyBudget<'a> {
         }
     }
 
+    /// The bytes the rest of the budget holds: the bound a door's
+    /// nothing-fits ask reports for an image it serves (FIX 680).
+    pub(crate) fn remaining(&self) -> u64 {
+        u64::try_from(self.remaining).unwrap_or(u64::MAX)
+    }
+
     /// Charges a body of `bytes` when the rest of the budget holds it.
     pub(crate) fn admits(&mut self, bytes: usize) -> bool {
         match self.remaining.checked_sub(bytes) {

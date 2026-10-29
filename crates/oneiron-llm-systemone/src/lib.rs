@@ -148,8 +148,13 @@ impl SystemOneSeat {
         self.transport.preflight()
     }
 
-    /// The exact request `request` is sent as.
-    fn build(&self, request: &SeatRequest, time_left: Duration) -> LlmResult<SystemOneHttpRequest> {
+    /// The exact request `request` is sent as. Each image is decoded and resized on a
+    /// blocking thread, off the caller's runtime.
+    async fn build(
+        &self,
+        request: &SeatRequest,
+        time_left: Duration,
+    ) -> LlmResult<SystemOneHttpRequest> {
         let model = format!("{}-{}", self.pin.model, self.pin.version);
         let (kind, criteria) = match &request.question.contract {
             // The question's criteria triple, as what a yes and a no mean.
@@ -168,7 +173,15 @@ impl SystemOneSeat {
             // The wire has no point: a Point asks for a box, read as its centre.
             AnswerContract::Box | AnswerContract::Point => ("box", None),
         };
-        let mut question = json!({"type":kind,"instructions":request.question.text});
+        // A question that is no yes/no reads its criteria as the rubric of its
+        // own form after its instructions (FIX 2181).
+        let rubric = QuestionCriteria::rubric_in(&request.state, &request.question.contract)
+            .filter(|_| request.question.contract != AnswerContract::Noul);
+        let instructions = match rubric {
+            Some(rubric) => format!("{}\n\n{rubric}", request.question.text),
+            None => request.question.text.clone(),
+        };
+        let mut question = json!({"type":kind,"instructions":instructions});
         if let Some(criteria) = criteria {
             question["criteria"] = criteria;
         }
@@ -177,7 +190,7 @@ impl SystemOneSeat {
         let mut state = request.state.clone();
         let mut assets = serde_json::Map::new();
         for (index, image) in request.images.iter().enumerate() {
-            let fitted = image.fitted(MAX_IMAGE_EDGE)?;
+            let fitted = image.fitted_async(MAX_IMAGE_EDGE).await?;
             let reference = format!("oneiron-image-{index}-{}", image.name);
             state[image.name.as_str()] = json!(reference);
             assets.insert(
@@ -225,7 +238,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
     ) -> SeatFuture<'a> {
         Box::pin(async move {
             request.validate_remote()?;
-            let sent = self.build(&request, time_left)?;
+            let sent = self.build(&request, time_left).await?;
             let model = sent.model.clone();
             let response = self.transport.send(sent, lease).await?;
             if !(200..300).contains(&response.status) {

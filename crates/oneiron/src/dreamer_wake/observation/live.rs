@@ -197,6 +197,7 @@ impl<'a> StepCalls<'a> {
         ObservedCall {
             vault: self.vault,
             bound: self.bind(guard, lease, ordinal),
+            stated_reset: None,
         }
     }
 
@@ -274,6 +275,8 @@ impl<'a> StepCalls<'a> {
 pub(crate) struct ObservedCall<'a> {
     vault: &'a Vault,
     bound: Option<BoundCall>,
+    /// The reset the provider limit that refused the call stated.
+    stated_reset: Option<u64>,
 }
 
 struct BoundCall {
@@ -288,6 +291,13 @@ impl ObservedCall<'_> {
         StepTerminal::Fresh {
             bound: self.bound.is_some(),
         }
+    }
+
+    /// A provider limit refused the call and stated it resets at `at`, in
+    /// Unix seconds: its end row keeps it, so a Retry park its try makes is
+    /// due then (FIX 11226).
+    pub(crate) fn refused_until(&mut self, at: u64) {
+        self.stated_reset = Some(at);
     }
 
     /// The step's terminal claim recorded this call's end in its own write:
@@ -321,6 +331,7 @@ impl Drop for ObservedCall<'_> {
             at_unix_ms: crate::unix_millis_now(),
             used_units,
             claim: None,
+            stated_reset: self.stated_reset,
         };
         record_call_closed(self.vault, bound.key, end);
     }

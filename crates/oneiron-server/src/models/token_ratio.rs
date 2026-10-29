@@ -9,14 +9,20 @@
 //! model none of these reaches keeps no ratio: a key held by the credential
 //! broker, a proxy with no count endpoint, or no provider on this host. Its
 //! offer price is then an estimate.
+//!
+//! Each count's JSON reply is read whole on the served vault's chat-reply line
+//! once the AI host binds it (FIX 11412), as a ladder's chat reply is.
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::sync::OnceLock;
 
 use oneiron::Vault;
 use oneiron::llm::registry::ModelRegistryRow;
 use oneiron::tokenizer::DEFAULT_CONTEXT_PACK_TOKENIZER;
 use serde_json::{Value as JsonValue, json};
 
-use super::http::{JsonReply, KeyStyle, ProviderHttp};
+use super::ModelHostBudgets;
+use super::http::{JsonReply, KeyStyle, ProviderHttp, holding_chat_replies};
 use crate::config::models::{ModelsConfig, ProviderConfig, ProviderKind};
 
 /// The calibration passage: plain public-domain prose (the Gettysburg
@@ -45,11 +51,12 @@ const CALIBRATION_PROBE: &str = "Four";
 const O200K_FAMILY: &str = "openai";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-/// The host's token counters: its providers, and the runtime their requests
-/// run on.
+/// The host's token counters: its providers, the runtime their requests
+/// run on, and the served vault's byte budgets once the AI host binds them.
 pub struct TokenRatios {
     providers: BTreeMap<String, ProviderConfig>,
     runtime: tokio::runtime::Handle,
+    budgets: OnceLock<ModelHostBudgets>,
 }
 
 impl TokenRatios {
@@ -57,6 +64,22 @@ impl TokenRatios {
         Self {
             providers: config.providers.clone(),
             runtime,
+            budgets: OnceLock::new(),
+        }
+    }
+
+    /// Reads every count's reply on `budgets`' chat-reply line, the served
+    /// vault's (FIX 11412). The first binding holds.
+    pub(crate) fn read_on(&self, budgets: &ModelHostBudgets) {
+        let _ = self.budgets.set(budgets.clone());
+    }
+
+    /// `count`, its reply read whole on the bound chat-reply line, else on
+    /// none, as before.
+    async fn on_line<F: Future>(&self, count: F) -> F::Output {
+        match self.budgets.get() {
+            Some(budgets) => holding_chat_replies(budgets, count).await,
+            None => count.await,
         }
     }
 
@@ -129,8 +152,10 @@ impl TokenRatios {
             .and_then(JsonValue::as_str)
             .unwrap_or_else(|| model.name());
         let counter = Counter::new(provider)?;
-        let passage = counter.count(wire, CALIBRATION_PASSAGE).await?;
-        let probe = counter.count(wire, CALIBRATION_PROBE).await?;
+        let passage = self
+            .on_line(counter.count(wire, CALIBRATION_PASSAGE))
+            .await?;
+        let probe = self.on_line(counter.count(wire, CALIBRATION_PROBE)).await?;
         passage.checked_sub(probe).filter(|count| *count > 0)
     }
 }

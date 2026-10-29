@@ -8,6 +8,7 @@
 use super::artifact_question::{ArtifactAsk, ArtifactAskRun, UnitAbstention, UnitRefusal, invalid};
 use super::slides_review::SlideReviewLabels;
 use super::{EditOp, EditOutcome, EditProposal, OfficeFormat};
+use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionRung, EvidenceVersion, PairedReading, TypedDecision,
 };
@@ -131,6 +132,8 @@ impl Vault {
                 continue;
             };
             if decision.answer == DecisionAnswer::Abstain {
+                // A unit asked of its role holder keeps its ask (FIX 11231).
+                keep_artifact_unit_ask(self, &sources[0], &unit, &decision);
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision),

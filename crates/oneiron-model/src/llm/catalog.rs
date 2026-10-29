@@ -37,6 +37,11 @@ pub enum LlmCapability {
     /// [`Self::Reasoning`]. On that wire an offer without it gets its
     /// assistant reasoning as ordinary text content.
     ReasoningContentHistory,
+    /// The provider reports each output token's log-probability and its most
+    /// likely alternatives when asked (OpenAI-compatible `logprobs` /
+    /// `top_logprobs`), so a decision rung reads a joint distribution over
+    /// single-token labels (FIX 1557).
+    TokenLogprobs,
 }
 
 impl LlmCapability {
@@ -53,6 +58,7 @@ impl LlmCapability {
             Self::AssistantPrefill => "assistant_prefill",
             Self::AudioInput => "audio_input",
             Self::ReasoningContentHistory => "reasoning_content_history",
+            Self::TokenLogprobs => "token_logprobs",
         }
     }
 }

@@ -14,10 +14,10 @@ use crate::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 
 use super::custody::{keep_checkpoint, read_pin};
 use super::{
-    CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck, PinnedCheckpoint,
-    ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin, TrainingDeclarationPin,
-    TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult, TrainingRun, TrainingState,
-    hash_json, invalid, json_value, run_in_txn,
+    CandleParityCheck, CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck,
+    PinnedCheckpoint, ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin,
+    TrainingDeclarationPin, TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult,
+    TrainingRun, TrainingState, hash_json, invalid, json_value, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -50,6 +50,9 @@ pub struct TrainOutput {
     /// A question head's producer check, which its result requires; a role
     /// run's connector sends none.
     pub question_check: Option<QuestionExportCheck>,
+    /// The host's Candle-side reproduction of the receipt (FIX 7568), for a
+    /// question head; a role run's connector sends none.
+    pub candle_parity: Option<CandleParityCheck>,
 }
 
 pub type TrainingFuture<'a> = Pin<Box<dyn Future<Output = Result<TrainOutput>> + Send + 'a>>;
@@ -150,6 +153,7 @@ fn check_export(
         max_logit_difference: max_difference,
         tolerance: run.plan.export_logit_tolerance,
         question_check: output.question_check,
+        candle_parity: output.candle_parity.clone(),
     })
 }
 
@@ -266,11 +270,24 @@ impl Vault {
                 return Err(error);
             }
         };
-        let settlement = permit.settle(CallOutcome::Used(output.service_units));
-        // Keep completed work even when the meter reports a settlement error.
-        let result = self.complete_training_pack(admission, output)?;
-        settlement.map_err(|e| invalid(&e.to_string()))?;
-        Ok(result)
+        let service_units = output.service_units;
+        match self.complete_training_pack(admission, output) {
+            Ok(result) => {
+                // Keep completed work even when the meter reports a settlement error.
+                let settlement = permit.settle(CallOutcome::Used(service_units));
+                settlement.map_err(|e| invalid(&e.to_string()))?;
+                Ok(result)
+            }
+            Err(error) => {
+                // A refused completion fails the run as a failed train does:
+                // the permit drops unsettled, settling Failed and never
+                // Used, and the run is marked ConnectorFailed, so no run is
+                // stranded Running.
+                drop(permit);
+                self.mark_training_connector_failed(id)?;
+                Err(error)
+            }
+        }
     }
 
     fn mark_training_connector_failed(&self, id: &EntityId) -> Result<()> {
@@ -323,6 +340,7 @@ impl Vault {
                     || result.harness != output.harness
                     || result.connector_receipt != output.receipt
                     || result.checks.question_check != output.question_check
+                    || result.checks.candle_parity != output.candle_parity
                 {
                     return Err(invalid("a completed training run cannot be replaced"));
                 }

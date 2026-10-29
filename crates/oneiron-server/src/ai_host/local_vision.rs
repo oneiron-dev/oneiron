@@ -13,9 +13,10 @@
 //! under a schema shaped as System One's answer for the contract: a Box
 //! (`{"box": {top, bottom, left, right} | null, "confidence"}`; a Point is
 //! that box's centre), a Choice
-//! (`{"choice": <one option>, "confidence"}`) or a yes/no (`{"p_yes"}`). A
-//! Score, or a call with no image, abstains, so the ladder takes it on. An
-//! answer outside the schema is refused whole, never read as an absent
+//! (`{"choice": <one option>, "confidence"}`), a Score
+//! (`{"score": <min to max>, "confidence"}`, FIX 3269) or a yes/no
+//! (`{"p_yes"}`). A call with no image abstains, so the ladder takes it on.
+//! An answer outside the schema is refused whole, never read as an absent
 //! target.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -128,11 +129,10 @@ impl LocalVisionModel {
                 },
             });
         }
-        // A yes/no question's criteria triple, as the rubric it is judged by.
-        if let Some(criteria) = QuestionCriteria::for_call(call) {
-            content.push(ContentPart::Text {
-                text: criteria.rubric(),
-            });
+        // The question's criteria triple, as the rubric its contract is
+        // judged by (FIX 2181).
+        if let Some(rubric) = QuestionCriteria::rubric_in(call.state, &call.question.contract) {
+            content.push(ContentPart::Text { text: rubric });
         }
         content.push(ContentPart::Text {
             text: json!({"question": call.question.text, "state": state}).to_string(),
@@ -164,12 +164,9 @@ impl LocalVisionModel {
 }
 
 impl DecisionModel for LocalVisionModel {
-    /// It reads no score: the ladder skips it for one.
+    /// It reads a score over its images as a number on the score's scale.
     fn capability(&self) -> ProviderCapability {
-        ProviderCapability {
-            score: false,
-            ..ProviderCapability::default()
-        }
+        ProviderCapability::default()
     }
 
     fn reads_images(&self) -> bool {
@@ -189,7 +186,7 @@ impl DecisionModel for LocalVisionModel {
             AnswerContract::Box | AnswerContract::Point => Some(box_schema()),
             AnswerContract::Choice { options } => Some(choice_schema(options)),
             AnswerContract::Noul => Some(noul_schema()),
-            AnswerContract::Score { .. } => None,
+            AnswerContract::Score { min, max } => Some(score_schema(*min, *max)),
         };
         let Some(schema) = schema else {
             return Ok(ProviderDecision {
@@ -255,7 +252,7 @@ impl DecisionModel for LocalVisionModel {
             }),
             AnswerContract::Choice { options } => choice_answer(&text, options),
             AnswerContract::Noul => noul_answer(&text),
-            AnswerContract::Score { .. } => None,
+            AnswerContract::Score { min, max } => score_answer(&text, *min, *max),
         }
         .ok_or_else(|| failed("malformed local vision answer"))
     }
@@ -284,6 +281,46 @@ fn choice_schema(options: &[String]) -> Value {
 }
 
 /// A yes/no answer's shape: the probability the answer is yes.
+/// A Score's schema: one number on the score's own scale, and how sure.
+fn score_schema(min: f64, max: f64) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "score": {
+                "type": "number",
+                "minimum": min,
+                "maximum": max,
+                "description": "The one number that answers the question, on its scale."
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "How sure the answer is, from 0 to 1."
+            }
+        },
+        "required": ["score", "confidence"],
+        "additionalProperties": false
+    })
+}
+
+/// A Score's answer: a finite number from `min` to `max`, with its
+/// confidence.
+fn score_answer(text: &str, min: f64, max: f64) -> Option<ProviderDecision> {
+    let value = answer_object(text)?;
+    let score = value
+        .get("score")?
+        .as_f64()
+        .filter(|score| score.is_finite() && (min..=max).contains(score))?;
+    Some(ProviderDecision {
+        answer: DecisionAnswer::Score(score),
+        probability: Some(unit(value.get("confidence"))?),
+        paired: None,
+        person: None,
+        served: None,
+    })
+}
+
 fn noul_schema() -> Value {
     json!({
         "type": "object",

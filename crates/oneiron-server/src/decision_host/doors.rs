@@ -9,14 +9,13 @@ use super::{
     CAMPAIGN_TASTE_USEFUL_WORDING, CampaignTasteDecisions, CampaignTasteWording,
     ClaimReplayDecisions, ConsolidationDecisions, DecisionAsks, DecisionBand, DecisionBandPolicy,
     DecisionDial, DecisionHost, DecisionLadder, DecisionProvider, DecisionRung, EntityId,
-    FanoutDecisions, HeldLadder, HostingPrivacyPosture, ImagePick, LadderNotes,
-    MembershipDecisions, PLACEMENT_BUDGET, PLACEMENT_WORDING, PLANNER_BUDGET, PLANNER_WORDING,
-    PlacementDecisions, PolicyDecisions, REVIEW_DIAL, REVIEW_HARD_CHECK_WORDING,
-    REVIEW_LENS_BUDGET, REVIEW_OUT_OF_SCOPE_WORDING, REVIEW_SEVERITY_WORDING,
-    REVIEW_VERDICT_WORDING, RetrievalDeadline, ReviewDecisions, ReviewWording, SeatDecisions,
-    SeatPickSettings, TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING,
-    TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions, Vault,
-    WAVE_FANOUT_WORDING,
+    FanoutDecisions, HeldLadder, HostingPrivacyPosture, ImagePick, MembershipDecisions,
+    PLACEMENT_BUDGET, PLACEMENT_WORDING, PLANNER_BUDGET, PLANNER_WORDING, PlacementDecisions,
+    PolicyDecisions, REVIEW_DIAL, REVIEW_HARD_CHECK_WORDING, REVIEW_LENS_BUDGET,
+    REVIEW_OUT_OF_SCOPE_WORDING, REVIEW_SEVERITY_WORDING, REVIEW_VERDICT_WORDING,
+    RetrievalDeadline, ReviewDecisions, ReviewWording, SeatDecisions, SeatPickSettings,
+    TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING, TASK_SURFACE,
+    TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions, Vault, WAVE_FANOUT_WORDING,
 };
 
 impl DecisionHost {
@@ -98,6 +97,34 @@ impl DecisionHost {
                 threshold = row.threshold,
                 version = row.version,
                 "the person threshold row changed"
+            );
+        }
+        Ok(())
+    }
+
+    /// Installs the newest accepted Coach revision of the think row (Q2,
+    /// FIX 2437) above the configured start row, else the start row, on
+    /// every clone of the host's bands. A host whose recipe names no think
+    /// row keeps none.
+    pub(crate) fn refresh_think_threshold(&self, vault: &Vault) -> oneiron::Result<()> {
+        let Some(start) = self.think_start else {
+            return Ok(());
+        };
+        let _turn = self
+            .person_refresh
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let row = vault
+            .latest_accepted_think_threshold()?
+            .map(|(_, row)| row)
+            .filter(|row| row.version > start.version)
+            .unwrap_or(start);
+        if self.bands.think_threshold() != Some(row) {
+            self.bands.replace_think_threshold(row)?;
+            tracing::info!(
+                threshold = row.threshold,
+                version = row.version,
+                "the think threshold row changed"
             );
         }
         Ok(())
@@ -327,8 +354,8 @@ impl DecisionHost {
 
     /// A critic review's questions through this ladder for `principal`, the
     /// caller, over `state`, the target as the caller reads it: the engine's
-    /// review dial, this host's bands and wording, one clock per lens, and no
-    /// notes.
+    /// review dial, this host's bands and wording, one clock per lens, and
+    /// this host's notes (FIX 3040).
     #[must_use]
     pub(crate) fn review_decisions<'a>(
         &'a self,
@@ -348,7 +375,7 @@ impl DecisionHost {
                 hard_check: REVIEW_HARD_CHECK_WORDING.to_owned(),
                 out_of_scope: REVIEW_OUT_OF_SCOPE_WORDING.to_owned(),
             },
-            notes: None,
+            notes: Some(&self.notes),
         }
     }
 
@@ -437,6 +464,24 @@ impl DecisionHost {
         )
     }
 
+    /// The policy safeguard's configuration this host serves (FIX 1201,
+    /// FIX 2436): the host's own `base`, with this ladder's paired question
+    /// lent to the safeguard's generated read, so its receipts keep the
+    /// paired reading. A ladder with no paired question leaves `base` as it
+    /// is. The planes' row questions (`owner_decisions`, `hosted_decisions`)
+    /// stay the host's: no recipe names their wording.
+    #[must_use]
+    pub fn policy_model_config(
+        &self,
+        base: &oneiron::policy_model::PolicyModelConfig,
+    ) -> oneiron::policy_model::PolicyModelConfig {
+        let mut config = base.clone();
+        if config.safeguard_paired.is_none() {
+            config.safeguard_paired = self.ladder.paired.clone();
+        }
+        config
+    }
+
     /// The code-mode seat pick through this ladder, for `principal`.
     pub(crate) fn seat_decisions(
         &self,
@@ -451,7 +496,7 @@ impl DecisionHost {
             model_wording: settings.model_wording.clone(),
             effort_wording: settings.effort_wording.clone(),
             budget: settings.budget,
-            notes: Arc::new(LadderNotes),
+            notes: Arc::new(self.notes.clone()),
         }
     }
 }

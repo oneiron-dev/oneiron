@@ -162,8 +162,11 @@ fn classify(
                 Receipted
             }
         }
-        // A world or a mask grants nothing.
-        (_, Some(ShapeRow::World { .. } | ShapeRow::Facet { .. })) => Receipted,
+        // A world, a mask or a world's facet grants nothing.
+        (
+            _,
+            Some(ShapeRow::World { .. } | ShapeRow::Facet { .. } | ShapeRow::WorldFacet { .. }),
+        ) => Receipted,
         (None, Some(ShapeRow::Actor { ceiling, .. })) => match ceiling {
             ShapeCeiling::Auto => Widening,
             ShapeCeiling::Proposed => Receipted,
@@ -207,10 +210,12 @@ fn door(
         (ShapeChange::Retire, ShapeTarget::Member { .. }) => Some("remove_shared_member"),
         (ShapeChange::Create, ShapeTarget::World { .. }) => Some("create_world"),
         (ShapeChange::Create, ShapeTarget::Facet { .. }) => Some("create_facet"),
-        // A retired world or mask is deleted, never erased: its keys stay.
-        (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }) => {
-            Some("delete_entity")
-        }
+        (ShapeChange::Create, ShapeTarget::WorldFacet { .. }) => Some("create_world_facet"),
+        // A retired world or facet is deleted, never erased: its keys stay.
+        (
+            ShapeChange::Retire,
+            ShapeTarget::World { .. } | ShapeTarget::Facet { .. } | ShapeTarget::WorldFacet { .. },
+        ) => Some("delete_entity"),
         (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
             Some("update_agent_definition_as")
@@ -248,6 +253,10 @@ fn door(
         (ShapeChange::Retire, ShapeTarget::Manifest { .. }) => {
             Some("quarantine_manifest_contribution")
         }
+        (ShapeChange::Create | ShapeChange::Update, ShapeTarget::Sync { .. }) => {
+            Some("declare_sync_wire")
+        }
+        (ShapeChange::Retire, ShapeTarget::Sync { .. }) => Some("withdraw_sync_wire"),
         _ => None,
     }
 }
@@ -347,6 +356,9 @@ impl Vault {
             (None, Some(stored)) => (stored.seed.clone(), true),
             (None, None) => (ShapeSeed::default(), false),
         };
+        // A manifest stated by its JSON form alone plans as the hex it
+        // writes (FIX 2760).
+        let seed = seed.with_manifest_bodies();
         seed.validate()?;
         let live = self.read_live_shape_into(visible, sources)?;
         // The stored seed is named as the caller reads it (FIX 9960).
@@ -360,7 +372,8 @@ impl Vault {
         let seed = match stored.as_ref().filter(|_| stored_seed) {
             Some(stored) => self
                 .projected_stored_seed(stored, &live.withheld, visible)?
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                .with_manifest_bodies(),
             None => seed,
         };
         let frontier = frontier(&seed, &live)?;
@@ -384,8 +397,6 @@ impl Vault {
                 (ShapeRow::Retire { .. }, None) => continue,
                 (ShapeRow::Retire { .. }, Some(live)) if live.retired() => continue,
                 (ShapeRow::Retire { .. }, Some(_)) => (ShapeChange::Retire, None),
-                // No sync declaration is stored yet, so every one is open.
-                (ShapeRow::Sync { .. }, _) => (ShapeChange::Create, Some(row)),
                 (_, None) => (ShapeChange::Create, Some(row)),
                 (_, Some(live)) if row.satisfied_by(live) => continue,
                 (_, Some(_)) => (ShapeChange::Update, Some(row)),

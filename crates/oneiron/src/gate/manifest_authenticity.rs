@@ -241,6 +241,20 @@ impl Vault {
         Ok(())
     }
 
+    /// Lifts the quarantine marker on a manifest id, so bytes declared
+    /// under it count again as any declaration does. An id with no marker is
+    /// left as it is. An install never lifts it by itself.
+    pub fn lift_manifest_quarantine(&self, owner: &AuthenticatedOwner, id: EntityId) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        if QUARANTINED.get(&self.store, &txn, &HexId(id))?.is_none() {
+            return Ok(());
+        }
+        QUARANTINED.delete(&self.store, &mut txn, &HexId(id))?;
+        txn.commit()?;
+        Ok(())
+    }
+
     /// Shared owner-authenticated manifest write door. Fixture policies and
     /// re-authoring take the same decode, target-type and write checks.
     pub(crate) fn write_owner_policy_manifest_in_txn(

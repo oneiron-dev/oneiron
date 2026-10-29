@@ -5,8 +5,9 @@
 //! loses no completed read. Each claim takes the next run number; an arm an
 //! earlier run left in flight then reads unknown. A run sends only the arms
 //! never sent: a completed arm is never billed again, and an arm whose
-//! provider outcome is unknown stays unknown, is never sent again and never
-//! reads as zero usage. Once every arm is read or unknown, the kept readings
+//! provider outcome is unknown stays unknown and never reads as zero usage;
+//! it is sent again only on its owner's own resend (FIX 10464), which keeps
+//! the unknown attempt beside the arm's new send. Once every arm is read or unknown, the kept readings
 //! measure the trial; an unknown arm leaves its case without a decision or a
 //! known cost, so the comparison reads unknown and stays an owner-reviewed
 //! offer at most (FIX 9901).
@@ -20,6 +21,8 @@ pub struct TrialProgressCounts {
     pub state: ModelTrialExecutionState,
     pub completed: usize,
     pub unknown: usize,
+    /// Unknown attempts the owner resent (FIX 10464).
+    pub resent: usize,
     pub total: usize,
 }
 
@@ -34,6 +37,7 @@ impl ModelTrial {
                 state: ModelTrialExecutionState::Measured,
                 completed: total.saturating_sub(evidence.unknown_arms),
                 unknown: evidence.unknown_arms,
+                resent: evidence.resent_unknown_arms,
                 total,
             };
         }
@@ -51,8 +55,23 @@ impl ModelTrial {
             state: self.execution,
             completed: count(false),
             unknown: count(true),
+            resent: self.resent_arms.len(),
             total,
         }
+    }
+
+    /// The arms whose provider outcome is unknown, which the owner may
+    /// resend (FIX 10464).
+    #[must_use]
+    pub fn unknown_arms(&self) -> Vec<TrialArmKey> {
+        self.arms
+            .iter()
+            .filter(|kept| matches!(kept.outcome, TrialArmOutcome::Unknown { .. }))
+            .map(|kept| TrialArmKey {
+                answer: kept.answer,
+                arm: kept.arm,
+            })
+            .collect()
     }
 
     fn arm_mut(&mut self, answer: EntityId, arm: TrialArm) -> Option<&mut TrialArmProgress> {
@@ -91,6 +110,58 @@ pub(super) fn claim(trial: &mut ModelTrial) {
 }
 
 impl Vault {
+    /// The owner's choice to send one arm of unknown outcome again (FIX
+    /// 10464); nothing resends one on its own. The unknown attempt is kept in
+    /// `resent_arms`, its spend still unknown, and its slot is cleared, so the
+    /// next run sends it as an arm never sent. A measured trial keeps its
+    /// evidence, which is immutable, and an arm whose outcome is known or
+    /// still in flight has nothing to resend.
+    pub fn resend_model_trial_arm(
+        &self,
+        principal: EntityId,
+        question: EntityId,
+        id: EntityId,
+        locality: CallerLocality,
+        key: TrialArmKey,
+    ) -> Result<ModelTrial> {
+        let mut txn = self.store.env.write_txn()?;
+        let trial =
+            self.resend_model_trial_arm_in_txn(&mut txn, principal, question, id, locality, key)?;
+        txn.commit()?;
+        Ok(trial)
+    }
+
+    pub(crate) fn resend_model_trial_arm_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        principal: EntityId,
+        question: EntityId,
+        id: EntityId,
+        locality: CallerLocality,
+        key: TrialArmKey,
+    ) -> Result<ModelTrial> {
+        let previous = self
+            .model_trial_in_txn(txn, principal, question, id, locality)?
+            .ok_or(Error::EntityNotFound)?;
+        if previous.evidence.is_some() {
+            return Err(invalid("a measured model trial's evidence is immutable"));
+        }
+        let mut trial = previous.clone();
+        let index = trial
+            .arms
+            .iter()
+            .position(|kept| {
+                kept.answer == key.answer
+                    && kept.arm == key.arm
+                    && matches!(kept.outcome, TrialArmOutcome::Unknown { .. })
+            })
+            .ok_or_else(|| invalid("only a model trial arm of unknown outcome is resent"))?;
+        let resent = trial.arms.remove(index);
+        trial.resent_arms.push(resent);
+        replace(self, txn, &previous, &trial)?;
+        Ok(trial)
+    }
+
     /// Keeps one arm's step in its own committed write: `Sending` before a
     /// send, its outcome after. The row is read as stored, never re-frozen:
     /// a label change since cannot lose a billed read. Returns false when a

@@ -37,6 +37,8 @@ pub struct MediaGate {
     offer: DispatchBinding,
     /// The jobs this gate started or took up, each on its permit.
     jobs: MediaJobBindings,
+    /// The idempotency key its job's submit goes out with (FIX 2248).
+    submit_key: Option<String>,
 }
 
 impl MediaGate {
@@ -44,12 +46,14 @@ impl MediaGate {
         run: Arc<RunInner>,
         inner: Arc<dyn MediaBackend>,
         offer: DispatchBinding,
+        submit_key: Option<String>,
     ) -> Self {
         Self {
             run,
             inner,
             offer,
             jobs: MediaJobBindings::default(),
+            submit_key,
         }
     }
 
@@ -139,11 +143,13 @@ impl MediaGate {
 
     /// Starts one long call as a provider job; its permit stays open for
     /// the job's polls and is settled when the job ends. The job the
-    /// provider started is bound to this permit (FIX 9923).
+    /// provider started is bound to this permit (FIX 9923). It goes out
+    /// under the run's submit key, when the run has one (FIX 2248).
     pub async fn submit(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<String> {
         let mut opened = self.open(&request, lease)?;
         let model = request.model.clone();
-        let job = self.inner.submit(request, lease).await;
+        let key = self.submit_key.as_deref();
+        let job = self.inner.submit(request, key, lease).await;
         opened.finish(None, job.is_ok());
         if let Ok(job) = &job {
             self.jobs.bind_media_job(lease, &model, job);
@@ -237,6 +243,7 @@ impl MediaGate {
             caps,
             bound_ms,
             admitted_ms: 0,
+            end_report: None,
         })
     }
 }
@@ -259,9 +266,26 @@ pub struct MediaStreamLease {
     caps: MediaCaps,
     bound_ms: u64,
     admitted_ms: u64,
+    /// What the stream's end is reported to (FIX 1743): its offer's health,
+    /// told whether the stream answered. A stream cancelled or dropped
+    /// reports nothing.
+    end_report: Option<StreamEndReport>,
 }
 
+/// What a stream's end reports to its offer's health: `true` for a stream
+/// that answered, `false` for one that failed.
+type StreamEndReport = Box<dyn FnOnce(bool) + Send + Sync>;
+
 impl MediaStreamLease {
+    /// This stream, its end reported to `report` (FIX 1743): `true` when it
+    /// ends answered ([`Self::end`]), `false` when it fails
+    /// ([`Self::fail`]). A cancel or a drop reports nothing.
+    #[must_use]
+    pub fn with_end_report(mut self, report: impl FnOnce(bool) + Send + Sync + 'static) -> Self {
+        self.end_report = Some(Box::new(report));
+        self
+    }
+
     /// What a stream of up to `bound_ms` of audio reserves, in token units
     /// at `caps`' rate for `operation`: its permit's reservation.
     #[must_use]
@@ -306,10 +330,25 @@ impl MediaStreamLease {
     /// `served_model` is the model the provider said it served, for the
     /// dispatch receipt.
     pub fn end(mut self, served_model: Option<String>) -> Result<BudgetSettlement, RunDenied> {
+        self.report_end(true);
         self.settle(served_model, true)
             .unwrap_or(Err(RunDenied::Dispatch {
                 refused: DispatchRefused::Closed,
             }))
+    }
+
+    /// Ends the stream failed (FIX 1743): it pays for the audio it already
+    /// sent, as a cancel does, and its end reports a failure.
+    pub fn fail(mut self) -> Result<BudgetSettlement, RunDenied> {
+        self.report_end(false);
+        self.cancel()
+    }
+
+    /// Reports the stream's end, once, when something hears it.
+    fn report_end(&mut self, answered: bool) {
+        if let Some(report) = self.end_report.take() {
+            report(answered);
+        }
     }
 
     /// Cancels the stream: it pays for the audio it already sent.
