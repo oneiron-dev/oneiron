@@ -308,7 +308,7 @@ async fn add_device(
     Ok(Json(info))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RemoveRequest {
     /// The wrap's id: `password`, `passkey:<name>`, `escrow:<label>` or
@@ -316,7 +316,7 @@ struct RemoveRequest {
     id: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Removed {
     removed: String,
 }
@@ -341,7 +341,7 @@ async fn remove(
     Ok(Json(removed))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RetireEscrowRequest {
     /// The released escrow recipient's label.
@@ -365,6 +365,30 @@ async fn retire_escrow(
     })
     .await?;
     Ok(Json(retired))
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/remove`'s body (FIX 11611):
+/// [`RemoveRequest`].
+pub(crate) fn remove_wrap_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RemoveRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/remove`'s answer
+/// (FIX 11611): [`Removed`].
+pub(crate) fn wrap_removed_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Removed>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/retire-escrow`'s body
+/// (FIX 11611): [`RetireEscrowRequest`].
+pub(crate) fn retire_escrow_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RetireEscrowRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/vault-key/retire-escrow`'s answer
+/// (FIX 11611): [`EscrowRetirement`].
+pub(crate) fn escrow_retirement_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<EscrowRetirement>()
 }
 
 /// The vault, holding its data key: already held, unlocked with this

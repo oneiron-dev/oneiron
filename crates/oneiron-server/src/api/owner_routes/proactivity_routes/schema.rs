@@ -1,14 +1,16 @@
 //! The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611),
-//! `POST /v1/owner/proactivity/action-mode` and the two
-//! `POST /v1/owner/representation/*` writes (FIX 11611 part D).
-//! [`super`] is already past the file-size bar, so its schema fns live here,
-//! beside the route files' own.
+//! `POST /v1/owner/proactivity/action-mode`, the two
+//! `POST /v1/owner/representation/*` writes and `POST /v1/owner/stewardship`
+//! (FIX 11611 part D). [`super`] is already past the file-size bar, so their
+//! schema fns live here, beside the route files' own.
 
 use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::identity::IdentitySettled;
+use oneiron::dreamer_runner::maintenance::stewardship::StewardshipRules;
 
 use super::{
     AnswerIdentityAsk, ApproveRepresentation, ApprovedView, DeclineRepresentation, SetActionMode,
+    SetStewardship,
 };
 
 /// The OpenAPI schema of `POST /v1/owner/identity/asks/answer`'s body
@@ -57,4 +59,14 @@ pub(crate) fn decline_representation_body_schema() -> serde_json::Value {
 /// (FIX 11611): `null`.
 pub(crate) fn representation_declined_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<()>()
+/// The OpenAPI schema of `POST /v1/owner/stewardship`'s body (FIX 11611):
+/// [`SetStewardship`].
+pub(crate) fn set_stewardship_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetStewardship>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/stewardship`'s answer (FIX 11611):
+/// [`StewardshipRules`].
+pub(crate) fn stewardship_rules_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<StewardshipRules>()
 }

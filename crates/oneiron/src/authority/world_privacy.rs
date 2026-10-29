@@ -49,7 +49,9 @@ use super::world_strength::{full_strength, read_under, world_meet};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectiveRead {
     Everywhere,
@@ -62,7 +64,9 @@ pub enum EffectiveRead {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectiveModelOrder {
     Inherit,
@@ -72,7 +76,9 @@ pub enum EffectiveModelOrder {
 }
 
 /// One world's settings as the fold decides them.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub struct EffectiveWorldPrivacy {
     pub read: EffectiveRead,
