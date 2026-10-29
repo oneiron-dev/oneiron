@@ -371,9 +371,15 @@ pub(crate) fn refresh_witness_in_txn(
     id: &EntityId,
     caller: &SavedBrowserCaller,
 ) -> Result<()> {
-    let Some(witness) = caller.witness.clone() else { return Ok(()); };
-    let Some(mut kept) = AUTHORITY.get(&vault.store, wtxn, id)? else { return Ok(()); };
-    if kept.scope != caller.scope { return Ok(()); }
+    let Some(witness) = caller.witness.clone() else {
+        return Ok(());
+    };
+    let Some(mut kept) = AUTHORITY.get(&vault.store, wtxn, id)? else {
+        return Ok(());
+    };
+    if kept.scope != caller.scope {
+        return Ok(());
+    }
     kept.witness_digest = caller.witness_digest;
     kept.witness = Some(witness);
     AUTHORITY.put(vault, wtxn, id, &kept)
@@ -390,11 +396,20 @@ pub(crate) fn reindex_restored_source_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, id)? else { return Ok(()); };
-    let Some(raw) = vault.get_raw_in(wtxn, id)? else { return Ok(()); };
-    let Some(evidence) = evidence_of(entity_type, &raw) else { return Ok(()); };
+    let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, id)? else {
+        return Ok(());
+    };
+    let Some(raw) = vault.get_raw_in(wtxn, id)? else {
+        return Ok(());
+    };
+    let Some(evidence) = evidence_of(entity_type, &raw) else {
+        return Ok(());
+    };
     let key = evidence.group();
-    let row = GroupRef { run_id: evidence.run_id, captured_at_ms: evidence.captured_at_ms };
+    let row = GroupRef {
+        run_id: evidence.run_id,
+        captured_at_ms: evidence.captured_at_ms,
+    };
     GROUP.put(vault, wtxn, &(key.digest(), *id), &row)?;
     if evidence.scope.authority.is_none() {
         let caller = SavedBrowserCaller {

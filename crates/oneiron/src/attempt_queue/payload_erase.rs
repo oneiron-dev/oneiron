@@ -348,8 +348,8 @@ fn erase_program_admission_payloads_in_txn(
         if record.kind != PROGRAM_ADMISSION_KIND {
             continue;
         }
-        let owned = admission_payload_actor(&record.payload)
-            .is_some_and(|actor| actors.contains(&actor));
+        let owned =
+            admission_payload_actor(&record.payload).is_some_and(|actor| actors.contains(&actor));
         if owned && !record.payload.is_empty() {
             record.payload.clear();
             rewrites.push((raw.into_owned(), record));
