@@ -28,7 +28,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/diary/read", post(read))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetReview {
     /// The agent, as 32 hex.
@@ -36,13 +36,23 @@ struct SetReview {
     on: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReviewSet {
     agent: String,
     on: bool,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/diary/review`'s body (FIX 11103): [`SetReview`].
+pub(crate) fn diary_review_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetReview>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/review`'s answer (FIX 11103): [`ReviewSet`].
+pub(crate) fn diary_review_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewSet>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct GrantDiaryRead {
     /// Who reads, as 32 hex: the owner names itself to read.
@@ -56,19 +66,40 @@ struct GrantDiaryRead {
     entries: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct DiaryReadGranted {
     grant_ref: Option<String>,
     receipt_ref: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/diary/grants`'s body (FIX 11103): [`GrantDiaryRead`].
+pub(crate) fn diary_grant_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GrantDiaryRead>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/grants`'s answer (FIX 11103): [`DiaryReadGranted`].
+pub(crate) fn diary_grant_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DiaryReadGranted>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReadDiary {
     /// Whose diary, as 32 hex.
     agent: String,
     /// The reason the read states; the agent sees it.
     reason: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/read`'s body (FIX 11611): [`ReadDiary`].
+pub(crate) fn read_diary_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReadDiary>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/read`'s answer (FIX 11611):
+/// [`DiaryReadOutcome`].
+pub(crate) fn diary_read_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DiaryReadOutcome>()
 }
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {

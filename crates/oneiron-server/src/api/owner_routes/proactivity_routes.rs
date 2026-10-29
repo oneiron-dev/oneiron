@@ -62,6 +62,7 @@ use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+pub(crate) mod schema;
 mod training_runs;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -690,7 +691,7 @@ async fn identity_asks(
     Ok(Json(asks))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerIdentityAsk {
     /// An ask, as 64 hex.

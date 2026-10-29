@@ -729,6 +729,14 @@ pub struct McpArgs {
     /// request fails as `server_unreachable`.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
     pub idle_timeout_secs: u64,
+
+    /// Seconds one named tool may take, answer included, before it fails as
+    /// `server_unreachable`, instead of `--request-timeout-secs` for that
+    /// tool alone. Repeatable, one tool per flag: `--tool-timeout-secs
+    /// TOOL=SECS`. A `tools/call` naming the tool in `params.name` gets its
+    /// entry; every other request keeps the global value.
+    #[arg(long = "tool-timeout-secs", value_name = "TOOL=SECS")]
+    pub tool_timeout_secs: Vec<String>,
 }
 
 /// The connection `oneiron mcp` holds to its server.

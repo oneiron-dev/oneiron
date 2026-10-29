@@ -63,7 +63,7 @@ const APPLICATIONS: SideTable<[u8; 16], PromptInjectApplication, Named> =
 
 /// `/v1/owner/inbox/concern/apply-prompt-inject`'s input: the one prompt
 /// continuation the owner approves.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConcernPromptInjectRequest {
     /// The card's `health:` handle, the row's `payload_ref`.
@@ -81,7 +81,7 @@ pub struct ConcernPromptInjectRequest {
 }
 
 /// The continuation an approval made.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConcernPromptInjectOutcome {
     /// The card's `health:` handle.
     pub card: String,

@@ -65,7 +65,7 @@ pub(crate) fn agent_health_card_in_txn(
 }
 
 /// What a card now says: the answer to a settle.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConcernCardSummary {
     /// The card's `health:` handle.
     pub card: String,

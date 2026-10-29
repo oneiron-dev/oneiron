@@ -54,10 +54,22 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/desktops/return", post(hand_back))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RunRequest {
     run: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/take`'s body (FIX 11611),
+/// shared with `POST /v1/owner/desktops/return`: [`RunRequest`].
+pub(crate) fn desktop_run_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RunRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/take`'s answer (FIX 11611):
+/// [`Takeover`].
+pub(crate) fn desktop_takeover_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Takeover>()
 }
 
 #[derive(Deserialize)]
@@ -66,11 +78,17 @@ struct StreamQuery {
     run: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct InputRequest {
     run: String,
     action: PersonInput,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/input`'s body (FIX 11611):
+/// [`InputRequest`].
+pub(crate) fn desktop_input_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputRequest>()
 }
 
 #[derive(Serialize)]
@@ -87,15 +105,27 @@ struct DesktopList {
     desktops: Vec<DesktopView>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct InputReply {
     inputs: u64,
 }
 
-#[derive(Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/desktops/input`'s answer (FIX 11611):
+/// [`InputReply`].
+pub(crate) fn desktop_input_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputReply>()
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
 struct ReturnReply {
     record: TakeoverRecord,
     receipt: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/return`'s answer (FIX 11611):
+/// [`ReturnReply`].
+pub(crate) fn desktop_return_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReturnReply>()
 }
 
 /// `GET /v1/owner/desktops`: each run desktop whose guest started, its

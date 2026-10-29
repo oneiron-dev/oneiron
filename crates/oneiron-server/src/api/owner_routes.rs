@@ -43,58 +43,59 @@ mod account_routes;
 mod agent_grant_routes;
 mod authority_clock_routes;
 mod backup_setting_routes;
-mod browser_takeover_routes;
+pub(super) mod browser_takeover_routes;
 mod budget_hold_routes;
-mod checkpoint_policy_routes;
+pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
 mod commitment_routes;
-mod concern_routes;
-mod conflict_routes;
+pub(super) mod concern_routes;
+pub(super) mod conflict_routes;
 pub(crate) mod connector_admission_routes;
-mod connector_consent_routes;
+pub(super) mod connector_consent_routes;
 pub(crate) mod connector_slate_routes;
-mod connector_subscription_routes;
-mod conversation_learning_routes;
+pub(super) mod connector_subscription_routes;
+pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
-mod craft_candidate_routes;
+pub(super) mod craft_candidate_routes;
 mod decision_ask_routes;
-mod desktop_takeover_routes;
-mod diary_routes;
+pub(super) mod desktop_takeover_routes;
+pub(super) mod diary_routes;
 mod disclosure_routes;
-mod dreamer_maintenance_routes;
-mod dreamer_routes;
-mod embedding_space_routes;
+pub(super) mod dreamer_maintenance_routes;
+pub(super) mod dreamer_routes;
+pub(super) mod embedding_space_routes;
 mod export_audit_routes;
-mod federation_connect_routes;
+pub(super) mod federation_connect_routes;
 mod feedback_triage_routes;
 mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
-mod history_routes;
+pub(super) mod history_routes;
 mod house_routes;
 mod inbox_routes;
-mod intent_routes;
+pub(super) mod intent_routes;
 mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
-mod model_setting_routes;
+pub(super) mod model_setting_routes;
 mod owner_key_enrollment_routes;
 pub(super) mod owner_work_routes;
 mod pack_preview_routes;
 mod pack_routes;
 mod pad_routes;
-mod peer_confidence_routes;
-mod proactivity_routes;
-mod recovery_kit_routes;
+pub(super) mod peer_confidence_routes;
+pub(super) mod proactivity_routes;
+pub(super) mod recovery_kit_routes;
 mod recovery_kit_target_routes;
 mod room_thread_setting_routes;
 mod root_routes;
+pub(super) mod schema;
 mod secret_control_routes;
 mod secret_found_routes;
 mod secret_lift_routes;
 mod secret_reveal_routes;
 mod secret_use_routes;
-mod shared_training_setup_routes;
+pub(super) mod shared_training_setup_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
 mod steer_routes;
@@ -105,7 +106,7 @@ mod usage_repair_routes;
 mod vault_key_routes;
 mod weave_routes;
 mod widen_proposal_routes;
-mod wire_health_routes;
+pub(super) mod wire_health_routes;
 mod world_privacy_routes;
 mod world_privacy_work_routes;
 
@@ -546,7 +547,7 @@ async fn run_housekeeping(
     Ok(Json(report))
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RehearseRequest {
     /// A backup file name from `GET /v1/owner/backups`; the newest by default.
@@ -662,7 +663,7 @@ async fn preview_import(
     Ok(Json(preview))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideImport {
     batch: imports::ImportBatch,
@@ -802,7 +803,7 @@ async fn configure_cleanup(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideCleanup {
     /// A proposal id from `GET /v1/owner/cleanup`.
@@ -869,7 +870,7 @@ async fn decline_note_tombstone(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RestoreArchived {
     /// An id from the `archived` list of `GET /v1/owner/cleanup`.
@@ -899,7 +900,7 @@ async fn restore_archived(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertCleanupRun {
     /// A run's `attempt` from the `runs` list of `GET /v1/owner/cleanup`.

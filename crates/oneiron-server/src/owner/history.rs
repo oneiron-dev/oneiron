@@ -20,7 +20,7 @@ use super::stamp::rfc3339_secs;
 use super::{OwnerError, OwnerResult, entity_id};
 
 /// `POST /v1/owner/history/erase`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EraseHistory {
     /// The NOTE or other text-carrying entity, as 32 hex.
@@ -32,7 +32,7 @@ pub(crate) struct EraseHistory {
 }
 
 /// One history erase, as the engine filed it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Erased {
     pub(crate) receipt: String,
     pub(crate) entity: String,
@@ -58,7 +58,7 @@ impl From<PurgeReceipt> for Erased {
 }
 
 /// What asking to erase a history did, as the engine rules it for this vault.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub(crate) enum EraseOutcome {
     /// A personal vault, or a shared one with one live Owner: erased now.
@@ -71,7 +71,7 @@ pub(crate) enum EraseOutcome {
 }
 
 /// `POST /v1/owner/history/erase/execute`.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExecuteErase {
     /// The id of the `erase` act a waiting history erase returned.
