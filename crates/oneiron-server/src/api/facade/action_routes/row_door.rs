@@ -368,6 +368,12 @@ impl AgentVerbDoor for FacadeRowDoor {
         .then(|| self.read_key.clone()))
     }
 
+    /// The host turn's hooks read on the credential's lane, the same
+    /// verified caller key run admission uses (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        Some(self.read_key.clone())
+    }
+
     fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
         self.refused
             .lock()

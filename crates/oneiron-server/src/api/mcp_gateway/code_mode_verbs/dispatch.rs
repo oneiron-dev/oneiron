@@ -272,6 +272,12 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.credential_lane().map(Some)
     }
 
+    /// The host turn's hooks read on the credential's lane, as the run's
+    /// own search does (FIX 9841). A keyless reply stays keyless.
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.credential_lane().ok()
+    }
+
     /// A read a session-bound run serves through the room (WILL L11-01)
     /// meets this connector's door as its run calls do: the verb's own
     /// binding, the credential `execute_code` was admitted on, still live,

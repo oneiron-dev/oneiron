@@ -83,6 +83,9 @@ pub(super) fn replay_request_match(
 /// else a miss when the two differ only in the project or the objectives
 /// asked for.
 fn spawn_match(stored: &Value, offered: &Value) -> Result<ReplayRequestMatch> {
+    if barrier_hit(stored, offered)? {
+        return Ok(ReplayRequestMatch::Hit);
+    }
     if erased_hit(stored, offered)? {
         return Ok(ReplayRequestMatch::Hit);
     }
@@ -124,6 +127,31 @@ fn erased_hit(stored: &Value, offered: &Value) -> Result<bool> {
         return Ok(false);
     };
     if !ask_of(stored).is_some_and(is_erased_ask) || !ask_of(offered).is_some_and(Value::is_str) {
+        return Ok(false);
+    }
+    let (stored, offered) = (without_ask(stored), without_ask(offered));
+    Ok(stored == offered || admitted_from(&stored, &offered)?)
+}
+
+/// The content-free marker of an undispatched spawn barrier: no call ran,
+/// so its row keeps no ask text. It is valid only with a live wait/failure
+/// answer (FIX 11391).
+fn barrier_ask() -> Value {
+    request_map(vec![("state", Value::from("barrier"))])
+}
+
+fn is_barrier_ask(value: &Value) -> bool {
+    *value == barrier_ask()
+}
+
+/// A stored barrier and a live spawn request are the same call when every
+/// field except the ask text matches. The call never ran, so no target proof
+/// is needed for that identity.
+fn barrier_hit(stored: &Value, offered: &Value) -> Result<bool> {
+    let (Value::Map(stored), Value::Map(offered)) = (stored, offered) else {
+        return Ok(false);
+    };
+    if !ask_of(stored).is_some_and(is_barrier_ask) || !ask_of(offered).is_some_and(Value::is_str) {
         return Ok(false);
     }
     let (stored, offered) = (without_ask(stored), without_ask(offered));
@@ -320,6 +348,25 @@ pub(crate) fn spawn_ask_part(call: &CodeRunBridgeCall) -> Option<&Value> {
     ask_of(fields).filter(|ask| ask.is_str())
 }
 
+/// Makes an undispatched spawn barrier content-free at birth: its ask takes
+/// the barrier marker and every other field, including its Nil targets and
+/// live outcome, stays exactly as it was. Other effects and live calls are
+/// unchanged (FIX 11391).
+pub(crate) fn barrier_spawn_call(call: &mut CodeRunBridgeCall) -> Result<bool> {
+    if call.effect != SelfEffect::AgentsSpawn {
+        return Ok(false);
+    }
+    let before = call.clone();
+    if let Value::Map(fields) = &mut call.request {
+        for (key, value) in fields {
+            if key.as_str() == Some(ASK_KEY) && value.is_str() {
+                *value = barrier_ask();
+            }
+        }
+    }
+    Ok(*call != before)
+}
+
 /// Puts `ask` in the place of `call`'s ask, and returns the ask it held: a
 /// checkpoint takes a carried ask out of its call, nil in its place, and
 /// puts it back. `None` for a request with no ask.
@@ -381,14 +428,17 @@ impl CodeRunBridgeCall {
     /// is built, encoded, decoded or replayed, before its request can match.
     /// Targets name a spawn's seats; an erased ask and a prior id belong to
     /// a spawn that answers `TargetErased` (or a checkpoint image's retired
-    /// stub of one), and such a spawn keeps no live ask. A live spawn's row,
-    /// whatever it asked and answered, is never refused here.
+    /// stub of one), and such a spawn keeps no live ask. An undispatched
+    /// barrier keeps its content-free marker only beside durable wait or
+    /// failure. A live spawn's row, whatever it asked and answered, is never
+    /// refused here.
     ///
     /// # Errors
     ///
     /// A row no host records: targets on another effect, an ask that is
-    /// neither text, nil nor the erased marker, an erased ask or prior id
-    /// beside a live answer, or a live ask beside `TargetErased`.
+    /// not text, nil or a typed marker, an erased ask or prior id beside a
+    /// live answer, a live ask beside `TargetErased`, or a barrier beside
+    /// another outcome.
     pub(super) fn validate_spawn_coherence(&self) -> Result<()> {
         if self.effect != SelfEffect::AgentsSpawn {
             if self.spawn_targets.is_empty() {
@@ -403,13 +453,15 @@ impl CodeRunBridgeCall {
             _ => None,
         };
         let erased = ask.is_some_and(is_erased_ask);
+        let barrier = ask.is_some_and(is_barrier_ask);
         let live = ask.is_some_and(Value::is_str);
-        if !erased && !live && ask.is_some_and(|ask| !ask.is_nil()) {
+        if !erased && !barrier && !live && ask.is_some_and(|ask| !ask.is_nil()) {
             return Err(invalid_code_run_replay(
-                "spawn ask is neither an ask nor its erased marker",
+                "spawn ask is not text, nil, or a typed marker",
             ));
         }
-        let answer = match decode_self_dispatch_outcome(&self.outcome)? {
+        let outcome = decode_self_dispatch_outcome(&self.outcome)?;
+        let answer = match &outcome {
             SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
                 SpawnAnswer::Erased
             }
@@ -418,12 +470,23 @@ impl CodeRunBridgeCall {
             }
             _ => SpawnAnswer::Live,
         };
+        if barrier
+            && (answer != SpawnAnswer::Live
+                || !matches!(
+                    outcome,
+                    SelfDispatchOutcome::DurableWait(_) | SelfDispatchOutcome::Failed(_)
+                ))
+        {
+            return Err(invalid_code_run_replay(
+                "a spawn barrier answers neither durable wait nor failure",
+            ));
+        }
         if (erased || self.spawn_targets.prior.is_some()) && answer == SpawnAnswer::Live {
             return Err(invalid_code_run_replay(
                 "an erased spawn carries a live answer",
             ));
         }
-        if answer == SpawnAnswer::Erased && live {
+        if answer == SpawnAnswer::Erased && (live || barrier) {
             return Err(invalid_code_run_replay(
                 "a target-erased spawn keeps its ask",
             ));

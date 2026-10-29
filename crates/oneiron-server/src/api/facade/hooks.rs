@@ -80,6 +80,7 @@ async fn row_hooks_pre_decided(
             class: hook_class(class),
             scope: None,
             board_epoch: None,
+            turn: None,
             domain: verb_hook_boundary::row_domain(&verb),
             reader,
         };
