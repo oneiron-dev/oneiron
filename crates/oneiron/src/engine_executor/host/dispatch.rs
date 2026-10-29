@@ -233,6 +233,18 @@ impl RecordingJsHost<'_, '_> {
             match injection.answer(&call) {
                 InjectedAnswer::Live => {}
                 InjectedAnswer::Settled { outcome, view } => {
+                    // A granted `reveal.wait` reads its value again under its
+                    // own lease, for the guest's view only; the row keeps its
+                    // value-free answer (FIX 2360). A failed replay leaves
+                    // the kept answer, as before.
+                    let view = match view {
+                        Some(view) => Some(view),
+                        None => self
+                            .gated_write
+                            .replay_reveal_view(&call, &outcome)
+                            .ok()
+                            .flatten(),
+                    };
                     return Ok(self.respond(*outcome, view));
                 }
                 InjectedAnswer::Hold => {

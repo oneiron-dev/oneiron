@@ -31,6 +31,7 @@ mod file;
 mod notice;
 mod owner;
 mod person;
+mod replay;
 mod scope;
 mod types;
 

@@ -198,6 +198,30 @@ pub fn wait_reveal_as_caller(
     let reveal = EntityId::from_hex(input.reveal.trim())
         .map_err(|_| MemoryError::bad_request("reveal is not a reveal id"))?;
     let wait = memory.vault().wait_secret_reveal(&asker, &reveal)?;
+    Ok(wait_answer(wait))
+}
+
+/// `reveal.wait` made again by the step that collected it, resumed after a
+/// park (FIX 2360): the value its first wait delivered, read again under
+/// `lease`, the T1 lease its kept answer names. Nothing is spent, stamped or
+/// extended; a lapsed lease answers `expired`.
+pub fn replay_reveal_as_caller(
+    memory: &Memory<'_>,
+    input: RevealWaitRequest,
+    lease: EntityId,
+) -> MemoryResult<RevealWaitAnswer> {
+    let asker = memory.reveal_asker()?;
+    let reveal = EntityId::from_hex(input.reveal.trim())
+        .map_err(|_| MemoryError::bad_request("reveal is not a reveal id"))?;
+    let wait = memory
+        .vault()
+        .replay_secret_reveal(&asker, &reveal, &lease)?;
+    Ok(wait_answer(wait))
+}
+
+/// The guest's answer to a wait: the decision, the value as text or base64,
+/// and the receipt.
+fn wait_answer(wait: crate::secret_custody::SecretRevealWait) -> RevealWaitAnswer {
     let (value, value_base64) = match wait.value.as_deref() {
         None => (None, None),
         Some(bytes) => match std::str::from_utf8(bytes) {
@@ -208,7 +232,7 @@ pub fn wait_reveal_as_caller(
             ),
         },
     };
-    Ok(RevealWaitAnswer {
+    RevealWaitAnswer {
         decision: match wait.decision {
             SecretRevealDecision::Pending => RevealDecision::Pending,
             SecretRevealDecision::Granted => RevealDecision::Granted,
@@ -219,7 +243,7 @@ pub fn wait_reveal_as_caller(
         value,
         value_base64,
         receipt: wait.receipt.map(reveal_receipt),
-    })
+    }
 }
 
 /// `reveal.describe` on a handle, for the calling agent.
@@ -293,6 +317,17 @@ pub fn kept_reveal_answer(output: &serde_json::Value) -> serde_json::Value {
         fields.remove("value_base64");
     }
     kept
+}
+
+/// The T1 lease a kept `granted` answer of `reveal.wait` names: the lease a
+/// replay of its step reads the value again under (FIX 2360). `None` for any
+/// other answer.
+pub(crate) fn kept_reveal_lease(output: &serde_json::Value) -> Option<EntityId> {
+    if output.get("decision")?.as_str()? != "granted" {
+        return None;
+    }
+    let lease = output.get("receipt")?.get("lease")?.as_str()?;
+    EntityId::from_hex(lease).ok()
 }
 
 /// A reply to `verb` as a call receipt digests it and a verb hook reads it
