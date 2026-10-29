@@ -22,7 +22,6 @@ use oneiron::off_record::OffRecordBackendClass;
 use oneiron::off_record::anonymous_chat::{
     AnonymousChatResponder as Responder, AnonymousChatSession, AnonymousChatTarget,
 };
-use oneiron::policy_model::PolicyModelConfig;
 use oneiron::store::GateSystemNoticeRecord;
 use oneiron::task_verb::sdk::{
     AnonymousChatRequest as ChatRequest, AnonymousChatRequestTarget as Target,
@@ -165,7 +164,11 @@ pub(crate) async fn ai_anonymous_chat(
             &responder,
             &policy_backend,
             &policy_budget,
-            &PolicyModelConfig::default(),
+            // The serving host's policy config, its decision ladder's paired
+            // question lent (FIX 1201).
+            &server
+                .decision_host()
+                .policy_model_config(&server.policy_doors.owner),
         )
         .await;
     let closed = session.close();
