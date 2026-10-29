@@ -13171,7 +13171,7 @@
       "const": 1,
       "crate-vis": 17,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 2,
       "struct": 3
      }
@@ -38238,6 +38238,16 @@
       "enum": 1,
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inbox/outbox_ask.rs",
+     "purpose": "FIX 11074: a vault VM's outbox carrier keeps a copy of a member the carrier never agreed on, as the member's…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -82280,7 +82290,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -83101,7 +83111,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5558,
+   "source_files": 5559,
    "test_files": 902
   },
   "oneiron-android": {
@@ -103873,7 +103883,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 60
+      "crate-vis": 61
      }
     },
     {
@@ -104274,6 +104284,16 @@
      "purpose": "`/v1/owner/settings/models`: the owner's model settings",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/outbox_diverged_routes.rs",
+     "purpose": "`/v1/owner/outbox/diverged`: a vault VM's outbox carrier members as the owner sees them (FIX 11074, FIX 11242)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -106738,7 +106758,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/commands/owner/vault_key/fresh_restore.rs",
@@ -108225,7 +108245,7 @@
      "path": "src/device_sync/renewal.rs",
      "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -109911,7 +109931,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 3,
       "re-export": 10
      }
@@ -110232,6 +110252,16 @@
      "purpose": "A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/carrier_watch/diverged_ask.rs",
+     "purpose": "The owner's ask for each copy the outbox carrier keeps unagreed (FIX 11074): one inbox Ask per live owner…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -110623,10 +110653,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/vm_outbox/diverged.rs",
+     "purpose": "The guest carrier's member status read and the owner's answers to its diverged copies (FIX 11074, FIX 11242)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/vm_outbox/endpoint.rs",
      "purpose": "The companion's local lifecycle endpoint, `/run/oneiron-outbox/ lifecycle.sock`: a root-owned socket only…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -110681,7 +110721,7 @@
      "path": "src/managed/vm_outbox/mod.rs",
      "purpose": "A vault VM's outbox carrier (FIX 5235, FIX 5467): both ends of the one persistent, bidirectional stream on…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "re-export": 2
      }
     },
@@ -110712,7 +110752,7 @@
      "path": "src/managed/vm_outbox/store.rs",
      "purpose": "One end's durable carrier state: a record per member and its next transfer id, in a directory only that…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -110721,6 +110761,16 @@
      "notable": [],
      "path": "src/managed/vm_outbox/transfer.rs",
      "purpose": "The carrier's session on one connection: the hello, then turns",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/transfer/local_check.rs",
+     "purpose": "A taken set's check against this end's own versions before it is published, and the copy this end keeps, or…",
      "surface": {
       "crate-vis": 4
      }
@@ -114958,7 +115008,7 @@
      "path": "src/wire_telemetry/kept.rs",
      "purpose": "The kept questions as the health check reads them (OF-520): the call-volume questions past its cursor, a…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -115293,7 +115343,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 622,
+     "files": 623,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -115608,7 +115658,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 91,
+     "files": 94,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -115792,7 +115842,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1433,
+   "source_files": 1437,
    "test_files": 182
   },
   "oneiron-spawn": {
