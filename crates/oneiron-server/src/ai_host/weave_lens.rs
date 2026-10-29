@@ -373,6 +373,7 @@ async fn render_listing(
                 binding: HostInferenceBinding::Advertised {
                     model: model.clone(),
                     locality,
+                    keyless: false,
                 },
                 extraction_egress: server.extraction_egress.as_deref(),
             },

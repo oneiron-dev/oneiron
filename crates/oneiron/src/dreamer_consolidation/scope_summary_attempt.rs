@@ -410,6 +410,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             .inference
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("summary host binding needs locality".into()))?;
+        let keyless = self.inference.selected_keyless();
         let request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
@@ -430,7 +431,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 ),
                 response_format: ResponseFormat::Json { schema },
                 locality,
-                host_keyless: false,
+                host_keyless: keyless,
             }
             .with_purpose_defaults(),
             messages: vec![

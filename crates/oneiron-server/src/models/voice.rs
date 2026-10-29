@@ -105,6 +105,7 @@ impl ModelRuntime {
             binding: HostInferenceBinding::Advertised {
                 model: backend.model.clone(),
                 locality: backend.locality,
+                keyless: false,
             },
             extraction_egress: None,
         };

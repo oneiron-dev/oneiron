@@ -300,6 +300,7 @@ impl ConsolidationExecutor<'_> {
 /// The verdict role's request for a typed read: its model, scope and binding, with no
 /// messages yet.
 fn verdict_shell(call: &RoleCall<'_>, scope: &crate::llm::Scope) -> Result<LlmRequest> {
+    let keyless = call.inference.selected_keyless();
     Ok(LlmRequest {
         model: call.model.clone(),
         envelope: CallEnvelope {
@@ -320,7 +321,7 @@ fn verdict_shell(call: &RoleCall<'_>, scope: &crate::llm::Scope) -> Result<LlmRe
             locality: call.inference.selected_locality().ok_or_else(|| {
                 crate::Error::InvalidConfig("consolidation host binding needs locality".into())
             })?,
-            host_keyless: false,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: Vec::new(),

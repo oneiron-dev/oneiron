@@ -506,6 +506,7 @@ impl AdmittedBackend<'_> {
                     binding: HostInferenceBinding::Advertised {
                         model: self.model.clone(),
                         locality: self.locality,
+                        keyless: false,
                     },
                     extraction_egress: None,
                 },

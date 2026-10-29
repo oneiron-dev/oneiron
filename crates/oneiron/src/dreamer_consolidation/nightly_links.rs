@@ -264,6 +264,7 @@ impl ConsolidationExecutor<'_> {
                 charges.park_for("nightly links need locality", DreamerParkCause::Retry),
             ));
         };
+        let keyless = call.inference.selected_keyless();
         // The call labels its claims and questions before its state renders
         // (FIX 7506).
         let mut labels = CallLabelMap::default();
@@ -314,7 +315,7 @@ impl ConsolidationExecutor<'_> {
                 ),
                 response_format: ResponseFormat::Text,
                 locality,
-                host_keyless: false,
+                host_keyless: keyless,
             }
             .with_purpose_defaults(),
             messages: Vec::new(),

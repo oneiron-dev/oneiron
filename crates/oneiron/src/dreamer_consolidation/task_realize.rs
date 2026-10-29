@@ -143,6 +143,7 @@ pub async fn run_task_realize(
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
+    let keyless = model.inference.selected_keyless();
     let mut request = LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
@@ -158,7 +159,7 @@ pub async fn run_task_realize(
             ),
             response_format: ResponseFormat::Text,
             locality,
-            host_keyless: false,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: vec![

@@ -305,6 +305,7 @@ impl ServerProbeAuthor<'_> {
             binding: HostInferenceBinding::Advertised {
                 model: model.clone(),
                 locality: *locality,
+                keyless: false,
             },
             extraction_egress: self.server.extraction_egress.as_deref(),
         };

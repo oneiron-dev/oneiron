@@ -282,7 +282,11 @@ fn policy_admits(server: &SyncServer, row: &MediaRow) -> bool {
         .is_ok();
     }
     let binding = match server.ai.model_locality(&model) {
-        Some(locality) => HostInferenceBinding::Advertised { model, locality },
+        Some(locality) => HostInferenceBinding::Advertised {
+            model,
+            locality,
+            keyless: false,
+        },
         None => HostInferenceBinding::Registered,
     };
     let context = HostInferenceContext {

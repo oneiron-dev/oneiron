@@ -323,6 +323,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
             steps,
         };
     };
+    let keyless = rung.call.inference.selected_keyless();
     let vault = rung.step.vault;
     let refused = AtomicBool::new(false);
     let seal = |request: LlmRequest| -> Result<LlmRequest> {
@@ -351,7 +352,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
             ),
             response_format: ResponseFormat::Text,
             locality,
-            host_keyless: false,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {

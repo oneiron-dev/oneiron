@@ -550,6 +550,7 @@ impl<E> PersonAboutExecutor<'_, E> {
             .inference
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("about host binding needs locality".into()))?;
+        let keyless = self.inference.selected_keyless();
         let mut charges = StepChargeTally::default();
         let mut lines: Vec<AboutLine> = Vec::new();
         let mut below: Option<[u8; 32]> = None;
@@ -593,7 +594,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     ),
                     response_format: ResponseFormat::Text,
                     locality,
-                    host_keyless: false,
+                    host_keyless: keyless,
                 }
                 .with_purpose_defaults(),
                 messages: vec![

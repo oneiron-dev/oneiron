@@ -120,6 +120,7 @@ impl ConsolidationExecutor<'_> {
                 charges.park_for("sieve host binding needs locality", DreamerParkCause::Retry)
             );
         };
+        let keyless = call.inference.selected_keyless();
         let labels = window_labels(&window);
         let source = labels
             .label(LabelKind::Source, window.source)
@@ -144,7 +145,7 @@ impl ConsolidationExecutor<'_> {
                 ),
                 response_format: ResponseFormat::Text,
                 locality,
-                host_keyless: false,
+                host_keyless: keyless,
             }
             .with_purpose_defaults(),
             messages: vec![

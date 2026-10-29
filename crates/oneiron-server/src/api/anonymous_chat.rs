@@ -326,6 +326,7 @@ fn bind_target(
         let binding = oneiron::llm::HostInferenceBinding::Advertised {
             model: request.model.clone(),
             locality: request.envelope.locality,
+            keyless: false,
         };
         request = server
             .vault
