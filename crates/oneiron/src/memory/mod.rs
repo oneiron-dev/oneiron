@@ -83,6 +83,7 @@ mod entity_erase;
 pub mod erase_sweep;
 mod export;
 mod export_audit;
+mod export_kept;
 mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
@@ -212,6 +213,7 @@ pub(crate) use export_audit::{
     ExportCopy, owner_copy_in_txn, record_export, record_raw_export, record_raw_json_export,
     turn_thread_root,
 };
+pub use export_kept::KeptExportLapse;
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
