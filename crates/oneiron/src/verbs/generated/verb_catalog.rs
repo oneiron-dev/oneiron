@@ -47,6 +47,10 @@ pub enum AgentVerb {
     VaultShapeRead,
     VaultShapePlan,
     VaultShapeApply,
+    VaultShapePlanCard,
+    VaultShapeItemsReceipt,
+    VaultShapeGroups,
+    VaultShapeGroupsResolve,
     SelfMessage,
     SelfGrantsAsk,
     VaultCompanionsAccessRequestsAnswer,
@@ -203,6 +207,7 @@ pub enum AgentVerb {
     VaultInboxConcernsReview,
     VaultInboxLens,
     VaultInboxGroups,
+    VaultInboxGroupsResolve,
     VaultWeaveDigestRender,
     VaultWeaveLinkCorrections,
     SelfInboxLens,
@@ -1263,6 +1268,10 @@ impl AgentVerb {
         Self::VaultShapeRead,
         Self::VaultShapePlan,
         Self::VaultShapeApply,
+        Self::VaultShapePlanCard,
+        Self::VaultShapeItemsReceipt,
+        Self::VaultShapeGroups,
+        Self::VaultShapeGroupsResolve,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
         Self::VaultCompanionsAccessRequestsAnswer,
@@ -1419,6 +1428,7 @@ impl AgentVerb {
         Self::VaultInboxConcernsReview,
         Self::VaultInboxLens,
         Self::VaultInboxGroups,
+        Self::VaultInboxGroupsResolve,
         Self::VaultWeaveDigestRender,
         Self::VaultWeaveLinkCorrections,
         Self::SelfInboxLens,
@@ -2482,6 +2492,10 @@ impl AgentVerb {
             Self::VaultShapeRead => "vault.shape.read",
             Self::VaultShapePlan => "vault.shape.plan",
             Self::VaultShapeApply => "vault.shape.apply",
+            Self::VaultShapePlanCard => "vault.shape.plan.card",
+            Self::VaultShapeItemsReceipt => "vault.shape.items.receipt",
+            Self::VaultShapeGroups => "vault.shape.groups",
+            Self::VaultShapeGroupsResolve => "vault.shape.groups.resolve",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
             Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
@@ -2638,6 +2652,7 @@ impl AgentVerb {
             Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
             Self::VaultInboxLens => "vault.inbox.lens",
             Self::VaultInboxGroups => "vault.inbox.groups",
+            Self::VaultInboxGroupsResolve => "vault.inbox.groups.resolve",
             Self::VaultWeaveDigestRender => "vault.weave.digest.render",
             Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
             Self::SelfInboxLens => "self.inbox.lens",
@@ -3728,6 +3743,10 @@ impl AgentVerb {
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
+                | Self::VaultShapePlanCard
+                | Self::VaultShapeItemsReceipt
+                | Self::VaultShapeGroups
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
@@ -3884,6 +3903,7 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
@@ -4973,6 +4993,10 @@ impl AgentVerb {
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
+                | Self::VaultShapePlanCard
+                | Self::VaultShapeItemsReceipt
+                | Self::VaultShapeGroups
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
@@ -5129,6 +5153,7 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
@@ -6145,6 +6170,7 @@ impl AgentVerb {
                 | Self::VaultCommitmentsProposals
                 | Self::SelfStandingList
                 | Self::SelfInboxList
+                | Self::VaultShapeGroups
                 | Self::Describe
                 | Self::VaultRetrievalHydePending
                 | Self::VaultRetrievalRuns
@@ -6366,6 +6392,10 @@ impl AgentVerb {
                 | Self::VaultShapeRead
                 | Self::VaultShapePlan
                 | Self::VaultShapeApply
+                | Self::VaultShapePlanCard
+                | Self::VaultShapeItemsReceipt
+                | Self::VaultShapeGroups
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
@@ -6505,6 +6535,7 @@ impl AgentVerb {
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
                 | Self::VaultInboxGroups
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
@@ -7477,6 +7508,7 @@ impl AgentVerb {
                 | Self::SelfInboxConcernMove
                 | Self::VaultPeopleCreate
                 | Self::VaultShapeApply
+                | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
@@ -7565,6 +7597,7 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
+                | Self::VaultInboxGroupsResolve
                 | Self::VaultWeaveDigestRender
                 | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
@@ -8245,6 +8278,10 @@ impl AgentVerb {
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
+            Self::VaultShapePlanCard => &["spec"],
+            Self::VaultShapeItemsReceipt => &["spec"],
+            Self::VaultShapeGroups => &["spec"],
+            Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
@@ -8418,6 +8455,7 @@ impl AgentVerb {
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
+            Self::VaultInboxGroupsResolve => &["spec"],
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
@@ -9479,6 +9517,10 @@ impl AgentVerb {
             Self::VaultShapeRead => &["spec"],
             Self::VaultShapePlan => &["spec"],
             Self::VaultShapeApply => &["spec"],
+            Self::VaultShapePlanCard => &["spec"],
+            Self::VaultShapeItemsReceipt => &["spec"],
+            Self::VaultShapeGroups => &["spec"],
+            Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
@@ -9635,6 +9677,7 @@ impl AgentVerb {
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
             Self::VaultInboxGroups => &["spec"],
+            Self::VaultInboxGroupsResolve => &["spec"],
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
@@ -10777,6 +10820,18 @@ impl AgentVerb {
             Self::VaultShapeApply => {
                 "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."
             }
+            Self::VaultShapePlanCard => {
+                "The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read."
+            }
+            Self::VaultShapeItemsReceipt => {
+                "Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable."
+            }
+            Self::VaultShapeGroups => {
+                "Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof."
+            }
+            Self::VaultShapeGroupsResolve => {
+                "The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged."
+            }
             Self::SelfMessage => {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
             }
@@ -11243,7 +11298,10 @@ impl AgentVerb {
                 "Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."
             }
             Self::VaultInboxGroups => {
-                "Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."
+                "Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."
+            }
+            Self::VaultInboxGroupsResolve => {
+                "The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."
             }
             Self::VaultWeaveDigestRender => {
                 "Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due."

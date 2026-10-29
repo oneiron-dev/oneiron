@@ -127,6 +127,8 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
+pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;

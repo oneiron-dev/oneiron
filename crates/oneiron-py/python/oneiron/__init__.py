@@ -1074,12 +1074,42 @@ class Oneiron:
         def read(self, spec=None):
             """The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read."""
             return json.loads(_translate(lambda: self._client.vault_shape_read(json.dumps({} if spec is None else spec))))
-        def plan(self, spec):
-            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
-            return json.loads(_translate(lambda: self._client.vault_shape_plan(json.dumps(spec))))
+        @property
+        def plan(self) -> "Oneiron._VaultShapePlanVerbs":
+            return Oneiron._VaultShapePlanVerbs(self._client)
         def apply(self, spec):
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."""
             return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
+        @property
+        def items(self) -> "Oneiron._VaultShapeItemsVerbs":
+            return Oneiron._VaultShapeItemsVerbs(self._client)
+        @property
+        def groups(self) -> "Oneiron._VaultShapeGroupsVerbs":
+            return Oneiron._VaultShapeGroupsVerbs(self._client)
+    class _VaultShapePlanVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_shape_plan(json.dumps(spec))))
+        def card(self, spec):
+            """The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read."""
+            return json.loads(_translate(lambda: self._client.vault_shape_plan_card(json.dumps(spec))))
+    class _VaultShapeItemsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def receipt(self, spec):
+            """Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable."""
+            return json.loads(_translate(lambda: self._client.vault_shape_items_receipt(json.dumps(spec))))
+    class _VaultShapeGroupsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec=None):
+            """Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_shape_groups(json.dumps({} if spec is None else spec))))
+        def resolve(self, spec):
+            """The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_shape_groups_resolve(json.dumps(spec))))
     class _VaultCompanionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1782,15 +1812,24 @@ class Oneiron:
         def lens(self, spec):
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
             return json.loads(_translate(lambda: self._client.vault_inbox_lens(json.dumps(spec))))
-        def groups(self, spec):
-            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
-            return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
+        @property
+        def groups(self) -> "Oneiron._VaultInboxGroupsVerbs":
+            return Oneiron._VaultInboxGroupsVerbs(self._client)
     class _VaultInboxConcernsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def review(self, spec=None):
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
             return json.loads(_translate(lambda: self._client.vault_inbox_concerns_review(json.dumps({} if spec is None else spec))))
+    class _VaultInboxGroupsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."""
+            return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
+        def resolve(self, spec):
+            """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
+            return json.loads(_translate(lambda: self._client.vault_inbox_groups_resolve(json.dumps(spec))))
     class _VaultSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

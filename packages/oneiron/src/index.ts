@@ -543,9 +543,21 @@ export class Oneiron {
       /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
       read: (input: Facade.EmptyRequest = {}): Facade.ShapeRead => this.#call(() => this.#client.vaultShapeRead(input) as Facade.ShapeRead),
       /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
-      plan: (input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan),
+      plan: Object.assign((input: Facade.ShapePlanRequest): Facade.ShapePlan => this.#call(() => this.#client.vaultShapePlan(input) as Facade.ShapePlan), {
+        /** The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read. */
+        card: (input: Facade.ShapePlanRequest): Facade.ShapePlanCardView => this.#call(() => this.#client.vaultShapePlanCard(input) as Facade.ShapePlanCardView),
+      }),
       /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
+      items: {
+        /** Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable. */
+        receipt: (input: Facade.ShapeItemReceiptRequest): Facade.ShapeItemReceipt | null => this.#call(() => this.#client.vaultShapeItemsReceipt(input) as Facade.ShapeItemReceipt | null),
+      },
+      /** Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof. */
+      groups: Object.assign((input: Facade.EmptyRequest = {}): Facade.ShapeInboxGroup[] => this.#call(() => this.#client.vaultShapeGroups(input) as Facade.ShapeInboxGroup[]), {
+        /** The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged. */
+        resolve: (input: Facade.ShapeGroupResolveRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeGroupsResolve(input) as Facade.ShapeApplyReceipt),
+      }),
     },
     companions: {
       access_requests: {
@@ -984,8 +996,11 @@ export class Oneiron {
       },
       /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
       lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.vaultInboxLens(input) as Facade.InboxLensPage),
-      /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
-      groups: (input: Facade.InboxRunGroupsRequest): Facade.InboxGroupPage => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.InboxGroupPage),
+      /** Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it. */
+      groups: Object.assign((input: Facade.InboxRunGroupsRequest): Facade.UnifiedInboxGroupPage => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.UnifiedInboxGroupPage), {
+        /** The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items. */
+        resolve: (input: Facade.InboxGroupResolveRequest): Facade.InboxGroupResolution => this.#call(() => this.#client.vaultInboxGroupsResolve(input) as Facade.InboxGroupResolution),
+      }),
     },
     skills: {
       /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */
