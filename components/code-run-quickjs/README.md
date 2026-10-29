@@ -204,8 +204,11 @@ execution through the new door.
 Reuse `run_ref` and `task` to resume a yielded run. Completed re-entry returns
 the persisted result without a second effect. A changed task, interpreter pin,
 or actor identity cannot reuse the existing replay identity. Concurrent calls
-to the same run fail with `code_run_busy`; disconnect does not release the
-worker's single-flight guard. A durable human wait remains parked until the
+to the same run wait their turn in arrival order, each entering the run once
+the one before it ends; a call still waiting at the configured queue wait
+(`limits.queue_wait_timeout_ms`) starts nothing and answers
+`code_run_waited_out`. Disconnect does not release the worker's single-flight
+guard. A durable human wait remains parked until the
 engine supplies a settlement door; this change does not claim to settle waits.
 
 ## Required artifact acceptance

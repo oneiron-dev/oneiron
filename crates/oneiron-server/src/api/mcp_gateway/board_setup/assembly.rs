@@ -253,9 +253,11 @@ pub(super) fn mcp_board_sections(
     };
     let resident = std::collections::BTreeSet::new();
     // A child whose TASK the destination, the read or the scope withheld
-    // stays off the board, never a bare row (FIX 9755). The bare rows these
-    // children make were judged here, so the scope's row check below, which
-    // reads a row id as an entity, leaves them be.
+    // stays off the board, never a bare row (FIX 9755). On a narrowed
+    // connector the bare rows its children make were judged here by their
+    // evidence, so the scope's row check below, which reads a row id as an
+    // entity, leaves them be; a wide connector's keep that check.
+    let narrowed = super::children::mcp_children_narrowed(actor);
     let mut bare_children = std::collections::BTreeSet::new();
     rows.attach_people_admitted(
         &oneiron::context_board::PeopleView::new(&people, &resident),
@@ -263,7 +265,7 @@ pub(super) fn mcp_board_sections(
         |child| {
             let admitted =
                 super::children::mcp_child_admitted(server, actor, &memory, &read, child)?;
-            if admitted {
+            if admitted && narrowed {
                 bare_children.insert(child.attempt.clone());
             }
             Ok::<_, McpGatewayError>(admitted)

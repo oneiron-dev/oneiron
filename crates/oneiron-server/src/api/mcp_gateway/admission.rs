@@ -404,8 +404,8 @@ fn mcp_task_in_world(
 /// another of its bounds withholds. A row in a world or facet the credential
 /// cannot read, or one that cannot prove where it sits, adds to no count
 /// (ARCH-0067 §5, DEC-0005). Each row it admits is listed in `served`. The
-/// bare rows of `bare_children`, a board's children it already judged by
-/// their TASK or their dispatch scope (FIX 1052), pass as they are.
+/// bare rows of `bare_children`, a narrowed board's children it already
+/// judged by their TASK or their dispatch scope (FIX 1052), pass as they are.
 pub(super) fn mcp_scoped_tasks_section(
     server: &Arc<SyncServer>,
     actor: &McpResolvedActor,
@@ -435,8 +435,8 @@ pub(super) fn mcp_scoped_tasks_section(
     let mut bare_jobs = Vec::with_capacity(rows.bare_jobs.len());
     let mut children_served = Vec::new();
     for job in rows.bare_jobs {
-        // A child's bare row names its attempt, which no entity read proves:
-        // its board already judged it by its TASK or its dispatch scope.
+        // A narrowed board's child row names its attempt, which no entity
+        // read proves: its board already judged it by its evidence.
         if bare_children.contains(&job.id) {
             children_served.extend(oneiron::EntityId::from_hex(&job.id).ok());
             bare_jobs.push(job);
