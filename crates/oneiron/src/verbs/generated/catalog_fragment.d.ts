@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1247 code-mode rows (1207 host rows, 40 run rows), 4379 declarations.
-// Replies: 1064 fully typed, 182 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1252 code-mode rows (1212 host rows, 40 run rows), 4393 declarations.
+// Replies: 1069 fully typed, 182 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 116; unread shapes: none.
 declare namespace Sdk {
@@ -368,7 +368,8 @@ declare namespace Sdk {
   type BriefConstraints = { notes?: string[]; policy_refs?: EntityId[]; budget_ref?: EntityId | null; deadline?: number | null; pins?: SpawnPins };
   type PinnedPack = { pack_ref: EntityId; context_version?: number | null; retrieval_run_id?: EntityId | null; digest: string };
   type PinnedRef = { target: EntityId; frontier?: number[] | null; digest: string };
-  type WorkflowBinding = { handle: string; args?: Record<string, string> };
+  type SecretArg = { handle: string } | { text: string };
+  type WorkflowBinding = { handle: string; args?: Record<string, string>; secret_args?: Record<string, SecretArg> };
   type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type QuestionCriteria<Line> = { yes_if_all?: Line[]; no_if_any?: Line[]; not_a_reason_to_say_no?: Line[] };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
@@ -1743,6 +1744,10 @@ declare namespace Sdk {
   type OfferPilotPrepared = { pilot: OfferPilot; release: EvalRelease };
   type OfferPilotComplete = { pilot: EntityId; measurement: OfferPilotMeasurement };
   type OfferPilotRef = { pilot: EntityId };
+  type ReservoirSourcesRequest = { task_classes?: string[] | null; since?: number | null; consented_sources?: EntityId[] };
+  type ReservoirSourcePeople = "others" | "unknown";
+  type ReservoirSourceRow = { source: EntityId; people: ReservoirSourcePeople; pairs: number; consented: boolean };
+  type ReservoirSourcePreview = { carried: number; excluded: Record<string, number>; sources: ReservoirSourceRow[] };
   type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
   type ForkKind = "variation" | "debug";
   type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
@@ -4246,6 +4251,16 @@ declare namespace Sdk {
   type IdentityProposalResolutionResult = { receipt: IdentityTopologyReceipt; applied?: IdentityTopologyReceipt | null };
   type IdentityPairRequest = { a: EntityId; b: EntityId };
   type IdentityPairProposals = { a: EntityId; b: EntityId; proposals: EntityId[]; distinct_claims: EntityId[] };
+  type CustodyMemberRef = { target_id: string };
+  type AckPosition = { vault: string; namespace: string; epoch: number; seq: number; tip: string };
+  type CustodyDrainTicketView = { target_id: string; set_revision: number; position: AckPosition; operation_id: string; token: string };
+  type ProtocolEvidenceKind = "filesystem_sweep" | "residence_sweep" | "ssh_version_sweep" | "object_version_sweep" | "no_head_in_scope" | "unversioned_object_sweep";
+  type DeletionEvidence = { kind: ProtocolEvidenceKind; superseded_removed: number; remaining_heads: number; inventory_digest: string };
+  type DrainAck = { version: number; target_id: string; set_revision: number; position: AckPosition; operation_id: string; evidence: DeletionEvidence; placement: string; origin: string; mac: string };
+  type CustodyDrainCommitRequest = { ack: DrainAck };
+  type CustodySetRevision = { revision: number };
+  type TargetScope = "head_and_log" | "log_only";
+  type CustodyMemberReenrolRequest = { target_id?: string | null; folder?: string | null; scope?: TargetScope | null };
   type TabSwitchCause = "opened" | "closed";
   type TabSwitch = { tab: string; url: string; title: string; from: string; why: TabSwitchCause };
   type DemonstrationId = string;
@@ -4255,7 +4270,6 @@ declare namespace Sdk {
   type RecordingGapKind = { why: "no_locator"; cause: LocatorGap } | { why: "gesture"; gesture: string } | { why: "uncovered"; target: string } | { why: "capture_lost" } | { why: "unrecorded_navigation" } | { why: "not_started"; refusal: string };
   type RecordingGap = { seq?: number | null; tab?: string | null; gap: RecordingGapKind };
   type DemonstrationStopCause = "stopped" | "handed_over" | "handed_back" | "abandoned" | "guest_lost" | "engine_switched" | "session_closed";
-  type SecretArg = { handle: string } | { text: string };
   type SnapshotBounds = { read_chars?: number | null; snapshot_origins?: number | null; snapshot_bytes?: number | null };
   type ProposeInput = { subgoal?: string; params?: string[]; steps?: BatchStep[]; postcondition?: ExpectInput[]; args?: Record<string, string>; replay_args?: Record<string, string>; supersedes?: string | null; seed?: WorkflowSeed | null; candidate?: string | null; secret_args?: Record<string, SecretArg>; snapshot_bounds?: SnapshotBounds | null };
   type SlotField = "text" | "option";
@@ -5407,6 +5421,8 @@ declare const vault: Sdk.VaultHost & {
       };
       /** Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer. */
       result(input: Sdk.OfferPassRef): Promise<Sdk.OfferPassResult | null | StoredResult>;
+      /** Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far. */
+      sources(input: Sdk.ReservoirSourcesRequest): Promise<Sdk.ReservoirSourcePreview | StoredResult>;
       /** Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body. */
       trigger(input: Sdk.OfferPassRequest): Promise<Sdk.OfferPassRef | StoredResult>;
       /** Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding. */
@@ -5802,6 +5818,20 @@ declare const vault: Sdk.VaultHost & {
   critic: {
     /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
     review(input: Sdk.CriticReviewSubmit): Promise<Sdk.CriticReviewOutcome | StoredResult>;
+  };
+  custody: {
+    members: {
+      drain: {
+        /** The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter. */
+        begin(input: Sdk.CustodyMemberRef): Promise<Sdk.CustodyDrainTicketView | StoredResult>;
+        /** The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row. */
+        commit(input: Sdk.CustodyDrainCommitRequest): Promise<Sdk.CustodySetRevision | StoredResult>;
+        /** The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision. */
+        folder(input: Sdk.CustodyMemberRef): Promise<Sdk.CustodySetRevision | StoredResult>;
+      };
+      /** The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision. */
+      reenrol(input: Sdk.CustodyMemberReenrolRequest): Promise<Sdk.CustodySetRevision | StoredResult>;
+    };
   };
   decisions: {
     asks: {

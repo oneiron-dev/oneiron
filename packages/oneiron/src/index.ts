@@ -495,6 +495,8 @@ export class Oneiron {
           /** Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card. */
           get: (input: Facade.OfferPilotRef): Facade.OfferPilot | null => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsGet(input) as Facade.OfferPilot | null),
         },
+        /** Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far. */
+        sources: (input: Facade.ReservoirSourcesRequest): Facade.ReservoirSourcePreview => this.#call(() => this.#client.vaultCoachTrainingOffersSources(input) as Facade.ReservoirSourcePreview),
       }),
     },
     people: {
@@ -3097,6 +3099,20 @@ export class Oneiron {
     },
     /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
     revert_run: (input: Facade.RevertRunRequest): Facade.RevertRunOutcome => this.#call(() => this.#client.vaultRevertRun(input) as Facade.RevertRunOutcome),
+    custody: {
+      members: {
+        drain: {
+          /** The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter. */
+          begin: (input: Facade.CustodyMemberRef): Facade.CustodyDrainTicketView => this.#call(() => this.#client.vaultCustodyMembersDrainBegin(input) as Facade.CustodyDrainTicketView),
+          /** The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row. */
+          commit: (input: Facade.CustodyDrainCommitRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersDrainCommit(input) as Facade.CustodySetRevision),
+          /** The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision. */
+          folder: (input: Facade.CustodyMemberRef): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersDrainFolder(input) as Facade.CustodySetRevision),
+        },
+        /** The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision. */
+        reenrol: (input: Facade.CustodyMemberReenrolRequest): Facade.CustodySetRevision => this.#call(() => this.#client.vaultCustodyMembersReenrol(input) as Facade.CustodySetRevision),
+      },
+    },
   }
   /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
   fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }

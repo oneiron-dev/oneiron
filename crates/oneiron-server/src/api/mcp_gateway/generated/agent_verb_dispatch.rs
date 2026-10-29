@@ -593,6 +593,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.coach.training_offers.pilots.prepare" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.pilots.complete" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.pilots.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.sources" => a.spec.clone().ok_or_else(invalid),
         "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.research.fork" => a.spec.clone().ok_or_else(invalid),
         "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
@@ -1418,6 +1419,10 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.identity.events.get" => a.spec.clone().ok_or_else(invalid),
         "vault.identity.proposals.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.identity.proposals.for_pair" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.drain.begin" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.drain.commit" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.drain.folder" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.reenrol" => a.spec.clone().ok_or_else(invalid),
         "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
@@ -2865,6 +2870,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.coach.training_offers.pilots.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.sources" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.bind" => {
@@ -5028,6 +5036,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.identity.proposals.for_pair" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.custody.members.drain.begin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.custody.members.drain.commit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.custody.members.drain.folder" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.custody.members.reenrol" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "connector.answer" => {
@@ -12622,6 +12642,25 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_coach_training_offers_pilots_get(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.sources" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.sources", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ReservoirSourcesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_coach_training_offers_sources(
                     server, auth, input,
                 )
                 .await;
@@ -23536,6 +23575,80 @@ async fn execute_agent_verb_row(
                     server, auth, input,
                 )
                 .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.drain.begin" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.begin", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyMemberRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_drain_begin(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.drain.commit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.commit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyDrainCommitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_drain_commit(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.drain.folder" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.folder", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyMemberRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_drain_folder(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.reenrol" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.reenrol", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyMemberReenrolRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_reenrol(server, auth, input)
+                    .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,

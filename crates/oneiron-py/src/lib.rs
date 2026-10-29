@@ -4354,6 +4354,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_coach_training_offers_sources(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.coach.training_offers.sources")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.coach.training_offers.sources", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_research_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.research.bind")?;
         let output = py
@@ -10500,6 +10514,58 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.identity.proposals.for_pair", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_custody_members_drain_begin(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.custody.members.drain.begin")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.custody.members.drain.begin", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_custody_members_drain_commit(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.custody.members.drain.commit")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.custody.members.drain.commit", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_custody_members_drain_folder(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.custody.members.drain.folder")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.custody.members.drain.folder", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_custody_members_reenrol(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.custody.members.reenrol")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.custody.members.reenrol", input)
             })
             .map_err(raise)?;
         encode(&output)
