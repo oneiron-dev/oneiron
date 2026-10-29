@@ -289,6 +289,8 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Retryable(RetryableLlmError::ServerError) => "server_error",
         LlmError::Retryable(RetryableLlmError::Timeout) => "timeout",
         LlmError::Retryable(RetryableLlmError::StreamCut) => "stream_cut",
+        // A typed cut names its cause as its class (FIX 10403).
+        LlmError::Retryable(RetryableLlmError::TransportFault(fault)) => fault.kind.as_str(),
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => "kept_on_device",
         LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
         LlmError::Fatal(FatalLlmError::InvalidRequestDetail { .. }) => "invalid_request",

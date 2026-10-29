@@ -70,7 +70,8 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::RateLimited { .. }
             | RetryableLlmError::ServerError
             | RetryableLlmError::Timeout
-            | RetryableLlmError::StreamCut => false,
+            | RetryableLlmError::StreamCut
+            | RetryableLlmError::TransportFault(_) => false,
         },
         LlmError::Fatal(fatal) => match fatal {
             FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {
