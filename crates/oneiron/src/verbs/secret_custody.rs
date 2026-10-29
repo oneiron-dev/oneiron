@@ -27,9 +27,9 @@ use crate::authority::{ActSurface, CustodyChange, CustodyRecipientPermit};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::secret_custody::{
-    CustodyClass, CustodyPlan, CustodyTier, ManifestSource, OwnerSecretRegistration,
-    RequestedBinding, SECRET_NAME_MAX_BYTES, SealedCustodyChange, SecretCustodyView,
-    SecretCustodyWork, SecretRegistered,
+    CustodyClass, CustodyManifestCheck, CustodyPlan, CustodyTier, ManifestSource,
+    OwnerSecretRegistration, RequestedBinding, SECRET_NAME_MAX_BYTES, SealedCustodyChange,
+    SecretCustodyView, SecretCustodyWork, SecretRegistered,
 };
 use crate::secret_rotation::RotationReceipt;
 use crate::world_keys::OwnerWorkReceipt;
@@ -602,7 +602,7 @@ impl From<SecretCustodyWork> for SecretCustodyReply {
             said: custody.text().to_owned(),
             kept_here: custody.kept_here.map(|why| why.as_str().to_owned()),
             delivery: custody.delivery.as_str().to_owned(),
-            manifest: custody.manifest.as_ref().map(|check| check.text()),
+            manifest: custody.manifest.as_ref().map(CustodyManifestCheck::text),
             work: custody.work,
         }
     }
