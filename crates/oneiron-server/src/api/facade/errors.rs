@@ -116,6 +116,31 @@ impl From<MemoryError> for FacadeApiError {
             // FIX 8189: an OpenAI proxy call the caller's own deadline cut,
             // as its raw door answers it.
             crate::api::openai_proxy::TIMEOUT_CODE => StatusCode::GATEWAY_TIMEOUT,
+            // FIX 11198: the OpenAI proxy's own refusal codes, each with the
+            // status its raw door already answers (wire.rs upstream_error, mod.rs
+            // invalid/forbidden/error, choices.rs, release.rs, and llm.rs admission
+            // for the proxied call). A typed caller reads a rate limit as 429,
+            // not a server fault.
+            "rate_limited" | "quota_spent" => StatusCode::TOO_MANY_REQUESTS,
+            "upstream_error" | "upstream_auth" | "label_read" => StatusCode::BAD_GATEWAY,
+            "kept_on_device" | "recall_failed" | "llm_unavailable" => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
+            "budget_denied" => StatusCode::PAYMENT_REQUIRED,
+            "model_not_found" => StatusCode::NOT_FOUND,
+            "connector_auth_required" => StatusCode::UNAUTHORIZED,
+            "memory_withheld"
+            | "session_refused"
+            | "scope_refused"
+            | "verb_unbound"
+            | "connector_unregistered"
+            | "connector_grant_revoked"
+            | "extraction_egress_denied" => StatusCode::FORBIDDEN,
+            "n_unsupported"
+            | "stream_unsupported"
+            | "user_message_required"
+            | "invalid_request"
+            | "route_selector_forbidden" => StatusCode::BAD_REQUEST,
             // OF-063: the write named a record its writer cannot resolve. The
             // request was well formed and refused, so it is the caller's
             // to correct, and a missing record and an unreadable one are this
