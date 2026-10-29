@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1187 facade rows, 4299 declarations.
-Inputs: 1116 of 1187 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1032 of 1187 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1190 facade rows, 4310 declarations.
+Inputs: 1119 of 1190 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1035 of 1190 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 118; unread shapes: 0.
 """
 
@@ -7284,6 +7284,7 @@ class GuestSlipMinted(TypedDict):
     slip: str
     expires_at: int
 SupportHolderClass = Literal["human", "agent"]
+SupportRepair = Literal["critical_confirm_expiry", "symbol_lease_expiry", "esign_expiry", "esign_seal_backstop", "commitment_lapse", "ppr_cache_eviction", "shared_act_maturity"]
 class SupportGrantMintRequest(TypedDict):
     holder: EntityId
     holder_class: SupportHolderClass
@@ -7294,6 +7295,7 @@ class SupportGrantMintRequest(TypedDict):
     purpose: str
     ticket_ref: NotRequired[str | None]
     comm: NotRequired[CommReach | None]
+    repairs: NotRequired[list[SupportRepair]]
 SupportGrantStatus = Literal["active", "expired", "revoked", "ended"]
 class SupportGrantView(TypedDict):
     grant_ref: str
@@ -7309,6 +7311,7 @@ class SupportGrantView(TypedDict):
     status: SupportGrantStatus
     comm: CommReach
     revoke_command: str
+    repairs: NotRequired[list[SupportRepair]]
 class SupportGrantMintAnswer(TypedDict):
     slip: str
     grant: SupportGrantView
@@ -15442,6 +15445,50 @@ class TeacherProbeApproval(TypedDict):
 class ModelManifestReplace(TypedDict):
     manifest: ModelManifest
     teacher_approval: NotRequired[TeacherProbeApproval | None]
+WebProvider = Literal["tavily", "exa", "brave", "tinyfish", "context_dev", "octen"]
+class WebProviderKeyBackend(TypedDict):
+    kind: Literal["backend"]
+class WebProviderKeySecret(TypedDict):
+    kind: Literal["secret"]
+    name: str
+class WebProviderKeyHub(TypedDict):
+    kind: Literal["hub"]
+    connector: str
+WebProviderKey = WebProviderKeyBackend | WebProviderKeySecret | WebProviderKeyHub
+class WebConnectorSetting(TypedDict):
+    provider: WebProvider
+    key: WebProviderKey
+class WebConnectorUsageRead(TypedDict):
+    since_ms: NotRequired[int | None]
+    limit: NotRequired[int | None]
+WebTool = Literal["search", "fetch"]
+WebKeySource = Literal["backend", "user", "hub"]
+WebCostBasis = Literal["actual", "estimated", "unpriced"]
+class WebCallOutcomeOk(TypedDict):
+    kind: Literal["ok"]
+    results: int
+class WebCallOutcomeFailed(TypedDict):
+    kind: Literal["failed"]
+    reason: str
+class WebCallOutcomeWaiting(TypedDict):
+    kind: Literal["waiting"]
+    reason: str
+WebCallOutcome = WebCallOutcomeOk | WebCallOutcomeFailed | WebCallOutcomeWaiting
+class WebConnectorUsage(TypedDict):
+    at_ms: int
+    tool: WebTool
+    provider: WebProvider
+    key: WebKeySource
+    hub_connector: NotRequired[str | None]
+    latency_ms: int
+    cost_micro_usd: NotRequired[int | None]
+    cost_basis: WebCostBasis
+    provider_request_id: NotRequired[str | None]
+    outcome: WebCallOutcome
+class WebConnectorUsagePage(TypedDict):
+    rows: list[WebConnectorUsage]
+    total_cost_micro_usd: int
+    unpriced: int
 class OneironerBind(TypedDict):
     expected_checkpoint_sha16: NotRequired[str | None]
     expected_stack_sha16: NotRequired[str | None]

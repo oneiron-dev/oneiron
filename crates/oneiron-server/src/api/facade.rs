@@ -189,6 +189,7 @@ mod vector_doors;
 mod voice_bank_doors;
 mod wave_doors;
 mod weave_doors;
+mod web_connector_doors;
 mod web_fetch_doors;
 mod widen_proposal_doors;
 mod wire_health_doors;

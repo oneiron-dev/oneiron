@@ -7482,6 +7482,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_settings_web_connector(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.web_connector", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_web_connector_replace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.web_connector.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_web_usage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.web.usage", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_models_oneironer_bind(
         &self,
         input: serde_json::Value,
