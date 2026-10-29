@@ -97,7 +97,7 @@ export type ReportDisclosureRequest = { issue_ref: string; choice: ReportDisclos
 /** `oneiron::feedback::report::ReportReview` */
 export type ReportReview = { status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null }
 /** `oneiron::feedback::report::ReportIssue` */
-export type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure; disclosure_basis?: ReportDisclosureBasis | null }
+export type ReportIssue = { issue_ref: string; actor_ref: string; request: ReportRequest; received_at: number; route: ReportRoute; review: ReportReview; disclosure: ReportDisclosure; disclosure_basis?: ReportDisclosureBasis | null; disclosure_round?: number }
 /** `oneiron::verbs::feedback::ReportRouteRequest` */
 export type ReportRouteRequest = { subject_ref: string; route: ReportRoute }
 /** `oneiron::verbs::feedback::ReportRouteReceipt` */

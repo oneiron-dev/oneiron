@@ -167,6 +167,9 @@ pub struct ReportIssue {
     /// Why the text may reach its publisher, when it may: the owner's
     /// issue-once approval, or a standing grant live now.
     pub disclosure_basis: Option<ReportDisclosureBasis>,
+    /// Number of Deny choices on the issue / disclosure consent round (FIX 9368).
+    #[serde(default)]
+    pub disclosure_round: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
