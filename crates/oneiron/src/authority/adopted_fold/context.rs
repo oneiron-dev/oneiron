@@ -10,10 +10,11 @@
 //! peers' consent roots for a federation lifecycle act naming a peer whose
 //! roots differ. When each lands as its kept state says under both, every
 //! covered state is the one this install's fold reaches, and the image
-//! stands here; the projection is read under this install's pin anyway.
-//! Otherwise, or where the image keeps no state to judge on, the whole
-//! history decides, as before. The posture still has to match: it decides
-//! which consent arm judges every row.
+//! stands here; the projection is read under this install's pin anyway. A
+//! row the image's settlement pruned lands alike too (FIX 11263): no fence
+//! reads either input. Otherwise, or where the image keeps no state to
+//! judge on, the whole history decides, as before. The posture still has to
+//! match: it decides which consent arm judges every row.
 
 use super::super::fold_engine::{CausalPast, FoldContext, ImagePast};
 use super::*;
@@ -102,6 +103,15 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
 /// states as its own kept state says, under the image's pin and peers and
 /// under this install's alike. False where the image keeps no state at the
 /// row or at a parent of it.
+///
+/// A row the image's fold holds no state at, though its own transition
+/// admits it there under the image's inputs, fell to the fold's settlement
+/// (FIX 11263): a retired signer's fence, a confirmation collision or an
+/// unsettled handoff on it or beneath it, or a causal sequence floor. None
+/// of those reads the pin or the peers, so under this install's inputs it
+/// falls the same way, whether its transition admits it there or not. A row
+/// the world refold folds again ([`refolded_kind`]) is judged by that
+/// refold, which reads them: its kept state alone decides, as before.
 fn judged_alike(
     image: &AuthorityCheckpointV2,
     log: AdoptedTail<'_>,
@@ -153,7 +163,34 @@ fn judged_alike(
     };
     let built = judge(image.building_pin.as_ref(), &image.aggregate.peers);
     let here = judge(log.pin, log.peer_consent_roots);
-    !causal.incomplete() && built.as_ref() == Some(&kept) && here.as_ref() == Some(&kept)
+    if causal.incomplete() {
+        return false;
+    }
+    if built.as_ref() == Some(&kept) && here.as_ref() == Some(&kept) {
+        return true;
+    }
+    kept.is_none()
+        && matches!(built, Some(Some(_)))
+        && here.is_some()
+        && refolded_kind(image, &hash) == Some(false)
+}
+
+/// Whether the fold folds covered row `hash` again over a main-log row it
+/// did not keep (`world_refold`): a world's side row, or a row of a kind the
+/// refold takes. None for a row the image does not cover or whose carried
+/// body does not decode.
+fn refolded_kind(image: &AuthorityCheckpointV2, hash: &AuthorityEntryHash) -> Option<bool> {
+    let row = image.rows.get(hash)?;
+    if row.world.is_some() {
+        return Some(true);
+    }
+    let Some(body) = &row.body else {
+        return Some(false);
+    };
+    let entry = decode_authority_log_entry_body(body).ok()?;
+    Some(super::super::world_refold::refolds(&entry.op, |request| {
+        super::super::world_refold::carried_request_kind(image, request)
+    }))
 }
 
 /// Whether a tail row may fold on covered row `hash`'s kept state as the
@@ -162,20 +199,10 @@ fn judged_alike(
 /// such a row beneath it, may hold the state of that refold rather than of
 /// its parents: only the whole history seeds a row on it.
 pub(super) fn seeds_late_fork(image: &AuthorityCheckpointV2, hash: &AuthorityEntryHash) -> bool {
-    let Some(row) = image.rows.get(hash) else {
+    let (Some(row), Some(refolded)) = (image.rows.get(hash), refolded_kind(image, hash)) else {
         return false;
     };
-    let refolded_kind = row.world.is_some()
-        || match &row.body {
-            Some(body) => match decode_authority_log_entry_body(body) {
-                Ok(entry) => super::super::world_refold::refolds(&entry.op, |request| {
-                    super::super::world_refold::carried_request_kind(image, request)
-                }),
-                Err(_) => return false,
-            },
-            None => false,
-        };
-    if !refolded_kind {
+    if !refolded {
         return true;
     }
     let mut stack = row.parents.clone();
