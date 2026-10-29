@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1241 code-mode rows (1201 host rows, 40 run rows), 4359 declarations.
+// Census: 1241 code-mode rows (1201 host rows, 40 run rows), 4360 declarations.
 // Replies: 1064 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -1449,9 +1449,10 @@ declare namespace Sdk {
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key?: string | null; expires_at: number; comm?: CommReach | null };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
   type SupportHolderClass = "human" | "agent";
-  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null; comm?: CommReach | null };
+  type SupportRepair = "critical_confirm_expiry" | "symbol_lease_expiry" | "esign_expiry" | "esign_seal_backstop" | "commitment_lapse" | "ppr_cache_eviction" | "shared_act_maturity";
+  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null; comm?: CommReach | null; repairs?: SupportRepair[] };
   type SupportGrantStatus = "active" | "expired" | "revoked" | "ended";
-  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach; revoke_command: string };
+  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; comm: CommReach; revoke_command: string; repairs?: SupportRepair[] };
   type SupportGrantMintAnswer = { slip: string; grant: SupportGrantView; decision_ref: string };
   type SupportGrantListRequest = { include_inactive?: boolean; limit?: number | null };
   type SupportGrantList = { grants: SupportGrantView[] };

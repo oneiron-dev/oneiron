@@ -6,12 +6,14 @@
 //! customer's support person or agent never passes these doors, its own
 //! grant included. An embedded handle holds no host signing key, so it
 //! refuses mint and revoke after the owner check; its owner may list.
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::authority::{
     CommReach, HostSlipIssuer, SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantQuery,
-    SupportGrantRequest, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
+    SupportGrantRequest, SupportGrantRow, SupportGrantStatus, SupportHolderClass, SupportRepair,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -57,6 +59,11 @@ pub struct SupportGrantMintRequest {
     /// owners only. Absent is `vault`; a wider reach later is a new mint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<CommReach>,
+    /// The repairs the owner lets the support holder run (FIX 4407), each
+    /// by its own id; none when omitted. Naming them all still runs each
+    /// alone, never the whole housekeeping pass.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub repairs: BTreeSet<SupportRepair>,
 }
 
 /// One support grant as the owner reviews it.
@@ -85,6 +92,9 @@ pub struct SupportGrantView {
     pub comm: CommReach,
     /// The one-tap revoke command: `vault.support_grants.revoke`.
     pub revoke_command: String,
+    /// The repairs the support holder may run (FIX 4407).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub repairs: BTreeSet<SupportRepair>,
 }
 
 /// `vault.support_grants.mint`'s answer: the credential for the support
@@ -168,6 +178,7 @@ pub fn mint_support_grant_as(
             purpose: input.purpose,
             ticket_ref: input.ticket_ref,
             comm: input.comm,
+            repairs: input.repairs,
         },
     )?;
     Ok(SupportGrantMintAnswer {
@@ -276,6 +287,7 @@ fn support_grant_view(row: &SupportGrantRow) -> SupportGrantView {
         status: row.status,
         comm: row.comm,
         revoke_command: SUPPORT_GRANT_REVOKE_COMMAND.to_owned(),
+        repairs: row.delegation.repairs.clone(),
     }
 }
 

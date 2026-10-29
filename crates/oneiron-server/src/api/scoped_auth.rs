@@ -220,6 +220,11 @@ fn transport_memory<'a>(
     if let Some(instrument) = auth.and_then(|auth| verb_ask_instrument(vault, auth)) {
         memory = memory.with_credential_instrument(instrument);
     }
+    // The attested owner apart from the vault's authority id (FIX 11129),
+    // so a rootless managed vault's owner is still known on the handle.
+    if let Some(holder) = auth.and_then(attested_owner_holder) {
+        memory = memory.with_attested_owner(holder);
+    }
     if let Some(auth) = auth {
         // Only this host verifies the credential again, so a verb hook's
         // settlement never runs this caller's call without it.

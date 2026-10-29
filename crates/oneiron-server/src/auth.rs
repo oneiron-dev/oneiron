@@ -29,7 +29,7 @@ mod managed_request;
 mod operator_credential;
 mod slips;
 pub(crate) use binding_admission::{
-    AUTHORITY_CLOCK_REPAIR_PATH, admit_http_binding, admit_owner_proof,
+    AUTHORITY_CLOCK_REPAIR_PATH, SUPPORT_REPAIR_PATH, admit_http_binding, admit_owner_proof,
 };
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;

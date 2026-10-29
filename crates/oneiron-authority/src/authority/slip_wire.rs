@@ -93,7 +93,7 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
 }
 
 fn delegation_value(delegation: &SupportDelegation) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(DELEGATION_KEY_PURPOSE),
             Value::from(delegation.purpose.as_str()),
@@ -117,12 +117,51 @@ fn delegation_value(delegation: &SupportDelegation) -> Value {
             Value::from(DELEGATION_KEY_WALL_EXPIRES_AT),
             Value::from(delegation.wall_expires_at),
         ),
-    ])
+    ];
+    // The repairs key is written only when the customer selected one, so a
+    // delegation that names none keeps its bytes (FIX 4407).
+    if !delegation.repairs.is_empty() {
+        entries.push((
+            Value::from(DELEGATION_KEY_REPAIRS),
+            Value::Array(
+                delegation
+                    .repairs
+                    .iter()
+                    .map(|repair| Value::from(repair.as_str()))
+                    .collect(),
+            ),
+        ));
+    }
+    Value::Map(entries)
 }
 
 fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
-    let entries = map_entries(value)?;
+    let all = map_entries(value)?;
+    let repairs = optional_values(all, DELEGATION_KEY_REPAIRS);
+    let entries: Vec<(Value, Value)> = all
+        .iter()
+        .filter(|(key, _)| key.as_str() != Some(DELEGATION_KEY_REPAIRS))
+        .cloned()
+        .collect();
+    let entries = entries.as_slice();
     validate_keys(entries, &SLIP_DELEGATION_KEYS)?;
+    let repairs = match repairs.as_slice() {
+        [] => BTreeSet::new(),
+        [Value::Array(ids)] if !ids.is_empty() => {
+            let mut repairs = BTreeSet::new();
+            for id in ids {
+                let repair = id
+                    .as_str()
+                    .and_then(SupportRepair::from_wire)
+                    .ok_or_else(invalid_authority)?;
+                if !repairs.insert(repair) {
+                    return Err(invalid_authority());
+                }
+            }
+            repairs
+        }
+        _ => return Err(invalid_authority()),
+    };
     let delegation = SupportDelegation {
         purpose: decode_string(required(entries, DELEGATION_KEY_PURPOSE)?)?,
         ticket_ref: decode_optional_string(required(entries, DELEGATION_KEY_TICKET_REF)?)?,
@@ -133,6 +172,7 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
         wall_expires_at: required(entries, DELEGATION_KEY_WALL_EXPIRES_AT)?
             .as_u64()
             .ok_or_else(invalid_authority)?,
+        repairs,
     };
     delegation.validate()?;
     Ok(delegation)
