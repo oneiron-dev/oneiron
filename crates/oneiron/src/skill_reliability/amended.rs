@@ -153,7 +153,7 @@ pub(super) fn amended_shares_in_txn(
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn amended_share_in_txn(
+pub(crate) fn amended_share_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,
