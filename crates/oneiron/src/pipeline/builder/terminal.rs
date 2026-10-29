@@ -48,10 +48,12 @@ impl PipelineBuilder<'_> {
             if !value.successful() {
                 continue;
             }
-            let learned_at =
+            let Some(metadata) =
                 crate::pipeline::support::read_entity_metadata(&self.read, &txn, &claim_id)?
-                    .ok_or(Error::EntityNotFound)?
-                    .learned_at;
+            else {
+                continue;
+            };
+            let learned_at = metadata.learned_at;
             records.push(CopingOutcomeRecord {
                 claim_id,
                 learned_at,
