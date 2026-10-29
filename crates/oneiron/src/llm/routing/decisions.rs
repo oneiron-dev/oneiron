@@ -12,6 +12,7 @@ use crate::llm::decision::{
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;
+use crate::task_type::TaskTypeRef;
 use crate::{EntityId, Result};
 
 use super::readings::DescriptionFitnessReadings;
@@ -56,14 +57,16 @@ pub struct DescriptionDecisions<'a> {
 impl DescriptionDecisions<'_> {
     /// Every candidate's fitness for `task` as one pack: each candidate's complete typed
     /// decision, whose `[0, 1]` score is its fitness (FIX 9922). An abstained grade leaves
-    /// its candidate unfit.
+    /// its candidate unfit. The task's type stamp, as placed, rides in the state the
+    /// grades read and in the readings (ARCH-0079).
     pub(super) fn fitness(
         &self,
         task: &str,
+        type_ref: Option<&TaskTypeRef>,
         candidates: &[Candidate<'_>],
     ) -> Result<DescriptionFitnessReadings> {
         if candidates.is_empty() {
-            return Ok(DescriptionFitnessReadings::default());
+            return Ok(DescriptionFitnessReadings::of(&[], Vec::new(), type_ref));
         }
         let questions = candidates
             .iter()
@@ -96,6 +99,7 @@ impl DescriptionDecisions<'_> {
                 .collect();
             json!({
                 "task": cut_text(task, cut),
+                "task_type": type_ref.map(TaskTypeRef::to_string),
                 "candidates": candidates,
                 "cut_at_bytes": cut,
             })
@@ -110,6 +114,10 @@ impl DescriptionDecisions<'_> {
             Reversibility::ReversibleRead,
             &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
-        Ok(DescriptionFitnessReadings::of(candidates, decisions))
+        Ok(DescriptionFitnessReadings::of(
+            candidates,
+            decisions,
+            type_ref,
+        ))
     }
 }
