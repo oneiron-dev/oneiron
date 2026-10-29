@@ -91,16 +91,23 @@ export interface LensFrameEventRequest {
    * trip, never approval or action authority; any other action ignores it.
    */
   readonly selectedContext?: readonly string[];
+  /**
+   * The stream profile this event's answer is framed in (FIX 11399): a
+   * patch-profile caller takes the card's refinement beside a local
+   * action's `$state`. Omitted, the answer is today's plain JSON.
+   */
+  readonly stream?: Facade.GeneratedUiStreamProfile;
 }
 
 /**
  * What a lens-card event's 2xx body reads as. There is no discriminator: a
- * local action answers the card's new `$state`, a deterministic tool its
- * outcome and the scoped read of its entity arguments, and a model round
- * trip (`202`) the callback queued for the agent that emitted the card.
+ * local action answers the card's new `$state` (beside the card's
+ * refinement for a patch-profile caller), a deterministic tool its outcome
+ * and the scoped read of its entity arguments, and a model round trip
+ * (`202`) the callback queued for the agent that emitted the card.
  */
 export type LensFrameEventReply =
-  | { readonly $state: Facade.GeneratedUiStateSnapshot }
+  | { readonly $state: Facade.GeneratedUiStateSnapshot; readonly refinement?: Facade.GeneratedUiSegment | null }
   | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
   | { readonly queued: boolean; readonly callbackId: string };
 
@@ -418,7 +425,9 @@ export class HttpBaseClient {
    * this server rendered (OF-181), authored by this client's credential,
    * whoever rendered the card (FIX 3267). `request.event.cardId` must name
    * the same card. A deterministic tool's reply carries its dispatched
-   * verb's `x-oneiron-receipt-ref` (FIX 2887). `LensFrameEventReply`
+   * verb's `x-oneiron-receipt-ref` (FIX 2887). A patch-profile caller
+   * also names `stream: "patch"` (FIX 11399) and takes the card's
+   * refinement beside a local action's `$state`. `LensFrameEventReply`
    * types the 2xx body; a card the server no longer holds answers
    * `404 NOT_FOUND` (render the lens again).
    */

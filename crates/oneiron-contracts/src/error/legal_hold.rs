@@ -45,7 +45,7 @@ impl LegalHoldState {
 }
 
 /// What kind of bound a hosted refusal names. A legal order's is the law.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldBoundKind {
     Law,
@@ -53,7 +53,7 @@ pub enum LegalHoldBoundKind {
 
 /// The law a legal order binds Oneiron's hosting under, as the host recorded
 /// it. A term the host did not record is `None`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldBound {
     pub kind: LegalHoldBoundKind,

@@ -30,6 +30,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/craft-candidates/answer", post(answer))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/craft-candidates/answer`'s body
+/// (FIX 11611): [`CraftCandidateAnswer`].
+pub(crate) fn craft_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CraftCandidateAnswer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/craft-candidates/answer`'s answer
+/// (FIX 11611): the verdict as it landed, [`CraftVerdictView`].
+pub(crate) fn craft_verdict_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CraftVerdictView>()
+}
+
 /// `GET /v1/owner/craft-candidates[?resident=<hex>]`: the candidates waiting
 /// on a verdict, newest first.
 async fn list(

@@ -52,7 +52,7 @@ struct AppliedQuery {
 
 /// One applied write: its finding, the identity ask it kept separate, or
 /// the project and fork of a project tree fork.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertMaintenance {
     /// The applied write's finding, as 32 hex.
@@ -71,7 +71,7 @@ struct RevertMaintenance {
 }
 
 /// The owner's apply of one action-mode finding's patch, as it was shown.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ApplyActionMode {
     /// The action-mode finding, as 32 hex.
@@ -82,7 +82,7 @@ struct ApplyActionMode {
     ceiling: ActionModeCeiling,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct AppliedView {
     /// The finding, as 32 hex; none for an identity ask or a project tree
     /// fork.
@@ -107,7 +107,7 @@ struct AppliedView {
     reverted: Option<RevertView>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RevertView {
     finding: Option<String>,
     ask: Option<String>,
@@ -130,6 +130,30 @@ struct RevertView {
     /// finding's 32 hex (a reach-out whose revert withdrew this follow-up
     /// plan); none for the owner's own revert.
     parent: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/revert`'s body (FIX 11611):
+/// [`RevertMaintenance`].
+pub(crate) fn revert_maintenance_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertMaintenance>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/revert`'s answer (FIX 11611):
+/// [`RevertView`].
+pub(crate) fn maintenance_revert_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/action-mode/apply`'s body
+/// (FIX 11611): [`ApplyActionMode`].
+pub(crate) fn apply_action_mode_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ApplyActionMode>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/action-mode/apply`'s answer
+/// (FIX 11611): [`AppliedView`].
+pub(crate) fn applied_maintenance_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AppliedView>()
 }
 
 /// The target as the views spell it: `(finding, ask)`.

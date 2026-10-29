@@ -3,7 +3,7 @@
 //! `host_doors` re-exports it, so the generated HTTP facade handler (the held
 //! socket runs the same dispatch) and the MCP dispatcher (a tool call and an
 //! MCP code-mode call) call it by the name every host door has; a pumped
-//! agent run calls [`connector_call_as`]. All of them meet one admission: the
+//! agent run calls [`connector_call_listing_as`]. All of them meet one admission: the
 //! caller's own principal, its own standing grant and the gate. The call is
 //! never the owner's by default. The principal is the caller's: the facade
 //! credential's own (`facade_actor`), the MCP connector's resolved actor, or
@@ -18,6 +18,7 @@
 //! inside a write transaction.
 use std::sync::Arc;
 
+use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::outbound_consent::ConnectorCallRequest;
 use oneiron::runtime_hooks::InvocationId;
@@ -50,13 +51,14 @@ pub(crate) async fn connector_call(
     Option<Vec<EntityId>>,
 ) {
     const VERB: &str = "connector.call";
+    let line = super::host_doors::calling_line();
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |server, _, memory| {
             let memory = match invocation {
                 Some(invocation) => memory.with_invocation(invocation),
                 None => memory,
             };
-            connector_call_listing_as(server, &memory, input)
+            connector_call_listing_on(server, &memory, input, line.as_ref())
         })
         .await;
     let answer = match answer {
@@ -87,53 +89,38 @@ const AWAITING_INPUT_REPLY_NARROWS: bool = false;
 /// content; what the ref leads to narrows where it is read or delivered. A
 /// connector's questions keep their answer path
 /// ([`AWAITING_INPUT_REPLY_NARROWS`]).
-fn answers_as_before(reply: &ConnectorCallReply) -> bool {
+pub(crate) fn answers_as_before(reply: &ConnectorCallReply) -> bool {
     reply.wait_ref().is_some()
         || (!AWAITING_INPUT_REPLY_NARROWS
             && matches!(reply, ConnectorCallReply::AwaitingInput { .. }))
 }
 
-/// [`connector_call`]'s call as it answered before FIX 5455: its reply in
-/// full, beside the rows its reads listed. `ai.voice.tool` hands the reply
-/// to its live session.
-pub(crate) async fn connector_call_reply(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass),
-    invocation: Option<InvocationId>,
-    input: ConnectorCallRequest,
-) -> Listed<ConnectorCallReply> {
-    const VERB: &str = "connector.call";
-    credential_listing(server, auth, caller, VERB, move |server, _, memory| {
-        let memory = match invocation {
-            Some(invocation) => memory.with_invocation(invocation),
-            None => memory,
-        };
-        connector_call_as(server, &memory, input)
-    })
-    .await
-}
-
-/// One connector call for the caller `memory` is bound to, with the
-/// invocation it carries. Blocking: it sends, so call it on a blocking
-/// worker.
-pub(crate) fn connector_call_as(
+/// [`connector_call_listing_as`] for a caller that spends on `line`, its
+/// run's own: a web call on the deploy's key is charged there (FIX 11604).
+/// Every other call runs as [`connector_call_listing_as`] runs it.
+pub(crate) fn connector_call_listing_on(
     server: &SyncServer,
     memory: &Memory<'_>,
     input: ConnectorCallRequest,
-) -> MemoryResult<ConnectorCallReply> {
-    connector_call_listing_as(server, memory, input).map(|(reply, _)| reply)
+    line: Option<&RunAdmission>,
+) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
+    if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
+        return crate::web_connector::call_listing(server, memory, input, line);
+    }
+    connector_call_listing_as(server, memory, input)
 }
 
-/// [`connector_call_as`], beside the rows the call's passes picked
-/// (FIX 5455), `None` when they are not known.
+/// One connector call for the caller `memory` is bound to, with the
+/// invocation it carries, beside the rows the call's passes picked
+/// (FIX 5455), `None` when they are not known. Blocking: it sends, so call
+/// it on a blocking worker.
 pub(crate) fn connector_call_listing_as(
     server: &SyncServer,
     memory: &Memory<'_>,
     input: ConnectorCallRequest,
 ) -> MemoryResult<(ConnectorCallReply, Option<Vec<EntityId>>)> {
     if input.name == oneiron::web_connector::WEB_CONNECTOR_NAME {
-        return crate::web_connector::call_listing(server, memory, input);
+        return crate::web_connector::call_listing(server, memory, input, None);
     }
     let invocation = memory
         .invocation()

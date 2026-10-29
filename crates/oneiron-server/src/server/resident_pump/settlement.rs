@@ -10,12 +10,12 @@ use super::{
     DetectorTier, DreamerParkCause, DreamerRunnerStore, DurableStepContext, EngineExecutorOutcome,
     EngineExecutorStatus, EngineRunError, EntityId, FORK_REFUSALS, FailureEscalationMode,
     FailureLadderOutcome, FailureScope, FailureScopePolicy, HandleAttemptFailure, HealerSlot,
-    LEASE_OWNER, LlmError, OUTAGE_PARK_REASON, OutputContextEntry, ParkDreamerAttempt, PayerFault,
+    LEASE_OWNER, LlmError, OutputContextEntry, ParkDreamerAttempt, PayerFault,
     RUN_RETRY_BACKOFF_SECS, RetryableLlmError, SetAttemptResult, SpentKind, TypeRef,
     TypedFailureEvidence, TypedFailureVerdict, Vault, WAITING_PARK_REASON, agent_dispatch_actor,
-    browser_workflow, open_trap, park_and_bind_wait_trap, park_for_payer, parks_on_outage,
-    parse_confession, register_wait, restore_output, run_continuation, trap_for_durable_wait,
-    trap_park_owner, unix_now,
+    browser_workflow, open_trap, outage_park_reason, park_and_bind_wait_trap, park_for_payer,
+    parks_on_outage, parse_confession, register_wait, restore_output, run_continuation,
+    trap_for_durable_wait, trap_park_owner, unix_now,
 };
 
 /// Settles the run's attempt: complete, parked on its wait or on a provider
@@ -67,7 +67,7 @@ pub(super) fn settle(
             tracing::info!(%error, attempt = ?attempt.id, "an agent run parks on a provider outage");
             DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
                 attempt_id: attempt.id,
-                reason: OUTAGE_PARK_REASON.to_owned(),
+                reason: outage_park_reason(error.provider_outage()),
                 cause: DreamerParkCause::ProviderUnavailable,
                 park_owner: LEASE_OWNER.to_owned(),
                 carried_spend: None,
@@ -244,7 +244,7 @@ fn complete(
         })?;
     } else {
         // The run's durable result: the TASK's Done names it.
-        let output = AgentDispatcher::new(vault).attach_resident_run_result(
+        let output = AgentDispatcher::new(vault).attach_agent_run_result(
             attempt,
             LEASE_OWNER,
             &outcome.replay_record,
@@ -379,7 +379,7 @@ fn park_on_wait(
         parked.step_hash,
         "code-run wait",
     )?;
-    register_wait(vault, &trap, now_ms)?;
+    let registered = register_wait(vault, &trap, now_ms)?;
     // The park and its wake binding commit together: a stop between them
     // would leave a park no delivery wakes.
     park_and_bind_wait_trap(
@@ -396,5 +396,11 @@ fn park_on_wait(
         &trap,
         now_ms,
     )?;
+    // A signal that landed before register_wait leaves the trap Sent: the
+    // delivering commit cannot wake that head again. Now that the park and
+    // binding exist, the shared sweep consumes it and queues this same try.
+    if registered == oneiron::llm::DreamerTrapState::Sent {
+        AgentDispatcher::new(vault).resume_signalled_runs(now_ms)?;
+    }
     Ok(())
 }

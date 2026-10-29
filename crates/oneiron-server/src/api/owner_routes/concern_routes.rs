@@ -41,6 +41,58 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
 }
 
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/outcome`'s body
+/// (FIX 11611): [`ConcernOutcome`].
+pub(crate) fn concern_outcome_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/outcome`'s answer
+/// (FIX 11611): [`ConcernCardSummary`].
+pub(crate) fn concern_card_summary_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernCardSummary>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/move`'s body
+/// (FIX 11611): [`ConcernMoveRequest`].
+pub(crate) fn concern_move_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernMoveRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/move`'s answer
+/// (FIX 11611): [`ConcernMoveOutcome`].
+pub(crate) fn concern_move_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernMoveOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply`'s body
+/// (FIX 11611): [`ConcernApplyRequest`].
+pub(crate) fn concern_apply_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernApplyRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply`'s answer
+/// (FIX 11611): [`ConcernApplyOutcome`].
+pub(crate) fn concern_apply_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConcernApplyOutcome>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply-prompt-inject`'s
+/// body (FIX 11611): the approved prompt continuation.
+pub(crate) fn concern_prompt_inject_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<
+        oneiron::agent_dispatch::ConcernPromptInjectRequest,
+    >()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/inbox/concern/apply-prompt-inject`'s
+/// answer (FIX 11611): the continuation the approval made.
+pub(crate) fn concern_prompt_inject_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<
+        oneiron::agent_dispatch::ConcernPromptInjectOutcome,
+    >()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ConcernCard {
@@ -67,7 +119,7 @@ async fn card(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConcernOutcome {
     /// The card's `health:` handle, the row's `payload_ref`.
