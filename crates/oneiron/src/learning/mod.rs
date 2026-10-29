@@ -23,6 +23,7 @@
 //! ([`coordination`]).
 
 pub mod cell;
+mod conversion_chain;
 pub mod coordination;
 pub mod doors;
 pub mod estimate;
