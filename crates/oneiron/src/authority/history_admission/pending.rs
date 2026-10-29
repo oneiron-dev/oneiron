@@ -16,12 +16,18 @@
 //! and a composing door stores as before.
 //!
 //! The history the rows need joins the vault's own request
-//! ([`pending_history_request_in_txn`]); once a repair lands, the rows are
-//! put again ([`Vault::retry_pending_authority_history`]) and leave only
-//! when the fold with them answers and they are stored (CALLS
-//! AUTHORITY_HISTORY_PENDING_END). The evidence survives a restore (LIVE).
+//! ([`pending_history_request_in_txn`]); once any commit stores an authority
+//! row, whichever door stored it (a local append, a signed page or repair
+//! page, the selector door or the replicated commit), the rows are put
+//! again ([`Vault::retry_pending_authority_history`]), each with the pending
+//! rows it stands on, parents first. A row leaves once the fold with it
+//! answers: stored where the door admits it, dropped with every pending row
+//! standing on it where the door still refuses it for something other than
+//! history (CALLS AUTHORITY_HISTORY_PENDING_END). The evidence survives a
+//! restore (LIVE).
 
-use std::collections::BTreeMap;
+use std::cell::Cell;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::readonly_fold::{ArrivingFold, authority_view_with_rows_for_store_in_txn};
 use super::*;
@@ -33,14 +39,33 @@ const AUTHORITY_HISTORY_PENDING: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
     SideTable::new(&side_table::AUTHORITY_HISTORY_PENDING);
 
 /// When pending evidence leaves (CALLS AUTHORITY_HISTORY_PENDING_END): once
-/// the same door stores it, never by age or count.
+/// the fold with it answers, never by age or count.
 pub(crate) const AUTHORITY_HISTORY_PENDING_END: PendingEnd = PendingEnd::ResolvedByReferenceFold;
 
 /// The policy hook behind [`AUTHORITY_HISTORY_PENDING_END`].
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingEnd {
-    /// A row leaves when a put of it lands; a row still refused stays.
+    /// A row leaves when the fold with it answers: a put of it lands, or the
+    /// door refuses it for something other than history, which no later
+    /// history changes. A row whose fold still needs history stays.
     ResolvedByReferenceFold,
+}
+
+thread_local! {
+    /// Set while this thread puts pending rows again, so the commit of a row
+    /// it lands starts no second retry inside the first.
+    static RETRYING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// What one put of a pending row, with the pending rows it stands on, did.
+enum PendingLanding {
+    /// Stored: the rows left the evidence in the same commit.
+    Landed,
+    /// The fold with them still needs history: they stay.
+    Waiting,
+    /// The fold with them answers and the door refuses them for something
+    /// other than history.
+    Refused(crate::error::Error),
 }
 
 /// A batch a local append keeps as evidence instead of storing it: the
@@ -198,25 +223,101 @@ pub(crate) fn pending_history_request_in_txn(
 }
 
 impl Vault {
-    /// Puts every pending row again, as one batch through the local append
-    /// door (FIX 2989): once it lands, the rows leave the pending evidence;
-    /// while the fold with them still needs history, or the door refuses,
-    /// they stay (CALLS AUTHORITY_HISTORY_PENDING_END).
+    /// After a commit that stored an authority row (`noted`), whichever door
+    /// stored it, puts the pending rows again (FIX 2989 rest): history that
+    /// lands by window sync or a plain page import ends their wait as a
+    /// repair page does. A failure is logged and leaves them waiting for the
+    /// next authority commit; it never fails the commit that called it.
+    pub(crate) fn retry_pending_authority_history_after_authority_ingest(&self, noted: bool) {
+        if !noted || RETRYING.with(Cell::get) {
+            return;
+        }
+        if let Err(error) = self.retry_pending_authority_history() {
+            tracing::warn!(
+                target: "oneiron::authority::history",
+                %error,
+                "pending authority evidence retry failed; the next authority commit retries it"
+            );
+        }
+    }
+
+    /// Puts every pending row again through the local append door (FIX
+    /// 2989), parents first, each with the pending rows it stands on, so a
+    /// row the door refuses or one still waiting holds back only the rows
+    /// standing on it (CALLS AUTHORITY_HISTORY_PENDING_END).
     pub(crate) fn retry_pending_authority_history(&self) -> Result<()> {
         match AUTHORITY_HISTORY_PENDING_END {
             PendingEnd::ResolvedByReferenceFold => {}
         }
-        let (pending, now) = {
+        let pending = {
             let txn = self.store.env.read_txn()?;
-            (
-                pending_rows_in_txn(&self.store, &txn)?,
-                self.instant_in_txn(&txn)?.secs(),
-            )
+            pending_rows_in_txn(&self.store, &txn)?
         };
         if pending.is_empty() {
             return Ok(());
         }
-        let entries: Vec<_> = pending
+        let outer = RETRYING.with(|retrying| retrying.replace(true));
+        let result = self.retry_pending_rows(&pending);
+        RETRYING.with(|retrying| retrying.set(outer));
+        result
+    }
+
+    /// [`Self::retry_pending_authority_history`] over `pending`, read before.
+    fn retry_pending_rows(
+        &self,
+        pending: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ) -> Result<()> {
+        let closures: BTreeMap<_, _> = pending
+            .keys()
+            .map(|hash| (*hash, pending_closure(pending, hash)))
+            .collect();
+        // An ancestor's closure is a strict subset of its descendant's.
+        let mut order: Vec<_> = closures.keys().copied().collect();
+        order.sort_by_key(|hash| (closures[hash].len(), *hash));
+        let mut resolved = BTreeSet::new();
+        for hash in order {
+            if resolved.contains(&hash) {
+                continue;
+            }
+            let rows: BTreeMap<_, _> = closures[&hash]
+                .iter()
+                .filter(|row| !resolved.contains(*row))
+                .map(|row| (*row, pending[row].clone()))
+                .collect();
+            match self.land_pending_rows(&rows)? {
+                PendingLanding::Landed => resolved.extend(rows.into_keys()),
+                PendingLanding::Waiting => {}
+                PendingLanding::Refused(error) => {
+                    resolved.extend(self.drop_refused_pending(hash, &closures, &error)?);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One put of `rows` through the local append door, in a writer of its
+    /// own that deletes them from the evidence as it stores them. The fold
+    /// with them in is read first: while it needs history, no writer opens.
+    fn land_pending_rows(
+        &self,
+        rows: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ) -> Result<PendingLanding> {
+        let now = {
+            let txn = self.store.env.read_txn()?;
+            if !matches!(
+                authority_view_with_rows_for_store_in_txn(
+                    &self.store,
+                    self.privacy_posture(),
+                    &txn,
+                    rows
+                ),
+                Ok(ArrivingFold::Complete(_))
+            ) {
+                return Ok(PendingLanding::Waiting);
+            }
+            self.instant_in_txn(&txn)?.secs()
+        };
+        let entries: Vec<_> = rows
             .values()
             .map(|entry| {
                 (
@@ -229,14 +330,70 @@ impl Vault {
                 )
             })
             .collect();
-        if self.put_authority_log_entries(&entries).is_err() {
-            return Ok(());
+        let watch = crate::federation::StaleSweepWatch::begin(self);
+        let mut wtxn = self.store.env.write_txn()?;
+        match self.put_authority_log_rows_in_txn(&mut wtxn, &entries, true) {
+            Ok(AuthorityPut::Stored(_)) => {}
+            Ok(AuthorityPut::Pending(_)) => return Ok(PendingLanding::Waiting),
+            Err(error) if super::super::readonly_fold::is_history_incomplete(&error) => {
+                return Ok(PendingLanding::Waiting);
+            }
+            Err(error @ crate::error::Error::Record(_)) => {
+                return Ok(PendingLanding::Refused(error));
+            }
+            Err(error) => return Err(error),
         }
+        for hash in rows.keys() {
+            AUTHORITY_HISTORY_PENDING.delete(&self.store, &mut wtxn, hash)?;
+        }
+        wtxn.commit()?;
+        watch.finish()?;
+        self.store.notify_proactivity_changes();
+        Ok(PendingLanding::Landed)
+    }
+
+    /// Drops `refused` and every pending row standing on it from the
+    /// evidence, once the fold with it answered and the door still refused
+    /// it (`error`), and answers them all.
+    fn drop_refused_pending(
+        &self,
+        refused: AuthorityEntryHash,
+        closures: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        error: &crate::error::Error,
+    ) -> Result<BTreeSet<AuthorityEntryHash>> {
+        let dropped: BTreeSet<_> = closures
+            .iter()
+            .filter(|(_, closure)| closure.contains(&refused))
+            .map(|(hash, _)| *hash)
+            .collect();
         let mut txn = self.store.env.write_txn()?;
-        for hash in pending.keys() {
+        for hash in &dropped {
             AUTHORITY_HISTORY_PENDING.delete(&self.store, &mut txn, hash)?;
         }
         txn.commit()?;
-        Ok(())
+        tracing::warn!(
+            target: "oneiron::authority::history",
+            %error,
+            rows = dropped.len(),
+            "pending authority evidence left: its history is here and the door refused it"
+        );
+        Ok(dropped)
     }
+}
+
+/// `hash` and every pending row it stands on, through pending rows only.
+fn pending_closure(
+    pending: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    hash: &AuthorityEntryHash,
+) -> BTreeSet<AuthorityEntryHash> {
+    let mut closure = BTreeSet::from([*hash]);
+    let mut stack = pending[hash].parent_hashes.clone();
+    while let Some(parent) = stack.pop() {
+        if let Some(row) = pending.get(&parent)
+            && closure.insert(parent)
+        {
+            stack.extend(row.parent_hashes.iter().copied());
+        }
+    }
+    closure
 }
