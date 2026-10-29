@@ -15,20 +15,27 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron_code_check::{
-    BackendId, CheckFailure, CheckInput, CheckReport, FeedbackCheck, ProgramLanguage, StepThen,
+    BackendId, CheckFailure, CheckInput, CheckReport, Declaration, FeedbackCheck, ProgramLanguage,
+    StepThen,
 };
 
-use super::host::executor_declarations;
 use super::store::{RESULT_REPLY_INLINE_BYTES, type_diagnostics_output_path, write_json};
 use super::types::EngineExecutorStatus;
 use crate::code_run::{
-    CodeRunRawOutput, DiagnosticCollection, ExecutorStorage, ProgramPreparationNote,
+    CodeRunRawOutput, DiagnosticCollection, ExecutorStorage, FeedbackRoute, ProgramPreparationNote,
     ProgramStepFeedback, ProgramStepIdentity, StepKey, StoredStepFeedback, TYPE_CHECK_NOT_LOADED,
     TYPE_CHECK_NOT_STARTED, TYPE_CHECK_OFF, TypeCheckFacts, TypeDiagnostic, TypeDiagnostics,
     measure,
 };
 use crate::receipt::{ActionInputs, call_bytes_digest};
 use crate::{EntityId, Vault};
+
+mod door;
+mod publication;
+
+pub(crate) use self::door::{
+    CheckedDoor, LatestFeedback, ProgramAdmission, ProgramCheck, RowsCheck,
+};
 
 /// The action a feedback check's digest names.
 const FEEDBACK_CHECK_ACTION: &str = "code_check.feedback";
@@ -47,7 +54,8 @@ struct Service {
     loaded: Condvar,
     /// The checker the configuration names, for a check pending its load.
     configured: String,
-    /// Where a landed check writes its own result: the served vault.
+    /// Where a landed check writes its own result: the served vault's rows,
+    /// or the live stretch of it a session-bound run was bound to.
     vault: Option<Arc<Vault>>,
 }
 
@@ -62,7 +70,8 @@ impl TypeFeedback {
     /// A service whose `configured` checker is loading. A check admitted
     /// before the load ends waits for it on the check's own thread; its run
     /// never does. A check that lands writes its result to its step's row on
-    /// `vault`, when its run's rows are there.
+    /// its run's own route on `vault`: its rows, or the live stretch of it
+    /// the run was bound to.
     #[must_use]
     pub fn loading(configured: &str, vault: Option<Arc<Vault>>) -> Self {
         Self::with(Checker::Loading, configured, vault)
@@ -161,31 +170,21 @@ impl Service {
         }
     }
 
-    /// The vault `job`'s run keeps its rows on, when it is this service's.
-    fn vault_for(&self, job: &CheckJob) -> Option<&Vault> {
-        self.vault
-            .as_deref()
-            .filter(|vault| job.vault.is_some_and(|id| id == vault.vault_id()))
-    }
-
     /// One check, on its own thread: run, measured, its large collection
-    /// kept in the run's body, landed in its cell, and written to its step's
-    /// row when the step already wrote it pending. A failure to keep it is
-    /// traced; the run it checked is never touched.
+    /// kept in the run's body, landed in its cell, and written on its run's
+    /// own route when the step already wrote it pending. A check of a
+    /// stretch that closed while it waited for its checker is never run: its
+    /// program goes with it. A failure to keep it is traced; the run it
+    /// checked is never touched.
     fn work(&self, cell: &StepCell, job: &CheckJob) {
         let landed = match self.checker() {
             Ok(checker) => {
+                if !self.still_kept(job) {
+                    return;
+                }
                 let checked = check(&checker, job);
                 let diagnostics = checked.type_diagnostics(cell.facts());
-                let (diagnostics, body, finalized) = match self.vault_for(job) {
-                    Some(vault) => {
-                        let storage = ExecutorStorage::Canonical(vault);
-                        let (diagnostics, body) =
-                            keep_collection(&storage, job.key, job.source.as_ref(), diagnostics);
-                        (diagnostics, body, true)
-                    }
-                    None => (diagnostics, None, false),
-                };
+                let (diagnostics, body, finalized) = self.placed(job, diagnostics);
                 Landed {
                     diagnostics,
                     body,
@@ -195,12 +194,8 @@ impl Service {
             }
             Err(diagnostics) => Landed::settled(diagnostics),
         };
-        let vault = self.vault_for(job);
-        if let Some(row) = cell.land(landed, vault.is_some())
-            && let Some(vault) = vault
-            && let Err(error) = vault.put_type_diagnostics(job.key, &row)
-        {
-            tracing::warn!(target: "oneiron::code_check", %error, "late type feedback not kept");
+        if let Some(row) = cell.land(landed, self.publishes(job)) {
+            self.publish(job, &row);
         }
     }
 }
@@ -216,8 +211,12 @@ pub(super) struct CheckJob {
     pub(super) actor: Option<EntityId>,
     /// The step's stored program, whose marks a stored collection takes.
     pub(super) source: Option<CodeRunRawOutput>,
-    /// The vault the run's rows are on; `None` for a run on a session.
-    pub(super) vault: Option<crate::vault::VaultId>,
+    /// The declaration files the program is checked against: those its
+    /// door teaches it, owned by the check.
+    pub(super) declarations: Vec<Declaration<'static>>,
+    /// Where a check that lands after its step keeps its result: its run's
+    /// own route (FIX 10389).
+    pub(super) route: FeedbackRoute,
 }
 
 /// What one check answered.
@@ -232,17 +231,16 @@ struct Checked {
 /// Runs `job`'s check on `checker`. A checker that panics is a crashed
 /// check.
 fn check(checker: &FeedbackCheck, job: &CheckJob) -> Checked {
-    let declarations = executor_declarations();
     let started = Instant::now();
     let checked = catch_unwind(AssertUnwindSafe(|| {
         checker.checker().check_attributed(&CheckInput {
-            declarations: &declarations,
+            declarations: &job.declarations,
             program: &job.program,
             language: job.language,
         })
     }));
     let action_digest = checked.as_ref().ok().map(|(backend, _)| {
-        declarations
+        job.declarations
             .iter()
             .fold(ActionInputs::new(), |inputs, file| {
                 inputs.with(file.name, call_bytes_digest(file.text.as_bytes()))
@@ -513,12 +511,13 @@ impl StepCell {
     }
 
     /// Keeps a landed collection past one reply in a body on `storage`, the
-    /// run's own route, when its check could not.
+    /// run's own route, when its check could not and no landed row of it is
+    /// written yet: a row written already keeps the collection where it is.
     pub(super) fn finalize(&self, storage: &ExecutorStorage<'_>) {
         let diagnostics = {
             let state = lock(&self.state);
             match &state.landed {
-                Some(landed) if !landed.finalized => landed.diagnostics.clone(),
+                Some(landed) if !landed.finalized && !state.kept => landed.diagnostics.clone(),
                 _ => return,
             }
         };
