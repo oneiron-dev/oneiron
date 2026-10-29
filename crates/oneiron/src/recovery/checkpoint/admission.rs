@@ -91,10 +91,7 @@ impl Vault {
     /// [`CheckpointKey::from_delivered`]: super::CheckpointKey::from_delivered
     pub fn restore_checkpoint_admitted(
         request: AdmittedRestore<'_>,
-        finish: impl FnOnce(
-            &Self,
-            Option<&super::HostOrderHolds>,
-        ) -> Result<(), RestoreAdmissionError>,
+        finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<(), RestoreAdmissionError>,
         after_keep: impl FnOnce(&Self, &RestoreCommitFacts) -> Result<(), RestoreAdmissionError>,
     ) -> Result<(Self, RestoreReport, RestoreAdmission), RestoreAdmissionError> {
         use RestorePhase as P;

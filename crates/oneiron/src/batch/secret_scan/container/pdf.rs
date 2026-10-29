@@ -22,8 +22,7 @@ use lopdf::xref::XrefEntry;
 use lopdf::{Document, LoadOptions, Object, ObjectId, ObjectStream, Stream};
 
 use super::{
-    Budget, MAX_EXPANDED_BYTES, Stop, Walked, encode_failed, hidden_member, over_budget,
-    unreadable,
+    Budget, MAX_EXPANDED_BYTES, Stop, Walked, encode_failed, hidden_member, over_budget, unreadable,
 };
 use crate::blob_artifact::esign::render::{PdfPreparationError, decode_stream};
 use crate::secret_custody::MemberStep;
@@ -379,12 +378,13 @@ fn superseded(
         let mut view = bytes.to_vec();
         view.extend_from_slice(format!("\nstartxref\n{offset}\n%%EOF\n").as_bytes());
         let mut visited_stop = false;
-        let mut carrier = |id: ObjectId, decoded: Vec<u8>, budget: &mut Budget| -> Walked<Vec<u8>> {
-            if hidden_member(&decoded) {
-                each(step(id), &decoded, budget).inspect_err(|_| visited_stop = true)?;
-            }
-            Ok(decoded)
-        };
+        let mut carrier =
+            |id: ObjectId, decoded: Vec<u8>, budget: &mut Budget| -> Walked<Vec<u8>> {
+                if hidden_member(&decoded) {
+                    each(step(id), &decoded, budget).inspect_err(|_| visited_stop = true)?;
+                }
+                Ok(decoded)
+            };
         let revision = match load(&view, budget, &mut carrier) {
             Ok(revision) => revision,
             Err(stop @ Stop::Fail(_)) => return Err(stop),

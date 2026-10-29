@@ -7,8 +7,8 @@
 
 use getrandom::SysRng;
 use oneiron_crypto::{
-    Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId,
-    WrapType, seal_with_aad,
+    Argon2Cost, Envelope, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId, WrapType,
+    seal_with_aad,
 };
 
 use super::super::{AuthorityVaultId, invalid_authority};
