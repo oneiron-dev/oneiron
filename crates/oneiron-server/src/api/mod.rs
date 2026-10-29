@@ -194,6 +194,9 @@ mod saved_query;
 mod scoped_auth;
 mod search;
 mod surface_events;
+// FIX 10389: one step's type feedback released apart from its answer, for
+// the MCP gateway and the HTTP facade alike.
+mod type_feedback_release;
 mod vad;
 pub(crate) mod write_facet;
 

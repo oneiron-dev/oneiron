@@ -4,7 +4,11 @@
 //! `oneiron::runtime_hooks::verb::InvocationRelease` is the record a claimed call keeps.
 
 use super::*;
+use crate::api::type_feedback_release::{
+    FeedbackScan, put_program_step, release_step_feedback, take_program_steps,
+};
 use oneiron::authority::PeerMachine;
+use oneiron::code_run::{ProgramStepFeedback, ProgramStepFeedbackRelease};
 use oneiron::runtime_hooks::verb::InvocationRelease;
 use oneiron::settings::{ReadDestination, ReleaseHold};
 
@@ -42,7 +46,9 @@ impl FacadeReleased {
 /// becomes the content-free word that the call ran
 /// ([`ActAnswer::DetailsOnDevice`](oneiron::task_verb::sdk::ActAnswer)); its
 /// effect stays committed. An answer whose rows are unknown, and every answer
-/// on this device, goes out as it was.
+/// on this device, goes out as it was. The step feedback an answer carries
+/// is judged apart from it, after it (FIX 10389): a hold on one withholds
+/// only that feedback's text, never the answer.
 pub(super) fn released_reply(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -51,17 +57,23 @@ pub(super) fn released_reply(
 ) -> (axum::Extension<FacadeReleased>, Json<serde_json::Value>) {
     let FacadeCallOutput { value, rows } = output;
     let owner_export = verb == OWNER_EXPORT_VERB && auth.is_owner_grade();
+    let destination = auth.destination();
+    let carried = take_program_steps(verb, &value);
     let held = known_denied(
         server.vault(),
-        &auth.destination(),
+        &destination,
         rows.as_deref(),
-        &value,
+        carried.as_ref().map_or(&value, |(base, _)| base),
         owner_export,
     );
-    let (sent, withheld) = if held {
-        (details_on_device(), Some(value))
-    } else {
-        (value, None)
+    let released = carried.filter(|_| !held).and_then(|(_, feedback)| {
+        let rows = rows.as_deref();
+        released_feedback(server.vault(), &destination, rows, value.clone(), feedback)
+    });
+    let (sent, withheld) = match released {
+        _ if held => (details_on_device(), Some(value)),
+        Some(sent) => (sent, Some(value)),
+        None => (value, None),
     };
     let kept = FacadeReleased {
         peer: auth.peer(),
@@ -110,17 +122,47 @@ pub(crate) fn replayed_value(
         return details_on_device();
     }
     let owner_export = verb == OWNER_EXPORT_VERB && auth.is_owner_grade();
+    let destination = auth.destination();
+    let carried = take_program_steps(verb, &release.value);
     if known_denied(
         vault,
-        &auth.destination(),
+        &destination,
         release.rows.as_deref(),
-        &release.value,
+        carried.as_ref().map_or(&release.value, |(base, _)| base),
         owner_export,
     ) {
-        details_on_device()
-    } else {
-        release.value
+        return details_on_device();
     }
+    let Some((_, feedback)) = carried else {
+        return release.value;
+    };
+    let rows = release.rows.as_deref();
+    released_feedback(vault, &destination, rows, release.value.clone(), feedback)
+        .unwrap_or(release.value)
+}
+
+/// `value`, an answer released as it stands, with the step feedback it
+/// carries judged apart for `destination` (FIX 10389): `None` when every
+/// item leaves whole, else the answer with each item its own release check
+/// holds withheld, with none of its text. Nothing else in it changes.
+fn released_feedback(
+    vault: &oneiron::Vault,
+    destination: &ReadDestination,
+    rows: Option<&[EntityId]>,
+    mut value: serde_json::Value,
+    feedback: Vec<(usize, ProgramStepFeedback)>,
+) -> Option<serde_json::Value> {
+    let mut withheld = false;
+    for (slot, feedback) in feedback {
+        let released =
+            release_step_feedback(vault, destination, rows, feedback, FeedbackScan::Named);
+        if matches!(released, ProgramStepFeedbackRelease::Withheld { .. }) {
+            withheld = true;
+            let released = serde_json::to_value(&released).unwrap_or(serde_json::Value::Null);
+            put_program_step(&mut value, slot, released);
+        }
+    }
+    withheld.then_some(value)
 }
 
 /// Whether `auth`'s credential still reads every one of `rows` now, and none
