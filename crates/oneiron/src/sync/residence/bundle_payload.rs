@@ -35,8 +35,7 @@ use zeroize::Zeroizing;
 use super::discover_local_window_keys;
 use crate::Vault;
 use crate::authority::{
-    AuthorityEntryHash, Destination, EffectiveRead, decode_authority_log_entry_body,
-    side_world,
+    AuthorityEntryHash, Destination, EffectiveRead, decode_authority_log_entry_body, side_world,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;

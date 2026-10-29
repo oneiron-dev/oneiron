@@ -354,9 +354,7 @@ async fn pin(
     let body = payload.read(&server).await?;
     let report = blocking(move || -> OwnerResult<RepinView> {
         let root = RecoveryRootId(parse_revision("root", &body.root)?);
-        let report = server
-            .vault()
-            .pin_owner_root(&owner, root)?;
+        let report = server.vault().pin_owner_root(&owner, root)?;
         Ok(RepinView::from(&report))
     })
     .await?;

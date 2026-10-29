@@ -151,13 +151,7 @@ async fn anchor(
         let confirm = confirmation(body.fingerprint.as_deref(), body.confirm_root.as_deref())?;
         let code = body.code.as_deref().map(request_code).transpose()?;
         let seed = Kit::parse(body.pieces, body.passphrase)?.seed(vault)?;
-        let anchored = vault.anchor_machine(
-            &owner,
-            &seed,
-            &request,
-            code,
-            confirm,
-        )?;
+        let anchored = vault.anchor_machine(&owner, &seed, &request, code, confirm)?;
         Ok(RootWorkAnswer::of(
             vault,
             RootWorkDone::Anchored(Box::new(anchored)),
@@ -184,12 +178,8 @@ async fn restore(
         let confirm = confirmation(body.fingerprint.as_deref(), body.confirm_root.as_deref())?;
         let kit = Kit::parse(body.pieces, body.passphrase)?;
         let pieces = kit.pieces();
-        let restored = vault.restore_world_kit(
-            &owner,
-            &pieces,
-            kit.passphrase.as_ref(),
-            confirm,
-        )?;
+        let restored =
+            vault.restore_world_kit(&owner, &pieces, kit.passphrase.as_ref(), confirm)?;
         Ok(RootWorkAnswer::of(
             vault,
             RootWorkDone::KitRestored(Box::new(restored)),
@@ -255,12 +245,8 @@ async fn confirm(
             .collect::<OwnerResult<BTreeSet<EntityId>>>()?;
         let kit = Kit::parse(body.pieces, body.passphrase)?;
         let pieces = kit.pieces();
-        let confirmed = vault.confirm_world_kit(
-            &owner,
-            &pieces,
-            kit.passphrase.as_ref(),
-            &carry,
-        )?;
+        let confirmed =
+            vault.confirm_world_kit(&owner, &pieces, kit.passphrase.as_ref(), &carry)?;
         Ok(RootWorkAnswer::of(
             vault,
             RootWorkDone::KitConfirmed {
