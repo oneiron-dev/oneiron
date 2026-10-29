@@ -183,8 +183,9 @@ pub(crate) fn queue_pad_tombstone_window(store: &Store, txn: &RwTxn<'_>, window:
     });
 }
 
-/// The rows `ops` write: each put, and the source of each edge they write,
-/// whose window carries the edge.
+/// The rows `ops` write: each put, and the source of each edge they write or
+/// remove, whose window carries the edge. A removal's source wakes the live
+/// mirror, which takes the removal from its durable marker (FIX 9599).
 pub(super) fn ops_written_rows(ops: &[BatchOp]) -> BTreeSet<EntityId> {
     ops.iter()
         .filter_map(|op| match op {
@@ -193,7 +194,8 @@ pub(super) fn ops_written_rows(ops: &[BatchOp]) -> BTreeSet<EntityId> {
             | BatchOp::PublicEdgeWithCreatedAt { src, .. }
             | BatchOp::EdgeWithCreatedAt { src, .. }
             | BatchOp::SetEdgeWeight { src, .. }
-            | BatchOp::SetEdgeVad { src, .. } => Some(*src),
+            | BatchOp::SetEdgeVad { src, .. }
+            | BatchOp::DeleteEdge { src, .. } => Some(*src),
             _ => None,
         })
         .collect()
