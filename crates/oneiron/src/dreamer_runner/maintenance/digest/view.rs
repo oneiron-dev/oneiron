@@ -28,7 +28,7 @@ use crate::{EntityId, Result, Vault};
 /// words were written, with its text rebuilt from what is left. A
 /// projection: neither its text nor its lines are checked against the
 /// stored digest's content hash, which it does not carry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct ProactivityDigestView {
     /// The stored digest's locator (FIX 2332): what its notifications name.
     pub id: [u8; 32],
@@ -37,6 +37,7 @@ pub struct ProactivityDigestView {
     /// The authenticated reader the asks are addressed to; `None` for the
     /// ownerless timer projection, which carries no asks.
     #[serde(with = "crate::serialize::entity_ref::optional")]
+    #[schemars(with = "Option<String>")]
     pub recipient: Option<EntityId>,
     /// Whether an urgent wake broke through the cadence for it.
     pub urgent: bool,

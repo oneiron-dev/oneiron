@@ -18,10 +18,12 @@
 //! `NativeClient` and exports `Oneiron` and `OneironError` only; the export
 //! census asserts `not hasattr(oneiron, "NativeClient")`.
 
+use oneiron::authority::CustodyChange;
 use oneiron::memory::{
     ClaimInput, MemoryError, MemoryPack, WitnessAssertions, WitnessAuthor, WitnessMessage,
     WitnessTurn,
 };
+use oneiron::task_verb::sdk::{SecretCustodyViewReply, seal_custody_submit};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde::Deserialize;
@@ -404,6 +406,35 @@ impl NativeClient {
             })
             .map_err(raise)?;
         encode(&receipt)
+    }
+
+    /// Seals a custody register or rotate on the caller's own side (FIX
+    /// 11441): `view_json` is what `vault.secrets.custody.get` answered,
+    /// `change` is `register` or `rotate`, `holder` the candidate the input
+    /// is sealed to (the view's own install when `None`), `recipients` the
+    /// candidates permitted to hold the bytes (the holder alone when empty)
+    /// and `body` a register's whole record or a rotate's new value. Answers
+    /// the `vault.secrets.custody.submit` input that carries it, as JSON. No
+    /// vault is opened and no call is made.
+    #[staticmethod]
+    fn vault_secrets_custody_seal(
+        view_json: &str,
+        change: &str,
+        holder: Option<&str>,
+        recipients: Vec<String>,
+        body: &[u8],
+    ) -> PyResult<String> {
+        let view: SecretCustodyViewReply = decode(view_json, "custody view")?;
+        let change = CustodyChange::from_name(change)
+            .filter(|change| matches!(change, CustodyChange::Register | CustodyChange::Rotate))
+            .ok_or_else(|| {
+                raise(MemoryError::bad_request(
+                    "change must be register or rotate",
+                ))
+            })?;
+        let sealed =
+            seal_custody_submit(&view, change, holder, &recipients, None, body).map_err(raise)?;
+        encode(&sealed)
     }
 
     // BEGIN GENERATED AGENT VERBS
@@ -5255,6 +5286,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.secrets.rewrap")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.secrets.rewrap", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_secrets_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.secrets.revoke")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.secrets.revoke", input))
             .map_err(raise)?;
         encode(&output)
     }

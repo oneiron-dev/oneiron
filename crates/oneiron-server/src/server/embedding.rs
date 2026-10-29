@@ -19,6 +19,32 @@ use crate::embedder::{EmbedQueryRefusal, EmbedderSlot, QueryEmbedder};
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const FIRST_BACKOFF: Duration = Duration::from_secs(5);
 
+/// Sleeps `wait`, unless a provider recovery ends it first (FIX 1112): true
+/// when a recovery woke the wait. A wait the operator must end sleeps plain.
+async fn sleep_or_recovery(
+    wait: Duration,
+    recoveries: &mut tokio::sync::watch::Receiver<u64>,
+    wakeable: bool,
+) -> bool {
+    if !wakeable {
+        tokio::time::sleep(wait).await;
+        return false;
+    }
+    tokio::select! {
+        () = tokio::time::sleep(wait) => false,
+        recovered = recoveries.changed() => {
+            if recovered.is_ok() {
+                true
+            } else {
+                // The runtime is gone: no recovery comes, and the backoff
+                // runs out as before.
+                tokio::time::sleep(wait).await;
+                false
+            }
+        }
+    }
+}
+
 /// Whether the worker keeps filling the vault's own text index while the
 /// text kind slot binds a declared space (the one-space preset, OF-370). No
 /// text search reads the index then, but `GET /api/search/vector` does, and
@@ -133,6 +159,7 @@ impl SyncServer {
     ) -> Option<Arc<PendingEmbeddingReconciler>> {
         let mut backoff = FIRST_BACKOFF;
         let mut complained = false;
+        let mut recoveries = self.ai.model_runtime().recoveries();
         loop {
             let Some(admission) = admit() else {
                 tokio::time::sleep(FIRST_BACKOFF).await;
@@ -165,8 +192,18 @@ impl SyncServer {
                         }
                         complained = true;
                     }
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                    // A changed model or transform needs the operator; a
+                    // provider recovery never wakes those waits.
+                    let wakeable = error.kind() != oneiron::ErrorKind::EmbeddingTransformChanged
+                        && error.kind() != oneiron::ErrorKind::EmbeddingModelChanged;
+                    if sleep_or_recovery(backoff, &mut recoveries, wakeable).await {
+                        tracing::info!(
+                            "a provider recovered; the embedding worker tries again at once"
+                        );
+                        backoff = FIRST_BACKOFF;
+                    } else {
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                    }
                 }
             }
         }
@@ -216,6 +253,7 @@ impl SyncServer {
     ) {
         let mut backoff = FIRST_BACKOFF;
         let mut failing = false;
+        let mut recoveries = self.ai.model_runtime().recoveries();
         loop {
             let Some(admission) = admit() else {
                 tokio::time::sleep(idle).await;
@@ -271,8 +309,18 @@ impl SyncServer {
                         failing = true;
                     }
                     self.readmit_embedder(admit).await;
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(MAX_BACKOFF);
+                    // A changed model or transform needs the operator; a
+                    // provider recovery never wakes those waits.
+                    let wakeable = error.kind() != oneiron::ErrorKind::EmbeddingTransformChanged
+                        && error.kind() != oneiron::ErrorKind::EmbeddingModelChanged;
+                    if sleep_or_recovery(backoff, &mut recoveries, wakeable).await {
+                        tracing::info!(
+                            "a provider recovered; the embedding worker tries again at once"
+                        );
+                        backoff = FIRST_BACKOFF;
+                    } else {
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                    }
                 }
                 // The blocking pool only fails to join on shutdown or a panic
                 // inside the pass. Either way the loop has nothing left to
