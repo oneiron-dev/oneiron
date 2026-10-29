@@ -19,6 +19,7 @@ use super::inference_device::{
     DeclaredEnvelope, DeviceLedger, DeviceSnapshot, TryReserveOutcome, WorkEnvelope,
 };
 
+mod load;
 mod policy;
 mod status;
 mod ticket;
@@ -145,7 +146,8 @@ impl Drop for DeviceGrant {
 /// workspace, so a queued call cannot block the launch that would serve it.
 #[derive(Debug)]
 pub struct LoadGrant {
-    ledger: Arc<DeviceLedger>,
+    admission: Arc<DeviceAdmission>,
+    worker_id: String,
     holder: String,
     released: bool,
 }
@@ -158,7 +160,7 @@ impl LoadGrant {
     fn release_inner(&mut self) {
         if !self.released {
             self.released = true;
-            self.ledger.release_hold(&self.holder);
+            self.admission.release_load(&self.worker_id, &self.holder);
         }
     }
 }
@@ -208,6 +210,12 @@ pub struct WorkerQueueStatus {
 }
 
 #[derive(Debug, Clone)]
+struct LoadWaiter {
+    class: WorkClass,
+    sequence: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct AdmissionSnapshot {
     pub device: String,
     pub capacity_mib: Option<u64>,
@@ -219,6 +227,7 @@ pub struct AdmissionSnapshot {
     pub pressure: PressureState,
     pub executors: Vec<ExecutorRegistration>,
     pub workers: BTreeMap<String, WorkerQueueStatus>,
+    pub loads: BTreeMap<String, WorkClass>,
 }
 
 #[derive(Debug, Clone)]
@@ -235,6 +244,8 @@ struct AdmissionState {
     paused: std::collections::BTreeSet<TicketId>,
     executors: BTreeMap<String, ExecutorRegistration>,
     reaping: std::collections::BTreeSet<String>,
+    load_waiters: BTreeMap<String, LoadWaiter>,
+    next_load: u64,
     background_serviced: HashMap<(ResourceClass, String), u64>,
     next_ticket: TicketId,
     next_grant: GrantId,
@@ -271,6 +282,8 @@ impl DeviceAdmission {
                 paused: std::collections::BTreeSet::new(),
                 executors: BTreeMap::new(),
                 reaping: std::collections::BTreeSet::new(),
+                load_waiters: BTreeMap::new(),
+                next_load: 1,
                 background_serviced: HashMap::new(),
                 next_ticket: 1,
                 next_grant: 1,
@@ -517,37 +530,6 @@ impl DeviceAdmission {
         PressureDecision::Wait
     }
 
-    /// Takes a transient load reservation before launch. `None` means a
-    /// known-capacity device has no qualified room; unknown capacity admits.
-    #[must_use]
-    pub fn acquire_load(
-        &self,
-        worker_id: &str,
-        declared: &DeclaredEnvelope,
-        class: ResourceClass,
-    ) -> Option<LoadGrant> {
-        let holder = load_holder(worker_id);
-        let envelope = WorkEnvelope {
-            kv_increment_mib: declared.weights_mib,
-            workspace_mib: declared.load_transient_mib,
-        };
-        match self.ledger.try_reserve(&holder, &envelope, class) {
-            TryReserveOutcome::Admitted | TryReserveOutcome::AdmittedUnknown => Some(LoadGrant {
-                ledger: Arc::clone(&self.ledger),
-                holder,
-                released: false,
-            }),
-            TryReserveOutcome::NoRoom => None,
-        }
-    }
-
-    /// Promotes a load to its steady row and frees the transient hold.
-    pub fn loaded(&self, worker_id: &str, declared: DeclaredEnvelope, class: ResourceClass) {
-        self.ledger
-            .mark_loaded(worker_id, declared, class, &load_holder(worker_id));
-        self.changed.notify_waiters();
-    }
-
     /// Releases every grant/ticket of a reaped worker, then its load and row.
     pub fn reaped(&self, worker_id: &str) {
         let tickets: Vec<TicketId> = {
@@ -563,6 +545,7 @@ impl DeviceAdmission {
         let tickets: Vec<TicketId> = {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             state.reaping.remove(worker_id);
+            state.load_waiters.remove(worker_id);
             state
                 .background_serviced
                 .retain(|(_, worker), _| worker != worker_id);

@@ -506,6 +506,7 @@ fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
         worker_host::report_device_stats(&route.worker.spec().worker_id, stats);
     }
     if let Some(activity) = stats.and_then(activity_of) {
+        worker_host::register_device_executor(&route.worker.spec().worker_id, activity.is_idle());
         route.worker.report(activity);
     }
 }

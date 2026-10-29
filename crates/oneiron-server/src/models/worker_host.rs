@@ -288,6 +288,29 @@ pub(super) fn report_receipt(worker_id: &str, epoch: &str, receipt: InferenceCal
     }
 }
 
+/// Registers or refreshes one executor's idle row. Managed custody exists
+/// only when this process may launch that worker; other work is recorded as
+/// external and is never an unload target.
+pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Some((device, external)) = host.lock().get(worker_id).and_then(|hosted| {
+        let device = hosted.row.launch.as_ref()?.device.clone()?;
+        let managed =
+            hosted.row.mode == WorkerMode::Managed && host.launch_permitted.load(Ordering::SeqCst);
+        Some((device, !managed))
+    }) else {
+        return;
+    };
+    host.admission(&device)
+        .register_executor(ExecutorRegistration {
+            worker_id: worker_id.to_owned(),
+            external,
+            idle,
+        });
+}
+
 /// Cross-checks a worker's own device capacity report with the pre-load
 /// query. The first valid report fills an unknown; a mismatch keeps the
 /// device query and logs rather than silently rewriting capacity.

@@ -13,6 +13,7 @@ impl DeviceAdmission {
                 .tickets
                 .values()
                 .any(|ticket| ticket.request.worker_id == worker_id)
+            && !state.load_waiters.contains_key(worker_id)
             && !self.ledger.has_hold(&load_holder(worker_id))
     }
 
@@ -77,6 +78,11 @@ impl DeviceAdmission {
             pressure: state.pressure.clone(),
             executors: state.executors.values().cloned().collect(),
             workers,
+            loads: state
+                .load_waiters
+                .iter()
+                .map(|(worker, waiter)| (worker.clone(), waiter.class))
+                .collect(),
         }
     }
 }

@@ -4,7 +4,7 @@ use std::time::UNIX_EPOCH;
 
 use oneiron::ModelId;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{BrokerIsolation, ResourceClass, SpentKind, WorkerStatus};
+use oneiron::llm::{BrokerIsolation, ResourceClass, SpentKind, WorkClass, WorkerStatus};
 use oneiron_driver::{AdmissionSnapshot, PressureState, ResidentSource};
 use serde::Serialize;
 
@@ -84,6 +84,7 @@ pub struct DeviceExecutorStatus {
     pub worker_id: String,
     pub external: bool,
     pub idle: bool,
+    pub load_class: Option<WorkClass>,
 }
 
 impl DeviceStatus {
@@ -138,6 +139,7 @@ impl DeviceStatus {
                 }
             })
             .collect();
+        let loads = snapshot.loads;
         Self {
             device: snapshot.device,
             capacity_mib: snapshot.capacity_mib,
@@ -159,6 +161,7 @@ impl DeviceStatus {
                 .executors
                 .into_iter()
                 .map(|executor| DeviceExecutorStatus {
+                    load_class: loads.get(&executor.worker_id).copied(),
                     worker_id: executor.worker_id,
                     external: executor.external,
                     idle: executor.idle,
