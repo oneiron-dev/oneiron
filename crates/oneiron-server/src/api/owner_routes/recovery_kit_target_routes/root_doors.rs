@@ -73,7 +73,7 @@ fn confirmation(
         .map(|root| root.map(KitConfirmation::Owner))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnchorDoor {
     /// The install this call's kit is for, 32 hex: this one.
@@ -95,7 +95,7 @@ struct AnchorDoor {
     confirm_root: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RestoreDoor {
     target: String,
@@ -108,7 +108,7 @@ struct RestoreDoor {
     confirm_root: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct IssueDoor {
     target: String,
@@ -119,7 +119,7 @@ struct IssueDoor {
     passphrase: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConfirmDoor {
     target: String,
@@ -257,4 +257,28 @@ async fn confirm(
     })
     .await?;
     Ok(Json(answer))
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/anchor`'s body (FIX 11611):
+/// [`AnchorDoor`].
+pub(crate) fn anchor_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnchorDoor>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/restore`'s body (FIX 11611):
+/// [`RestoreDoor`].
+pub(crate) fn restore_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RestoreDoor>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/issue`'s body (FIX 11611):
+/// [`IssueDoor`].
+pub(crate) fn issue_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<IssueDoor>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/confirm`'s body (FIX 11611):
+/// [`ConfirmDoor`].
+pub(crate) fn confirm_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConfirmDoor>()
 }

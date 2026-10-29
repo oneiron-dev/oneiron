@@ -188,7 +188,7 @@ pub(super) struct RedeemLink {
 }
 /// [`MachineEnrolmentRequest`] on the wire: hex ids and keys, base64 for the
 /// 1600-byte encryption key.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MachineEnrolment {
     vault_id: String,
