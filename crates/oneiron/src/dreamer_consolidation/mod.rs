@@ -25,6 +25,7 @@
 //! exactly the carrier identity its queued round selected.
 
 mod assembly;
+mod attempt_reads;
 mod branch;
 pub(crate) mod branch_scope;
 mod call_labels;
@@ -60,6 +61,7 @@ mod person_about;
 mod provenance;
 mod recipe_failure;
 pub(crate) mod redirty;
+mod request_sources;
 mod residency;
 mod resident_dream;
 mod resident_for_human;
@@ -91,6 +93,7 @@ mod weave_lens;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use attempt_reads::{declare_attempt_reads, record_attempt_reads};
 pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
@@ -111,6 +114,7 @@ pub(crate) use provenance::{
     decode_verified_citations, decode_verified_locators,
     encode_consolidation_evidence_with_locators, kept_decisions_value,
 };
+pub use request_sources::SourcedBackend;
 pub(crate) use residency::waits_on_residency;
 pub use resident_dream::{
     RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS, ResidentDreamModel, ResidentDreamPartial,
@@ -134,7 +138,7 @@ pub use roles::{
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
 pub(crate) use scope_summary_attempt::{
-    ScopeSummaryEvidence, arc_evidence_in_txn, note_source_pins_in_txn,
+    ScopeSummaryEvidence, arc_evidence_in_txn, editor_source_pins_in_txn, note_source_pins_in_txn,
     scope_summary_evidence_in_txn,
 };
 pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};

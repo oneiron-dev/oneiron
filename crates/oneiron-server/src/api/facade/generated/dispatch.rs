@@ -36711,6 +36711,7 @@ async fn self_focus_refresh(
             super::host_doors::self_focus_refresh(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36751,6 +36752,7 @@ async fn self_focus_subscribe(
             super::host_doors::self_focus_subscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36791,6 +36793,7 @@ async fn self_focus_unsubscribe(
             super::host_doors::self_focus_unsubscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,

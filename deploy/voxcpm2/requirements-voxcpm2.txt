@@ -1,0 +1,20 @@
+# The direct requirements of a managed VoxCPM2 worker's environment (FIX
+# 8318). The supervisor never installs from this file: a managed row names
+# its hash-locked lock (`env_lock`), compiled from these pins with every
+# transitive dependency pinned by version and SHA-256, and builds the
+# environment with `pip install --require-hashes --no-deps -r <lock>`.
+#
+# Compile the lock for the worker's host (CPython 3.12 on x86_64 Linux,
+# CUDA 12.8 PyTorch), with no build and no GPU:
+#
+#   uv pip compile deploy/voxcpm2/requirements-voxcpm2.txt \
+#     --python-platform x86_64-manylinux_2_35 --python-version 3.12 \
+#     --generate-hashes --no-build \
+#     --index-url https://pypi.org/simple \
+#     --extra-index-url https://download.pytorch.org/whl/cu128 \
+#     --index-strategy unsafe-best-match --emit-index-url --no-header \
+#     -o voxcpm2-py312.lock
+voxcpm==2.0.3
+# The CUDA build the host's driver takes, from the PyTorch cu128 index.
+torch
+numpy
