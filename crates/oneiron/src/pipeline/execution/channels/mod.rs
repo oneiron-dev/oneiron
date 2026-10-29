@@ -197,7 +197,9 @@ impl PipelineBuilder<'_> {
             )?;
             let corpus_filter = CorpusFilter::new(&self.corpus_scope)?;
             let device_local = self.device_local_worlds(rtxn)?;
-            let mut filter_config = corpus_filter.config(self, occurred_range, authority_filter);
+            let admission = self.snapshot_admission(rtxn);
+            let mut filter_config =
+                corpus_filter.config(self, &admission, occurred_range, authority_filter);
             filter_config.world_active_set = world_authority
                 .as_ref()
                 .map(|resolved| &resolved.active_set);

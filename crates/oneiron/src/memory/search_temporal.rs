@@ -125,13 +125,13 @@ impl Memory<'_> {
         let (limit, _) = caps::clamp_search_limit(input.limit);
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let (filter, policy) = lane.recall_plan()?;
+        // The ranges here, then the actor gate under one authority per
+        // snapshot (FIX 11648).
+        let gate = lane.recall_candidate_gate(&policy, &filter);
         let admitted = |store: &crate::store::StoreRead<'_>,
                         txn: &heed::RoTxn<'_>,
                         id: &crate::EntityId|
          -> crate::Result<bool> {
-            if !lane.recall_candidate_in(txn, &policy, &filter, id)? {
-                return Ok(false);
-            }
             if input.occurred_range.is_none() && input.learned_range.is_none() {
                 return Ok(true);
             }
@@ -157,6 +157,7 @@ impl Memory<'_> {
             .scoped_note_reader(lane.actor_key().clone())
             .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)
+            .gate_candidates(&gate)
             .temporal_adaptive(input.adaptive)
             .limit(limit);
         pipeline = match (input.anchor_mode, input.learned_start, input.learned_end) {
