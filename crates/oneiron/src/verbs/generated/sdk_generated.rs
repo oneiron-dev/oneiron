@@ -32342,7 +32342,7 @@ pub fn ai_voice_usage(
 pub fn ai_voice_tool(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::LiveVoiceToolRequest,
-) -> MemoryResult<crate::task_verb::sdk::LiveVoiceToolReply> {
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>> {
     crate::task_verb::sdk::host_only(memory, "ai.voice.tool", &input)
 }
 pub fn ai_voice_end(

@@ -62,16 +62,23 @@ export interface LensFrameEventRequest {
    * trip, never approval or action authority; any other action ignores it.
    */
   readonly selectedContext?: readonly string[]
+  /**
+   * The stream profile this event's answer is framed in (FIX 11399): a
+   * patch-profile caller takes the card's refinement beside a local
+   * action's `$state`. Omitted, the answer is today's plain JSON.
+   */
+  readonly stream?: Facade.GeneratedUiStreamProfile
 }
 
 /**
  * What a lens-card event answers. There is no discriminator: a local action
- * answers the card's new `$state`, a deterministic tool its outcome and the
- * scoped read of its entity arguments, and a model round trip the callback
- * queued for the agent that emitted the card.
+ * answers the card's new `$state` (beside the card's refinement for a
+ * patch-profile caller), a deterministic tool its outcome and the scoped
+ * read of its entity arguments, and a model round trip the callback queued
+ * for the agent that emitted the card.
  */
 export type LensFrameEventReply =
-  | { readonly $state: Facade.GeneratedUiStateSnapshot }
+  | { readonly $state: Facade.GeneratedUiStateSnapshot; readonly refinement?: Facade.GeneratedUiSegment | null }
   | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
   | { readonly queued: boolean; readonly callbackId: string }
 
@@ -395,7 +402,9 @@ export class Oneiron {
   /**
    * Sends one event on a lens card the connected server rendered (OF-181):
    * `POST /v1/core/lens-frames/{cardId}/events` under this handle's
-   * credential. `request.event.cardId` must name the same card. A card the
+   * credential. `request.event.cardId` must name the same card. A
+   * patch-profile caller also names `stream: "patch"` (FIX 11399) and takes
+   * the card's refinement beside a local action's `$state`. A card the
    * server no longer holds throws `NOT_FOUND`: render the lens again. An
    * embedded handle throws `BAD_REQUEST`: lens frames live on the served
    * host that rendered the card, so render the lens through a connected
@@ -3376,7 +3385,7 @@ export class Oneiron {
       /** Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment. */
       usage: (input: Facade.LiveVoiceUsageRequest): Facade.LiveVoiceUsage => this.#call(() => this.#client.aiVoiceUsage(input) as Facade.LiveVoiceUsage),
       /** Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards. */
-      tool: (input: Facade.LiveVoiceToolRequest): Facade.LiveVoiceToolReply => this.#call(() => this.#client.aiVoiceTool(input) as Facade.LiveVoiceToolReply),
+      tool: (input: Facade.LiveVoiceToolRequest): Facade.ActAnswer<Facade.LiveVoiceToolReply> => this.#call(() => this.#client.aiVoiceTool(input) as Facade.ActAnswer<Facade.LiveVoiceToolReply>),
       /** Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation. */
       end: (input: Facade.LiveVoiceSessionRequest): Facade.LiveVoiceProcessed => this.#call(() => this.#client.aiVoiceEnd(input) as Facade.LiveVoiceProcessed),
       /** Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing. */

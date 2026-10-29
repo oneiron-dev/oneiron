@@ -3,7 +3,7 @@
 // Census: 1187 facade rows, 4299 declarations.
 // Inputs: 1116 of 1187 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 // Results: 1032 of 1187 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Opaque serde_json::Value leaves: 118; unread shapes: 0.
+// Opaque serde_json::Value leaves: 119; unread shapes: 0.
 /** `oneiron::memory::commitment_doors::types::CommitmentObligorKind` */
 export type CommitmentObligorKind = "owner" | "agent" | "third_party"
 /** `oneiron::memory::commitment_doors::types::CommitmentObligor` */
@@ -8571,9 +8571,9 @@ export type BoardSubscriptionRequest = { scopes: SubscriptionScope[] }
 /** `oneiron::verbs::BoardSubscriptionReply` */
 export type BoardSubscriptionReply = { connection: string; active: SubscriptionScope[] }
 /** `oneiron_remote::lens_frames::LensFrameEventRequest` */
-export type LensFrameEventRequest = { event: GeneratedUiActionEvent; idempotencyKey: string; selectedContext?: string[] }
+export type LensFrameEventRequest = { event: GeneratedUiActionEvent; idempotencyKey: string; selectedContext?: string[]; stream?: GeneratedUiStreamProfile }
 /** `oneiron_remote::lens_frames::LensFrameEventReply` */
-export type LensFrameEventReply = { $state: GeneratedUiStateSnapshot } | { outcome: unknown; readReceipt: ScopedReadReceipt } | { queued: boolean; callbackId: string }
+export type LensFrameEventReply = { $state: GeneratedUiStateSnapshot; refinement?: unknown | null } | { outcome: unknown; readReceipt: ScopedReadReceipt } | { queued: boolean; callbackId: string }
 /** `oneiron_remote::lens_frames::CloseLensFrameReply` */
 export type CloseLensFrameReply = { closed: boolean }
 /** `oneiron::lens::generated_ui::genui_render::GeneratedUiCardStart` */

@@ -245,8 +245,9 @@ impl Oneiron {
     ///
     /// `request` is the route's `{event, idempotencyKey}` body as its
     /// generated record; the reply is the generated `LensFrameEventReply`:
-    /// `Local` (the card's new `$state`) for a local action, `Tool`
-    /// (`outcome`, `readReceipt`) for a deterministic tool, or `Callback` for
+    /// `Local` (the card's new `$state`, beside the card's refinement for a
+    /// patch-profile caller) for a local action, `Tool` (`outcome`,
+    /// `readReceipt`) for a deterministic tool, or `Callback` for
     /// a model round trip. A card the server no longer holds fails
     /// `NOT_FOUND`: render the lens again. An embedded handle fails
     /// `BAD_REQUEST`: lens frames live on the served host that rendered the

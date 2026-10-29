@@ -4356,7 +4356,7 @@ export_facade! {
     let output = client.ai_voice_usage(&input)?;
     crate::codec::lift_record("ai.voice.usage", &output)
 };
-"ai.voice.tool" => fn ai_voice_tool(&self, input: LiveVoiceToolRequest) -> LiveVoiceToolReply = |client| {
+"ai.voice.tool" => fn ai_voice_tool(&self, input: LiveVoiceToolRequest) -> ActAnswerLiveVoiceToolReply = |client| {
     let input: oneiron::task_verb::sdk::LiveVoiceToolRequest = crate::codec::lower_record("ai.voice.tool", input)?;
     let output = client.ai_voice_tool(&input)?;
     crate::codec::lift_record("ai.voice.tool", &output)
