@@ -3969,6 +3969,7 @@
      "path": "src/authority/left_notices/delivery.rs",
      "purpose": "The host's delivery of an export-first removal's archive to its removed holder (FIX 3215, 3396), beside the…",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -66273,7 +66274,7 @@
      "path": "src/store/key_custody/home.rs",
      "purpose": "The residence home's side of the residence target (KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -68153,7 +68154,7 @@
      "purpose": "Client-side sync over WebSocket",
      "surface": {
       "crate-vis": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -68337,7 +68338,8 @@
      "path": "src/sync/client/residence/custody.rs",
      "purpose": "This machine's key custody to its residence home (KS-4A2, FIX 5685): the residence member of the required…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -69858,7 +69860,7 @@
      "path": "src/sync/residence/custody.rs",
      "purpose": "The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -108713,7 +108715,7 @@
      "path": "src/handler/documents.rs",
      "purpose": "Per-entity selector admission and scope-filtered document delivery on the sync socket",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -108873,7 +108875,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/handler/socket_stop.rs",
-     "purpose": "An upgraded socket's transport under its embedded engine's stop (OF-237)",
+     "purpose": "An upgraded socket's transport under its server's stop (OF-237)",
      "surface": {
       "crate-vis": 5
      }
