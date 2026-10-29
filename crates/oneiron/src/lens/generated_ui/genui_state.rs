@@ -287,8 +287,7 @@ impl GeneratedUiStatePatch {
 
 /// Canonical card lifecycle. `completed`/`expired` are archive *reasons*, not phases.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedUiCardPhase {

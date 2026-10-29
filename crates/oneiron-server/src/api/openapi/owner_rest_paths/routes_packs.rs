@@ -9,12 +9,12 @@ use crate::api::owner_routes::pack_preview_routes::{
 };
 use crate::api::owner_routes::pack_routes::schema::{
     activation_ask_view_schema, activation_request_body_schema, agent_world_body_schema,
-    bind_hooks_body_schema, bound_hooks_schema, consent_row_schema, hook_qualification_schema,
-    import_skill_body_schema, install_from_hub_body_schema, organ_build_schema,
-    pack_install_receipt_schema, pack_put_schema, pack_setup_reply_schema,
-    put_organ_build_body_schema, put_pack_body_schema, qualify_hooks_body_schema,
-    ref_sync_view_schema, restore_skill_body_schema, set_ref_sync_body_schema,
-    hook_enabled_body_schema, hook_enabled_schema, setup_answer_body_schema, setup_key_body_schema,
+    bind_hooks_body_schema, bound_hooks_schema, consent_row_schema, hook_enabled_body_schema,
+    hook_enabled_schema, hook_qualification_schema, import_skill_body_schema,
+    install_from_hub_body_schema, organ_build_schema, pack_install_receipt_schema, pack_put_schema,
+    pack_setup_reply_schema, put_organ_build_body_schema, put_pack_body_schema,
+    qualify_hooks_body_schema, ref_sync_view_schema, restore_skill_body_schema,
+    set_ref_sync_body_schema, setup_answer_body_schema, setup_key_body_schema,
     setup_verify_body_schema, skill_row_schema, skill_rows_schema, skill_sync_schema,
     slack_install_link_schema, slack_install_request_body_schema, sync_pack_body_schema,
 };

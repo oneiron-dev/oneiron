@@ -145,8 +145,7 @@ pub(super) const CARDS: SideTable<([u8; 16], [u8; 1], [u8; 16]), AgentHealthCard
 
 /// How a card reads (agent-mind §3.5).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthTone {
@@ -194,8 +193,7 @@ impl AgentHealthTone {
 /// A move the card proposes. A leader or the owner takes it; the Coach never
 /// does.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthMove {
@@ -215,8 +213,7 @@ pub enum AgentHealthMove {
 
 /// What lowers a signal, or names another possible cause.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthCounter {

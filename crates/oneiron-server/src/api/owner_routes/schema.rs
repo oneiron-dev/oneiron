@@ -104,7 +104,8 @@ pub(crate) fn set_model_catalog_body_schema() -> serde_json::Value {
 
 /// The OpenAPI schema of `PUT /v1/owner/model-catalog`'s answer (FIX 11617): [`oneiron::skill_hub::ModelCatalogSync`].
 pub(crate) fn model_catalog_sync_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<oneiron::skill_hub::ModelCatalogSync>()
+    oneiron_contracts::code_run::vault_read::request_schema::<oneiron::skill_hub::ModelCatalogSync>(
+    )
 }
 
 /// The OpenAPI schema of `POST /v1/owner/model-catalog/sync`'s answer (FIX 11617): [`ModelCatalogSynced`].
