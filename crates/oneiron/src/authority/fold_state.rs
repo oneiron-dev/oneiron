@@ -188,6 +188,13 @@ pub struct AuthorityFold {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) agent_carried_acts:
         BTreeMap<AuthorityEntryHash, super::carried_act::AgentCarriedAct>,
+    /// Each live agent world edit's world as read had it no effect, for a
+    /// view that holds its Grant refused (FIX 11426).
+    #[serde(
+        default,
+        skip_serializing_if = "super::agent_world_undo::AgentWorldUndo::is_empty"
+    )]
+    pub(super) agent_world_undo: super::agent_world_undo::AgentWorldUndo,
     /// Each machine's newest MACRO home candidacy, as the log carries it
     /// (FIX 4898); an election judges each on this fold.
     pub(crate) home_candidacy: BTreeMap<EntityId, super::home_candidacy::DeclaredHomeCandidacy>,
