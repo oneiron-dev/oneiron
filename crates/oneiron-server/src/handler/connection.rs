@@ -71,6 +71,13 @@ async fn ws_upgrade_handler(
     // owner his supervisor attested. There each call it carries is admitted
     // under the reap freeze as one `POST /mcp` is (FIX 5128).
     if super::mcp_socket::requested(&ws) {
+        // A stale owner sign-in, whose per-request booking doors serve him,
+        // holds a socket that books and nothing more (FIX 5935).
+        if let Some(holder) =
+            super::mcp_socket::stale_booking_holder(&headers, &extensions, &server)
+        {
+            return super::mcp_socket::booking_upgrade(ws, &headers, &extensions, server, holder);
+        }
         return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
     }
     let auth = match CoreAuth::for_attested_request(&headers, &extensions, "/ws", &server) {
@@ -202,16 +209,25 @@ pub(super) fn session_credential_revoked(
     session_jti.is_some_and(|jti| is_revoked_or_unreadable(jti, revoked))
 }
 
+/// Whether the vault's Owners deleted it: its `shared-vault:deleted:v1`
+/// marker is present (OF-163). A session already open stops serving it, as
+/// the binding door refuses each new request (FIX 1930). Fail-closed on a
+/// marker read that fails, matching that door.
+pub(super) fn vault_deleted(vault: &oneiron::Vault) -> bool {
+    !matches!(vault.shared_vault_deletion(), Ok(None))
+}
+
 /// Whether this socket's caller no longer stands: its credential revoked
-/// ([`session_credential_revoked`]), or, for a managed vault's attested
-/// owner, whom no token id names, the vault no longer recording him as its
-/// live owner (FIX 5255).
+/// ([`session_credential_revoked`]), its vault deleted ([`vault_deleted`]),
+/// or, for a managed vault's attested owner, whom no token id names, the
+/// vault no longer recording him as its live owner (FIX 5255).
 fn session_gone(
     vault: &oneiron::Vault,
     session_jti: Option<&str>,
     owner: Option<&CoreAuth>,
 ) -> bool {
     session_credential_revoked(vault, session_jti)
+        || vault_deleted(vault)
         || owner.is_some_and(|owner| !owner.credential_is_live(vault))
 }
 

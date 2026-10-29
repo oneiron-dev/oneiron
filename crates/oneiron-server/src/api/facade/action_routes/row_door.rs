@@ -15,13 +15,25 @@ use oneiron::code_run::{
     SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::memory::{HostWriteOrigin, MEMORY_CODE_INTERNAL};
+use oneiron::receipt::{
+    ActionInputs, CallAttemptWitness, CallOutcome, CallReceiptInput, CallTransport,
+};
+use oneiron::skill_attribution::RunWriteToken;
 use tower::ServiceExt;
 
+use super::super::host_doors::support::with_calling_run_writes;
+use super::super::{FacadeApiError, FacadeCallOutput};
 use crate::api::call_receipt::{
-    CallStamp, RECEIPT_REF_HEADER, attempt_collector, with_attempt_collector,
+    self, CallStamp, HeldOuterAttempt, RECEIPT_REF_HEADER, attempt_collector,
+    attempt_witnessed_inside, with_attempt_collector, witness_attempt,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+
+/// The transport the receipt of a row the credential's own facade call runs
+/// in process states (FIX 10635, CALLS row): the facade's verb table it ran
+/// through, as the request branch's in-process route records its rows.
+const CREDENTIAL_ROW_TRANSPORT: CallTransport = CallTransport::HttpFacade;
 
 /// The verb door of one action call. Each verb-table row runs as its own
 /// generated facade route, in process, under the request's own headers and
@@ -29,7 +41,9 @@ use crate::server::SyncServer;
 ///
 /// The row writes as the credential, as its direct call does: an action is
 /// its caller's own call, not a run's generated write, so the run origin the
-/// dispatcher offers is not the row's source.
+/// dispatcher offers is not the row's source. The DerivedFrom edges it
+/// leaves are still witnessed for the leased run that origin seals (FIX
+/// 10748).
 ///
 /// A memory run row reads with `read_key`, the credential's own read key
 /// at the caller's locality, which this request was admitted on.
@@ -37,7 +51,10 @@ use crate::server::SyncServer;
 /// A row's refusal keeps the words its route answered with in `refused`,
 /// which the action's record keeps beside its code; the guest sees only the
 /// code. What its reply stated of its call receipt is kept in `stamp`, for
-/// a caller that states it again on its own reply (FIX 2887).
+/// a caller that states it again on its own reply (FIX 2887); a row the
+/// credential's own facade call ran records its receipt here (FIX 10635).
+/// Each row's receipt names the action's own live-run hold, which it runs
+/// inside (FIX 10938).
 pub(super) struct FacadeRowDoor {
     rows: Router,
     headers: HeaderMap,
@@ -51,7 +68,9 @@ pub(super) struct FacadeRowDoor {
     /// The action call's attempt collector, taken where the door is built:
     /// each row runs on a spawned task, and a live-run hold in it reaches the
     /// action's receipt only through this (FIX 8107).
-    collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
+    collector: Option<std::sync::mpsc::Sender<CallAttemptWitness>>,
+    /// The action's own live-run hold, as the hold witnessed it, once taken.
+    outer: Mutex<Option<CallAttemptWitness>>,
 }
 
 /// A row that did not answer: no route words it.
@@ -84,12 +103,19 @@ impl FacadeRowDoor {
             refused: Mutex::new(None),
             stamp: Mutex::new(CallStamp::Unrecorded),
             collector: attempt_collector(),
+            outer: Mutex::new(None),
         }
     }
 
+    /// Names the action's own live-run hold, which every row it posts after
+    /// runs inside (FIX 10938).
+    pub(super) fn held_outer(&self, witness: CallAttemptWitness) {
+        *self.outer.lock().unwrap_or_else(PoisonError::into_inner) = Some(witness);
+    }
+
     /// What the last row this door posted stated of its call receipt, on
-    /// its success and its refusal alike: unrecorded when none ran through
-    /// its route.
+    /// its success and its refusal alike, or the receipt it recorded for a
+    /// row the credential's own call ran: unrecorded when no row ran.
     pub(super) fn stamp(&self) -> CallStamp {
         self.stamp
             .lock()
@@ -156,37 +182,66 @@ impl FacadeRowDoor {
 impl FacadeRowDoor {
     /// Posts the row to its facade route. The step's invocation rides as
     /// `x-oneiron-invocation`, so the route's verb hooks fire once for it.
+    /// Its writes are witnessed for the leased run `origin` seals (FIX
+    /// 10748), and its receipt names the action's hold (FIX 10938).
     fn post_row(
         &self,
         call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
         let refused = || AgentVerbRefusal {
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };
+        let run_writes = RunWriteToken::of_origin(origin);
+        let outer = *self.outer.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(auth) = &self.credential {
             let auth = auth.clone();
             let server = Arc::clone(&self.server);
+            let headers = self.headers.clone();
             let call = call.clone();
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
             let row = async move {
                 let invocation = invocation.to_hex();
                 let context = super::super::FacadeCall::bound(&auth, None, Some(&invocation), None);
-                let answer =
-                    super::super::call_verb(&server, &context, call.verb.as_str(), Ok(call.input))
-                        .await
-                        .map(|answer| answer.value)
-                        .map_err(|error| AgentVerbRefusalWords {
-                            code: error.body.error.code,
-                            message: error.body.error.message,
-                            suggestions: error.body.error.suggestions,
-                            reason_codes: error.body.error.reason_codes,
-                        });
-                let _ = sender.send(answer);
+                let verb = call.verb.as_str();
+                let request_digest = oneiron::receipt::call_json_digest(&call.input);
+                let inputs = call_receipt::action_inputs(&server, verb, Some(&call.input));
+                let (answer, attempt) = attempt_witnessed_inside(
+                    outer,
+                    super::super::call_verb(&server, &context, verb, Ok(call.input)),
+                )
+                .await;
+                // A hold the row made, with none of the action's around it,
+                // reaches the action's receipt too, as before (FIX 8107).
+                if let Some(attempt) = attempt {
+                    witness_attempt(attempt);
+                }
+                let stamp = record_credential_row(
+                    &server,
+                    &auth,
+                    &headers,
+                    verb,
+                    (request_digest, inputs, attempt),
+                    &answer,
+                );
+                let answer = answer
+                    .map(|answer| answer.value)
+                    .map_err(|error| AgentVerbRefusalWords {
+                        code: error.body.error.code,
+                        message: error.body.error.message,
+                        suggestions: error.body.error.suggestions,
+                        reason_codes: error.body.error.reason_codes,
+                    });
+                let _ = sender.send((stamp, answer));
             };
-            self.runtime
-                .spawn(with_attempt_collector(self.collector.clone(), row));
-            let output = receiver.recv().map_err(|_| refused())?.map_err(|row| {
+            self.runtime.spawn(with_attempt_collector(
+                self.collector.clone(),
+                with_calling_run_writes(run_writes, row),
+            ));
+            let (stamp, answer) = receiver.recv().map_err(|_| refused())?;
+            *self.stamp.lock().unwrap_or_else(PoisonError::into_inner) = stamp;
+            let output = answer.map_err(|row| {
                 let code = row.code.clone();
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
                 AgentVerbRefusal { code }
@@ -210,6 +265,9 @@ impl FacadeRowDoor {
             HeaderValue::from_static("application/json"),
         );
         *request.extensions_mut() = self.extensions.clone();
+        if let Some(outer) = outer {
+            request.extensions_mut().insert(HeldOuterAttempt(outer));
+        }
         // The dispatcher holds its driver thread while the row runs on
         // the server runtime, as a request of its own would.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -217,8 +275,10 @@ impl FacadeRowDoor {
         let row = async move {
             let _ = sender.send(Self::answer(rows, request).await);
         };
-        self.runtime
-            .spawn(with_attempt_collector(self.collector.clone(), row));
+        self.runtime.spawn(with_attempt_collector(
+            self.collector.clone(),
+            with_calling_run_writes(run_writes, row),
+        ));
         let (stamp, answer) = receiver.recv().map_err(|_| refused())?;
         *self.stamp.lock().unwrap_or_else(PoisonError::into_inner) = stamp;
         let output = answer.map_err(|row| {
@@ -230,14 +290,68 @@ impl FacadeRowDoor {
     }
 }
 
+/// Records the receipt of a row the credential's own facade call ran in
+/// process (FIX 10635), as a facade route's receipt door records its call:
+/// attributed to the credential, its request and answer digested, the
+/// inputs captured before it ran and the attempt it ran inside. A row run
+/// inside an anonymous off-record session the credential is verified in
+/// keeps none, judged as the route's receipt door judges it, and so does
+/// an off-record row ([`call_receipt::record`]).
+fn record_credential_row(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    headers: &HeaderMap,
+    verb: &str,
+    (request_digest, inputs, attempt): (String, Option<ActionInputs>, Option<CallAttemptWitness>),
+    answer: &Result<FacadeCallOutput, FacadeApiError>,
+) -> CallStamp {
+    let (outcome, result_digest) = match answer {
+        Ok(output) => (
+            CallOutcome::Ok,
+            serde_json::to_vec(&output.value)
+                .ok()
+                .map(|bytes| oneiron::task_verb::sdk::call_reply_digest(verb, &bytes)),
+        ),
+        Err(refusal) => (
+            CallOutcome::Refused {
+                code: refusal.body.error.code.clone(),
+            },
+            Some(oneiron::receipt::call_refusal_digest(
+                &refusal.body.error.code,
+                &refusal.body.error.message,
+            )),
+        ),
+    };
+    let anonymous =
+        call_receipt::in_anonymous_session(server, headers, call_receipt::request_principal(auth));
+    let (actor_ref, actor_class) = call_receipt::call_actor(auth);
+    call_receipt::record(
+        server,
+        anonymous,
+        CallReceiptInput {
+            transport: CREDENTIAL_ROW_TRANSPORT,
+            verb: verb.to_owned(),
+            actor_ref,
+            actor_class,
+            credential_ref: call_receipt::credential_ref(auth),
+            outcome,
+            request_digest,
+            result_digest,
+            inputs,
+            attempt,
+            served: Vec::new(),
+        },
+    )
+}
+
 impl AgentVerbDoor for FacadeRowDoor {
     fn call(
         &self,
         call: &SelfAgentVerbCall,
-        _origin: &HostWriteOrigin,
+        origin: &HostWriteOrigin,
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        Ok(self.post_row(call, invocation))
+        Ok(self.post_row(call, origin, invocation))
     }
 
     /// The typed actions keep their own ceiling and owner proof; this door

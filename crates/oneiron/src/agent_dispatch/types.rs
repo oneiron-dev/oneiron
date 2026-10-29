@@ -30,7 +30,7 @@ pub const DEFAULT_BASE_LOGICAL_ID: &str = "sys.default";
 pub const AGENT_DISPATCH_INPUT_SCHEMA_VERSION: u64 = 1;
 
 /// The pinned dispatch-input body keys (dreamer-payload-side snake_case).
-pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 23] = [
+pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 24] = [
     "schema_version",
     "target",
     "agent_def",
@@ -54,6 +54,7 @@ pub const AGENT_DISPATCH_INPUT_KEYS: [&str; 23] = [
     "objectives",
     "comm",
     "direct_spawn",
+    "requester",
 ];
 
 pub(super) const KEY_SCHEMA_VERSION: &str = AGENT_DISPATCH_INPUT_KEYS[0];
@@ -92,6 +93,8 @@ pub(super) const KEY_OBJECTIVES: &str = AGENT_DISPATCH_INPUT_KEYS[20];
 pub(super) const KEY_COMM: &str = AGENT_DISPATCH_INPUT_KEYS[21];
 /// OF-541: a direct spawn's whole ask and what it left unapplied. Required.
 pub(super) const KEY_DIRECT_SPAWN: &str = AGENT_DISPATCH_INPUT_KEYS[22];
+/// FIX 11592: who queued the dispatch, and what his request stood on.
+pub(super) const KEY_REQUESTER: &str = AGENT_DISPATCH_INPUT_KEYS[23];
 
 /// The depth a lineage with no explicit slice once stopped at. Such a
 /// lineage spends no depth (FIX 9560): past this many ancestors its walk
@@ -193,6 +196,11 @@ pub struct AgentDispatchInput {
     /// spawn, whose `plan` records its ask. Never authority, and never part
     /// of `spawn_intent`: a retry is the same spawn whatever it asked.
     pub direct_spawn: Option<super::DirectSpawnReceipt>,
+    /// FIX 11592: who queued this dispatch and the instrument his request
+    /// was admitted on, or his parent's; each claim judges it again, and a
+    /// positive withdrawal ends the try. `None`: the in-process host's own
+    /// work, which runs as before. Never part of `spawn_intent`.
+    pub requester: Option<super::QueuedRequester>,
 }
 
 impl AgentDispatchInput {
@@ -220,6 +228,7 @@ impl AgentDispatchInput {
             objectives: None,
             comm: super::comm::default_comm_reach(super::comm::SpawnRole::Worker),
             direct_spawn: None,
+            requester: None,
         }
     }
 }
@@ -281,6 +290,10 @@ pub struct AgentSpawnContext {
     /// dispatch to freeze. Never read to execute the spawn, and outside its
     /// intent digest.
     pub direct_spawn: Option<super::DirectSpawnReceipt>,
+    /// FIX 11592: the requester the host's authenticated door names for a
+    /// dispatch its request queues. `None` keeps the parent's, or none for a
+    /// root. Outside the intent digest.
+    pub requester: Option<super::QueuedRequester>,
 }
 
 impl AgentSpawnContext {

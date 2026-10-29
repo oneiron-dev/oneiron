@@ -276,7 +276,9 @@ impl Memory<'_> {
     // here rather than as row `refs` so the resource routes meet it too).
 
     /// `vault.campaign.program.create` — an authored program under a
-    /// campaign the bound actor owns.
+    /// campaign the bound actor owns. Files every outbound step's body
+    /// after the program write: the program ref is minted inside
+    /// `create_campaign_program`, so the filer cannot run first (FIX 11513).
     pub fn campaign_program_create(
         &self,
         request: &crate::campaign::surface::CreateCampaignProgramRequest,
@@ -297,6 +299,24 @@ impl Memory<'_> {
             &draft,
             self.vault.store.clock.now_recorded_at(),
         )?;
+        // The program ref above is minted inside the create, so its step
+        // bodies file after it. A filer failure is returned, never
+        // swallowed: the program row persists, its sends fail closed, and
+        // an update re-files.
+        let filer = crate::WriteActor::new(self.actor, self.actor_class);
+        let filed_at = self.vault.store.clock.now_recorded_at();
+        for step in &program.steps {
+            if let Some(outbound) = step.outbound.as_ref() {
+                self.vault.save_campaign_step_body(
+                    program.program.program_ref,
+                    step.step_ref,
+                    outbound.call_seq,
+                    &outbound.payload,
+                    filer,
+                    filed_at,
+                )?;
+            }
+        }
         Ok(crate::campaign::surface::campaign_program_record(&program))
     }
 
@@ -322,7 +342,10 @@ impl Memory<'_> {
     }
 
     /// `vault.campaign.program.update` — replaces a program's definition,
-    /// steps and audience whole, under a CAS.
+    /// steps and audience whole, under a CAS. Files every outbound step's
+    /// body before the program write: the program ref rides the request, so
+    /// a filer failure aborts first and no unfiled update persists
+    /// (FIX 11513).
     pub fn campaign_program_update(
         &self,
         request: &crate::campaign::surface::UpdateCampaignProgramRequest,
@@ -335,6 +358,20 @@ impl Memory<'_> {
             crate::campaign::surface::CAMPAIGN_PROGRAM_STEP_REFS,
         )?;
         let draft = request.draft()?;
+        let filer = crate::WriteActor::new(self.actor, self.actor_class);
+        let filed_at = self.vault.store.clock.now_recorded_at();
+        for step in &draft.steps {
+            if let Some(outbound) = step.outbound.as_ref() {
+                self.vault.save_campaign_step_body(
+                    request.program_ref,
+                    step.step_ref,
+                    outbound.call_seq,
+                    &outbound.payload,
+                    filer,
+                    filed_at,
+                )?;
+            }
+        }
         let program = crate::campaign::enrollment::update_campaign_program(
             self.vault,
             self.actor,

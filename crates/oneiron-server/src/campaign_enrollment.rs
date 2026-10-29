@@ -23,13 +23,13 @@ use oneiron::campaign::enrollment::{
     decode_enrollment_attempt_payload, drive_enrollment_outbound_leg,
     elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
 };
+use oneiron::campaign::sender::CampaignChannelSender;
 use oneiron::saved_query::{
     QueryScope, SavedQueryEvaluator, SavedQueryRecord, WakeEvaluationReport, read_saved_query,
     sweep_owner_read,
 };
 use oneiron::{EntityId, Vault};
 
-use crate::connector_call_host::ServedConnectorCallHost;
 use crate::ladder_poll::block_on;
 use crate::server::SyncServer;
 
@@ -226,16 +226,17 @@ async fn execute(
     runner.execute_claimed(node, attempt, &evaluator, now).await
 }
 
-/// Runs the outward leg of `attempt` on this server's connector call host
-/// (FIX 2636). `None` when the designation moved before the send: the row
-/// stays leased for the new home node. A Gate hold waits on the owner's
-/// press and fails the attempt with its digest, as a review hold does.
+/// Runs the outward leg of `attempt` on the campaign channel sender
+/// (FIX 2636, FIX 11513). `None` when the designation moved before the
+/// send: the row stays leased for the new home node. A Gate hold waits on
+/// the owner's press and fails the attempt with its digest, as a review
+/// hold does.
 fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Settlement> {
     let vault = server.vault();
-    let mut sender = match ServedConnectorCallHost::new(server) {
-        Ok(sender) => sender,
-        Err(error) => return Some(Settlement::Fail(error.to_string())),
-    };
+    let mut sender = CampaignChannelSender::new(
+        Arc::clone(server.vault()),
+        server.config.line.monthly_push_allowance(),
+    );
     let now_ms = crate::runtime::wall_clock_ms();
     let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
     Some(match drive {

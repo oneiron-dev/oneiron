@@ -111,6 +111,10 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.shape.read" => a.spec.clone().ok_or_else(invalid),
         "vault.shape.plan" => a.spec.clone().ok_or_else(invalid),
         "vault.shape.apply" => a.spec.clone().ok_or_else(invalid),
+        "vault.shape.plan.card" => a.spec.clone().ok_or_else(invalid),
+        "vault.shape.items.receipt" => a.spec.clone().ok_or_else(invalid),
+        "vault.shape.groups" => a.spec.clone().ok_or_else(invalid),
+        "vault.shape.groups.resolve" => a.spec.clone().ok_or_else(invalid),
         "self.message" => a.spec.clone().ok_or_else(invalid),
         "self.grants.ask" => a.spec.clone().ok_or_else(invalid),
         "vault.companions.access_requests.answer" => a.spec.clone().ok_or_else(invalid),
@@ -289,6 +293,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.retrieval.policy.update" => a.spec.clone().ok_or_else(invalid),
         "vault.export" => a.spec.clone().ok_or_else(invalid),
         "self.credential.attenuate" => a.spec.clone().ok_or_else(invalid),
+        "self.actor" => a.spec.clone().ok_or_else(invalid),
         "vault.scope.position" => a.spec.clone().ok_or_else(invalid),
         "vault.scope.ceiling" => a.spec.clone().ok_or_else(invalid),
         "vault.export.scoped" => a.spec.clone().ok_or_else(invalid),
@@ -347,6 +352,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.inbox.concerns.review" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.lens" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.groups" => a.spec.clone().ok_or_else(invalid),
+        "vault.inbox.groups.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.link.corrections" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.lens" => a.spec.clone().ok_or_else(invalid),
@@ -588,6 +594,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.coach.training_offers.pilots.prepare" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.pilots.complete" => a.spec.clone().ok_or_else(invalid),
         "vault.coach.training_offers.pilots.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.training_offers.sources" => a.spec.clone().ok_or_else(invalid),
         "vault.research.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.research.fork" => a.spec.clone().ok_or_else(invalid),
         "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
@@ -1413,6 +1420,10 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.identity.events.get" => a.spec.clone().ok_or_else(invalid),
         "vault.identity.proposals.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.identity.proposals.for_pair" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.drain.begin" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.drain.commit" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.drain.folder" => a.spec.clone().ok_or_else(invalid),
+        "vault.custody.members.reenrol" => a.spec.clone().ok_or_else(invalid),
         "connector.answer" => a.spec.clone().ok_or_else(invalid),
         "self.browser.open" => a.spec.clone().ok_or_else(invalid),
         "self.browser.observe" => a.spec.clone().ok_or_else(invalid),
@@ -1608,6 +1619,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shape.apply" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shape.plan.card" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shape.items.receipt" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shape.groups" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shape.groups.resolve" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.message" => {
@@ -1958,6 +1981,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "self.credential.attenuate" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "self.actor" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.scope.position" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -2130,6 +2156,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.inbox.groups" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.inbox.groups.resolve" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.digest.render" => {
@@ -2845,6 +2874,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.coach.training_offers.pilots.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.training_offers.sources" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.bind" => {
@@ -5010,6 +5042,18 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.identity.proposals.for_pair" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.custody.members.drain.begin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.custody.members.drain.commit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.custody.members.drain.folder" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.custody.members.reenrol" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "connector.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -5345,7 +5389,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_commitments_create(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5359,7 +5405,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_commitments_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5374,7 +5422,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_commitments_instances(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -5389,7 +5439,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_commitments_proposals(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -5404,7 +5456,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_commitments_fulfill(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5419,7 +5473,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_commitments_release(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5434,7 +5490,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_commitments_supersede(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5453,7 +5511,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5472,7 +5532,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5511,7 +5573,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::feedback_preview(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5525,7 +5589,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::feedback_send(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5539,7 +5605,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_reports_disclosure(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5553,7 +5621,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_reports_route(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5567,7 +5637,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_reports_outbound(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5708,7 +5780,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5836,7 +5910,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5859,7 +5935,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5882,7 +5960,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5917,7 +5997,75 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shape.plan.card" => {
+            let input: oneiron::vault_shape::ShapePlanRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_shape_plan_card(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shape.items.receipt" => {
+            let input: oneiron::memory::ShapeItemReceiptRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_shape_items_receipt(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shape.groups" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shape.groups", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_shape_groups(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.shape.groups",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shape.groups.resolve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shape.groups.resolve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::ShapeGroupResolveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_shape_groups_resolve(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.shape.groups.resolve",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5956,7 +6104,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5970,7 +6120,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::self_grants_answer(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5984,7 +6136,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_personas_preview(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -5998,7 +6152,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_personas_export(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6012,7 +6168,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_personas_edit(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6026,7 +6184,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::self_memory_diary_query(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6116,7 +6276,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::tasks_wave(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6141,7 +6303,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6195,7 +6359,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_lease_open(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6209,7 +6375,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_lease(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6224,7 +6392,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_budgets_lease_top_up(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6238,7 +6408,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_hold(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6253,7 +6425,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_budgets_hold_resume(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6267,7 +6441,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_local(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6282,7 +6458,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_budgets_reservations(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6297,7 +6475,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_budgets_settlements(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6312,7 +6492,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_budgets_rsi_configure(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6326,7 +6508,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_rsi(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6340,7 +6524,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_rsi_top_up(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6354,7 +6540,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_budgets_rsi_hold(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6369,7 +6557,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_budgets_rsi_hold_resume(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6384,7 +6574,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_budgets_resident_shares(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6401,7 +6593,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6416,7 +6610,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_runners_seats_quotas(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6431,7 +6627,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_runners_seats_top_up(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6445,7 +6643,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_fanout_resume(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6459,7 +6659,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_fanout_resume_as(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6473,7 +6675,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_fanout_ack(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6655,7 +6859,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_aging_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6671,7 +6877,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6686,7 +6894,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_weights_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6703,7 +6913,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6718,7 +6930,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_hyde_configure(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6732,7 +6946,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_hyde_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6747,7 +6963,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_hyde_pending(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -6762,7 +6980,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_hyde_complete(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6777,7 +6997,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_hyde_receipt(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6833,7 +7055,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6848,7 +7072,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_affect_coping_record(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6863,7 +7089,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_affect_coping_update(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6878,7 +7106,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_affect_coping_aggregate(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6895,7 +7125,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6915,7 +7147,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6930,7 +7164,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_affect_wellness_derive(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6945,7 +7181,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_affect_wellness_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6980,7 +7218,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -6999,7 +7239,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7018,7 +7260,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7037,7 +7281,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7051,7 +7297,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_recall(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7065,7 +7313,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_runs(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -7079,7 +7329,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_run(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7093,7 +7345,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_turn(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -7108,7 +7362,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_outcomes_put(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -7123,7 +7379,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_outcomes_end(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -7137,7 +7395,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_trace(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7151,7 +7411,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_export(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7165,7 +7427,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_retrieval_replay(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7180,7 +7444,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_policy_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7195,7 +7461,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_policy_pin(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7210,7 +7478,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_policy_train(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7226,7 +7496,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7241,7 +7513,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_policy_admit(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7256,7 +7530,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_retrieval_policy_update(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7346,8 +7622,22 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::self_credential_attenuate(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.actor" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.actor", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_actor(server, auth, input)
+                .await
+                .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -7462,7 +7752,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_explain_memory(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7476,7 +7768,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_explain_gate(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7540,7 +7834,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7572,7 +7868,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7596,7 +7894,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7620,7 +7920,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7659,7 +7961,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7798,7 +8102,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_weave_digest(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7819,7 +8125,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7833,7 +8141,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_weave_link_wrong(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7848,7 +8158,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_weave_owner_link_wrong(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7862,7 +8174,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_weave_item_wrong(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7877,7 +8191,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_weave_owner_item_wrong(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7900,7 +8216,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7923,7 +8241,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -7946,7 +8266,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7969,7 +8291,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -7993,7 +8317,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -8017,7 +8343,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8041,7 +8369,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8064,7 +8394,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8087,7 +8419,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8110,7 +8444,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8133,7 +8469,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8156,7 +8494,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::scoped_window(
                 output.groups.len(),
@@ -8166,6 +8506,31 @@ async fn execute_agent_verb_row(
             )
             .rows_at("groups")
             .resumed_within("next", "spec", "after");
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.inbox.groups.resolve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.inbox.groups.resolve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::inbox::InboxGroupResolveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_inbox_groups_resolve(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.inbox.groups.resolve",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.weave.digest.render" => {
@@ -8201,7 +8566,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_bootstrap(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -8216,7 +8583,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skill_hubs_default_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8231,7 +8600,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_restoreDefaults(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -8245,7 +8616,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skill_hubs_put(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8259,7 +8632,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skill_hubs_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8276,7 +8651,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8293,7 +8670,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8308,7 +8687,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skill_hubs_refs_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8323,7 +8704,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skill_hubs_refs_set(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8337,7 +8720,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_install(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8351,7 +8736,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_sync(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8365,7 +8752,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8379,7 +8768,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_import(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8393,7 +8784,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_sync(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8407,7 +8800,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_receipts(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8421,7 +8816,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_convert(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8435,7 +8832,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8449,7 +8848,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_list(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8463,7 +8864,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_archive(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8477,7 +8880,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_restore(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8491,7 +8896,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_fork(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8505,7 +8912,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_skills_rules_set(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8522,7 +8931,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8539,7 +8950,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8554,7 +8967,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_optimize_start(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8569,7 +8984,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_optimize_result(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8586,7 +9003,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8600,7 +9019,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_projects_goal_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8615,7 +9036,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_optimize_propose(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8630,7 +9053,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_optimize_measure(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8645,7 +9070,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_optimize_score(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8660,7 +9087,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_optimize_admit(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8675,7 +9104,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_optimize_goal_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8691,7 +9122,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8711,7 +9144,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8731,7 +9166,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8748,7 +9185,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -8768,7 +9207,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8783,7 +9224,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_governance_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8798,7 +9241,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_governance_set(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8812,7 +9257,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_hooks_bind(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -8826,7 +9273,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_hooks_list(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -8841,7 +9290,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_hooks_grant_set(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8856,7 +9307,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_hooks_grant_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8871,7 +9324,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_hooks_qualify(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8885,7 +9340,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_put(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8912,7 +9369,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_connector_prepare(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8927,7 +9386,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_connector_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8942,7 +9403,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_connector_qualify(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8957,7 +9420,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_connector_accept(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8972,7 +9437,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_connector_update(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -8989,7 +9456,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9006,7 +9475,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9020,7 +9491,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_remove(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9043,7 +9516,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9066,7 +9541,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::scoped_window(
                 output.pending.len(),
@@ -9095,7 +9572,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9118,7 +9597,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9141,7 +9622,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9165,7 +9648,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9189,7 +9674,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9213,7 +9700,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9228,7 +9717,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_connectors_proxy_admit(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9245,7 +9736,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9261,7 +9754,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9284,7 +9779,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9304,7 +9801,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9324,7 +9823,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9344,7 +9845,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9364,7 +9867,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9381,7 +9886,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9398,7 +9905,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9415,7 +9924,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9435,7 +9946,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9450,7 +9963,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_packs_setup_prepare(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9464,7 +9979,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_setup_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9478,7 +9995,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_setup_answer(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9492,7 +10011,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_packs_setup_verify(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9506,7 +10027,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_authority_audit(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9521,7 +10044,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_authority_history_export(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9536,7 +10061,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_authority_history_import(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9551,7 +10078,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_authority_clock_repair(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9568,7 +10097,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9585,7 +10116,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9599,7 +10132,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_slim_policy(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9613,7 +10148,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_slim_state(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9627,7 +10164,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_slim_resume_step(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9641,7 +10180,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_slim_drop_heavy(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9655,7 +10196,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_slim_resume(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9669,7 +10212,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_mesh_path_receipts(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -9683,7 +10228,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_mesh_identity(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9697,7 +10244,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_mesh_bind_machine(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9712,7 +10261,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_mesh_set_alpn_grant(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9727,7 +10278,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_mesh_revoke_machine(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9741,7 +10294,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_mesh_dial(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9764,7 +10319,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_shared_propose_delete(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9779,7 +10336,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_shared_propose_transfer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9796,7 +10355,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9810,7 +10371,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_execute(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9824,7 +10387,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_receipt(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9838,7 +10403,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_outcomes(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -9852,7 +10419,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_deletion(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9867,7 +10436,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_org_admin_configure(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9881,7 +10452,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_org_admin_powers(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9904,7 +10477,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_members_delegate(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9926,7 +10501,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_members_add(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9941,7 +10518,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_members_invitation_slip(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9955,7 +10534,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_members_change(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9969,7 +10550,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_members_remove(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9983,7 +10566,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_members_leave(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9998,7 +10583,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_members_invitations(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10012,7 +10599,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_members_accept(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10026,7 +10615,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_members_decline(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10043,7 +10634,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10057,7 +10650,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_object(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10073,7 +10668,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10087,7 +10684,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_started(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10101,7 +10700,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_matured(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10115,7 +10716,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_erase_ask(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10129,7 +10732,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_erase_asks(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10144,7 +10749,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_shared_close_erase_ask(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10158,7 +10765,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_policy_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10173,7 +10782,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_shared_policy_propose(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10188,7 +10799,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_shared_policy_answer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10203,7 +10816,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_shared_policy_change(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10218,7 +10833,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_shared_policy_changes(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10235,7 +10852,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10252,7 +10871,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10272,7 +10893,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10289,7 +10912,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10305,7 +10930,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10320,7 +10947,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_federation_burst_policy(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10337,7 +10966,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10352,7 +10983,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_federation_burst_ingress(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10369,7 +11002,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10384,7 +11019,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_federation_burst_review(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10404,7 +11041,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10421,7 +11060,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10436,7 +11077,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_federation_burst_replay(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10453,7 +11096,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10470,7 +11115,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10485,7 +11132,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_federation_connect_offer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10501,7 +11150,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10517,7 +11168,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10537,7 +11190,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10557,7 +11212,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10574,7 +11231,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10590,7 +11249,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10606,7 +11267,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10621,7 +11284,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_trusted_contacts_name(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10636,7 +11301,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_trusted_contacts_list(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10651,7 +11318,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_trusted_contacts_consent(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10666,7 +11335,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_trusted_contacts_revoke(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10682,7 +11353,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10698,7 +11371,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10715,7 +11390,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -10735,7 +11412,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10762,7 +11441,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10789,7 +11470,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10803,7 +11486,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_guests_share(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10818,7 +11503,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_guests_export_envelope(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10832,7 +11519,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_guests_reshare(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10846,7 +11535,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_guests_revoke(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10860,7 +11551,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_guests_mint_slip(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10875,7 +11568,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_support_grants_mint(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10890,7 +11585,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_support_grants_list(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10905,7 +11602,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_support_grants_revoke(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10920,7 +11619,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_files_sources_attach(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10935,7 +11636,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_files_sources_rescan(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10950,7 +11653,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_files_sources_detach(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10964,7 +11669,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_files_sources_list(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10979,7 +11686,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_files_sources_files(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -10993,7 +11702,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_residence_mode(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11007,7 +11718,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_residence_open(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11021,7 +11734,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_residence_index(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11035,7 +11750,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_residence_prune(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11050,7 +11767,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_residence_directives(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -11064,7 +11783,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_off_record_start(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11078,7 +11799,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_off_record_status(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11092,7 +11815,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_off_record_witness(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11106,7 +11831,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_off_record_discard(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11120,7 +11847,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_off_record_recall(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11135,7 +11864,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_off_record_notes_create(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11150,7 +11881,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_off_record_claims_upsert(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11164,7 +11897,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::self_off_record_execute(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11179,7 +11914,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::self_off_record_results_list(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11194,7 +11931,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::self_off_record_results_read(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11209,7 +11948,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::self_off_record_waits_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11224,7 +11965,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::self_off_record_waits_answer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11363,7 +12106,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_records_erase_preview(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11378,7 +12123,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_records_erase_confirm(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11393,7 +12140,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_records_erase_sweep(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11408,7 +12157,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_research_create_child(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11478,7 +12229,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_inventory(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11493,7 +12246,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_evals_cohorts_setup(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11507,7 +12262,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_author_now(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11522,7 +12279,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_evals_authoring_result(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11536,7 +12295,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_families(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -11551,7 +12312,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_evals_families_assign(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11565,7 +12328,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_cases(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -11579,7 +12344,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_cases_record(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11593,7 +12360,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_cohorts(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -11607,7 +12376,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_cohorts_open(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11621,7 +12392,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_exposure(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11635,7 +12408,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_sufficiency(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11650,7 +12425,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_evals_labels_blocked(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -11664,7 +12441,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_evals_labels_pick(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11679,7 +12458,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_coach_training_offers(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -11695,7 +12476,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11712,7 +12495,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11729,7 +12514,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11746,7 +12533,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11763,7 +12552,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11783,7 +12574,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -11803,7 +12596,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11823,7 +12618,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11843,7 +12640,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11863,7 +12662,28 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.training_offers.sources" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.sources", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ReservoirSourcesRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_coach_training_offers_sources(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -11918,7 +12738,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_research_evaluate_split(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12031,7 +12853,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_authority_handoff_alarms(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12051,7 +12875,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12070,7 +12896,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12089,7 +12917,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12104,7 +12934,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_roots_requests_list(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12118,7 +12950,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_owner_work_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12132,7 +12966,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_cleanup_run(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12146,7 +12982,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_cleanup_review(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12160,7 +12998,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_cleanup_decide(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12191,7 +13031,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_usage_events_undecodable(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12214,7 +13056,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12229,7 +13073,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_usage_repair_receipts(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12243,7 +13089,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_entities_mention(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12257,7 +13105,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_legal_holds_place(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12271,7 +13121,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_legal_holds_widen(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12285,7 +13137,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_legal_holds_list(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12299,7 +13153,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_legal_holds_log(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12316,7 +13172,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12331,7 +13189,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_courtesy_delete_send(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12346,7 +13206,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_courtesy_delete_sent(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12361,7 +13223,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_courtesy_delete_incoming(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12376,7 +13240,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_courtesy_delete_answer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12391,7 +13257,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_embedding_spaces_list(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12406,7 +13274,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_embedding_spaces_declare(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12421,7 +13291,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_embedding_spaces_bind(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12438,7 +13310,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12453,7 +13327,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_embedding_spaces_retire(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12468,7 +13344,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_embedding_spaces_move(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12485,7 +13363,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12502,7 +13382,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12519,7 +13401,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12536,7 +13420,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12553,7 +13439,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12570,7 +13458,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12587,7 +13477,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12601,7 +13493,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_policy_owner_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12616,7 +13510,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_policy_owner_configure(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12631,7 +13527,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_policy_owner_row_change(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12660,7 +13558,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12689,7 +13589,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12704,7 +13606,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_consent_approve_once(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12721,7 +13625,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12735,7 +13641,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_consent_deny(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12752,7 +13660,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12766,7 +13676,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_consent_registry(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12783,7 +13695,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12797,7 +13711,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_consent_revoke(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12814,7 +13730,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12831,7 +13749,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12848,7 +13768,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12868,7 +13790,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12884,7 +13808,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12901,7 +13827,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12921,7 +13849,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12936,7 +13866,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_consent_graduation_stats(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12953,7 +13885,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -12969,7 +13903,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -12985,7 +13921,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13002,7 +13940,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -13022,7 +13962,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13038,7 +13980,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13060,7 +14004,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_gate_policy_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13074,7 +14020,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_gate_policy_put(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13096,7 +14044,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_gate_checker_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13110,7 +14060,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_gate_checker_set(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13124,7 +14076,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_learning_read(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13139,7 +14093,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_learning_projection(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13153,7 +14109,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_seal_confess(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13167,7 +14125,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_seal_audit(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13181,7 +14141,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_seal_receipt(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13195,7 +14157,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_seal_pending(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -13209,7 +14173,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_seal_run(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13223,7 +14189,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_seal_complete(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13237,7 +14205,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_settings_learning(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13252,7 +14222,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_settings_learning_put(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13267,7 +14239,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_settings_learning_clear(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13282,7 +14256,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_secrets_lift_history(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13301,7 +14277,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13320,7 +14298,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13339,7 +14319,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13358,7 +14340,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13373,7 +14357,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_secrets_custody_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13392,7 +14378,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13406,7 +14394,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_widen_proposals(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13421,7 +14411,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_widen_proposals_approve(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13436,7 +14428,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_widen_proposals_decline(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13459,7 +14453,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13482,7 +14478,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13496,7 +14494,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_craft_candidates(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13511,7 +14511,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_craft_candidates_answer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13530,7 +14532,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13547,7 +14551,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13570,7 +14576,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13592,7 +14600,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_lenses_activate(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13606,7 +14616,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_lenses_deactivate(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13645,7 +14657,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13668,7 +14682,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13710,7 +14726,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13733,7 +14751,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_disclosure_ceiling_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13748,7 +14768,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_disclosure_ceiling_set(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13763,7 +14785,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_disclosure_ceiling_clear(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13777,7 +14801,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_disclosure_reveals(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -13793,7 +14819,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13837,7 +14865,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13861,7 +14891,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13885,7 +14917,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13909,7 +14943,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13933,7 +14969,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13955,7 +14993,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shares_revoke(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13969,7 +15009,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shares_view(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -13989,7 +15031,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14009,7 +15053,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14032,7 +15078,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14046,7 +15094,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_hooks_replay(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::scoped_window(
                 output.rows.len(),
@@ -14067,7 +15117,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_hooks_regen_due(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -14081,7 +15133,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_hooks_regen_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14095,7 +15149,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_hooks_regen_adopt(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14112,7 +15168,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14126,7 +15184,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_artifacts_publish(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14140,7 +15200,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_artifacts_repoint(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14154,7 +15216,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_artifacts_pointer(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14169,7 +15233,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_artifacts_unpublish(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14184,7 +15250,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_artifacts_link_token(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14204,7 +15272,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14228,7 +15298,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14245,7 +15317,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14262,7 +15336,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14282,7 +15358,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14299,7 +15377,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14319,7 +15399,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14510,7 +15592,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_symbols_declare(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14524,7 +15608,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_symbols_renew(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14539,7 +15625,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_symbols_release(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14554,7 +15642,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_proposal_submit(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14569,7 +15659,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_conflict_record(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14583,7 +15675,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_conflict_view(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14598,7 +15692,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_proposal_resolve(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14613,7 +15709,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_proposal_review(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14628,7 +15726,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_proposal_settle(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14643,7 +15743,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_proposal_settlement(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14657,7 +15759,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_oplog(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14681,7 +15785,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(|failure| {
                 crate::api::mcp_gateway::type_feedback_release::source_run_error(
                     server,
@@ -14703,7 +15809,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_model_heal_count(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14718,7 +15826,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_type_diagnostics(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14732,7 +15842,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_waits_resolve(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14746,7 +15858,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_waits_receipt(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14760,7 +15874,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_results_status(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14774,7 +15890,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_results_recover(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14788,7 +15906,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_results_read(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14802,7 +15922,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_results_slice(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14824,7 +15946,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_export(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14847,7 +15971,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14870,7 +15996,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14884,7 +16012,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_import(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14898,7 +16028,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_repos_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14912,7 +16044,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_forks_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14927,7 +16061,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_imports_create(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14941,7 +16077,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_imports_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14955,7 +16093,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_ingress_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14970,7 +16110,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_origin_register(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14985,7 +16127,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_origin_mirror_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15000,7 +16144,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_origin_mirror_set(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15017,7 +16163,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15032,7 +16180,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_origin_mirror_clear(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15047,7 +16197,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_origin_mirror_push(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15064,7 +16216,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15081,7 +16235,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15096,7 +16252,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_origin_publish_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15113,7 +16271,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15130,7 +16290,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15147,7 +16309,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15163,7 +16327,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15179,7 +16345,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15194,7 +16362,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_origin_publications(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15208,7 +16378,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_checkout_bind(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15223,7 +16395,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_checkout_claim(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15237,7 +16411,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_checkout_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15252,7 +16428,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_checkout_renew(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15267,7 +16445,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_checkout_reclaim(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15282,7 +16462,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_checkout_takeover(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15297,7 +16479,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_checkout_publish(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15312,7 +16496,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_checkout_settle(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15327,7 +16513,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_checkout_teardown(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15342,7 +16530,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_views_materialize(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15356,7 +16546,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_views_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15370,7 +16562,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_views_read(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15384,7 +16578,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_views_action(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15398,7 +16594,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_views_build(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15412,7 +16610,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_cache_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15426,7 +16626,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_cache_reuse(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15441,7 +16643,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_snapshots_ingest(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15455,7 +16659,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_snapshots_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15470,7 +16676,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_snapshots_read(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15485,7 +16693,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_symbols_definitions(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15500,7 +16710,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_merge_queue_enqueue(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15515,7 +16727,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_merge_queue_stage(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15530,7 +16744,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_merge_queue_observe(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15550,7 +16766,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15567,7 +16785,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15584,7 +16804,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15599,7 +16821,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_merge_queue_recover(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15614,7 +16838,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_merge_queue_init(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15629,7 +16855,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_code_merge_queue_check(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15645,7 +16873,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15662,7 +16892,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15676,7 +16908,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_checks_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15703,7 +16937,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15730,7 +16966,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15747,7 +16985,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15769,7 +17009,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_create(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15783,7 +17025,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15797,7 +17041,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_update(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15812,7 +17058,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_agents_dreaming_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15827,7 +17075,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_agents_dreaming_set(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15846,7 +17096,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15865,7 +17117,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15884,7 +17138,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15903,7 +17159,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15920,7 +17178,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15937,7 +17197,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15951,7 +17213,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_repo_anchor_bind(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -15981,7 +17245,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16011,7 +17277,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16041,7 +17309,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16071,7 +17341,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16101,7 +17373,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16131,7 +17405,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16161,7 +17437,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16191,7 +17469,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16221,7 +17501,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16251,7 +17533,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16281,7 +17565,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16311,7 +17597,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16341,7 +17629,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16371,7 +17661,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16401,7 +17693,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16415,7 +17709,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_base(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16431,7 +17727,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16448,7 +17746,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16463,7 +17763,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_standing_blocks_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16478,7 +17780,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_standing_blocks_list(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -16492,7 +17796,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_workflows_save(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16506,7 +17812,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_workflows_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16520,7 +17828,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_workflows_update(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16534,7 +17844,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_workflows_dispatch(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16557,7 +17869,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16571,7 +17885,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_workflows_status(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16585,7 +17901,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_task_types_pin(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16599,7 +17917,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_task_types_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16613,7 +17933,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_spawn_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16627,7 +17949,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_spawn(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16641,7 +17965,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_tasks_cancel_force(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16664,7 +17990,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16678,7 +18006,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_runs_branches_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16708,7 +18038,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_consults_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16723,7 +18055,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_workspace_establish(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16739,7 +18073,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16753,7 +18089,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_workspace_roster(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -16808,7 +18146,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_artifacts_review_slides(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16822,7 +18162,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_artifacts_ask(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16836,7 +18178,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_artifacts_admit(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16850,7 +18194,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_critic_review(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16889,7 +18235,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -16912,7 +18260,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17279,7 +18629,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17433,7 +18785,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_messages_react(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17557,7 +18911,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_pack_receipt(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17572,7 +18928,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_outcomes_project(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17587,7 +18945,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_skills_outcomes_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17602,7 +18962,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_manifest_read(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17617,7 +18979,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_manifest_replace(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17632,7 +18996,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_settings_web_connector(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17649,7 +19015,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17664,7 +19032,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_connectors_web_usage(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17679,7 +19049,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_oneironer_bind(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17693,7 +19065,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_models_routes_read(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17708,7 +19082,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_routes_replace(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17722,7 +19098,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_models_roles_read(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17737,7 +19115,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_roles_invoke(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17854,7 +19234,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_steps_submit(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17868,7 +19250,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_steps_receipt(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17966,7 +19350,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -17997,7 +19383,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_asr_open(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18011,7 +19399,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_asr_hypothesis(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18025,7 +19415,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_asr_finalize(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18039,7 +19431,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_asr_close(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18053,7 +19447,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_start(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18067,7 +19463,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_audio(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18081,7 +19479,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_events(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18095,7 +19495,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_ack(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18109,7 +19511,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_usage(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18132,7 +19536,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18146,7 +19552,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_end(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18160,7 +19568,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_voice_close(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18175,7 +19585,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_catalog_refresh(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18189,7 +19601,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_models_catalog_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18204,7 +19618,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_catalog_diff(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18219,7 +19635,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_trials_nominate(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18233,7 +19651,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_models_trials_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18248,7 +19668,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_trials_approve(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18262,7 +19684,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_models_trials_run(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18277,7 +19701,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_trials_resend_arm(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18292,7 +19718,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_trials_complete(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18307,7 +19735,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_bindings_propose(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18322,7 +19752,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_bindings_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18337,7 +19769,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_bindings_read(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18352,7 +19786,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_bindings_accept(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18367,7 +19803,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_models_bindings_deny(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18381,7 +19819,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_options(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18395,7 +19835,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_image(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18409,7 +19851,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_speech(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18423,7 +19867,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_voices_packs_put(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18438,7 +19884,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_voices_render_consent(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18453,7 +19901,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_voices_targets_provision(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18468,7 +19918,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_voices_targets_evict(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18482,7 +19934,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_voices_inspect(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18496,7 +19950,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_voices_lineage(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -18510,7 +19966,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_transcribe(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18524,7 +19982,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_embed(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18538,7 +19998,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_video(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18552,7 +20014,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_video_poll(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18566,7 +20030,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_video_cancel(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18580,7 +20046,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_ask_image(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18594,7 +20062,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::ai_verdict(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18608,7 +20078,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_graph_ask(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18622,7 +20094,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_graph_admit(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18636,7 +20110,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_create(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18650,7 +20126,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_edit(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18664,7 +20142,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_pause(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18678,7 +20158,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_backfill(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18692,7 +20174,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_read(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18708,7 +20192,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -18722,7 +20208,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_answers(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let (value, source) =
                 crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(
@@ -18739,7 +20227,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_refresh(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -18753,7 +20243,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_outcomes(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18770,7 +20262,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18784,7 +20278,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_questions_schedule(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18799,7 +20295,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_decisions_bands_read(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18814,7 +20312,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_decisions_bands_learn(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18829,7 +20329,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_decisions_bands_enforce(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18844,7 +20346,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_decisions_asks_answer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18859,7 +20363,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_decisions_asks_climb(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18876,7 +20382,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18890,7 +20398,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::self_decisions_asks(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -18929,7 +20439,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -18992,7 +20504,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_booking_availability(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19006,7 +20520,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_booking_book(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19020,7 +20536,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_booking_reschedule(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19034,7 +20552,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_booking_cancel(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19049,7 +20569,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_booking_constraint_turn(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19063,7 +20585,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_booking_page_token(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19085,7 +20609,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_ics_configure(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19099,7 +20625,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_ics_poll(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19113,7 +20641,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_ics_status(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19144,7 +20674,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::calendar_connector_configure(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19158,7 +20690,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_connector_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19172,7 +20706,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_connector_pull(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19186,7 +20722,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_connector_write(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19200,7 +20738,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_connector_kill(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19214,7 +20754,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_imip_configure(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19228,7 +20770,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::calendar_imip_get(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19251,7 +20795,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_calendar_ics_import(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19274,7 +20820,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_calendar_instances_move(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19329,7 +20877,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_calendar_check_in_due(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19344,7 +20894,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_calendar_check_in_answer(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19361,7 +20913,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19378,7 +20932,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19461,7 +21017,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19485,7 +21043,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19512,7 +21072,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19539,7 +21101,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19601,7 +21165,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_vectors_put(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19813,7 +21379,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19830,7 +21398,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -19844,7 +21414,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_batch(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20023,7 +21595,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20086,7 +21660,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20109,7 +21685,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20132,7 +21710,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20155,7 +21735,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20178,7 +21760,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20201,7 +21785,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20217,7 +21803,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20232,7 +21820,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_consolidation_home_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20251,7 +21841,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20266,7 +21858,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_consolidation_lineage(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20289,7 +21883,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20312,7 +21908,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20335,7 +21933,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20358,7 +21958,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20381,7 +21983,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20395,7 +21999,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_evidence(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20410,7 +22016,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_sieve_evidence_replay(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20424,7 +22032,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_cadence(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20438,7 +22048,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_settlements(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20453,7 +22065,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_sieve_settlements_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20467,7 +22081,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_queue(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20481,7 +22097,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_retained(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20495,7 +22113,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_receipts(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20509,7 +22129,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_policy(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20523,7 +22145,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_policy_set(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20538,7 +22162,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_sieve_recipe_policy(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20553,7 +22179,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_sieve_recipe_policy_set(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20567,7 +22195,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_lease(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20581,7 +22211,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_sieve_lease_refill(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20596,7 +22228,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_free_time_policy_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20615,7 +22249,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20630,7 +22266,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_free_time_policy_set_as(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20644,7 +22282,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_free_time_cycles(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20658,7 +22298,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_free_time_cycle(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20681,7 +22323,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20704,7 +22348,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20733,7 +22379,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20766,7 +22414,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20791,7 +22441,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20806,7 +22458,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_channel_identities_bind(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20823,7 +22477,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20839,7 +22495,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20856,7 +22514,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20876,7 +22536,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20913,7 +22575,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20956,7 +22620,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -20981,7 +22647,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21020,7 +22688,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21059,7 +22729,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21082,7 +22754,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21105,7 +22779,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21128,7 +22804,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21159,7 +22837,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21183,7 +22863,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21207,7 +22889,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21238,7 +22922,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_notes_follow_citation(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21357,7 +23043,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_notes_history_purge(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21374,7 +23062,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21391,7 +23081,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
@@ -21414,7 +23106,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21437,7 +23131,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21508,7 +23204,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21545,7 +23243,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21568,7 +23268,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21588,7 +23290,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21611,7 +23315,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21635,7 +23341,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21658,7 +23366,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21682,7 +23392,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21701,7 +23413,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21720,7 +23434,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21739,7 +23455,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21758,7 +23476,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21777,7 +23497,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21796,7 +23518,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21810,7 +23534,9 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_identity_resolve(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21825,7 +23551,9 @@ async fn execute_agent_verb_row(
                 crate::api::facade::host_doors::vault_identity_events_get(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21845,7 +23573,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21862,7 +23592,83 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.drain.begin" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.begin", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyMemberRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_drain_begin(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.drain.commit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.commit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyDrainCommitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_drain_commit(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.drain.folder" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.folder", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyMemberRef =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_drain_folder(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.custody.members.reenrol" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.custody.members.reenrol", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CustodyMemberReenrolRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_custody_members_reenrol(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21885,7 +23691,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21915,7 +23723,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21945,7 +23755,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -21975,7 +23787,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22005,7 +23819,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22035,7 +23851,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22065,7 +23883,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22095,7 +23915,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22125,7 +23947,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22155,7 +23979,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22185,7 +24011,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22215,7 +24043,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22245,7 +24075,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22275,7 +24107,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22305,7 +24139,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22335,7 +24171,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22365,7 +24203,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22396,7 +24236,9 @@ async fn execute_agent_verb_row(
                 )
                 .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22426,7 +24268,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22456,7 +24300,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22486,7 +24332,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22516,7 +24364,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22546,7 +24396,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22576,7 +24428,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22606,7 +24460,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22631,7 +24487,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22651,7 +24509,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22671,7 +24531,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22691,7 +24553,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22711,7 +24575,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22735,7 +24601,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22760,7 +24628,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22784,7 +24654,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22809,7 +24681,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -22833,7 +24707,9 @@ async fn execute_agent_verb_row(
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
-            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
+                listed,
+            ));
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
