@@ -25,6 +25,7 @@ mod contribution;
 mod coordination_codec;
 mod dispatcher;
 mod payload;
+mod read_set;
 mod reader;
 mod reader_brief;
 mod reader_clock;
@@ -100,6 +101,7 @@ pub use self::dispatcher::{
     SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
 pub(crate) use self::payload::agent_verb_observations_of;
+pub use self::read_set::resident_tool_answer_rows;
 pub use self::replay::{
     CODE_RUN_CONSOLE_CLOSE, CODE_RUN_CONSOLE_OPEN, CODE_RUN_EXEC_CLOSE, CODE_RUN_EXEC_OPEN,
     CODE_RUN_REPLAY_HASH_LEN, CODE_RUN_REPLAY_SCHEMA_VERSION, CODE_RUN_RNG_SEED_LEN,
