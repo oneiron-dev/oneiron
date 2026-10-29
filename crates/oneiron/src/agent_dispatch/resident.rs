@@ -26,10 +26,10 @@ use self::validation::validate;
 mod validation;
 
 const PREDICATE: &str = "agent.resident";
-/// A completed resident run's result TURN. Parts: attempt.
-const RUN_RESULT: &[u8] = b"oneiron:resident-run-result:v1";
+/// A completed agent run's result TURN. Parts: attempt.
+const RUN_RESULT: &[u8] = b"oneiron:agent-run-result:v1";
 /// The run's answer body, as the result TURN holds it. Parts: result TURN.
-const RUN_RESULT_BODY: &[u8] = b"oneiron:resident-run-result-body:v1";
+const RUN_RESULT_BODY: &[u8] = b"oneiron:agent-run-result-body:v1";
 
 /// Wake policy changes scheduling only. It conveys no scope or approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,13 +476,20 @@ impl AgentDispatcher<'_> {
 }
 
 impl AgentDispatcher<'_> {
-    /// Gives a completed resident run its durable result before the runner
+    /// Resumes parked attempts whose durable-wait signal already landed. The
+    /// agent-run pump and Dreamer wake pass share this idempotent sweep; a
+    /// consumed signal resumes only the attempt named by its private binding.
+    pub fn resume_signalled_runs(&self, now_ms: u64) -> Result<usize> {
+        crate::llm::resume_signalled_steps(self.vault, now_ms)
+    }
+
+    /// Gives a completed agent run its durable result before the runner
     /// completes the attempt: one TURN naming the answer of the run's
     /// finished step, which holds that body for as long as the TURN lives
     /// (OF-597), set as the attempt's result so the task highway's Done
     /// resolves it. The TURN's id derives from the attempt, so a replayed
     /// completion finds the TURN it made.
-    pub fn attach_resident_run_result(
+    pub fn attach_agent_run_result(
         &self,
         attempt: &AttemptRecord,
         lease_owner: &str,
@@ -500,7 +507,7 @@ impl AgentDispatcher<'_> {
             .find(|output| output.complete && output.path.ends_with(".observation.txt"));
         let field = |key: &str, value: Value| (Value::from(key), value);
         let artifact = Value::Map(vec![
-            field("kind", Value::from("resident.run_result")),
+            field("kind", Value::from("agent.run_result")),
             field(
                 "attempt_ref",
                 Value::from(crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())),
@@ -589,9 +596,9 @@ impl AgentDispatcher<'_> {
         Ok(result_ref)
     }
 
-    /// The answer a completed resident run's result names, for a reader that
+    /// The answer a completed agent run's result names, for a reader that
     /// must see exactly what the run produced (a seal check, OF-544):
-    /// `result_ref` is the TURN [`Self::attach_resident_run_result`] made for
+    /// `result_ref` is the TURN [`Self::attach_agent_run_result`] made for
     /// `attempt`, and the answer is that run's own complete output, as its
     /// digest and length. `None` for any other result, a TURN with no answer,
     /// or a run that no longer holds that output. The TURN's id is never read
@@ -600,24 +607,24 @@ impl AgentDispatcher<'_> {
     /// # Errors
     ///
     /// Storage errors.
-    pub fn resident_run_answer(
+    pub fn agent_run_answer(
         &self,
         attempt: AttemptId,
         result_ref: &str,
     ) -> Result<Option<crate::compaction::output::OutputRef>> {
         Ok(self
-            .resident_run_answer_with_turn(attempt, result_ref)?
+            .agent_run_answer_with_turn(attempt, result_ref)?
             .map(|(answer, _)| answer))
     }
 
-    /// [`Self::resident_run_answer`] with the result TURN it read the answer
+    /// [`Self::agent_run_answer`] with the result TURN it read the answer
     /// from (FIX 7103): one source of a seal check's prompt, never the whole
     /// set, since the answer's bytes and the check's objectives have their own.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub fn resident_run_answer_with_turn(
+    pub fn agent_run_answer_with_turn(
         &self,
         attempt: AttemptId,
         result_ref: &str,
@@ -638,7 +645,7 @@ impl AgentDispatcher<'_> {
         let attempt_ref = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
         let kind = result_field(root, "kind").and_then(Value::as_str);
         let of = result_field(root, "attempt_ref").and_then(Value::as_str);
-        if kind != Some("resident.run_result") || of != Some(attempt_ref.as_str()) {
+        if kind != Some("agent.run_result") || of != Some(attempt_ref.as_str()) {
             return Ok(None);
         }
         let answer = result_field(root, "answer");
