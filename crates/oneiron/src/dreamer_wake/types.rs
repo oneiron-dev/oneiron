@@ -20,7 +20,7 @@ use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use crate::write_envelope::WriteEnvelope;
 
-use super::deadline::WakePassDeadline;
+use super::deadline::{WakeCancellation, WakePassDeadline};
 
 /// What woke the Dreamer (C9 wake model, design D2).
 ///
@@ -202,6 +202,10 @@ pub enum DreamerAttemptExecution {
 pub struct WakeAttemptContext<'a> {
     pub vault: &'a Vault,
     pub deadline: &'a WakePassDeadline,
+    /// The pass's cooperative cancellation (a drain's pause or a stop): a
+    /// running attempt polls it at its boundaries and parks, resumable,
+    /// when raised. `None` outside a driven pass: nothing is ever asked.
+    pub cancel: Option<&'a WakeCancellation>,
     pub budget_id: &'a str,
     pub now_ms: u64,
     /// One frozen LMDB ledger revision for this entire wake, if the driver
@@ -276,6 +280,14 @@ impl WakeAttemptMeter {
 }
 
 impl WakeAttemptContext<'_> {
+    /// True once the pass asked this attempt to stop at its next boundary:
+    /// the host paused or stopped it. An attempt that sees this parks
+    /// through its checkpoint exit, and a later pass resumes it.
+    #[must_use]
+    pub fn cancel_requested(&self) -> bool {
+        self.cancel.is_some_and(|cancel| cancel.is_cancelled())
+    }
+
     /// Registers `line`, the attempt's own run line, at what it has already
     /// used, so the driver settles what it charges if the attempt fails or
     /// parks before reporting its spend (SCAN C012). A second line, or a

@@ -45,6 +45,7 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 mod claim_authoring;
 mod compaction_check;
 mod free_time;
+mod pause;
 mod request_sources;
 mod run_log;
 mod urgent_digest;
@@ -122,6 +123,11 @@ pub(crate) struct DreamerControl {
     /// The freeze's current epoch: `true` once frozen, and kept `true` by
     /// that epoch after a thaw, which starts the next and closes it.
     pub(crate) pause: Arc<dyn Fn() -> tokio::sync::watch::Receiver<bool> + Send + Sync>,
+    /// Sets the owner's own pause cause (`POST /dreamer/pause`): no new
+    /// pass starts, and the running attempt parks at its next boundary.
+    pub(crate) set_owner_pause: Arc<dyn Fn(bool) + Send + Sync>,
+    /// Reads the owner's own pause cause (not the managed freeze).
+    pub(crate) read_owner_pause: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 /// The host's control over each Dreamer pass, its home-timer pump and its

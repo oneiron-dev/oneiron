@@ -158,6 +158,18 @@ impl WakePassDeadline {
                 .ceiling_ms
                 .saturating_sub(DREAMER_GRACEFUL_WRAP_WINDOW_MS)
     }
+
+    /// True once even a finished partition must checkpoint rather than land
+    /// (FIX 11570): past the ceiling by more than the graceful-wrap window,
+    /// which a partition that finished its model steps borrows for its
+    /// landing write.
+    #[must_use]
+    pub fn landing_closed(&self) -> bool {
+        self.elapsed()
+            >= self
+                .ceiling_ms
+                .saturating_add(DREAMER_GRACEFUL_WRAP_WINDOW_MS)
+    }
 }
 
 impl fmt::Debug for WakePassDeadline {
