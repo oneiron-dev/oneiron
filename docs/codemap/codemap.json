@@ -1648,7 +1648,7 @@
      "path": "src/agent_dispatch/workflow/model_context.rs",
      "purpose": "A workflow step's selected memory and chat as model context (FIX 6290)",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -2645,7 +2645,7 @@
      "path": "src/attempt_queue/read_set.rs",
      "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
      "surface": {
-      "const": 7,
+      "const": 9,
       "crate-vis": 1,
       "fn": 4,
       "struct": 2
@@ -24282,7 +24282,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 36
      }
     },
     {
@@ -24350,7 +24350,7 @@
      "path": "src/dreamer_consolidation/executor/extraction.rs",
      "purpose": "Extraction request/response projection for one admitted branch; the typed pack that decides which listed…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -26089,7 +26089,7 @@
      "purpose": "What a wake-budget counter charges once spend is incurred: a settlement never refuses it (FIX 8702), so…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -96951,9 +96951,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer_thing/generation.rs",
-     "purpose": "The served agent's generation count (FIX 7508, 9015): what its calls spent on its parent's guard, handed to…",
+     "purpose": "The served agent's generation count (FIX 7508, 9015, 11449): what its calls spent on its parent's guard…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -96971,7 +96971,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer_thing/profile.rs",
-     "purpose": "The served agent's own generation and the session its parent waits on (FIX 7508)",
+     "purpose": "The served agent's own generation and the session its parent waits on (FIX 7508, 11449)",
      "surface": {
       "crate-vis": 5
      }
@@ -97332,7 +97332,7 @@
      "path": "src/ai_host/step.rs",
      "purpose": "One saved-workflow step on a model seat",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
