@@ -258,6 +258,14 @@ impl DreamerRunnerStore<'_> {
     /// The wake driver never calls this; the Coach's model turn is the host's,
     /// as an `agent.dispatch` healer's is.
     ///
+    /// The admission's grouped write skips the write door's scope-summary
+    /// rederive (FIX 11664 item 2a), the way a cold open's recovery writes do
+    /// (FIX 11607): this admission leases queue/budget rows only and changes
+    /// no row any summary observation reads, while the rederive's per-summary
+    /// turn-text reads held the group-commit lead for seconds on every Coach
+    /// tick. Drift, if any, is queued by the next non-deferred write's door;
+    /// a summary may lag but never reads uncommitted rows.
+    ///
     /// # Errors
     ///
     /// Storage errors; the queue's own admission errors.
@@ -265,6 +273,7 @@ impl DreamerRunnerStore<'_> {
         &self,
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
+        let _deferral = crate::scope_summary::defer_rederive();
         self.admit_next_kind(super::COACH_HEAL_ATTEMPT_KIND, input)
     }
 
