@@ -37,6 +37,7 @@ use oneiron::llm::{
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
     LlmUsage, RetryableLlmError,
 };
+use oneiron::{ModelId, ModelLocality};
 use serde_json::{Value as JsonValue, json};
 
 use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
@@ -47,6 +48,9 @@ use crate::config::models::{
     DecisionReadRecipe, DecisionReadSettings, ModelsConfig, ProbeQuestions, ProviderConfig,
     ReadPrompt, RenderRefusal,
 };
+
+mod host;
+use host::HostSlot;
 
 const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
@@ -85,6 +89,8 @@ pub struct DecisionReadDoor {
     /// (`DecisionReadSettings::permitted`, FIX 9481). A door a host builds
     /// over its own reader is permitted.
     permitted: bool,
+    /// The vault the configured reader serves, once its server binds it.
+    host: HostSlot,
 }
 
 impl DecisionReadDoor {
@@ -104,6 +110,7 @@ impl DecisionReadDoor {
             think_threshold: None,
             recipe: None,
             permitted: true,
+            host: HostSlot::default(),
         }
     }
 
@@ -214,13 +221,15 @@ pub(super) fn bind(
         .get(&rung.model.provider)
         .ok_or_else(|| anyhow::anyhow!("decision read: no local_reasoner provider"))?;
     let model = engine_model_id(&rung.model, provider)?;
+    let host = HostSlot::default();
     let reader = DecisionReader::new(
-        model.as_str(),
+        &model,
         &rung.model.model,
         provider,
         settings,
         runtime,
         Arc::clone(identities),
+        Arc::clone(&host),
     )?;
     let mut door = DecisionReadDoor::new(
         Arc::new(reader),
@@ -231,6 +240,7 @@ pub(super) fn bind(
     door.think_threshold = Some(settings.think_threshold);
     door.recipe = Some(Arc::clone(&settings.recipe));
     door.permitted = settings.permitted;
+    door.host = host;
     Ok(Some(door))
 }
 
@@ -269,6 +279,12 @@ struct TokenIds {
 
 struct DecisionReader {
     model: String,
+    /// The engine id, as the vault's model registry keys it.
+    engine: ModelId,
+    /// The rung's provider is a third party's: its catalog price is the read's (FIX 11408).
+    leaves: bool,
+    /// The vault it serves, once its server binds it (FIX 11408, FIX 11412).
+    host: HostSlot,
     /// The rung's configured wire id: what a launch alias in an answer stands
     /// for. Never compared with an answer.
     wire_model: String,
@@ -290,15 +306,19 @@ struct DecisionReader {
 
 impl DecisionReader {
     fn new(
-        model: &str,
+        model: &ModelId,
         wire_model: &str,
         provider: &ProviderConfig,
         settings: &DecisionReadSettings,
         runtime: tokio::runtime::Handle,
         identities: Arc<LlamaIdentityResolver>,
+        host: HostSlot,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            model: model.to_owned(),
+            model: model.as_str().to_owned(),
+            engine: model.clone(),
+            leaves: provider.locality == ModelLocality::ThirdParty,
+            host,
             wire_model: wire_model.to_owned(),
             revision: format!(
                 "{}+recipe.{}",
@@ -352,11 +372,13 @@ impl DecisionReader {
     /// one position.
     async fn token_id(&self, text: &str, special: bool) -> LlmResult<u64> {
         let body = json!({"content": text, "add_special": false, "parse_special": special});
-        let reply = self
-            .http
-            .post_json(TOKENIZE_PATH, &BTreeMap::new(), &body)
-            .await
-            .map_err(transport)?;
+        let sent = self.http.post_json(TOKENIZE_PATH, &BTreeMap::new(), &body);
+        // Read whole on the served vault's chat-reply line (FIX 11412).
+        let reply = match self.host.get() {
+            Some(host) => super::http::holding_chat_replies(&host.budgets, sent).await,
+            None => sent.await,
+        }
+        .map_err(transport)?;
         status(reply.status)?;
         match reply
             .body
@@ -467,6 +489,15 @@ impl LabelReadModel for DecisionReader {
     /// One label, or one joint label, per recipe token.
     fn max_labels(&self) -> usize {
         self.recipe.tokens().len()
+    }
+
+    /// A third-party rung's catalog price, from the served vault's registry row (FIX
+    /// 11408); none for a rung this host serves, or before a server binds the vault.
+    fn cost_per_thousand(&self) -> Option<f64> {
+        if !self.leaves {
+            return None;
+        }
+        self.host.get()?.cost_per_thousand(&self.engine)
     }
 
     /// Blocks on the server's runtime until the model answers, so it runs on
