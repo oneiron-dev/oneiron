@@ -35,7 +35,7 @@ const SEED_RECENCY_ACTIVE_LIMIT_SECS: u64 = 7 * 86_400;
 /// Seed recency strictly below this bound (and ≥ the Active limit) is the
 /// Recent tier (`7–30d`); at or above it is Dormant (`≥ 30d`).
 const SEED_RECENCY_RECENT_LIMIT_SECS: u64 = 30 * 86_400;
-pub(super) const MAX_PPR_DEPTH: u32 = 10;
+pub(crate) const MAX_PPR_DEPTH: u32 = 10;
 /// Version of the PPR propagation math, mixed into the cache key so persisted
 /// `ppr_cache` rows computed under an older formula can never be served after
 /// an upgrade (the rows are otherwise gated only by graph version + TTL, and a
@@ -577,7 +577,7 @@ pub(super) fn decode_cache_state(payload: &[u8]) -> Result<PprCacheState> {
 
     let residual_count = decode_u32(&payload[21..25], "ppr cache residual")? as usize;
     let push_threshold = f32::from_le_bytes(payload[25..29].try_into().expect("checked prefix"));
-    if push_threshold.to_bits() != SCORE_EPSILON.to_bits() || completed_depth > MAX_PPR_DEPTH {
+    if push_threshold.to_bits() != SCORE_EPSILON.to_bits() {
         return Err(Error::CorruptedIndex("ppr cache residual"));
     }
     let residual_bytes = residual_count

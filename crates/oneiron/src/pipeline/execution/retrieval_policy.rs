@@ -61,7 +61,6 @@ impl PipelineBuilder<'_> {
         }
         explicit_seeds.sort_unstable();
         explicit_seeds.dedup();
-        explicit_seeds.truncate(crate::ppr::MAX_PPR_SEEDS);
         // Disable the channel's internal adaptive loop: each widening is now
         // one policy decision. Hard occurred/learned/since filters never change.
         let temporal_allowed = self.temporal_search.as_mut().is_some_and(|config| {
@@ -208,7 +207,6 @@ impl PipelineBuilder<'_> {
                     seeds.extend_from_slice(&explicit_seeds);
                     seeds.sort_unstable();
                     seeds.dedup();
-                    seeds.truncate(crate::ppr::MAX_PPR_SEEDS);
                     self.ppr_expand = Some((seeds, 1));
                     hops += 1;
                 }

@@ -15,7 +15,9 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::ManifestDbs;
 
 use super::VAD_PROPAGATION_EVIDENCE;
-use super::policy::{PprAlphas, SeedWeighting, lambda_for_kind, seed_weights, vad_multiplier};
+use super::policy::{
+    PprAlphas, SeedWeighting, lambda_for_kind, seed_weights_with_deadline, vad_multiplier,
+};
 
 /// Per-node read visibility for an ACTOR-SCOPED walk (ONE-1608 / ARCH-0050
 /// R6 L2).
@@ -44,6 +46,7 @@ struct PprRoundContext<'a, 'txn, D: ManifestDbs> {
     /// every landed caller shares. `Some` only on the compute-only scoped
     /// entry, which never reads or writes the shared cache.
     visibility: Option<&'a dyn PprNodeVisibility>,
+    deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
     push_threshold: f32,
 }
 #[derive(Debug, Clone)]
@@ -145,6 +148,22 @@ pub(super) fn ppr_compute_state_weighted(
     alphas: PprAlphas,
     visibility: Option<&dyn PprNodeVisibility>,
 ) -> Result<PprCacheState> {
+    ppr_compute_state_weighted_with_deadline(
+        store, txn, seeds, weighting, depth, alphas, visibility, None,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(super) fn ppr_compute_state_weighted_with_deadline(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    weighting: SeedWeighting,
+    depth: u32,
+    alphas: PprAlphas,
+    visibility: Option<&dyn PprNodeVisibility>,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
+) -> Result<PprCacheState> {
     validate_ppr_vad_alpha(alphas.ppr_vad_alpha)?;
 
     if seeds.is_empty() {
@@ -158,7 +177,8 @@ pub(super) fn ppr_compute_state_weighted(
         });
     }
 
-    let seed_weights = seed_weights(store, txn, seeds, weighting, visibility)?;
+    let seed_weights =
+        seed_weights_with_deadline(store, txn, seeds, weighting, visibility, deadline)?;
     let mut scores = BTreeMap::<EntityId, f32>::new();
     let mut frontier = BTreeMap::<(EntityId, u32), f32>::new();
     let mut dependencies = HashSet::<EntityId>::new();
@@ -177,6 +197,7 @@ pub(super) fn ppr_compute_state_weighted(
         teleport_alpha: alphas.teleport_alpha,
         ppr_vad_alpha: alphas.ppr_vad_alpha,
         visibility,
+        deadline,
         push_threshold: SCORE_EPSILON,
     };
     run_ppr_rounds(
@@ -195,6 +216,7 @@ pub(super) fn ppr_compute_state_weighted(
         SCORE_EPSILON,
     ))
 }
+#[expect(clippy::too_many_arguments)]
 pub(super) fn ppr_resume_state_weighted(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -203,8 +225,9 @@ pub(super) fn ppr_resume_state_weighted(
     target_depth: u32,
     alphas: PprAlphas,
     resume: PprCacheState,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<PprCacheState> {
-    let seed_weights = seed_weights(store, txn, seeds, weighting, None)?;
+    let seed_weights = seed_weights_with_deadline(store, txn, seeds, weighting, None, deadline)?;
     let mut scores = scores_to_map(resume.scores);
     let mut frontier = frontier_to_map(resume.frontier);
     for entry in resume.residual {
@@ -230,6 +253,7 @@ pub(super) fn ppr_resume_state_weighted(
         // Resume replays a SHARED cached state, which only the unscoped walk
         // ever writes; the scoped entry never reads or resumes that cache.
         visibility: None,
+        deadline,
         push_threshold: resume.push_threshold,
     };
     run_ppr_rounds(
@@ -259,6 +283,9 @@ fn run_ppr_rounds(
     let vad_evidence = VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().clone());
 
     for _ in 0..rounds {
+        if let Some(deadline) = context.deadline {
+            deadline.checkpoint()?;
+        }
         if frontier.is_empty() {
             break;
         }
@@ -293,6 +320,9 @@ fn run_ppr_rounds(
                     None,
                     None,
                 )? {
+                    if let Some(deadline) = context.deadline {
+                        deadline.checkpoint()?;
+                    }
                     let entry = entry?;
                     if let Some(edge) = gate_edge(context.store, context.txn, &node, &entry, hops)?
                     {

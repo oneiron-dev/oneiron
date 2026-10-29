@@ -6,6 +6,7 @@ mod entity_rank;
 mod post_blend;
 mod ppr_expand;
 mod ppr_visibility;
+mod ppr_work;
 mod rerank;
 mod residence_page;
 mod text;
@@ -105,6 +106,7 @@ impl PipelineBuilder<'_> {
         explicit_time_dependent_now: Option<u64>,
         overrides: HydeAttemptOverrides<'_>,
     ) -> Result<RetrievalTxnOutput> {
+        let _ppr_work = self.admit_ppr_work()?;
         let rtxn = self.vault.store.env.read_txn()?;
         let inputs = SnapshotInputs {
             occurred_range,
@@ -394,7 +396,20 @@ impl PipelineBuilder<'_> {
                     // search_ppr — seeds are weighted 1/ln(1 + passage_count)
                     // instead of uniform 1/n.
                     match pipeline_ppr_visibility(self, filter_config, &claim_gate) {
-                        Some(visibility) => crate::ppr::ppr_query_scoped_in_txn_with_diagnostics(
+                        Some(visibility) => {
+                            crate::ppr::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
+                                &self.read,
+                                rtxn,
+                                seeds,
+                                *depth,
+                                PPR_DAMPING,
+                                self.ppr_vad_alpha,
+                                crate::ppr::SeedWeighting::Specificity,
+                                &visibility,
+                                self.deadline,
+                            )
+                        }
+                        None => crate::ppr::ppr_query_in_txn_with_diagnostics_and_deadline(
                             &self.read,
                             rtxn,
                             seeds,
@@ -402,16 +417,7 @@ impl PipelineBuilder<'_> {
                             PPR_DAMPING,
                             self.ppr_vad_alpha,
                             crate::ppr::SeedWeighting::Specificity,
-                            &visibility,
-                        ),
-                        None => crate::ppr::ppr_query_in_txn_with_diagnostics(
-                            &self.read,
-                            rtxn,
-                            seeds,
-                            *depth,
-                            PPR_DAMPING,
-                            self.ppr_vad_alpha,
-                            crate::ppr::SeedWeighting::Specificity,
+                            self.deadline,
                         ),
                     }
                 })?

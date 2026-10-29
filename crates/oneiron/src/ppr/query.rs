@@ -21,13 +21,13 @@ use super::VAD_PROPAGATION_EVIDENCE;
 #[cfg(test)]
 use super::cache_store::flush_deferred_ppr_cache_writes;
 use super::cache_store::{
-    CACHE_HEADER_LEN, MAX_PPR_DEPTH, MAX_PPR_SEEDS, PPR_FORMULA_VERSION, SEED_HASH_LEN,
-    decode_cache_payload, parse_cache_header, read_graph_version, recency_tiered_cache_ttl_secs,
+    CACHE_HEADER_LEN, PPR_FORMULA_VERSION, SEED_HASH_LEN, decode_cache_payload, parse_cache_header,
+    read_graph_version, recency_tiered_cache_ttl_secs,
 };
 use super::community::hash_community_seeds;
 use super::policy::{PprAlphas, SeedWeighting, canonical_vad_alpha};
 use super::walk::{
-    CachedPprRow, PprCacheState, PprNodeVisibility, ppr_compute_state_weighted,
+    CachedPprRow, PprCacheState, PprNodeVisibility, ppr_compute_state_weighted_with_deadline,
     ppr_resume_state_weighted, sort_scores,
 };
 
@@ -109,6 +109,7 @@ pub(super) fn ppr_query(
             },
             SeedWeighting::Uniform,
             true,
+            None,
         )?
     };
 
@@ -134,6 +135,7 @@ pub(super) fn ppr_query_in_txn(
         PprAlphas::default_vad(teleport_alpha),
         SeedWeighting::Uniform,
         false,
+        None,
     )
     .map(|result| result.scores)
 }
@@ -179,8 +181,36 @@ pub(crate) fn ppr_query_in_txn_with_diagnostics(
         },
         weighting,
         true,
+        None,
     )
 }
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn ppr_query_in_txn_with_diagnostics_and_deadline(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
+    weighting: SeedWeighting,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
+) -> Result<PprQueryResult> {
+    ppr_query_in_txn_impl(
+        store,
+        txn,
+        seeds,
+        depth,
+        PprAlphas {
+            teleport_alpha,
+            ppr_vad_alpha,
+        },
+        weighting,
+        true,
+        deadline,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
 fn ppr_query_in_txn_impl(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -189,6 +219,7 @@ fn ppr_query_in_txn_impl(
     alphas: PprAlphas,
     weighting: SeedWeighting,
     defer_cache_writes: bool,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<PprQueryResult> {
     ppr_query_in_txn_with_identity(
         store,
@@ -201,8 +232,10 @@ fn ppr_query_in_txn_impl(
             defer_writes: defer_cache_writes,
             community_identity: None,
         },
+        deadline,
     )
 }
+#[expect(clippy::too_many_arguments)]
 pub(super) fn ppr_query_in_txn_with_identity(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -211,10 +244,13 @@ pub(super) fn ppr_query_in_txn_with_identity(
     alphas: PprAlphas,
     weighting: SeedWeighting,
     policy: PprCachePolicy,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<PprQueryResult> {
-    validate_ppr_request(seeds, depth)?;
     let mut public_seeds = Vec::with_capacity(seeds.len());
     for seed in seeds {
+        if let Some(deadline) = deadline {
+            deadline.checkpoint()?;
+        }
         if crate::note::ordinary_entity_visible(store, txn, seed)? {
             public_seeds.push(*seed);
         }
@@ -236,7 +272,9 @@ pub(super) fn ppr_query_in_txn_with_identity(
     // cached walk could omit the room's edges, and a walk over the room must
     // not land in the base cache (not even after the room goes on record).
     if store.is_union() || VAD_PROPAGATION_EVIDENCE.with(|active| active.borrow().is_some()) {
-        let state = ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alphas, None)?;
+        let state = ppr_compute_state_weighted_with_deadline(
+            store, txn, seeds, weighting, depth, alphas, None, deadline,
+        )?;
         return Ok(PprQueryResult {
             scores: state.scores,
             cache: PprCacheOutcome::Disabled,
@@ -278,11 +316,15 @@ pub(super) fn ppr_query_in_txn_with_identity(
         });
     }
 
-    let resume = read_deepest_resume_state(&cache_context, depth)?;
+    let resume = read_deepest_resume_state(&cache_context, depth, deadline)?;
     let state = if let Some(resume) = resume {
-        ppr_resume_state_weighted(store, txn, seeds, weighting, depth, alphas, resume)?
+        ppr_resume_state_weighted(
+            store, txn, seeds, weighting, depth, alphas, resume, deadline,
+        )?
     } else {
-        ppr_compute_state_weighted(store, txn, seeds, weighting, depth, alphas, None)?
+        ppr_compute_state_weighted_with_deadline(
+            store, txn, seeds, weighting, depth, alphas, None, deadline,
+        )?
     };
     let scores = state.scores.clone();
     if !policy.defer_writes {
@@ -309,8 +351,12 @@ pub(super) fn ppr_query_in_txn_with_identity(
 fn read_deepest_resume_state(
     context: &PprCacheReadContext<'_, '_, impl ManifestDbs>,
     target_depth: u32,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<Option<PprCacheState>> {
     for completed_depth in (0..target_depth).rev() {
+        if let Some(deadline) = deadline {
+            deadline.checkpoint()?;
+        }
         let seed_hash = hash_community_seeds(
             hash_seeds(
                 context.seeds,
@@ -381,19 +427,6 @@ fn read_servable_cache_row(
 
     Ok(Some(row))
 }
-pub(super) fn validate_ppr_request(seeds: &[EntityId], depth: u32) -> Result<()> {
-    if seeds.len() > MAX_PPR_SEEDS {
-        return Err(Error::InvalidConfig(format!(
-            "ppr seed count exceeds maximum of {MAX_PPR_SEEDS}"
-        )));
-    }
-    if depth > MAX_PPR_DEPTH {
-        return Err(Error::InvalidConfig(format!(
-            "ppr depth exceeds maximum of {MAX_PPR_DEPTH}"
-        )));
-    }
-    Ok(())
-}
 /// ACTOR-SCOPED, COMPUTE-ONLY personalized walk (ONE-1608 / ARCH-0050 R6 L2).
 ///
 /// Same Layer-1 formula, same λ table, same gates as
@@ -454,11 +487,38 @@ pub(crate) fn ppr_query_scoped_in_txn_with_diagnostics(
     weighting: SeedWeighting,
     visibility: &dyn PprNodeVisibility,
 ) -> Result<PprQueryResult> {
+    ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
+        store,
+        txn,
+        seeds,
+        depth,
+        teleport_alpha,
+        ppr_vad_alpha,
+        weighting,
+        visibility,
+        None,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    seeds: &[EntityId],
+    depth: u32,
+    teleport_alpha: f32,
+    ppr_vad_alpha: f32,
+    weighting: SeedWeighting,
+    visibility: &dyn PprNodeVisibility,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
+) -> Result<PprQueryResult> {
     validate_ppr_vad_alpha(ppr_vad_alpha)?;
-    validate_ppr_request(seeds, depth)?;
 
     let mut readable_seeds = Vec::with_capacity(seeds.len());
     for seed in seeds {
+        if let Some(deadline) = deadline {
+            deadline.checkpoint()?;
+        }
         if visibility.ppr_node_visible(txn, seed)? {
             readable_seeds.push(*seed);
         }
@@ -471,7 +531,7 @@ pub(crate) fn ppr_query_scoped_in_txn_with_diagnostics(
         });
     }
 
-    let state = ppr_compute_state_weighted(
+    let state = ppr_compute_state_weighted_with_deadline(
         store,
         txn,
         &readable_seeds,
@@ -482,6 +542,7 @@ pub(crate) fn ppr_query_scoped_in_txn_with_diagnostics(
             ppr_vad_alpha,
         },
         Some(visibility),
+        deadline,
     )?;
     Ok(PprQueryResult {
         scores: state.scores,

@@ -79,19 +79,14 @@ impl PipelineBuilder<'_> {
                 seeds.push(*seed);
             }
         }
-        if seeds.len() < crate::ppr::MAX_PPR_SEEDS {
-            let implicit_seed_limit = if inputs.codebase_scope_active {
-                scores.len()
-            } else {
-                self.result_limit
-            };
-            for scored in scores.iter().take(implicit_seed_limit) {
-                if seen.insert(scored.id) {
-                    seeds.push(scored.id);
-                    if seeds.len() == crate::ppr::MAX_PPR_SEEDS {
-                        break;
-                    }
-                }
+        let implicit_seed_limit = if inputs.codebase_scope_active {
+            scores.len()
+        } else {
+            self.result_limit
+        };
+        for scored in scores.iter().take(implicit_seed_limit) {
+            if seen.insert(scored.id) {
+                seeds.push(scored.id);
             }
         }
 
@@ -102,19 +97,8 @@ impl PipelineBuilder<'_> {
             // specificity weighting is search_ppr-only. A narrowed walk is
             // compute-only and takes no shared cache or community prior.
             let ppr = match pipeline_ppr_visibility(self, inputs.filter_config, &*claim_gate) {
-                Some(visibility) => crate::ppr::ppr_query_scoped_in_txn_with_diagnostics(
-                    &self.read,
-                    rtxn,
-                    &seeds,
-                    *depth,
-                    PPR_DAMPING,
-                    self.ppr_vad_alpha,
-                    crate::ppr::SeedWeighting::Uniform,
-                    &visibility,
-                )?,
-                None if self.ppr_community.beta == 0.0 || self.read.is_union() => {
-                    // Exact legacy path: no evidence/cache reads or new key namespace.
-                    crate::ppr::ppr_query_in_txn_with_diagnostics(
+                Some(visibility) => {
+                    crate::ppr::ppr_query_scoped_in_txn_with_diagnostics_and_deadline(
                         &self.read,
                         rtxn,
                         &seeds,
@@ -122,6 +106,21 @@ impl PipelineBuilder<'_> {
                         PPR_DAMPING,
                         self.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Uniform,
+                        &visibility,
+                        self.deadline,
+                    )?
+                }
+                None if self.ppr_community.beta == 0.0 || self.read.is_union() => {
+                    // Exact legacy path: no evidence/cache reads or new key namespace.
+                    crate::ppr::ppr_query_in_txn_with_diagnostics_and_deadline(
+                        &self.read,
+                        rtxn,
+                        &seeds,
+                        *depth,
+                        PPR_DAMPING,
+                        self.ppr_vad_alpha,
+                        crate::ppr::SeedWeighting::Uniform,
+                        self.deadline,
                     )?
                 }
                 None => {
@@ -150,6 +149,7 @@ impl PipelineBuilder<'_> {
                                 config: &config,
                                 context: &context,
                             },
+                            self.deadline,
                         )?;
                     community_diversity = diversity;
                     if state.acc.capture {
