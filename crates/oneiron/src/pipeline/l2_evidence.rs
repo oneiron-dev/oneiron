@@ -37,7 +37,8 @@ impl PipelineBuilder<'_> {
         )?;
         let corpus = CorpusFilter::new(&self.corpus_scope)?;
         let device_local = self.device_local_worlds(txn)?;
-        let mut filters = corpus.config(self, self.occurred_range, authority_filter);
+        let admission = self.snapshot_admission(txn);
+        let mut filters = corpus.config(self, &admission, self.occurred_range, authority_filter);
         filters.world_active_set = authority.as_ref().map(|authority| &authority.active_set);
         filters.device_local = device_local.as_ref();
         let stale_worlds = crate::federation::stale_stamped_worlds(store, txn)?;
