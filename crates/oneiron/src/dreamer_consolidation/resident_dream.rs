@@ -76,6 +76,45 @@ const PADS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
 /// replay writes none.
 const LANDED: SideTable<crate::attempt_queue::AttemptId, EntityId, Named> =
     SideTable::new(&side_table::DREAMER_RESIDENT_LANDED);
+/// What one dreaming read, keyed by the diary entry it landed (its first
+/// part), so the entry names its sources (FIX 7753).
+const READ: SideTable<EntityId, ResidentDreamRead, Named> =
+    SideTable::new(&side_table::DREAMER_RESIDENT_READ);
+
+/// The sources behind one diary entry (FIX 7753): every row its dreaming
+/// read, in the order the cut read them, and the attempt that wrote it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ResidentDreamRead {
+    pub(crate) attempt: crate::attempt_queue::AttemptId,
+    pub(crate) sources: Vec<DreamSource>,
+}
+
+/// One row a dreaming read (FIX 7753).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DreamSource {
+    pub(crate) kind: DreamSourceKind,
+    /// The row's id as the cut keeps it (an entity id in hex, or a receipt,
+    /// INBOX or health card id).
+    pub(crate) id: String,
+    /// When the row was written (Unix seconds, as the cut's cursor keeps
+    /// it); 0 for a pad.
+    pub(crate) at: u64,
+    /// For a pad, `blake3:<hex>` of its text as the cut found it: a sealed
+    /// pad never changes, so its id and this hash name the exact words read.
+    pub(crate) text_hash: Option<String>,
+    /// The cut stopped inside this row and read it in part.
+    pub(crate) partial: bool,
+}
+
+/// Which section of the cut a source came from (FIX 7753).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum DreamSourceKind {
+    Pad,
+    Receipt,
+    Inbox,
+    Health,
+    ForkHealth,
+}
 
 /// What a resident's dreaming has read so far. Each source keeps the time
 /// and id of the last row it read, so a cut that stops inside one second
@@ -239,6 +278,9 @@ pub(crate) fn resident_dream_progress_in_txn(
 struct DreamCut {
     sections: Vec<(&'static str, Vec<String>)>,
     pads: Vec<EntityId>,
+    /// Every row the cut read, in the order it read them: the diary entry's
+    /// receipt (FIX 7753).
+    read: Vec<DreamSource>,
     receipts_after: Option<(u64, String)>,
     inbox_after: Option<(u64, String)>,
     inbox_partial: Option<ResidentDreamPartial>,
@@ -557,7 +599,14 @@ pub async fn run_resident_dream(
             step_hashes: Vec::new(),
         });
     }
-    let (request, step_hash, craft) = dream_request(ctx, attempt_id, resident_id, &model, &cut)?;
+    let (request, step_hash, craft) = dream_request(
+        ctx,
+        attempt_id,
+        resident_id,
+        &model,
+        &cut,
+        free_time.is_some(),
+    )?;
     // The call sends under the rows its cut and craft were read from.
     let rows = cut.source_rows().map(|mut rows| {
         rows.extend(craft);
@@ -629,7 +678,7 @@ pub async fn run_resident_dream(
     if ctx.deadline.expired() {
         return Ok(charges.checkpoint());
     }
-    let (entry, craft) = match reply::diary_entry(&response) {
+    let parsed = match reply::diary_entry(&response) {
         Ok(read) => read,
         // Only a memo stored before the check can hold no entry: it goes,
         // and the Retry asks again (FIX 7431, OF-193a). A memo that does
@@ -659,9 +708,10 @@ pub async fn run_resident_dream(
         resident,
         resident_id,
         DreamWrite {
-            entry: &entry,
-            craft: &craft,
+            entry: &parsed.entry,
+            craft: &parsed.craft,
             free_time: &free_time,
+            another_round: parsed.another_round,
         },
         &cut,
         now,
