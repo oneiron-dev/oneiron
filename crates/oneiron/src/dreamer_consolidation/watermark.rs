@@ -1,11 +1,7 @@
 use crate::ports::EntityStoreRead;
-use std::io::Cursor;
-
-use rmpv::Value;
 
 use super::support::{
-    DEFAULT_MESO_ROUND_TURN_CAP, TURN_BODY_FACET_REF_KEY, TURN_BODY_WORLD_REF_KEY,
-    WATERMARK_SCHEMA_VERSION, invalid_consolidation, scope_byte,
+    DEFAULT_MESO_ROUND_TURN_CAP, WATERMARK_SCHEMA_VERSION, invalid_consolidation, scope_byte,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -13,6 +9,7 @@ use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerTurnRole, dreamer_extraction_role_admissible,
     dreamer_turn_role,
 };
+use crate::dreamer_wake::read_phase::WakeStop;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
@@ -21,6 +18,9 @@ use crate::side_table::{self, Raw, SideTable};
 pub(super) use super::redirty::conversation_of;
 mod codec;
 pub(super) use codec::{decode_watermark, encode_watermark};
+mod turn_body;
+pub use turn_body::entity_ref_from_value;
+pub(crate) use turn_body::{TurnBodyFacts, decode_turn_body};
 
 /// Per-scope consolidation watermark row. Key: u8 (the scope byte).
 const WATERMARK: SideTable<[u8; 1], ConsolidationWatermark, Raw> =
@@ -153,7 +153,7 @@ pub(crate) fn admit_turn_position_in_txn(
 /// against a concurrent planner).
 pub(crate) fn read_watermark_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     scope: DreamerConsolidationScope,
 ) -> Result<ConsolidationWatermark> {
     Ok(WATERMARK
@@ -193,7 +193,10 @@ pub fn advance_watermark(
             &current,
             Some(last_learned_at),
             usize::MAX,
+            WakeStop::NEVER,
         )
+        // NEVER never stops, so the enumeration always yields its rows.
+        .map(|rows| rows.unwrap_or_default())
     });
     match passed {
         Ok(passed) => park_deferred_in_txn(vault, &mut wtxn, &passed)?,
@@ -264,7 +267,17 @@ pub(crate) fn advance_watermark_to_turn(
     let mut wtxn = vault.store.env.write_txn()?;
     let current = read_watermark_in_txn(vault, &wtxn, scope)?;
     let at = last_consumed.learned_at;
-    let round = enumerate_admissible_turns(vault, &wtxn, scope, &current, Some(at), usize::MAX)?;
+    // NEVER never stops, so the enumeration always yields its rows.
+    let round = enumerate_admissible_turns(
+        vault,
+        &wtxn,
+        scope,
+        &current,
+        Some(at),
+        usize::MAX,
+        WakeStop::NEVER,
+    )?
+    .unwrap_or_default();
     match round
         .iter()
         .position(|row| row.turn_id == last_consumed.turn_id)
@@ -282,45 +295,83 @@ pub(crate) fn advance_watermark_to_turn(
     Ok(())
 }
 
-/// Settles a fenced round inside a caller-owned write transaction: composing
-/// the advance into the same commit as the round's enqueue makes
-/// "enqueued+committed before the advance" structural instead of ordered.
-///
-/// The caller has already matched its planned round against the
-/// in-transaction snapshot, so this re-enumerates that SAME capped prefix
-/// — through [`enumerate_admissible_turns`], from the current compound
-/// watermark through `upper_learned_at` — and settles on its final
-/// `(learned_at, id)` through [`settle_round_in_txn`]. An empty
-/// re-enumeration is the empty matched round: nothing was planned through
+/// An advance's settlement round, enumerated in a read snapshot.
+pub(crate) struct WatermarkAdvance {
+    current: ConsolidationWatermark,
+    upper_learned_at: u64,
+    round: Vec<AdmissibleTurnRow>,
+}
+
+/// The read half of [`advance_watermark_in_txn`]: the current watermark and
+/// the SAME capped prefix it settles, enumerated in the caller's snapshot.
+/// `None` when `stop` stopped the enumeration; nothing is settled then.
+pub(crate) fn read_watermark_advance_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
+    upper_learned_at: u64,
+    stop: WakeStop<'_>,
+) -> Result<Option<WatermarkAdvance>> {
+    let current = read_watermark_in_txn(vault, txn, scope)?;
+    let Some(round) = enumerate_admissible_turns(
+        vault,
+        txn,
+        scope,
+        &current,
+        Some(upper_learned_at),
+        effective_dirty_turn_limit(scope, usize::MAX),
+        stop,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(WatermarkAdvance {
+        current,
+        upper_learned_at,
+        round,
+    }))
+}
+
+/// The write half of [`advance_watermark_in_txn`]: settles the enumerated
+/// round on its final `(learned_at, id)` through [`settle_round_in_txn`].
+/// An empty round is the empty matched round: nothing was planned through
 /// `upper_learned_at`, so the cursor takes that complete-second position.
 /// Fail-closed on a backwards complete-second advance: rewinding the cursor
 /// over consumed work would re-plan it. A round of pending carriers alone
 /// may sit behind the cursor's second; it moves no cursor.
+pub(crate) fn apply_watermark_advance_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    advance: &WatermarkAdvance,
+) -> Result<()> {
+    if advance.round.iter().any(|row| !row.deferred) {
+        return settle_round_in_txn(vault, wtxn, scope, &advance.round);
+    }
+    if advance.upper_learned_at < advance.current.last_learned_at {
+        return Err(invalid_consolidation(
+            "dreamer watermark cannot settle behind its own position",
+        ));
+    }
+    park_deferred_in_txn(vault, wtxn, &advance.round)?;
+    write_watermark_position_in_txn(vault, wtxn, scope, advance.upper_learned_at, None)
+}
+
+/// Settles a fenced round inside a caller-owned write transaction: its read
+/// half, then its apply half.
 pub(crate) fn advance_watermark_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
     upper_learned_at: u64,
 ) -> Result<()> {
-    let current = read_watermark_in_txn(vault, wtxn, scope)?;
-    let round = enumerate_admissible_turns(
-        vault,
-        wtxn,
-        scope,
-        &current,
-        Some(upper_learned_at),
-        effective_dirty_turn_limit(scope, usize::MAX),
-    )?;
-    if round.iter().any(|row| !row.deferred) {
-        return settle_round_in_txn(vault, wtxn, scope, &round);
-    }
-    if upper_learned_at < current.last_learned_at {
-        return Err(invalid_consolidation(
-            "dreamer watermark cannot settle behind its own position",
-        ));
-    }
-    park_deferred_in_txn(vault, wtxn, &round)?;
-    write_watermark_position_in_txn(vault, wtxn, scope, upper_learned_at, None)
+    // NEVER never stops, so the read phase always yields its advance.
+    let Some(advance) =
+        read_watermark_advance_in_txn(vault, wtxn, scope, upper_learned_at, WakeStop::NEVER)?
+    else {
+        return Ok(());
+    };
+    apply_watermark_advance_in_txn(vault, wtxn, scope, &advance)
 }
 
 /// Settles a consumed round of `scope`, a prefix of the merged selection
@@ -468,7 +519,8 @@ fn enumerate_admissible_turns(
     watermark: &ConsolidationWatermark,
     upper_inclusive_second: Option<u64>,
     limit: usize,
-) -> Result<Vec<AdmissibleTurnRow>> {
+    stop: WakeStop<'_>,
+) -> Result<Option<Vec<AdmissibleTurnRow>>> {
     let admission_time = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
     let upper_inclusive_second = Some(
         upper_inclusive_second
@@ -493,6 +545,9 @@ fn enumerate_admissible_turns(
         ..Default::default()
     };
     let carriers = super::redirty::DirtyCarriers::read(vault, txn, scope)?;
+    if stop.stopped() {
+        return Ok(None);
+    }
     // A bound behind the cursor's second leaves no temporal entry, only
     // pending carriers at or before it.
     let behind = upper_inclusive_second
@@ -505,6 +560,9 @@ fn enumerate_admissible_turns(
     let mut admissible = Vec::new();
     let mut taken = 0_usize;
     for entry in carriers.merge(timeline, upper_inclusive_second) {
+        if stop.stopped() {
+            return Ok(None);
+        }
         if taken >= limit {
             break;
         }
@@ -552,7 +610,7 @@ fn enumerate_admissible_turns(
             role,
         });
     }
-    Ok(admissible)
+    Ok(Some(admissible))
 }
 
 /// Scans dirty turns: TURN entities (type 1) at temporal keys STRICTLY AFTER
@@ -583,7 +641,10 @@ pub fn scan_dirty_turns(
             watermark,
             None,
             effective_dirty_turn_limit(scope, limit),
+            WakeStop::NEVER,
         )?
+        // NEVER never stops, so the enumeration always yields its rows.
+        .unwrap_or_default()
     };
 
     let mut out = Vec::with_capacity(admissible.len());
@@ -614,98 +675,58 @@ pub fn scan_dirty_turns(
 /// round is stale and the answer is an empty set, never an error.
 pub(crate) fn collect_dirty_turn_ids_in_txn(
     vault: &Vault,
-    wtxn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     scope: DreamerConsolidationScope,
     lower_exclusive: u64,
     upper_inclusive: u64,
 ) -> Result<Vec<EntityId>> {
+    // NEVER never stops, so the collection always yields its ids.
+    Ok(collect_dirty_turn_ids_until(
+        vault,
+        txn,
+        scope,
+        lower_exclusive,
+        upper_inclusive,
+        WakeStop::NEVER,
+    )?
+    .unwrap_or_default())
+}
+
+/// [`collect_dirty_turn_ids_in_txn`] with a stop: `None` when `stop`
+/// stopped the enumeration; nothing is fenced then.
+pub(crate) fn collect_dirty_turn_ids_until(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
+    lower_exclusive: u64,
+    upper_inclusive: u64,
+    stop: WakeStop<'_>,
+) -> Result<Option<Vec<EntityId>>> {
     // `upper_inclusive` may sit behind `lower_exclusive`: a round of pending
     // re-dirty carriers alone, which the cursor does not cut.
-    let current = read_watermark_in_txn(vault, wtxn, scope)?;
+    let current = read_watermark_in_txn(vault, txn, scope)?;
     if current.last_learned_at != lower_exclusive {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
-    let admissible = enumerate_admissible_turns(
+    let Some(admissible) = enumerate_admissible_turns(
         vault,
-        wtxn,
+        txn,
         scope,
         &current,
         Some(upper_inclusive),
         effective_dirty_turn_limit(scope, usize::MAX),
-    )?;
-    Ok(admissible
-        .into_iter()
-        .filter(|row| !row.deferred)
-        .map(|row| row.turn_id)
-        .collect())
-}
-
-pub(crate) struct TurnBodyFacts {
-    pub(crate) speaker: Option<String>,
-    pub(crate) text: Option<String>,
-    pub(crate) world_ref: Option<EntityId>,
-    pub(crate) facet_ref: Option<EntityId>,
-    /// The turn is from an imported transcript (ARCH-0027): its evidence is
-    /// `Imported` whatever its speaker.
-    pub(crate) imported: bool,
-    /// The source the import stamp names, when it is one non-empty string.
-    pub(crate) import_source: Option<String>,
-}
-
-/// The ONE turn-body decoder. In-crate planners (the ONE-1685 session-close
-/// wake) share it so a turn's GATE-10 role can never be read one way by the
-/// scan and another way by the planner: first-wins across the `spkr|speaker`
-/// alias set, exactly as [`enumerate_admissible_turns`] admits it.
-pub(crate) fn decode_turn_body(raw: &[u8]) -> TurnBodyFacts {
-    let mut facts = TurnBodyFacts {
-        speaker: None,
-        text: None,
-        world_ref: None,
-        facet_ref: None,
-        imported: false,
-        import_source: None,
+        stop,
+    )?
+    else {
+        return Ok(None);
     };
-    let Ok(value) = rmpv::decode::read_value(&mut Cursor::new(raw)) else {
-        return facts;
-    };
-    let Value::Map(entries) = value else {
-        return facts;
-    };
-    for (key, value) in entries {
-        match key.as_str() {
-            Some("spkr" | "speaker") => {
-                if facts.speaker.is_none() {
-                    facts.speaker = value.as_str().map(str::to_owned);
-                }
-            }
-            Some("txt" | "text") => {
-                if facts.text.is_none() {
-                    facts.text = value.as_str().map(str::to_owned);
-                }
-            }
-            Some(TURN_BODY_WORLD_REF_KEY) => facts.world_ref = entity_ref_from_value(&value),
-            Some(TURN_BODY_FACET_REF_KEY) => facts.facet_ref = entity_ref_from_value(&value),
-            // Present at all, whatever its value: a malformed stamp fails toward
-            // the lower trust class, never up.
-            Some(crate::memory::IMPORTED_SOURCE_KEY) => {
-                facts.imported = true;
-                facts.import_source = value.as_str().filter(|s| !s.is_empty()).map(str::to_owned);
-            }
-            _ => {}
-        }
-    }
-    facts
-}
-
-/// Validator for the documented opt-in `world_ref`/`facet_ref` turn-body
-/// keys: exactly 16 MessagePack-binary bytes forming a valid entity id.
-#[must_use]
-pub fn entity_ref_from_value(value: &Value) -> Option<EntityId> {
-    let Value::Binary(bytes) = value else {
-        return None;
-    };
-    let raw: [u8; 16] = bytes.as_slice().try_into().ok()?;
-    EntityId::from_bytes(raw).ok()
+    Ok(Some(
+        admissible
+            .into_iter()
+            .filter(|row| !row.deferred)
+            .map(|row| row.turn_id)
+            .collect(),
+    ))
 }
 
 pub(super) fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFacts> {
@@ -739,7 +760,7 @@ pub(super) fn read_turn_facts(vault: &Vault, id: &EntityId) -> Result<TurnBodyFa
 /// false at the one row where it matters most.
 pub(super) fn read_turn_facts_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<TurnBodyFacts> {
     let Some(raw) = vault.get_raw_in(txn, id)? else {

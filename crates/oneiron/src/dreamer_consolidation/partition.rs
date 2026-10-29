@@ -16,7 +16,8 @@ use super::watermark::{
 use crate::Vault;
 use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::dreamer_prefilter::{
-    prefilter_partition_input, prefilter_partition_input_in_txn, write_prefilter_receipts_in_txn,
+    PrefilterScreen, prefilter_partition_input, prefilter_partition_input_in_txn,
+    write_prefilter_receipts_in_txn,
 };
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
@@ -242,7 +243,7 @@ pub(crate) fn plan_partitions_in_txn(
 /// without its conversation edge plans under none.
 pub(crate) fn partition_turns_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     turns: &[WorkingSetTurn],
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
@@ -251,7 +252,7 @@ pub(crate) fn partition_turns_in_txn(
 
 fn partition_screened_turns_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     kept: &[WorkingSetTurn],
     watermark: &ConsolidationWatermark,
 ) -> Result<Vec<ConsolidationPartitionPlan>> {
@@ -407,6 +408,72 @@ pub(crate) fn enqueue_partition_attempts_in_txn(
     Ok(keyed.into_iter().map(|(_, outcome)| outcome).collect())
 }
 
+/// What a partition enqueue's read phase decided: the turns it read, the
+/// screen it ruled them under, the plans they cut, and the carrier each
+/// re-dirtied turn stood at.
+pub(crate) struct PreparedPartitionPlans {
+    turns: Vec<WorkingSetTurn>,
+    screen: PrefilterScreen,
+    plans: Vec<ConsolidationPartitionPlan>,
+    carried: BTreeMap<EntityId, EntityId>,
+}
+
+/// The read half of [`enqueue_partition_plans_in_txn`]: the turns, their
+/// screen, and the plans they cut, read in the caller's snapshot. `None`
+/// when there is nothing to plan.
+pub(crate) fn prepare_partition_plans_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
+    planned_turn_ids: &[EntityId],
+    watermark: &ConsolidationWatermark,
+) -> Result<Option<PreparedPartitionPlans>> {
+    if planned_turn_ids.is_empty() {
+        return Ok(None);
+    }
+    let mut turns = read_partition_turns_in_txn(vault, txn, scope, planned_turn_ids)?;
+    turns.retain(|turn| turn.conversation.is_some());
+    let screen = prefilter_partition_input_in_txn(vault, txn, &turns)?;
+    let plans = partition_screened_turns_in_txn(vault, txn, &screen.kept, watermark)?;
+    let carried: BTreeMap<_, _> = turns
+        .iter()
+        .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
+        .collect();
+    Ok(Some(PreparedPartitionPlans {
+        turns,
+        screen,
+        plans,
+        carried,
+    }))
+}
+
+/// The write half of [`enqueue_partition_plans_in_txn`]: the attempts the
+/// prepared plans name, with the receipts of the screen they were cut
+/// under, in the caller's transaction.
+pub(crate) fn apply_partition_plans_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    scope: DreamerConsolidationScope,
+    prepared: &PreparedPartitionPlans,
+    run_id: Option<&str>,
+    now: u64,
+) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
+    let store = DreamerRunnerStore::new(vault);
+    let mut outcomes = Vec::with_capacity(prepared.plans.len());
+    for plan in &prepared.plans {
+        let input = partition_attempt_input(
+            scope,
+            plan,
+            &prepared.carried,
+            run_id.map(str::to_owned),
+            now,
+        );
+        outcomes.push((plan.key, store.enqueue_consolidation_in_txn(wtxn, input)?));
+    }
+    write_prefilter_receipts_in_txn(vault, wtxn, scope, &prepared.turns, &prepared.screen, now)?;
+    Ok(outcomes)
+}
+
 /// [`enqueue_partition_attempts_in_txn`], naming the partition each attempt
 /// plans. A turn without its conversation edge is left out: every caller
 /// settles through [`advance_watermark_in_txn`](super::watermark::advance_watermark_in_txn),
@@ -420,25 +487,12 @@ pub(crate) fn enqueue_partition_plans_in_txn(
     run_id: Option<&str>,
     now: u64,
 ) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
-    if planned_turn_ids.is_empty() {
+    let Some(prepared) =
+        prepare_partition_plans_in_txn(vault, wtxn, scope, planned_turn_ids, watermark)?
+    else {
         return Ok(Vec::new());
-    }
-    let mut turns = read_partition_turns_in_txn(vault, wtxn, scope, planned_turn_ids)?;
-    turns.retain(|turn| turn.conversation.is_some());
-    let screen = prefilter_partition_input_in_txn(vault, wtxn, &turns)?;
-    let plans = partition_screened_turns_in_txn(vault, wtxn, &screen.kept, watermark)?;
-    let carried: BTreeMap<_, _> = turns
-        .iter()
-        .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
-        .collect();
-    let store = DreamerRunnerStore::new(vault);
-    let mut outcomes = Vec::with_capacity(plans.len());
-    for plan in &plans {
-        let input = partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now);
-        outcomes.push((plan.key, store.enqueue_consolidation_in_txn(wtxn, input)?));
-    }
-    write_prefilter_receipts_in_txn(vault, wtxn, scope, &turns, &screen, now)?;
-    Ok(outcomes)
+    };
+    apply_partition_plans_in_txn(vault, wtxn, scope, &prepared, run_id, now)
 }
 
 /// Enqueues already-selected interest topics as children of one recipe
@@ -518,7 +572,7 @@ pub fn plan_dirty_turn_rounds(vault: &Vault, now: u64) -> Result<usize> {
 /// transaction, never from caller-supplied working-set metadata.
 pub(crate) fn read_partition_turns_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     scope: DreamerConsolidationScope,
     turn_ids: &[EntityId],
 ) -> Result<Vec<WorkingSetTurn>> {

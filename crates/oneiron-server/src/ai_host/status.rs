@@ -134,6 +134,9 @@ impl CompactionStatus {
 #[derive(Clone, Debug, Serialize)]
 pub struct AiStatus {
     pub dreamer: WorkStatus,
+    /// Dreamer passes that read in their writer after their guarded reads
+    /// went stale, since the vault opened (FIX 11568).
+    pub dreamer_one_writer_reads: u64,
     pub workflows: WorkStatus,
     pub chat: WorkStatus,
     pub compaction: CompactionStatus,

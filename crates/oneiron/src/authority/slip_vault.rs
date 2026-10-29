@@ -425,7 +425,13 @@ impl Vault {
             request_now,
         )?;
         self.receipt_support_use_in_txn(&mut txn, verified.claims(), nonce, timestamp)?;
+        let id = self.store.env.info().last_txn_id + 1;
         txn.commit()?;
+        // Without a delegation's support receipt the commit wrote only replay
+        // rows and the clock floors, which change no Dreamer input (FIX 11568).
+        if verified.claims().delegation.is_none() {
+            self.diagnostics().replay_only_commits.note(id);
+        }
         Ok(verified)
     }
     /// Read-only transport verification from the signed authority-log mint.

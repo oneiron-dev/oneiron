@@ -183,6 +183,7 @@ impl AiHandle {
             runtime,
             status: Arc::new(StatusCell::new(AiStatus {
                 dreamer: idle(),
+                dreamer_one_writer_reads: 0,
                 workflows: idle(),
                 chat,
                 compaction: CompactionStatus::off(match models {

@@ -66,6 +66,8 @@ use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 
+use super::read_phase::WakeStop;
+
 const POLICY: SideTable<(), ProjectorPolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROJECTOR_POLICY);
 const DEFAULT_POLICY: &str = include_str!("projector_policy_defaults.json");
@@ -193,13 +195,14 @@ impl Vault {
 }
 
 /// Compares a due window's material with the held turn, in the wake's
-/// transaction. Writes nothing.
+/// transaction. Writes nothing. `None` when `stop` stopped the plan.
 pub(crate) fn plan_in_txn(
     vault: &Vault,
-    txn: &heed::RwTxn<'_>,
+    txn: &heed::RoTxn<'_>,
     window: &[WorkingSetTurn],
     watermark: &ConsolidationWatermark,
-) -> Result<ProjectionPlan> {
+    stop: WakeStop<'_>,
+) -> Result<Option<ProjectionPlan>> {
     let policy = policy_in_txn(vault, txn)?;
     let held = held_in_txn(vault, txn)?;
     let mut plan = ProjectionPlan::default();
@@ -209,6 +212,9 @@ pub(crate) fn plan_in_txn(
     for partition in partition_turns_in_txn(vault, txn, window, watermark)? {
         let hash = partition.key.partition_hash();
         for turn in &partition.turns {
+            if stop.stopped() {
+                return Ok(None);
+            }
             // Words a branch would refuse to read are the branch's to refuse.
             let Some(statements) = turn_statements_in_txn(vault, txn, &turn.turn_id)? else {
                 unread = true;
@@ -235,7 +241,7 @@ pub(crate) fn plan_in_txn(
         }
         plan.ride = Some((held.round, held.key, riders));
     }
-    Ok(plan)
+    Ok(Some(plan))
 }
 
 /// Records what a wake queued and what it consumed, in the enqueue's

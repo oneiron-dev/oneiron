@@ -1315,8 +1315,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         } else {
             self.inner.execute(attempt, ctx).await
         };
+        let one_writer_reads = ctx.vault.dreamer_one_writer_reads();
         self.status.update(|status| {
             status.dreamer.state = WorkState::Waiting;
+            status.dreamer_one_writer_reads = one_writer_reads;
             match &outcome {
                 Ok(DreamerAttemptExecution::Completed { .. }) => status.dreamer.completed += 1,
                 Ok(other) => {
