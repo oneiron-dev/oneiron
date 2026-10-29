@@ -67,6 +67,8 @@ mod adapters;
 mod attach;
 mod doors;
 mod refresh;
+
+pub(crate) use adapters::description_notes;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's

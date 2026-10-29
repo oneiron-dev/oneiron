@@ -2,6 +2,8 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
+use oneiron::llm::routing::DescriptionNotes;
+
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
     DecisionCall, DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
@@ -196,10 +198,7 @@ impl SeatNotes for LadderNotes {
         effort: ReasoningEffort,
         _deadline: &RetrievalDeadline,
     ) -> oneiron::Result<String> {
-        let effort = match serde_json::to_value(effort) {
-            Ok(serde_json::Value::String(label)) => label,
-            _ => format!("{effort:?}"),
-        };
+        let effort = effort_label(effort);
         let described = candidates
             .iter()
             .find(|candidate| candidate.model == *model)
@@ -211,5 +210,36 @@ impl SeatNotes for LadderNotes {
             task.facet,
             candidates.len()
         ))
+    }
+}
+
+/// A routed seat's reason (FIX 11307), written from the route itself: the model, its effort,
+/// its fitness and the description line it was graded on. No model is asked.
+impl DescriptionNotes for LadderNotes {
+    fn reason(
+        &self,
+        _task: &str,
+        model: &ModelId,
+        description: &str,
+        effort: ReasoningEffort,
+        fitness: f64,
+    ) -> oneiron::Result<String> {
+        Ok(format!(
+            "The host's description route picked {model} at {} effort, fitness {fitness:.2}, on its line: {description}",
+            effort_label(effort)
+        ))
+    }
+}
+
+/// The notes a routed task seat's receipt keeps (FIX 11307).
+pub(crate) fn description_notes() -> &'static dyn DescriptionNotes {
+    &LadderNotes
+}
+
+/// An effort's wire label, as a receipt names it.
+fn effort_label(effort: ReasoningEffort) -> String {
+    match serde_json::to_value(effort) {
+        Ok(serde_json::Value::String(label)) => label,
+        _ => format!("{effort:?}"),
     }
 }
