@@ -354,8 +354,9 @@ impl RunBrowser {
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
         // CUA E8a: what the call solved is kept while its seat is held,
         // before the run's planner hears how it ended.
+        let mut solved_capture = None;
         if let Some((capture, mark, input)) = asked {
-            capture.after_call(driver, verb, &input, &output, mark);
+            solved_capture = capture.after_call(driver, verb, &input, &output, mark);
         }
         self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut() {
@@ -382,6 +383,11 @@ impl RunBrowser {
                     serde_json::to_value(ended)
                         .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
                 );
+            }
+            // Its solved-run capture's failure, when it failed (FIX
+            // 10509): a note, never the call's answer refused.
+            if let Some(note) = solved_capture {
+                object.insert("solved_capture".into(), Value::from(note));
             }
         }
         Ok(output)
@@ -641,11 +647,19 @@ impl RunGuests {
                         tracing::warn!(%error, "browser caller's solved-run scope did not encode");
                     })
                     .ok();
+                let filing = memory
+                    .browser_filing_envelope(origin.clone())
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "browser caller's filing envelope did not bind");
+                    })
+                    .ok()
+                    .flatten();
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
                     scope,
                     admission: self.admission,
+                    filing,
                 };
                 // Its site skills load under the run's skill-load lease (CUA E10).
                 let lease = self.admission_lease.as_ref();
@@ -691,6 +705,7 @@ impl RunGuests {
                 by,
                 scope: None,
                 admission: None,
+                filing: None,
             };
             planner.observe(call.verb, &call.input, &output, |workflow| {
                 let filed = library.program(workflow).ok().flatten()?;
