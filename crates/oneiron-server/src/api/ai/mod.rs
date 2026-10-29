@@ -19,6 +19,7 @@ use crate::server::SyncServer;
 pub(crate) mod chat;
 mod media;
 mod options;
+pub(crate) mod room_place;
 mod vision;
 mod voices;
 mod waves;
