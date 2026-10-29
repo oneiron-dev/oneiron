@@ -23,9 +23,8 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
 };
 use oneiron::browser_library::{
-    PROGRAM_ADMISSION_KIND, ProgramAdmissionJob, ProgramAdmissionOutcome, admission_readiness,
-    admission_sources, program_admission_job_id, record_program_admission,
-    record_undecodable_program_admission,
+    PROGRAM_ADMISSION_KIND, ProgramAdmissionJob, ProgramAdmissionOutcome, admission_sources,
+    program_admission_job_id, record_program_admission, record_undecodable_program_admission,
 };
 use tokio::sync::broadcast;
 
@@ -193,7 +192,8 @@ fn undecodable_sources(attempt: &AttemptRecord) -> Vec<oneiron::EntityId> {
 }
 
 /// What job `job` comes to: its sources and their caller as they stand
-/// now, what its proposal lacks, then its run as that caller.
+/// now, then its run as that caller, which judges the proposal's
+/// readiness once the caller stands.
 fn job_outcome(
     server: &Arc<SyncServer>,
     runtime: &tokio::runtime::Handle,
@@ -211,10 +211,15 @@ fn job_outcome(
             };
         }
     };
-    if let Some(lacking) = admission_readiness(job, &sources.evidence) {
-        return lacking;
-    }
-    RunGuests::admit_program(server, runtime, attempt, job_id, job, &sources.caller)
+    RunGuests::admit_program(
+        server,
+        runtime,
+        attempt,
+        job_id,
+        job,
+        &sources.caller,
+        &sources.evidence,
+    )
 }
 
 /// Completes or fails the attempt; either is terminal.
