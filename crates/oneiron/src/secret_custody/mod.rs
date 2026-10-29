@@ -109,6 +109,7 @@ pub(crate) use self::cloud_registration::{
 };
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
+pub use self::control::input::{CustodyInputBinding, seal_custody_input};
 #[cfg(feature = "sync")]
 pub(crate) use self::control::input::{
     RelayedInput, WitnessPart, held_input_in_txn, held_inputs, held_witness_in_txn, held_witnesses,

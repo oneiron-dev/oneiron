@@ -570,10 +570,7 @@ impl RunGuests {
             Ok(mut output) => {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
                 self.hold_stopped_batch(call.verb, origin, memory, held, &output);
-                Ok(Ok(AgentVerbAnswer {
-                    output,
-                    rows: answer.rows,
-                }))
+                Ok(Ok(AgentVerbAnswer::new(output, answer.rows)))
             }
             Err(error) => refused(super::mcp_facade_error(error)),
         }
@@ -700,10 +697,7 @@ impl RunGuests {
                 Some(filed.program.subgoal)
             });
         }
-        Ok(Ok(AgentVerbAnswer {
-            output,
-            rows: Some(Vec::new()),
-        }))
+        Ok(Ok(AgentVerbAnswer::new(output, Some(Vec::new()))))
     }
 
     pub(super) fn admits(

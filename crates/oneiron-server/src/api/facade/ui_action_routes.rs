@@ -85,8 +85,11 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 }
 
 /// `vault.lenses.default` on this server: the default lens read under the
-/// credential's own key at its locality, lowered once for the whole atom
-/// kit, its frame held for the card's events before the answer leaves.
+/// credential's own key at its locality, lowered once for the surface the
+/// call names (FIX 7969: its input's own `surface`, else `client_surface`,
+/// the profile its MCP call declared), else for the whole atom kit, its
+/// frame held beside exactly that render for the card's events before the
+/// answer leaves.
 /// Beside it, the rows its reads listed. A run-held render (`owner`, FIX
 /// 2612) holds its card for its creating run and subscription, replacing
 /// the card that run last rendered for it; any other holds it unowned.
@@ -94,12 +97,18 @@ pub(crate) async fn vault_lenses_default(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     owner: Option<CardOwner>,
+    client_surface: Option<GeneratedUiSurfaceCapabilities>,
     input: LensDefaultRequest,
 ) -> (MemoryResult<ScopedReadResult<LensFrameCard>>, Vec<EntityId>) {
     let (actor, class) = match facade_actor(server, auth) {
         Ok(bound) => bound,
         Err(refusal) => return (Err(refusal.into_memory_error()), Vec::new()),
     };
+    let surface = input
+        .surface
+        .clone()
+        .or(client_surface)
+        .unwrap_or_default();
     let rendered = {
         let server = Arc::clone(server);
         let auth = auth.clone();
@@ -117,7 +126,7 @@ pub(crate) async fn vault_lenses_default(
         return (Err(internal("vault.lenses.default")), Vec::new());
     };
     let answer = rendered.and_then(|ScopedReadResult { value, receipt }| {
-        let (frame, card) = value.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+        let (frame, card) = value.lower(&surface)?;
         match owner {
             Some(owner) => {
                 server.lens_frames.replace_for_subscription(

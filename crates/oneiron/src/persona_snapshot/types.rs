@@ -347,6 +347,12 @@ pub struct PersonaSnapshotArtifact {
     pub included_row_ids: Vec<String>,
     /// Row ids struck out of the artifact.
     pub struck_row_ids: Vec<String>,
+    /// blake3 hex fingerprint over both renders, as the export record keeps
+    /// it: the MemoryPack-lite JSON, a NUL byte, then the markdown.
+    pub artifact_fingerprint: String,
+    /// The vault ref slots both renders left out, as the export record names
+    /// them (FIX 1199); empty for a copy that carries its refs.
+    pub omitted_refs: Vec<String>,
 }
 
 /// Persisted PERSONA_SNAPSHOT_EXPORT record body.
