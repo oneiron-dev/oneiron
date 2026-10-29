@@ -342,6 +342,7 @@ impl ConsolidationExecutor<'_> {
                     evidence: &evidence,
                     state: &state,
                     ceiling: DecisionRung::Big,
+                    sources: None,
                 },
                 pack.questions(),
                 &labels,
