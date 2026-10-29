@@ -52,6 +52,10 @@ impl ReadSetProducer {
     /// shows (FIX 7019).
     pub const DREAMER_EXTRACTION: Self = Self("dreamer.extraction");
 
+    /// A workflow model step's input: its agent definition row, the memory
+    /// and chat rows its context render read and its planner craft (FIX 6934).
+    pub const WORKFLOW_STEP_INPUT: Self = Self("workflow.step_input");
+
     /// The key the record keeps.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
