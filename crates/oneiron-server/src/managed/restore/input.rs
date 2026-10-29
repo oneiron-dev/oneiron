@@ -1,11 +1,12 @@
 //! The restore's two pipes and the plan on the input pipe: each descriptor
 //! proven the right end of a pipe before either is taken over (FIX 6580,
 //! [`crate::pipe_proof::pipe_end`]), the plan read to EOF and parsed strictly,
-//! and every binding it names checked against this start's argv before
-//! anything is touched.
+//! and every binding it names checked against this start's argv, and in a
+//! vault VM its carrier, before anything is touched.
 
-use std::io::Read as _;
+use std::io::{ErrorKind, Read as _};
 use std::os::fd::{FromRawFd as _, RawFd};
+use std::path::PathBuf;
 
 use oneiron_vault_contract::restore::framing::identity_fits;
 use oneiron_vault_contract::restore::{
@@ -14,6 +15,8 @@ use oneiron_vault_contract::restore::{
 };
 
 use crate::managed::ManagedArgs;
+#[cfg(target_os = "linux")]
+use crate::managed::state_serve::carrier_recipient;
 
 /// An SLH-DSA-SHA2-256s public key's length in bytes.
 const SLHDSA_PUBLIC_LEN: usize = 64;
@@ -44,7 +47,9 @@ pub(super) fn read(mut pipe: std::fs::File) -> Result<ManagedRestoreInput, &'sta
 /// owners, its tier, the artifact's path, its signer pins, that its
 /// identity rides a result frame, and that each escrow recipient argv names
 /// is one of the plan's fresh recipients of that role, never a released
-/// one or one the plan did not authorize.
+/// one or one the plan did not authorize. In a vault VM a role argv names
+/// no file for is checked the same way against the carrier's file for it,
+/// as it stands now ([`vm_carrier_recipient`]).
 pub(super) fn check(
     plan: &ManagedRestorePlan,
     managed: &ManagedArgs,
@@ -98,11 +103,17 @@ pub(super) fn check(
         (EscrowRole::Managed, &managed.escrow_recipient),
         (EscrowRole::BreakGlass, &managed.break_glass_recipient),
     ] {
-        let Some(file) = file else {
+        let public_key = if let Some(file) = file {
+            std::fs::read(file).map_err(|_| "an escrow recipient file argv names did not read")?
+        } else if let Some(file) = vm_carrier_recipient(managed, role) {
+            match std::fs::read(file) {
+                Ok(public_key) => public_key,
+                Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                Err(_) => return Err("an escrow recipient file argv names did not read"),
+            }
+        } else {
             continue;
         };
-        let public_key =
-            std::fs::read(file).map_err(|_| "an escrow recipient file argv names did not read")?;
         if !plan
             .request
             .fresh
@@ -113,4 +124,18 @@ pub(super) fn check(
         }
     }
     Ok(())
+}
+
+/// The file a vault VM's carrier delivers `role`'s escrow recipient in, for
+/// a role argv names no file for: the host may send one after this start's
+/// argv was built, and the carrier watch seals to it once the vault serves
+/// (FIX 11078). `None` outside a vault VM.
+fn vm_carrier_recipient(managed: &ManagedArgs, role: EscrowRole) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if managed.vsock_guest {
+        return Some(carrier_recipient(role));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (managed, role);
+    None
 }

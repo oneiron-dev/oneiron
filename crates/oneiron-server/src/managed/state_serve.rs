@@ -67,6 +67,8 @@ mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
 
+#[cfg(target_os = "linux")]
+pub(super) use self::carrier_watch::carrier_recipient;
 pub use self::coordinator::serve_managed;
 pub use self::ingress::build_managed_app;
 pub(super) use self::ingress::build_managed_artifact_app;
