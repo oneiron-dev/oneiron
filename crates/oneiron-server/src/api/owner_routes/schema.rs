@@ -160,6 +160,8 @@ pub(crate) fn save_off_record_body_schema() -> serde_json::Value {
 /// The OpenAPI schema of `POST /v1/owner/off-record/save`'s answer (FIX 11617): [`off_record::Saved`].
 pub(crate) fn off_record_saved_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<off_record::Saved>()
+}
+
 /// The OpenAPI schema of `POST /v1/owner/runs/approve`'s body (FIX 11611),
 /// shared with `POST /v1/owner/runs/decline`: [`DecideRun`].
 pub(crate) fn decide_run_body_schema() -> serde_json::Value {
@@ -170,6 +172,8 @@ pub(crate) fn decide_run_body_schema() -> serde_json::Value {
 /// shared with `POST /v1/owner/runs/decline`: [`runs::RunResolved`].
 pub(crate) fn run_resolved_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<runs::RunResolved>()
+}
+
 /// The OpenAPI schema of `POST /v1/owner/secret-scan`'s body (FIX 11611): [`SetSecretScan`].
 pub(crate) fn set_secret_scan_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<SetSecretScan>()
