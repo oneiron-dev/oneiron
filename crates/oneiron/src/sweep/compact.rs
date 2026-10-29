@@ -578,7 +578,7 @@ fn drops_withdrawn_document(
     if !withdrawn.due.contains(id) {
         return Ok(false);
     }
-    let Some(&cutoff) = withdrawn.cutoffs.get(id) else {
+    let Some(cutoff) = withdrawn.cutoffs.get(id).map(|cutoff| cutoff.generation) else {
         return Ok(false);
     };
     let rtxn = vault.store.env.read_txn()?;
