@@ -8,9 +8,12 @@
 //! reads the quoted text rather than drifting. A quote the birth does not
 //! prove keeps its body anchor and reads as it does now. Nothing here fails
 //! the write it rides in, and no anchor is rewritten.
-use super::{QuoteAnchor, read_pointer, witness_turn_quotes};
+use super::{
+    MESSAGE_REPLY_KEY, QuoteAnchor, field, message_fields, read_pointer, witness_turn_quotes,
+};
 use crate::EntityId;
 use crate::store::ManifestDbs;
+use rmpv::Value;
 use std::collections::BTreeSet;
 
 /// Pins each body-anchored quote of `anchors`, by its citer, at its
@@ -74,4 +77,24 @@ pub(crate) fn turn_body_quotes(turn: EntityId, body: &[u8]) -> Vec<(EntityId, Qu
             .collect(),
         Err(_) => Vec::new(),
     }
+}
+
+/// The quote a door-added MESSAGE's `body` keeps (FIX 11084): its metadata's
+/// door-owned pointer with a quote, the quoted TURN and anchor. `None` for a
+/// body that keeps none, or does not decode.
+pub(crate) fn message_body_quotes(body: &[u8]) -> Option<(EntityId, QuoteAnchor)> {
+    let fields = message_fields(body).ok()?;
+    let Value::Map(metadata) = field(&fields, "metadata")? else {
+        return None;
+    };
+    let pointer = field(metadata, MESSAGE_REPLY_KEY)?;
+    let Value::Map(pointer) = pointer else {
+        return None;
+    };
+    let quote = field(pointer, "quote")?;
+    let record = field(pointer, "record")?.as_str()?;
+    Some((
+        EntityId::from_hex(record).ok()?,
+        QuoteAnchor::from_value(quote).ok()?,
+    ))
 }
