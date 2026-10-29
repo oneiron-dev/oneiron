@@ -14,10 +14,10 @@ use crate::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 
 use super::custody::{keep_checkpoint, read_pin};
 use super::{
-    CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck, PinnedCheckpoint,
-    ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin, TrainingDeclarationPin,
-    TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult, TrainingRun, TrainingState,
-    hash_json, invalid, json_value, run_in_txn,
+    CandleParityCheck, CheckpointUpload, ComputePin, DetectorProvenance, ExportCheck,
+    PinnedCheckpoint, ProbeMeasurement, QuestionExportCheck, RUNS, SourcePin,
+    TrainingDeclarationPin, TrainingDispatch, TrainingOwner, TrainingPlan, TrainingResult,
+    TrainingRun, TrainingState, hash_json, invalid, json_value, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -50,6 +50,9 @@ pub struct TrainOutput {
     /// A question head's producer check, which its result requires; a role
     /// run's connector sends none.
     pub question_check: Option<QuestionExportCheck>,
+    /// The host's Candle-side reproduction of the receipt (FIX 7568), for a
+    /// question head; a role run's connector sends none.
+    pub candle_parity: Option<CandleParityCheck>,
 }
 
 pub type TrainingFuture<'a> = Pin<Box<dyn Future<Output = Result<TrainOutput>> + Send + 'a>>;
@@ -150,6 +153,7 @@ fn check_export(
         max_logit_difference: max_difference,
         tolerance: run.plan.export_logit_tolerance,
         question_check: output.question_check,
+        candle_parity: output.candle_parity.clone(),
     })
 }
 
@@ -336,6 +340,7 @@ impl Vault {
                     || result.harness != output.harness
                     || result.connector_receipt != output.receipt
                     || result.checks.question_check != output.question_check
+                    || result.checks.candle_parity != output.candle_parity
                 {
                     return Err(invalid("a completed training run cannot be replaced"));
                 }

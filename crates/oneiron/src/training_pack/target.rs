@@ -106,4 +106,29 @@ impl QuestionTarget {
         }
         Ok(())
     }
+
+    /// The text [`QUESTION_RENDERER`] writes for one probe or row `input`,
+    /// as the trainer writes it (FIX 7568): canonical-JSON lines for the
+    /// question, the input's `target` and each item of its `context`.
+    /// Labels, reviewers, consent and ids never reach the model.
+    pub fn render_target_text(&self, input: &Value) -> Result<String> {
+        let line = |label: &str, value: &Value| -> Result<String> {
+            let bytes = crate::llm::canonical_json_bytes(value)
+                .map_err(|_| invalid("a detector target does not encode"))?;
+            let text = String::from_utf8(bytes)
+                .map_err(|_| invalid("a detector target does not encode"))?;
+            Ok(format!("{label}: {text}"))
+        };
+        let (Some(target), Some(context)) = (
+            input.get("target"),
+            input.get("context").and_then(Value::as_array),
+        ) else {
+            return Err(invalid("a detector input needs a target and a context list"));
+        };
+        let mut lines = vec![line("question", &self.definition)?, line("target", target)?];
+        for item in context {
+            lines.push(line("context", item)?);
+        }
+        Ok(lines.join("\n"))
+    }
 }
