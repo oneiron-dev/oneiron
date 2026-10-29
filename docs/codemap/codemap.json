@@ -97148,7 +97148,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 17
      }
     },
