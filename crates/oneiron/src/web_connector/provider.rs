@@ -69,23 +69,26 @@ const TAVILY: WebProviderProfile = WebProviderProfile {
     backend_key: true,
     // Basic search: 1 credit at $0.008 PAYG.
     search_price_micro_usd: Some(8_000),
-    // Basic extraction: 1 credit per 5 successful URLs, so one URL is at most one credit.
-    fetch_price_micro_usd: Some(8_000),
+    // Basic extraction: 1 credit per 5 successful URLs, $0.0016 a URL.
+    fetch_price_micro_usd: Some(1_600),
     fetch: FetchRoute::Provider,
     retention: ResultRetention::Unrestricted,
 };
 const EXA: WebProviderProfile = WebProviderProfile {
     provider: WebProvider::Exa,
     backend_key: false,
-    search_price_micro_usd: None,
-    fetch_price_micro_usd: None,
+    // Auto search, up to 10 results: $7 per 1,000 requests.
+    search_price_micro_usd: Some(7_000),
+    // Contents, one content type: $1 per 1,000 pages.
+    fetch_price_micro_usd: Some(1_000),
     fetch: FetchRoute::Provider,
     retention: ResultRetention::Unrestricted,
 };
 const BRAVE: WebProviderProfile = WebProviderProfile {
     provider: WebProvider::Brave,
     backend_key: false,
-    search_price_micro_usd: None,
+    // Search plan: $5 per 1,000 requests.
+    search_price_micro_usd: Some(5_000),
     fetch_price_micro_usd: Some(0),
     fetch: FetchRoute::Direct,
     retention: ResultRetention::Transient,
@@ -93,16 +96,18 @@ const BRAVE: WebProviderProfile = WebProviderProfile {
 const TINYFISH: WebProviderProfile = WebProviderProfile {
     provider: WebProvider::Tinyfish,
     backend_key: false,
-    search_price_micro_usd: None,
-    fetch_price_micro_usd: None,
+    // TinySearch and TinyFetch are free within their daily allowances.
+    search_price_micro_usd: Some(0),
+    fetch_price_micro_usd: Some(0),
     fetch: FetchRoute::Provider,
     retention: ResultRetention::Unrestricted,
 };
 const CONTEXT_DEV: WebProviderProfile = WebProviderProfile {
     provider: WebProvider::ContextDev,
     backend_key: false,
-    search_price_micro_usd: None,
-    fetch_price_micro_usd: None,
+    // One credit (up to 10 results, or one scrape), at most $0.003 on Developer overage.
+    search_price_micro_usd: Some(3_000),
+    fetch_price_micro_usd: Some(3_000),
     fetch: FetchRoute::Provider,
     retention: ResultRetention::Unrestricted,
 };
@@ -111,8 +116,8 @@ const OCTEN: WebProviderProfile = WebProviderProfile {
     backend_key: false,
     // Web search: $1 per 1,000 calls.
     search_price_micro_usd: Some(1_000),
-    // Extract: $1 to $2.5 per 1,000 URLs; the upper bound.
-    fetch_price_micro_usd: Some(2_500),
+    // Standard extract: $1 per 1,000 successful URLs.
+    fetch_price_micro_usd: Some(1_000),
     fetch: FetchRoute::Provider,
     retention: ResultRetention::Cache24h,
 };

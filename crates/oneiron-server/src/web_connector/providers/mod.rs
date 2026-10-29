@@ -73,7 +73,7 @@ impl ProviderError {
     pub(super) fn reason_code(&self) -> String {
         match self.status {
             Some(401 | 403) => "web_provider_key_refused".to_owned(),
-            Some(402) => "web_provider_out_of_credit".to_owned(),
+            Some(402 | 432 | 433) => "web_provider_out_of_credit".to_owned(),
             Some(429) => "web_provider_rate_limited".to_owned(),
             Some(status) => format!("web_provider_http_{status}"),
             None => "web_provider_unreachable".to_owned(),
@@ -196,9 +196,9 @@ fn send(request: reqwest::blocking::RequestBuilder) -> Result<Value, ProviderErr
         .iter()
         .find_map(|field| match body.get(*field) {
             Some(Value::String(text)) => Some(text.clone()),
-            Some(Value::Object(inner)) => inner
-                .get("message")
-                .and_then(Value::as_str)
+            Some(Value::Object(inner)) => ["error", "message", "detail"]
+                .iter()
+                .find_map(|field| inner.get(*field).and_then(Value::as_str))
                 .map(str::to_owned),
             _ => None,
         })
