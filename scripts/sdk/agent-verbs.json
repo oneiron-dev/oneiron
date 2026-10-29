@@ -6898,6 +6898,21 @@
       "openapi": true
     },
     {
+      "name": "vault.coach.training_offers.sources",
+      "description": "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far.",
+      "input": "crate::task_verb::sdk::ReservoirSourcesRequest",
+      "output": "crate::edit_distance::reservoir::ReservoirSourcePreview",
+      "call": "crate::task_verb::sdk::reservoir_sources_as(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.sources\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.research.bind",
       "description": "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it.",
       "input": "crate::task_verb::sdk::ResearchBindWire",
@@ -19869,6 +19884,62 @@
       },
       "section": false,
       "openapi": true
+    },
+    {
+      "name": "vault.custody.members.drain.begin",
+      "description": "The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter.",
+      "input": "crate::task_verb::sdk::CustodyMemberRef",
+      "output": "crate::task_verb::sdk::CustodyDrainTicketView",
+      "call": "crate::task_verb::sdk::custody_member_drain_begin_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.drain.begin\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.custody.members.drain.commit",
+      "description": "The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row.",
+      "input": "crate::task_verb::sdk::CustodyDrainCommitRequest",
+      "output": "crate::task_verb::sdk::CustodySetRevision",
+      "call": "crate::task_verb::sdk::custody_member_drain_commit_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.drain.commit\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.custody.members.drain.folder",
+      "description": "The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision.",
+      "input": "crate::task_verb::sdk::CustodyMemberRef",
+      "output": "crate::task_verb::sdk::CustodySetRevision",
+      "call": "crate::task_verb::sdk::custody_folder_member_drain_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.drain.folder\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.custody.members.reenrol",
+      "description": "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision.",
+      "input": "crate::task_verb::sdk::CustodyMemberReenrolRequest",
+      "output": "crate::task_verb::sdk::CustodySetRevision",
+      "call": "crate::task_verb::sdk::custody_member_reenrol_as(memory.vault(), &memory.embedded_owner(\"vault.custody.members.reenrol\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
     }
   ]
 }

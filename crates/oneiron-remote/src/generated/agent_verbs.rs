@@ -1383,6 +1383,9 @@ impl OneironClient {
                 "vault.coach.training_offers.pilots.get" => remote_agent_verb_output::<
                     Option<oneiron::skill_optimize::offer_pilot::OfferPilot>,
                 >(client, verb, &input),
+                "vault.coach.training_offers.sources" => remote_agent_verb_output::<
+                    oneiron::edit_distance::reservoir::ReservoirSourcePreview,
+                >(client, verb, &input),
                 "vault.research.bind" => remote_agent_verb_output::<
                     oneiron::autoreason_campaign::research::ResearchBinding,
                 >(client, verb, &input),
@@ -3575,6 +3578,18 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.identity.proposals.for_pair" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::IdentityPairProposals,
+                >(client, verb, &input),
+                "vault.custody.members.drain.begin" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodyDrainTicketView,
+                >(client, verb, &input),
+                "vault.custody.members.drain.commit" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodySetRevision,
+                >(client, verb, &input),
+                "vault.custody.members.drain.folder" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodySetRevision,
+                >(client, verb, &input),
+                "vault.custody.members.reenrol" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CustodySetRevision,
                 >(client, verb, &input),
                 "connector.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorCallReply,
@@ -9152,6 +9167,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.coach.training_offers.pilots.get", value)
+    }
+    pub fn vault_coach_training_offers_sources(
+        &self,
+        input: &oneiron::task_verb::sdk::ReservoirSourcesRequest,
+    ) -> Result<oneiron::edit_distance::reservoir::ReservoirSourcePreview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.coach.training_offers.sources", value)
     }
     pub fn vault_research_bind(
         &self,
@@ -17903,6 +17930,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.identity.proposals.for_pair", value)
+    }
+    pub fn vault_custody_members_drain_begin(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyMemberRef,
+    ) -> Result<oneiron::task_verb::sdk::CustodyDrainTicketView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.drain.begin", value)
+    }
+    pub fn vault_custody_members_drain_commit(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyDrainCommitRequest,
+    ) -> Result<oneiron::task_verb::sdk::CustodySetRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.drain.commit", value)
+    }
+    pub fn vault_custody_members_drain_folder(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyMemberRef,
+    ) -> Result<oneiron::task_verb::sdk::CustodySetRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.drain.folder", value)
+    }
+    pub fn vault_custody_members_reenrol(
+        &self,
+        input: &oneiron::task_verb::sdk::CustodyMemberReenrolRequest,
+    ) -> Result<oneiron::task_verb::sdk::CustodySetRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.custody.members.reenrol", value)
     }
     pub fn connector_answer(
         &self,

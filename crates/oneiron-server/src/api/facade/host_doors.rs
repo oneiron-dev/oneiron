@@ -154,6 +154,10 @@ pub(crate) use super::secret_lift_doors::*;
 // The owner's custody register, rotate, rewrap, view and sealed submit
 // doors (FIX 4993), likewise.
 pub(crate) use super::secret_custody_doors::*;
+// The owner's custody member drain doors (FIX 11274), likewise.
+pub(crate) use super::custody_drain_doors::*;
+// The owner's reservoir source preview door (FIX 11352), likewise.
+pub(crate) use super::reservoir_source_doors::*;
 // The usage repair doors (FIX 6476), likewise.
 pub(crate) use super::usage_repair_doors::*;
 // The owner's root wave door (OF-427), likewise.

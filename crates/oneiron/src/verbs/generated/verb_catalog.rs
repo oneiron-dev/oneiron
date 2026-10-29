@@ -444,6 +444,7 @@ pub enum AgentVerb {
     VaultCoachTrainingOffersPilotsPrepare,
     VaultCoachTrainingOffersPilotsComplete,
     VaultCoachTrainingOffersPilotsGet,
+    VaultCoachTrainingOffersSources,
     VaultResearchBind,
     VaultResearchFork,
     VaultResearchWeave,
@@ -1179,6 +1180,10 @@ pub enum AgentVerb {
     VaultIdentityEventsGet,
     VaultIdentityProposalsResolve,
     VaultIdentityProposalsForPair,
+    VaultCustodyMembersDrainBegin,
+    VaultCustodyMembersDrainCommit,
+    VaultCustodyMembersDrainFolder,
+    VaultCustodyMembersReenrol,
     ConnectorAnswer,
     SelfBrowserOpen,
     SelfBrowserObserve,
@@ -1660,6 +1665,7 @@ impl AgentVerb {
         Self::VaultCoachTrainingOffersPilotsPrepare,
         Self::VaultCoachTrainingOffersPilotsComplete,
         Self::VaultCoachTrainingOffersPilotsGet,
+        Self::VaultCoachTrainingOffersSources,
         Self::VaultResearchBind,
         Self::VaultResearchFork,
         Self::VaultResearchWeave,
@@ -2395,6 +2401,10 @@ impl AgentVerb {
         Self::VaultIdentityEventsGet,
         Self::VaultIdentityProposalsResolve,
         Self::VaultIdentityProposalsForPair,
+        Self::VaultCustodyMembersDrainBegin,
+        Self::VaultCustodyMembersDrainCommit,
+        Self::VaultCustodyMembersDrainFolder,
+        Self::VaultCustodyMembersReenrol,
         Self::ConnectorAnswer,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
@@ -2889,6 +2899,7 @@ impl AgentVerb {
                 "vault.coach.training_offers.pilots.complete"
             }
             Self::VaultCoachTrainingOffersPilotsGet => "vault.coach.training_offers.pilots.get",
+            Self::VaultCoachTrainingOffersSources => "vault.coach.training_offers.sources",
             Self::VaultResearchBind => "vault.research.bind",
             Self::VaultResearchFork => "vault.research.fork",
             Self::VaultResearchWeave => "vault.research.weave",
@@ -3642,6 +3653,10 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => "vault.identity.events.get",
             Self::VaultIdentityProposalsResolve => "vault.identity.proposals.resolve",
             Self::VaultIdentityProposalsForPair => "vault.identity.proposals.for_pair",
+            Self::VaultCustodyMembersDrainBegin => "vault.custody.members.drain.begin",
+            Self::VaultCustodyMembersDrainCommit => "vault.custody.members.drain.commit",
+            Self::VaultCustodyMembersDrainFolder => "vault.custody.members.drain.folder",
+            Self::VaultCustodyMembersReenrol => "vault.custody.members.reenrol",
             Self::ConnectorAnswer => "connector.answer",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
@@ -4125,6 +4140,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
+                | Self::VaultCoachTrainingOffersSources
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -4838,6 +4854,10 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -5370,6 +5390,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
+                | Self::VaultCoachTrainingOffersSources
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -6083,6 +6104,10 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -6744,6 +6769,7 @@ impl AgentVerb {
                 | Self::VaultCoachTrainingOffersPilotsPrepare
                 | Self::VaultCoachTrainingOffersPilotsComplete
                 | Self::VaultCoachTrainingOffersPilotsGet
+                | Self::VaultCoachTrainingOffersSources
                 | Self::VaultResearchBind
                 | Self::VaultResearchFork
                 | Self::VaultResearchWeave
@@ -7413,6 +7439,10 @@ impl AgentVerb {
                 | Self::VaultIdentityEventsGet
                 | Self::VaultIdentityProposalsResolve
                 | Self::VaultIdentityProposalsForPair
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
@@ -8139,6 +8169,10 @@ impl AgentVerb {
                 | Self::VaultIdentityPropose
                 | Self::VaultIdentityUndo
                 | Self::VaultIdentityProposalsResolve
+                | Self::VaultCustodyMembersDrainBegin
+                | Self::VaultCustodyMembersDrainCommit
+                | Self::VaultCustodyMembersDrainFolder
+                | Self::VaultCustodyMembersReenrol
                 | Self::ConnectorAnswer
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
@@ -8659,6 +8693,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsPrepare => &["spec"],
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
+            Self::VaultCoachTrainingOffersSources => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -9394,6 +9429,10 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::VaultCustodyMembersDrainBegin => &["spec"],
+            Self::VaultCustodyMembersDrainCommit => &["spec"],
+            Self::VaultCustodyMembersDrainFolder => &["spec"],
+            Self::VaultCustodyMembersReenrol => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -9876,6 +9915,7 @@ impl AgentVerb {
             Self::VaultCoachTrainingOffersPilotsPrepare => &["spec"],
             Self::VaultCoachTrainingOffersPilotsComplete => &["spec"],
             Self::VaultCoachTrainingOffersPilotsGet => &["spec"],
+            Self::VaultCoachTrainingOffersSources => &["spec"],
             Self::VaultResearchBind => &["spec"],
             Self::VaultResearchFork => &["spec"],
             Self::VaultResearchWeave => &["spec"],
@@ -10611,6 +10651,10 @@ impl AgentVerb {
             Self::VaultIdentityEventsGet => &["spec"],
             Self::VaultIdentityProposalsResolve => &["spec"],
             Self::VaultIdentityProposalsForPair => &["spec"],
+            Self::VaultCustodyMembersDrainBegin => &["spec"],
+            Self::VaultCustodyMembersDrainCommit => &["spec"],
+            Self::VaultCustodyMembersDrainFolder => &["spec"],
+            Self::VaultCustodyMembersReenrol => &["spec"],
             Self::ConnectorAnswer => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
@@ -11955,6 +11999,9 @@ impl AgentVerb {
             }
             Self::VaultCoachTrainingOffersPilotsGet => {
                 "Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card."
+            }
+            Self::VaultCoachTrainingOffersSources => {
+                "Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."
             }
             Self::VaultResearchBind => {
                 "Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."
@@ -14092,6 +14139,18 @@ impl AgentVerb {
             }
             Self::VaultIdentityProposalsForPair => {
                 "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."
+            }
+            Self::VaultCustodyMembersDrainBegin => {
+                "The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter."
+            }
+            Self::VaultCustodyMembersDrainCommit => {
+                "The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."
+            }
+            Self::VaultCustodyMembersDrainFolder => {
+                "The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."
+            }
+            Self::VaultCustodyMembersReenrol => {
+                "The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."
             }
             Self::ConnectorAnswer => {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."
