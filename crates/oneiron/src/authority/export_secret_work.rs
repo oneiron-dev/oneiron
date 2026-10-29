@@ -64,8 +64,8 @@ pub enum HolderExportState {
     /// No request was recorded, for the reason given; the archive's handle
     /// stands.
     Unassigned { reason: HolderExportUnassigned },
-    /// The export's audit write did not record it (logged): nothing waits
-    /// for a holder.
+    /// Not recorded for a holder: the export's audit write failed (logged),
+    /// or its door writes no audit. Nothing waits for a holder.
     Unrecorded,
 }
 
@@ -105,6 +105,14 @@ impl HolderExportUnassigned {
 }
 
 impl HolderExportRequest {
+    /// The need this entry names.
+    pub(crate) fn need(&self) -> HolderExportNeed {
+        HolderExportNeed {
+            secret: self.secret,
+            generation: self.generation,
+        }
+    }
+
     fn unassigned(need: HolderExportNeed, reason: HolderExportUnassigned) -> Self {
         Self {
             secret: need.secret,
@@ -113,7 +121,8 @@ impl HolderExportRequest {
         }
     }
 
-    fn unrecorded(need: HolderExportNeed) -> Self {
+    /// `need`, not recorded for a holder (yet, or at all).
+    pub(crate) fn unrecorded(need: HolderExportNeed) -> Self {
         Self {
             secret: need.secret,
             generation: need.generation,

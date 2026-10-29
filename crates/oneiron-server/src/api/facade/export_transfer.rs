@@ -13,6 +13,12 @@
 //! archive was derived from (source admission), and no hold a world keeps
 //! from the caller's destination. A kept export lives until its owner lets
 //! it go or the server stops: nothing expires it while it is unread.
+//!
+//! `GET /v1/core/export-secret-supplements/{request}` reads, for the owner
+//! whose export it was, one export secret request by its entry (FIX
+//! 4624(b)): where it stands and, once the secret's holder sealed it and
+//! this server keeps the copy, the copy, sealed to the machine he chose. No
+//! server it passes through can open it.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -78,6 +84,7 @@ impl ExportTransfers {
             format: receipt.format.clone(),
             bytes: receipt.bytes,
             digest: receipt.digest.clone(),
+            holder_requests: receipt.holder_requests.clone(),
         };
         let kept = KeptExport {
             exporter: exporter_of(auth),
@@ -231,10 +238,15 @@ pub(super) fn vault_export_answer(
 
 /// The transfer routes.
 pub(crate) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route(
-        "/v1/core/export-transfers/{transfer_ref}",
-        get(read_transfer).delete(release_transfer),
-    )
+    Router::new()
+        .route(
+            "/v1/core/export-transfers/{transfer_ref}",
+            get(read_transfer).delete(release_transfer),
+        )
+        .route(
+            "/v1/core/export-secret-supplements/{request}",
+            get(read_secret_supplement),
+        )
 }
 
 /// `GET`: the kept archive, whole (200) or the one byte range a
@@ -299,6 +311,50 @@ async fn release_transfer(
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(refused) => refused.into_response(),
     }
+}
+
+/// `GET`: one export secret request of the owner's (FIX 4624(b)), by its
+/// request's entry hash as hex: its status, and its sealed copy (base64)
+/// once this server keeps it. Only the owner whose export it was reads it,
+/// with his own verified, unattenuated proof; the copy opens only on the
+/// recipient machine he chose.
+async fn read_secret_supplement(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(request): Path<String>,
+) -> Response {
+    match secret_supplement(&server, &auth, &request) {
+        Ok(value) => Json(value).into_response(),
+        Err(refused) => refused.into_response(),
+    }
+}
+
+/// The supplement `request` names, as `auth`'s owner reads it.
+fn secret_supplement(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    request: &str,
+) -> Result<Value, FacadeApiError> {
+    auth.require(CoreScope::Read)?;
+    let owner = super::owner_binding::facade_owner(server, auth, EXPORT_VERB)?;
+    let request = blake3::Hash::from_hex(request)
+        .map(|hash| *hash.as_bytes())
+        .map_err(|_| unknown_supplement())?;
+    let supplement = server
+        .vault
+        .export_secret_supplement(&owner, request)
+        .map_err(MemoryError::from)?
+        .ok_or_else(unknown_supplement)?;
+    encoded(&supplement)
+}
+
+fn unknown_supplement() -> FacadeApiError {
+    FacadeApiError::new(
+        StatusCode::NOT_FOUND,
+        MEMORY_CODE_NOT_FOUND,
+        "no export secret request of this owner's is recorded under this entry",
+        ["Read the export's receipt for its holder requests."],
+    )
 }
 
 /// The kept export `transfer_ref` names, once `call`'s caller is admitted

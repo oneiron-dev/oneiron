@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::export_audit::{ExportAuditScope, ExportCopy, record_export};
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
-use crate::authority::{ActSurface, HostActionAuthority, OwnerAct, OwnerActKind, VerifiedSlip};
+use crate::authority::{
+    ActSurface, HolderExportRequest, HostActionAuthority, OwnerAct, OwnerActKind, VerifiedSlip,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -69,6 +71,11 @@ pub struct MemoryExport {
     pub archive: Vec<u8>,
     /// BLAKE3 of `archive`, lowercase hex, as its receipt records it.
     pub digest: String,
+    /// FIX 4624(b): each custody value the archive carries as its handle
+    /// because it did not open here, and where its holder's sealed copy
+    /// stands. Absent when there is none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holder_requests: Vec<HolderExportRequest>,
 }
 
 /// One export written to the caller's file (FIX 2766): its format, length and
@@ -80,6 +87,9 @@ pub struct MemoryExportReceipt {
     pub bytes: u64,
     /// BLAKE3 of the archive, lowercase hex.
     pub digest: String,
+    /// FIX 4624(b): as [`MemoryExport::holder_requests`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holder_requests: Vec<HolderExportRequest>,
 }
 
 /// One export kept on the server for its caller to read (FIX 3676): the
@@ -92,6 +102,9 @@ pub struct ExportTransfer {
     pub format: String,
     pub bytes: u64,
     pub digest: String,
+    /// FIX 4624(b): as [`MemoryExport::holder_requests`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holder_requests: Vec<HolderExportRequest>,
 }
 
 /// What `vault.export` answers (FIX 3676): the archive inline, or the
@@ -673,6 +686,7 @@ fn read_back(
         format: receipt.format,
         archive,
         digest: receipt.digest,
+        holder_requests: receipt.holder_requests,
     })
 }
 
@@ -713,7 +727,7 @@ fn render_export_to<W: Read + Write + Seek>(
     let (bytes, digest) = written_digest(&mut sink).map_err(crate::Error::from)?;
     // Export is never gated: a vault that cannot take one more write (a full
     // map, a failing disk) still hands the owner their data, and says so.
-    record_export(
+    let holder_requests = record_export(
         vault,
         ExportCopy {
             scope: ExportAuditScope::WholeVault,
@@ -725,6 +739,8 @@ fn render_export_to<W: Read + Write + Seek>(
             diary_reads: export.diary_reads().to_vec(),
             act: by.act,
             thread_roots: std::mem::take(&mut export.thread_roots),
+            holder_requests: std::mem::take(&mut export.holder_requests),
+            recipient: None,
         },
     );
     Ok((
@@ -732,6 +748,7 @@ fn render_export_to<W: Read + Write + Seek>(
             format,
             bytes,
             digest,
+            holder_requests,
         },
         export.sources,
     ))
