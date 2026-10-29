@@ -349,7 +349,7 @@ fn admitted(
             action.actor().entity_ref()
         }
         (None, None) if auth.managed_owner().is_some() => {
-            let owner = super::host_doors::owner_proof(auth, server, EXPORT_VERB)?;
+            let owner = super::host_doors::support::owner_proof(auth, server, EXPORT_VERB)?;
             server.vault.admit_authenticated_owner_export(&owner)?
         }
         (None, None) => return Err(no_owner_proof()),
