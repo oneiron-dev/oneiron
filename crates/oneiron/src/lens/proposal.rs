@@ -20,6 +20,7 @@ use super::artifact::{LensArtifacts, lens_tree_in};
 use super::intent::{INTENTS, LensIntentIndex};
 use super::scope::{
     LensAdmission, LensScope, declared_position, placed_in, proposal_admission_in,
+    tree_admitted_in,
 };
 use super::{GeneratedLens, LensIntentRecord, LensLoadAction, LensVersionStamp, lens_load_action};
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
@@ -96,7 +97,8 @@ pub struct LensListRequest {
     pub limit: Option<u32>,
     /// Carry each proposal's frozen tree. A reader narrowed to some worlds
     /// or facets gets the trees of the proposals whose scope its read
-    /// admits (FIX 2136).
+    /// admits, each whole and only while it reads every row the tree names
+    /// (FIX 2136).
     #[serde(default)]
     pub with_compiled: bool,
 }
@@ -337,6 +339,7 @@ impl Memory<'_> {
                 limit,
                 input.with_compiled,
                 |_, _, _| Ok(LensAdmission::Whole),
+                |_, _| Ok(true),
             )?);
         }
         Ok(read
@@ -350,6 +353,7 @@ impl Memory<'_> {
                     |txn, record, skill_id| {
                         proposal_admission_in(vault, &read, txn, record, skill_id)
                     },
+                    |txn, tree| tree_admitted_in(vault, &read, txn, tree),
                 )
             })?
             .value)
@@ -371,7 +375,8 @@ impl Vault {
     /// One page of proposals in `txn`. `admits` judges each proposal the
     /// pack filter keeps before the page counts it, so a withheld proposal
     /// neither fills a page nor sets its cursor; `with_compiled` carries the
-    /// tree of each proposal it admits whole.
+    /// tree of each proposal it admits whole while `tree_admits` admits that
+    /// tree.
     fn lens_proposals_page_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -384,6 +389,7 @@ impl Vault {
             &LensProposalRecord,
             &EntityId,
         ) -> Result<LensAdmission>,
+        mut tree_admits: impl FnMut(&heed::RoTxn<'_>, &GeneratedLens) -> Result<bool>,
     ) -> Result<LensListPage> {
         let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
         let mut rows = Vec::new();
@@ -415,6 +421,9 @@ impl Vault {
                     .is_some_and(|install| active_at(&install, &record.pack_content_hash));
             let compiled = record.compiled_in(self, txn, &lens_ref)?;
             let stamp = compiled.version_stamp();
+            let carried = with_compiled
+                && admission == LensAdmission::Whole
+                && tree_admits(txn, &compiled)?;
             rows.push(LensListRow {
                 lens_ref: lens_ref.to_hex(),
                 pack_name: record.pack_name,
@@ -431,8 +440,7 @@ impl Vault {
                     LensProposalState::Proposed
                 },
                 mounted,
-                compiled: (with_compiled && admission == LensAdmission::Whole)
-                    .then_some(compiled),
+                compiled: carried.then_some(compiled),
             });
         }
         Ok(LensListPage { rows, next_after })
