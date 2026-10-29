@@ -27,7 +27,7 @@ mod waves;
 // does, under one typed refusal (OF-410, FIX 779).
 pub(crate) use media::{MediaCallParts, MediaCallRefusal, VoiceRefusal, prepare_media_call};
 // Every `ai.options` door lists through one projection (FIX 2942).
-pub(crate) use options::{caller_options, run_options};
+pub(crate) use options::{CallerOptions, caller_options, line_options, run_options};
 // The facade's `ai.ask_image` door answers on this route's one path (FIX 679).
 pub(crate) use vision::asked as ask_image_answered;
 // The owner's `vault.voices.*` doors run the bank's provisioning and vendor

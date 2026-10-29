@@ -21,15 +21,17 @@
 //! provider recovers. Its `ai.options` lists the speech rows that call could
 //! take. Any other `ai.*` media call and a hook replay are the owner's, and
 //! refused, except to an owner's own program (`owner_program_rows`, FIX
-//! 5911). A browser or desktop row drives the run's own guest under the
-//! browser pack, its checked connection and the vault's standing grants. The
-//! board rows, `self.focus.*` and a keyed `describe`, run the engine's board
-//! dispatcher over the agent's own board on the run's own STREAM connection,
-//! which goes when the door does. Its `describe(self)` reads the run's own
-//! self brief, and its `vault.weave.lens` renders the agent's own lens on
-//! the run's line, its card held for the run (FIX 2086). A successful
-//! answer the run reads as it stands carries the frame that connection
-//! queued, beside its output (FIX 2135). Each row's verb hooks fire once around it.
+//! 5911), whose media calls, video jobs included, spend on the run's line
+//! and whose `ai.options` lists them all (FIX 6083). A browser or desktop
+//! row drives the run's own guest under the browser pack, its checked
+//! connection and the vault's standing grants. The board rows,
+//! `self.focus.*` and a keyed `describe`, run the engine's board dispatcher
+//! over the agent's own board on the run's own STREAM connection, which goes
+//! when the door does. Its `describe(self)` reads the run's own self brief,
+//! and its `vault.weave.lens` renders the agent's own lens on the run's
+//! line, its card held for the run (FIX 2086). A successful answer the run
+//! reads as it stands carries the frame that connection queued, beside its
+//! output (FIX 2135). Each row's verb hooks fire once around it.
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
