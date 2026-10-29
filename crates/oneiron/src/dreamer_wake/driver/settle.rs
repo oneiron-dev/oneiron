@@ -183,7 +183,7 @@ impl DreamerWakeDriver<'_> {
                 // reservation is refunded, all of it for an attempt that
                 // never dispatched.
                 let settled =
-                    self.settle_charged_or_abort(line, attempt_id, spend_meter, input.now)?;
+                    self.settle_metered_charge(line, attempt_id, spend_meter, input.now)?;
                 let hard_cut = reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
                 let (cause, park) = if let Some(row) = self.store.parked_attempt(attempt_id)? {
                     // One park-owner: the step layer already parked this

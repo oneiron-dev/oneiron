@@ -111,7 +111,9 @@ impl Vault {
         now: u64,
         learning: Option<(WriteActor, &CompilationTarget)>,
     ) -> Result<InboxBundleResolution> {
-        let group = explicit_inbox_group(self, group_key, now)?.ok_or(Error::EntityNotFound)?;
+        let group = explicit_inbox_group(self, group_key, now)?
+            .1
+            .ok_or(Error::EntityNotFound)?;
 
         let mut targets = Vec::new();
         for member in &group.members {
@@ -358,9 +360,10 @@ impl Vault {
         let group_key = inner.strip_prefix(INBOX_GROUP_DOOR_PREFIX).ok_or_else(|| {
             Error::InvalidConfig("inbox door ref must reference a dreamer run".into())
         })?;
-        let bundle_ref = bundle_ref_for_group(group_key);
-
-        let open_group = explicit_inbox_group(self, group_key, now)?;
+        // Bundles are receipted under the root key; a literal run id reopens
+        // its root's group and that group's receipts (FIX 9871).
+        let (canonical, open_group) = explicit_inbox_group(self, group_key, now)?;
+        let bundle_ref = bundle_ref_for_group(&canonical);
 
         let resolution_receipts = self
             .store
@@ -464,8 +467,7 @@ fn accept_member_with_amendment_in_txn(
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
     let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
-    // The Δ's proposed end is the claim's revision as reviewed (FIX 7819); a
-    // failed read is the capture's, never the accept's.
+    // Proposed end: the claim as reviewed (FIX 7819); a failed read fails only the capture.
     let reviewed_end = if amended_approval {
         Some((
             live_revision_in_txn(&vault.store, wtxn, *id),
@@ -629,8 +631,7 @@ pub(super) fn captured_amendment_delta(
     }
 }
 
-/// Both ends as their refs name them, the landed body read back from the
-/// write; `None` when either revision is not retained.
+/// Both ends by their refs, the landed body read back; `None` if either is gone.
 fn measured_amendment_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

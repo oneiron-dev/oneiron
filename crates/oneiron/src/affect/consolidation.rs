@@ -27,6 +27,7 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
 use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
+mod reappraisal;
 struct StoredClaimVadState {
     id: EntityId,
     header: EntityMetadataHeader,
@@ -226,7 +227,7 @@ impl Vault {
             turn_refs.extend(birth.made_by.inputs.into_iter().map(|input| input.row));
         }
         let mut evidence_turns = Vec::new();
-        for candidate in turn_refs {
+        for candidate in reappraisal::turns_within_claim(self, wtxn, claim_id, turn_refs)? {
             if let Some(annotation) = self.turn_vad_annotation_in_txn(wtxn, &candidate)? {
                 evidence_turns.push(ClaimVadTurnEvidence {
                     turn_id: candidate,
@@ -257,7 +258,7 @@ impl Vault {
             let reappraisal = if active_states.len() == 1
                 && active_states[0].body.value == value
                 && active_states[0].body.evidence.as_ref() == Some(&evidence)
-                && active_states[0].body.scope == claim_body.scope
+                && reappraisal::same_claim_axes(&active_states[0].body, &claim_body)
             {
                 ClaimVadReappraisal {
                     active_claim_id: Some(active_states[0].id),
@@ -276,8 +277,7 @@ impl Vault {
                 )?;
                 body.evidence = Some(evidence);
                 body.source = Some(ClaimSource::Inferred);
-                body.scope = claim_body.scope.clone();
-                body.scope_facet = claim_body.scope_facet;
+                reappraisal::copy_claim_axes(&mut body, &claim_body);
                 body.valid_from = Some(now);
                 let data = encode_claim_body(&body)?;
                 ops.push(BatchOp::Put {

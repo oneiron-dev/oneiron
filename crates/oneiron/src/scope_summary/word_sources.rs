@@ -5,7 +5,7 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
-use crate::store::StoreRead;
+use crate::store::{ManifestDbs, StoreRead};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
 
@@ -134,6 +134,32 @@ pub(crate) fn word_sources_through_in(
         ) => WordSources::Unresolved,
         Err(error) => return Err(error),
     })
+}
+
+/// What a reply copying `summary`'s words depends on (FIX 10092): the
+/// `sources` its words came from (covers and MESSAGEs) and every dependency
+/// `summary` registered that is still stored, an edited predecessor's
+/// sources among them. A registered source already erased is left out, so
+/// the reply lands as it did before.
+pub(super) fn reply_sources_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+    mut sources: Vec<EntityId>,
+) -> Result<Vec<EntityId>> {
+    for source in crate::ports::dependency_sources_in(&vault.store, txn, summary)? {
+        if vault
+            .store
+            .entities()
+            .get(txn, source.as_bytes())?
+            .is_some()
+        {
+            sources.push(source);
+        }
+    }
+    sources.sort_unstable();
+    sources.dedup();
+    Ok(sources)
 }
 
 /// `read` on base, then through `dbs` too when it is a session's composed

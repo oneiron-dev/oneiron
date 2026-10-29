@@ -226,11 +226,13 @@ impl<'a> NeighbourhoodExtraction<'a> {
     }
 }
 
-/// One scoped slice of a child: its transcript, labels and exact scope.
+/// One scoped slice of a child: its transcript, labels and exact scope, and
+/// the rows its transcript was read from (FIX 6998).
 pub(in crate::dreamer_consolidation) struct SliceCall<'a> {
     pub(in crate::dreamer_consolidation) transcript: &'a str,
     pub(in crate::dreamer_consolidation) labels: &'a CallLabelMap,
     pub(in crate::dreamer_consolidation) scope: &'a Scope,
+    pub(in crate::dreamer_consolidation) sources: &'a [EntityId],
 }
 
 /// One slice's extraction step: its request hash and its outcome.
@@ -379,6 +381,9 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
                 evidence: rung.evidence,
                 state: rung.state,
                 ceiling: rung.decider.decisions.dial.first,
+                // The rung's prompt is the vault's instruction and its
+                // state is the span, read from exactly its pinned sources.
+                sources: Some(rung.evidence.to_vec()),
             },
             rung.questions,
             rung.labels,
@@ -433,13 +438,21 @@ async fn extract_slices(child: NeighbourhoodExtraction<'_>) -> DurableStepResult
             move |response: &LlmResponse| citations.check(response, &scope, &labels)
         })
         .collect();
+    // Each slice's call sends under exactly the rows its own transcript was
+    // read from, never the branch's or a sibling's (FIX 6998).
+    let backends: Vec<_> = child
+        .slices
+        .iter()
+        .map(|slice| child.call.call_backend(Some(slice.sources.to_vec())))
+        .collect();
     let jobs = requests
         .iter()
         .zip(&checks)
-        .map(|((_, request), check)| {
+        .zip(&backends)
+        .map(|(((_, request), check), backend)| {
             call_as_step_checked(
                 child.step,
-                child.call.backend,
+                backend.get(),
                 child.guard,
                 request.clone(),
                 check,

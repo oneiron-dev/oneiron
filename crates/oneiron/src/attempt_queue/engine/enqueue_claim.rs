@@ -511,18 +511,8 @@ impl<'a> AttemptQueue<'a> {
     }
 
     /// Repairs ready/dedupe rows while returning the oldest claimable attempt id of
-    /// this kind, without leasing it.
-    pub(crate) fn ready_kind_candidate_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        kind: &str,
-        now: u64,
-    ) -> Result<Option<AttemptId>> {
-        self.ready_kind_matching_in_txn(wtxn, kind, now, |_| Ok(true))
-    }
-
-    /// The same ready scan and repairs, skipping rows a domain's admission
-    /// lease does not currently permit. Skipping never removes their readiness.
+    /// this kind, without leasing it, skipping rows a domain's admission lease
+    /// does not currently permit. Skipping never removes their readiness.
     pub(crate) fn ready_kind_matching_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
