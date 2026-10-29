@@ -111,6 +111,9 @@ pub struct VoiceHost {
     /// The call's speculative passes that missed their deadline and run on:
     /// joined before the call's write admission drops (FIX 3814).
     speculative: SpeculativeThreads,
+    /// The policy safeguard's configuration each sentence's safeguard runs
+    /// under (FIX 1201): the engine's default until the host sets its own.
+    policy: Arc<oneiron::policy_model::PolicyModelConfig>,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -176,6 +179,7 @@ impl VoiceHost {
             call_deadline,
             container,
             speculative: SpeculativeThreads::default(),
+            policy: Arc::default(),
             state: Arc::new(Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,
@@ -184,6 +188,24 @@ impl VoiceHost {
             extractor,
             shutdown: bindings.shutdown,
         })
+    }
+
+    /// This host with each sentence's safeguard run under `policy`, the
+    /// serving host's own (FIX 1201).
+    #[must_use]
+    pub fn with_policy_config(
+        mut self,
+        policy: Arc<oneiron::policy_model::PolicyModelConfig>,
+    ) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The policy safeguard's configuration each sentence's safeguard runs
+    /// under.
+    #[must_use]
+    pub fn policy_config(&self) -> &Arc<oneiron::policy_model::PolicyModelConfig> {
+        &self.policy
     }
 
     /// The injected backend allocation, not a new adapter.

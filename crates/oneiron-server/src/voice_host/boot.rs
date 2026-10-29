@@ -568,7 +568,14 @@ pub(super) fn prepare_call(
             shutdown: shutdown.clone(),
         },
     )
-    .map_err(failed)?;
+    .map_err(failed)?
+    // Each sentence's safeguard runs under the host's policy config, its
+    // ladder's paired question lent (FIX 1201).
+    .with_policy_config(Arc::new(
+        server
+            .decision_host()
+            .policy_model_config(&server.policy_doors.owner),
+    ));
 
     let (out, brain_out) = mpsc::channel(BRAIN_QUEUE);
     let brain = ChatBrain::new(ChatBrainBindings {

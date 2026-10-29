@@ -437,6 +437,24 @@ impl DecisionHost {
         )
     }
 
+    /// The policy safeguard's configuration this host serves (FIX 1201,
+    /// FIX 2436): the host's own `base`, with this ladder's paired question
+    /// lent to the safeguard's generated read, so its receipts keep the
+    /// paired reading. A ladder with no paired question leaves `base` as it
+    /// is. The planes' row questions (`owner_decisions`, `hosted_decisions`)
+    /// stay the host's: no recipe names their wording.
+    #[must_use]
+    pub fn policy_model_config(
+        &self,
+        base: &oneiron::policy_model::PolicyModelConfig,
+    ) -> oneiron::policy_model::PolicyModelConfig {
+        let mut config = base.clone();
+        if config.safeguard_paired.is_none() {
+            config.safeguard_paired = self.ladder.paired.clone();
+        }
+        config
+    }
+
     /// The code-mode seat pick through this ladder, for `principal`.
     pub(crate) fn seat_decisions(
         &self,
