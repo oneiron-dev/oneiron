@@ -540,6 +540,7 @@ pub(crate) fn revision_for_body_hash_in_txn(
         ));
     }
     for (_, revision) in FRONTIER.scan_keys(&vault.store, txn, id.as_bytes())? {
+        let revision = RevisionRef(revision);
         let Some(raw) = read_entity_revision_from_store_in_txn(
             vault,
             &vault.store,
