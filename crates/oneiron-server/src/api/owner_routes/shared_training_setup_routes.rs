@@ -54,7 +54,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/conversation-learning/setup", get(view).put(answer))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerSetup {
     /// The pending question's `question_ref`, as 64 hex. Required.
@@ -67,7 +67,7 @@ struct AnswerSetup {
 }
 
 /// Where the setup question stands, with the setting's current revision.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum SetupReply {
     /// The vault was never shared: there is no setup question.
@@ -129,6 +129,18 @@ fn setup_reply(question: &SharedTrainingSetupQuestion) -> SetupReply {
             seen,
         },
     }
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/setup`'s body (FIX 11611):
+/// [`AnswerSetup`].
+pub(crate) fn answer_setup_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerSetup>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/setup`'s answer (FIX 11611):
+/// [`SetupReply`].
+pub(crate) fn setup_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetupReply>()
 }
 
 /// The engine's typed refusals as the caller's: a stale `seen` is a change
