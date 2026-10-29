@@ -94,7 +94,9 @@ pub enum GuestDeletionRequestStatus {
 }
 
 /// What this host knows of the guest's copy: nothing it can attest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GuestCopyState {
     /// No receipt here proves what the guest kept or dropped.
