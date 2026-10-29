@@ -13245,6 +13245,51 @@
       "section": false
     },
     {
+      "name": "vault.settings.web_connector",
+      "description": "Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::web_connector::WebConnectorSetting",
+      "call": "crate::task_verb::sdk::read_web_connector_setting(memory)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.settings.web_connector.replace",
+      "description": "Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector.",
+      "input": "crate::web_connector::WebConnectorSetting",
+      "output": "crate::web_connector::WebConnectorSetting",
+      "call": "crate::task_verb::sdk::replace_web_connector_setting(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.connectors.web.usage",
+      "description": "Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text.",
+      "input": "crate::web_connector::WebConnectorUsageRead",
+      "output": "crate::web_connector::WebConnectorUsagePage",
+      "call": "crate::task_verb::sdk::read_web_connector_usage(memory, input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.models.oneironer.bind",
       "description": "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides.",
       "input": "crate::llm::manifest::doors::OneironerBind",
