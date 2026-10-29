@@ -279,7 +279,7 @@
      "path": "src/actor_claims/evidence.rs",
      "purpose": "Typed evidence inlets for the `actor.*` write door",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3,
       "struct": 1
      }
@@ -291,7 +291,7 @@
      "path": "src/actor_claims/mod.rs",
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 8
      }
     },
@@ -29198,7 +29198,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FinalizedProposalText",
@@ -29211,10 +29211,11 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 13,
+      "fn": 11,
       "mod": 11,
+      "re-export": 1,
       "struct": 4
      }
     },
@@ -29268,11 +29269,14 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "EditCost"
+     ],
      "path": "src/edit_distance/attribution/projector.rs",
      "purpose": "Projection of judged amendments — edit-cost claims, the skill's reliability record, actor lessons — and…",
      "surface": {
-      "fn": 4
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -29335,6 +29339,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EndpointDocument",
+      "EndpointRef",
+      "MeasuredEnd"
+     ],
+     "path": "src/edit_distance/delta/endpoint.rs",
+     "purpose": "The one endpoint ref every lane writes: the retained document an end of a measured window lives in, and the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29355,8 +29376,18 @@
      "path": "src/edit_distance/delta/mod.rs",
      "purpose": "ED-01 (ARCH-0056 §2, ONE-1757): the amendment-Δ schema, its two capture lanes, and the chooser every…",
      "surface": {
-      "crate-vis": 3,
-      "re-export": 3
+      "crate-vis": 4,
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/delta/op_stream.rs",
+     "purpose": "The recorded-ops lane's input (FIX 7820): the authored insert and delete runs of a proposal's window, read…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -29370,6 +29401,7 @@
      "path": "src/edit_distance/delta/schema.rs",
      "purpose": "Delta schema types, the shared d_norm metric, encode/decode, and version/count helpers",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 1,
       "fn": 5,
@@ -29383,7 +29415,7 @@
      "path": "src/edit_distance/delta/store.rs",
      "purpose": "Delta side-ledger writes, receipt attachment, and the identity-topology projection pass",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 2
      }
     },
@@ -29687,7 +29719,7 @@
      "path": "src/edit_distance/miner/model.rs",
      "purpose": "ED-04 miner domain and stored-row types",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 3,
       "fn": 3,
       "struct": 5
@@ -30023,7 +30055,7 @@
      "purpose": "Routing scope and rung types",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -30065,6 +30097,23 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RetainedProposal",
+      "TextRead",
+      "TextUnavailable"
+     ],
+     "path": "src/edit_distance/text_ref.rs",
+     "purpose": "ED-00 text by reference (FIX 7818): a finalized proposal keeps refs into its retained document, and every…",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 2,
+      "fn": 10,
+      "struct": 1
      }
     },
     {
@@ -38631,7 +38680,7 @@
      "path": "src/learning/prior.rs",
      "purpose": "Priors: everything that is not a cell's own evidence enters with an origin and a weight in runs (ARCH-0003…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -38709,10 +38758,9 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "SettingCheck",
       "SettingMode",
       "SettingRow",
       "SettingScope",
@@ -38722,10 +38770,11 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 16,
-      "crate-vis": 15,
+      "crate-vis": 13,
       "enum": 2,
-      "fn": 11,
-      "struct": 3
+      "fn": 9,
+      "re-export": 1,
+      "struct": 2
      }
     },
     {
@@ -38741,9 +38790,33 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SettingCheck"
+     ],
+     "path": "src/learning_setting/fit.rs",
+     "purpose": "A learned knob's fit (ARCH-0003 #learning-settings, FIX 6038): the checks that fit it, the key each scope's…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/learning_setting/resolution.rs",
      "purpose": "The one scope walk every setting read takes (FIX 2957): the value in force over a read's scopes, beside the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning_setting/scope_erase.rs",
+     "purpose": "A project's owner rows and fits go with the project (FIX 6038): its erase deletes every seed and pin laid…",
      "surface": {
       "crate-vis": 2
      }
@@ -38780,7 +38853,7 @@
      "purpose": "The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -38790,6 +38863,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LearnedChoiceValueView",
+      "LearnedChoiceView",
       "LearningChoiceValue",
       "LearningSettingClear",
       "LearningSettingMode",
@@ -38805,7 +38880,7 @@
      "surface": {
       "enum": 3,
       "fn": 3,
-      "struct": 6
+      "struct": 8
      }
     },
     {
@@ -41856,7 +41931,7 @@
      "path": "src/llm/seat/run.rs",
      "purpose": "A run's immutable seat pin: born once per run, loaded again on resume",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "struct": 1
      }
@@ -61288,7 +61363,7 @@
      "path": "src/skill_attribution/host.rs",
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -71766,6 +71841,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/team/choice_learning.rs",
+     "purpose": "What the planner learned under a spawn choice (FIX 3159; ARCH-0003 #learning-settings: a learned value…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71862,7 +71947,7 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 10,
       "re-export": 11
      }
@@ -75334,6 +75419,24 @@
       "enum": 3,
       "fn": 7,
       "struct": 30
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/skill_attribution/artifact_view.rs",
+     "purpose": "The public artifact view, its texts read through the retained document",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verbs/skill_attribution/settle_window.rs",
+     "purpose": "FIX 10176: a settlement measures the proposal it names, never a document minted for it",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -80208,9 +80311,9 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 72,
+     "files": 75,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
@@ -80432,9 +80535,9 @@
      "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…"
     },
     "learning_setting": {
-     "files": 5,
+     "files": 7,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
@@ -81041,7 +81144,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81139,7 +81242,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 88,
+     "files": 90,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81209,9 +81312,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 119,
+   "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5407,
+   "source_files": 5415,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86574,11 +86677,11 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "MemoryError",
@@ -86590,7 +86693,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 21,
+      "const": 22,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -86957,7 +87060,7 @@
     "memory": {
      "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…"
     },
@@ -87039,7 +87142,7 @@
      "purpose": "The write actor every write path stamps"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 60,
    "test_files": 1
@@ -98442,7 +98545,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/error_map.rs",
@@ -114934,6 +115037,8 @@
       "LeaderSplitInput",
       "LeaderSplitOutput",
       "LearnedBand",
+      "LearnedChoiceValueView",
+      "LearnedChoiceView",
       "LearningBetaValue",
       "LearningCell",
       "LearningCellKey",
@@ -117223,7 +117328,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1032,
-      "struct": 3149
+      "struct": 3151
      }
     },
     {
