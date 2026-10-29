@@ -200,14 +200,9 @@ fn outside(
         if super::classify(run).is_some() && hidden_member(run) {
             each(OUTSIDE, run, budget)?;
         }
-        let locals: Vec<usize> = run
-            .windows(LOCAL.len())
-            .enumerate()
-            .filter(|(_, head)| *head == LOCAL)
-            .map(|(local, _)| local)
-            .collect();
-        for local in locals {
-            if let Some(data) = local_entry(&run[local..], budget)?
+        for (local, head) in run.windows(LOCAL.len()).enumerate() {
+            if head == LOCAL
+                && let Some(data) = local_entry(&run[local..], budget)?
                 && hidden_member(&data)
             {
                 each(OUTSIDE, &data, budget)?;
