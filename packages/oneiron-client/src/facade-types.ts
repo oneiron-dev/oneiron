@@ -413,7 +413,7 @@ export type ShapeItemState = { state: "pending" } | { state: "landed"; at: numbe
 /** `oneiron::vault_shape::approval::ShapeApprovalDependencies` */
 export type ShapeApprovalDependencies = { digest: string }
 /** `oneiron::vault_shape::apply::ShapeApplyItem` */
-export type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null; slips_kept?: boolean }
+export type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null; slips_kept?: boolean; receipt_refs?: string[] | null }
 /** `oneiron::vault_shape::run::ShapeApplyRun` */
 export type ShapeApplyRun = { run_id: string; root: string; items: string[] }
 /** `oneiron::vault_shape::shared_setup::ShapeLearningSetting` */
