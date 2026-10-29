@@ -195,10 +195,13 @@ impl ConsolidationExecutor<'_> {
             let first = &members[0].body;
             let mut identity: BTreeMap<Vec<u8>, Vec<&Proposal>> = BTreeMap::new();
             for member in members {
-                identity
-                    .entry(identity_key(&member.body)?)
-                    .or_default()
-                    .push(member);
+                let key = match identity_key(&member.body) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
+                };
+                identity.entry(key).or_default().push(member);
             }
             for cohort in identity.values().filter(|cohort| cohort.len() > 1) {
                 let same = cohort
@@ -360,20 +363,25 @@ impl ConsolidationExecutor<'_> {
                     failure_policy,
                     ..
                 }) => {
-                    charges.record_terminal(
+                    if let Err(error) = charges.record_terminal(
                         ctx.vault,
                         attempt.status.attempt.id,
                         hash,
                         &response.usage,
-                    )?;
+                    ) {
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
                     if failure_policy.is_some() {
-                        return charges.park_on_fallback(
+                        return match charges.park_on_fallback(
                             ctx.vault,
                             attempt.status.attempt.id,
                             hash,
                             NARRATIVE_FALLBACK,
                             &response,
-                        );
+                        ) {
+                            Ok(parked) => Ok(parked),
+                            Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+                        };
                     }
                     response
                 }
@@ -405,12 +413,15 @@ impl ConsolidationExecutor<'_> {
                 // Only a memo stored before the check can be empty: it goes,
                 // and the Retry asks again (FIX 7431).
                 Err(reason) => {
-                    return charges.park_refused_reply(
+                    return match charges.park_refused_reply(
                         ctx.vault,
                         attempt.status.attempt.id,
                         hash,
                         reason,
-                    );
+                    ) {
+                        Ok(parked) => Ok(parked),
+                        Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+                    };
                 }
             };
             // A call's labels mean nothing past it: the stored text names
