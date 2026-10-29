@@ -370,6 +370,9 @@ pub struct EncoderAttempt<E = crate::Error> {
     /// `None` only when no worker was dispatched: a dispatched failure keeps
     /// the facts of the worker that failed.
     pub execution: Option<EncoderExecution>,
+    /// Whether the worker panicked: a dispatched panic, as an outer panic
+    /// is, with its execution kept.
+    pub panicked: bool,
     pub result: Result<EncoderOutput, E>,
 }
 /// Hosts own checkpoint execution. No engine implementation guesses model outputs.

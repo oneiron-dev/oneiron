@@ -76,6 +76,7 @@ impl Memory<'_> {
         let (model, attempt) = served.unwrap_or_else(|_| {
             let attempt = EncoderAttempt {
                 execution: None,
+                panicked: false,
                 result: Err("encoder_panicked".to_owned()),
             };
             ("unavailable".to_owned(), attempt)
@@ -120,6 +121,7 @@ pub fn infer_encoder_for(
     if encoder.locality() != EmbedderLocality::OnDevice {
         return EncoderAttempt {
             execution: None,
+            panicked: false,
             result: Err("off_device_shadow_denied".into()),
         };
     }
@@ -133,6 +135,7 @@ pub fn infer_encoder_for(
         });
     EncoderAttempt {
         execution: attempt.execution,
+        panicked: attempt.panicked,
         result,
     }
 }

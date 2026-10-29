@@ -333,7 +333,7 @@ pub(super) fn serve_unit(
     unit: Unit,
 ) -> Option<&'static str> {
     let started = Instant::now();
-    let (results, fault) = run_unit(worker, &unit);
+    let (results, fault, panicked) = run_unit(worker, &unit);
     let ran = started.elapsed();
     let answered = unit
         .into_iter()
@@ -348,6 +348,7 @@ pub(super) fn serve_unit(
             );
             let attempt = EncoderAttempt {
                 execution: Some(execution),
+                panicked,
                 result,
             };
             (job, attempt)
@@ -365,37 +366,43 @@ pub(super) fn serve_unit(
 fn run_unit(
     worker: &mut dyn Worker,
     unit: &[(Job, ExecutionPick)],
-) -> (Vec<oneiron::Result<EncoderOutput>>, Option<&'static str>) {
+) -> (
+    Vec<oneiron::Result<EncoderOutput>>,
+    Option<&'static str>,
+    bool,
+) {
     let inputs: Vec<&EncoderInput> = unit
         .iter()
         .flat_map(|(job, _)| job.windows.inputs())
         .collect();
-    let (code, fault) = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
-        Ok(results) if results.len() == inputs.len() => {
-            let mut results = results.into_iter();
-            let answers = unit
-                .iter()
-                .map(|(job, _)| {
-                    let parts: Vec<_> = results.by_ref().take(job.windows.len()).collect();
-                    parts
-                        .into_iter()
-                        .collect::<oneiron::Result<Vec<EncoderOutput>>>()
-                        .and_then(|outputs| job.windows.merge(outputs))
-                })
-                .collect();
-            return (answers, None);
-        }
-        Ok(_) => (
-            "the worker answered another number of calls",
-            "wrong_result_count",
-        ),
-        Err(_) => ("the worker panicked", "worker_panicked"),
-    };
+    let (code, fault, panicked) =
+        match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
+            Ok(results) if results.len() == inputs.len() => {
+                let mut results = results.into_iter();
+                let answers = unit
+                    .iter()
+                    .map(|(job, _)| {
+                        let parts: Vec<_> = results.by_ref().take(job.windows.len()).collect();
+                        parts
+                            .into_iter()
+                            .collect::<oneiron::Result<Vec<EncoderOutput>>>()
+                            .and_then(|outputs| job.windows.merge(outputs))
+                    })
+                    .collect();
+                return (answers, None, false);
+            }
+            Ok(_) => (
+                "the worker answered another number of calls",
+                "wrong_result_count",
+                false,
+            ),
+            Err(_) => ("the worker panicked", "worker_panicked", true),
+        };
     let failed = unit
         .iter()
         .map(|_| Err(failure(WORKER_TOOL, code)))
         .collect();
-    (failed, Some(fault))
+    (failed, Some(fault), panicked)
 }
 
 /// Loading, then Warming when the spec asks, then Ready. `None` when the
