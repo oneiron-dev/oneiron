@@ -3969,6 +3969,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/machine_identity/request_code_text.rs",
+     "purpose": "A machine's request code as the owner reads and types it (FIX 4956): 26 Crockford base32 symbols, the…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/machine_profile/apply.rs",
      "purpose": "The fold transitions of a machine revision: a roster revision, an owner anchor's mark, and the checks every…",
      "surface": {
@@ -60308,8 +60318,8 @@
      "path": "src/session_lifecycle/expiry.rs",
      "purpose": "A sitting's expiry policy (FIX 8600): the vault's own idle-floor and lifetime-ceiling rows, narrowed by…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 3,
+      "crate-vis": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -66927,9 +66937,9 @@
      "path": "src/sync/client/residence/bundle.rs",
      "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -66995,6 +67005,20 @@
      "purpose": "A kept object's read, typed, and a kept pad object's refill (FIX 9362, L03 half)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBundleRelayObservation"
+     ],
+     "path": "src/sync/client/residence/bundle/relay_observation.rs",
+     "purpose": "The last sealed bundle upkeep this process saw, per machine (FIX 4953; CALLS \"4953 relay report\"): what the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -68386,7 +68410,7 @@
       "crate-vis": 15,
       "enum": 1,
       "fn": 12,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 3
      }
     },
@@ -68402,6 +68426,16 @@
       "crate-vis": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle/local_access.rs",
+     "purpose": "The owner's kit grant of pad access on the home itself (FIX 4954): where this install keeps the generations…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -79853,7 +79887,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 215,
+     "files": 216,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81120,7 +81154,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 279,
+     "files": 281,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81325,7 +81359,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5416,
+   "source_files": 5419,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90212,7 +90246,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/supervisor/mod.rs",
-     "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…",
+     "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…",
      "surface": {
       "re-export": 9
      }
@@ -90309,8 +90343,9 @@
       "HybridTick"
      ],
      "path": "src/tick/hybrid.rs",
-     "purpose": "Hybrid tick: biased deadline-versus-push select with deadline priority and session-hint sidecar delegation",
+     "purpose": "Hybrid tick: deadline and push lanes taking turns, a deadline rest that leaves pushes flowing, and…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -90322,7 +90357,7 @@
      "path": "src/tick/mod.rs",
      "purpose": "Tick sources: what wakes the supervisor (ONE-1684)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5,
       "type": 1
      }
@@ -90485,7 +90520,7 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that pumps…"
+     "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…"
     },
     "tick": {
      "files": 10,
@@ -102130,7 +102165,27 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/recovery_kit_target_routes.rs",
-     "purpose": "The target install's own kit calls (FIX 4736, 4530, 4564): the material a root change or a late joiner's pad…",
+     "purpose": "The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the material a root change or a late…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_target_routes/pad_access.rs",
+     "purpose": "A late joiner's pad access by the owner's kit, and what the sealed bundle upkeep last moved (FIX 4564, 4953…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_target_routes/root_doors.rs",
+     "purpose": "The root ceremonies made directly on this install while its server runs (FIX 4955): where the owner is…",
      "surface": {
       "crate-vis": 1
      }
@@ -102146,7 +102201,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/root_routes.rs",
@@ -103683,21 +103738,26 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "KitPieceArgs",
+      "RecoveryKitAnchorArgs",
       "RecoveryKitCommand",
       "RecoveryKitConfirmArgs",
       "RecoveryKitIssueArgs",
+      "RecoveryKitPadAccessArgs",
+      "RecoveryKitPinArgs",
       "RecoveryKitRestoreArgs",
-      "RecoveryKitStatusArgs"
+      "RecoveryKitRootsArgs",
+      "RecoveryKitStatusArgs",
+      "RunningServerArgs"
      ],
      "path": "src/cli/recovery_kit_args.rs",
      "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key…",
      "surface": {
       "enum": 1,
-      "struct": 5
+      "struct": 10
      }
     },
     {
@@ -104248,6 +104308,16 @@
      "purpose": "`oneiron recovery-kit issue` and `issue-vault-key`: a kit's pieces, each stored piece's recovery code…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_kit/live.rs",
+     "purpose": "`oneiron recovery-kit pad-access | upkeep | roots | pin | anchor`: the kit and root calls of a running…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -112461,7 +112531,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 593,
+     "files": 595,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112538,7 +112608,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 54,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -112953,7 +113023,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1355,
+   "source_files": 1358,
    "test_files": 182
   },
   "oneiron-spawn": {

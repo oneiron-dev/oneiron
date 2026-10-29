@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::embed::{
-    EmbeddingSpace, InputKind, PendingEmbedderBinding, SpaceMove, SpaceMoveCheck,
-    SpaceMoveOutcome, SpaceProbe, SpaceRef,
+    EmbeddingSpace, InputKind, PendingEmbedderBinding, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome,
+    SpaceProbe, SpaceRef,
 };
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
