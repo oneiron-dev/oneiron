@@ -104437,7 +104437,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/recovery_kit_target_routes/root_doors.rs",
@@ -108229,7 +108229,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/device_sync/removal_delivery.rs",
