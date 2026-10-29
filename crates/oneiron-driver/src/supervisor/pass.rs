@@ -4,6 +4,7 @@ use oneiron::{
     BudgetGuard, DreamerConsolidationScope, DreamerWakeDriver, RunWakePass, Vault,
     WakeCancellation, WakePassDeadline, WakePassReport, WakeTrigger,
 };
+use tokio::sync::watch;
 
 use super::config::{NowSeconds, WakeSupervisorConfig};
 use super::factory::PassExecutorFactory;
@@ -166,6 +167,11 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
         }
     }
     report
+}
+
+/// Whether the host's pause holds (FIX 6909): the pass starts no next unit.
+pub(super) fn paused(pause: Option<&watch::Receiver<bool>>) -> bool {
+    pause.is_some_and(|pause| *pause.borrow())
 }
 
 /// The units ORDINARY pass execution may spend: the dialed total minus the

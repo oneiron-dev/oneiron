@@ -17,7 +17,7 @@ use super::budget_ids::{
 };
 use super::config::{NowSeconds, RestartBackoff, WakeSupervisorConfig, system_now_secs};
 use super::factory::PassExecutorFactory;
-use super::pass::{PassRunError, run_one_pass};
+use super::pass::{PassRunError, paused, run_one_pass};
 use super::shutdown::{ShutdownHandle, ShutdownListener};
 use crate::tick::{Tick, TickSource};
 
@@ -47,6 +47,9 @@ pub(super) enum PassOutcome {
     PreAdmissionFailed(oneiron::Error),
     /// Panic anywhere in the pass (including factory). Re-drives after backoff.
     Panicked,
+    /// The host's pause stopped the pass (FIX 6909). Counted as completed,
+    /// with no backoff; the consumed tick is re-driven once the pause lifts.
+    Paused(WakePassReport),
 }
 
 /// True when a completed pass made no durable progress and would otherwise
@@ -233,11 +236,7 @@ async fn account_pass_outcome(
     // as HybridTick redelivery); wait_backoff false → shutdown wins.
     match outcome {
         PassOutcome::Completed(pass) => {
-            *pass_index = pass_index.saturating_add(1);
-            report.passes_completed += 1;
-            report.attempts_completed += u64::from(pass.completed);
-            report.attempts_parked += u64::from(pass.parked);
-            report.attempts_landed += u64::from(pass.landed);
+            count_completed(report, pass_index, &pass);
             // Zero-progress BudgetExhausted / DeadlineHardCut
             // (admitted == 0): HybridTick re-surfaces the same due
             // deadline immediately; PushTick-only has already
@@ -295,9 +294,25 @@ async fn account_pass_outcome(
             }
             *redrive_tick = Some(tick);
         }
+        PassOutcome::Paused(pass) => {
+            // What the pause left (a Paused park, queued work, the timer
+            // work after the wake) is the same tick's, driven again once
+            // the loop's wait for the pause is over.
+            count_completed(report, pass_index, &pass);
+            *redrive_tick = Some(tick);
+        }
     }
 
     true
+}
+
+/// Tallies a pass that ran to its end, paused or not.
+fn count_completed(report: &mut WakeSupervisorReport, pass_index: &mut u64, pass: &WakePassReport) {
+    *pass_index = pass_index.saturating_add(1);
+    report.passes_completed += 1;
+    report.attempts_completed += u64::from(pass.completed);
+    report.attempts_parked += u64::from(pass.parked);
+    report.attempts_landed += u64::from(pass.landed);
 }
 
 /// The in-process starter motor: waits on its [`TickSource`], runs at most
@@ -437,6 +452,12 @@ where
         let mut ticks_exhausted = false;
 
         loop {
+            // While the host's pause holds (FIX 6909) the loop reads no
+            // tick, so no deadline arms and no pass starts; a held tick
+            // waits for the pause to lift.
+            if !wait_unpaused(&factory, &mut shutdown).await {
+                break;
+            }
             // A single arbiter for plans, bounded pages, retries, ordinary
             // passes, notifications and shutdown. Alternate ready wave work
             // and ready ticks; a hot notification stream cannot pin either.
@@ -538,6 +559,13 @@ where
                     Err(_closed) => break,
                 },
             };
+            // A pause that began while the tick or the permit was awaited
+            // holds the tick until it lifts (FIX 6909).
+            if paused(factory.pass_pause().as_ref()) {
+                drop(permit);
+                redrive_tick = Some(tick);
+                continue;
+            }
             // One point-read per pass: the startup probe is an optimization,
             // not a guarantee — an empty-pass hole below a still-occupied
             // higher suffix (possible past the gallop window) must never be
@@ -601,6 +629,9 @@ pub(super) async fn run_pass_supervised<F: PassExecutorFactory>(
     tick: &Tick,
 ) -> PassOutcome {
     let cancel = WakeCancellation::new();
+    // The host's pause for this pass (FIX 6909), taken before the pass
+    // borrows the factory.
+    let mut pause = factory.pass_pause();
     let mut pass = CatchUnwind::new(run_one_pass(
         vault,
         config,
@@ -619,8 +650,20 @@ pub(super) async fn run_pass_supervised<F: PassExecutorFactory>(
                 // branch disables itself once the flag is up).
                 cancel.cancel();
             }
+            // The host's pause flags the pass the same way, and the pass is
+            // still awaited to its boundary: what it admitted parks Paused,
+            // resumed once the pause lifts.
+            () = pause_requested(&mut pause), if !cancel.is_cancelled() => {
+                cancel.pause();
+            }
             result = &mut pass => {
                 return match result {
+                    // A pause that came while the pass ran its timer work,
+                    // where no arm above can see it, still pauses the pass:
+                    // its tick is driven again once the pause lifts.
+                    Ok(Ok(pass_report)) if cancel.is_paused() || paused(pause.as_ref()) => {
+                        PassOutcome::Paused(pass_report)
+                    }
                     Ok(Ok(pass_report)) => PassOutcome::Completed(pass_report),
                     Ok(Err(PassRunError::PreAdmission(error))) => {
                         PassOutcome::PreAdmissionFailed(error)
@@ -629,6 +672,40 @@ pub(super) async fn run_pass_supervised<F: PassExecutorFactory>(
                     Err(_panic) => PassOutcome::Panicked,
                 };
             }
+        }
+    }
+}
+
+/// Resolves once the host's pause asks the pass to stop; pends with no pause,
+/// and when its epoch closes without asking.
+async fn pause_requested(pause: &mut Option<watch::Receiver<bool>>) {
+    let asked = match pause {
+        Some(pause) => pause.wait_for(|asked| *asked).await.is_ok(),
+        None => false,
+    };
+    if !asked {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// Waits while the host's pause holds (FIX 6909), reading each epoch afresh:
+/// lifting the pause closes the epoch it held. It sleeps on the watch alone,
+/// with no timer. Returns false when shutdown fires first.
+async fn wait_unpaused<F: PassExecutorFactory>(
+    factory: &F,
+    shutdown: &mut ShutdownListener,
+) -> bool {
+    loop {
+        let Some(mut pause) = factory.pass_pause() else {
+            return true;
+        };
+        if !*pause.borrow() {
+            return true;
+        }
+        tokio::select! {
+            biased;
+            () = shutdown.triggered() => return false,
+            _ = pause.wait_for(|held| !*held) => {}
         }
     }
 }

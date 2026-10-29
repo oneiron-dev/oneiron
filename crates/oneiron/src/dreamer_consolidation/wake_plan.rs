@@ -5,6 +5,7 @@ use super::watermark::decode_turn_body;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
+use crate::dreamer_wake::{WakeCancellation, WakePassDeadline};
 use crate::edge::EdgeKind;
 use crate::llm::{Scope, ScopeResource};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN};
@@ -115,6 +116,21 @@ fn held_round_away_in(
 /// deadline applies.
 const WAKE_PREPARED_TURN_CAP: usize = super::DEFAULT_MESO_ROUND_TURN_CAP;
 
+/// What a long preparation polls per iteration: the pass's deadline and
+/// its cooperative cancellation (a drain's pause or a stop).
+pub(super) struct PreparationPreempt<'a> {
+    deadline: &'a WakePassDeadline,
+    cancel: &'a WakeCancellation,
+}
+
+impl PreparationPreempt<'_> {
+    /// True when the pass must stop preparing and end at its next boundary:
+    /// paused, stopped, or past its ceiling.
+    fn preempted(&self) -> bool {
+        self.cancel.is_cancelled() || self.deadline.expired()
+    }
+}
+
 /// Source bodies frozen by the Dreamer at ONE ledger snapshot, before the
 /// wake starts any writes. The read transaction closes immediately after this
 /// bounded projection; a wake never holds an LMDB reader slot across writes.
@@ -142,12 +158,28 @@ impl PreparedWake {
         Self::capture_with_grants(vault, scope, None)
     }
 
+    #[cfg(test)]
     pub(crate) fn capture_with_grants(
         vault: &Vault,
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
     ) -> Result<Self> {
-        Self::prepare_matching(vault, scope, caller_scope, None)
+        Self::prepare_matching(vault, scope, caller_scope, None, None)
+    }
+
+    /// [`Self::capture_with_grants`] for a driven pass: while the queues are
+    /// long, each iteration polls `deadline` and `cancel`, and a paused,
+    /// stopped or expired pass prepares nothing — it ends at its next
+    /// boundary instead.
+    pub(crate) fn capture_for_pass(
+        vault: &Vault,
+        scope: crate::dreamer_runner::DreamerConsolidationScope,
+        caller_scope: Option<&Scope>,
+        deadline: &WakePassDeadline,
+        cancel: &WakeCancellation,
+    ) -> Result<Self> {
+        let preempt = PreparationPreempt { deadline, cancel };
+        Self::prepare_matching(vault, scope, caller_scope, None, Some(&preempt))
     }
 
     /// Direct execution uses the same one-revision planner but materializes
@@ -158,7 +190,7 @@ impl PreparedWake {
         caller_scope: Option<&Scope>,
         attempt: AttemptId,
     ) -> Result<Self> {
-        Self::prepare_matching(vault, scope, caller_scope, Some(attempt))
+        Self::prepare_matching(vault, scope, caller_scope, Some(attempt), None)
     }
 
     fn prepare_matching(
@@ -166,12 +198,20 @@ impl PreparedWake {
         scope: crate::dreamer_runner::DreamerConsolidationScope,
         caller_scope: Option<&Scope>,
         only_attempt: Option<AttemptId>,
+        preempt: Option<&PreparationPreempt<'_>>,
     ) -> Result<Self> {
         use crate::ports::EdgeDirection;
+        // A preempted pass prepares nothing: the driver ends it at its next
+        // boundary, and the next pass prepares again.
+        let preempted = || preempt.is_some_and(|preempt| preempt.preempted());
+        let abandoned = || Ok(Self::default());
         // Witnessed TURN text is read under live relationship grants.
         let txn = super::turn_text::snapshot(vault)?;
         let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
         let records = crate::attempt_queue::AttemptQueue::new(vault).list_in_txn(&txn)?;
+        if preempted() {
+            return abandoned();
+        }
         let left = if only_attempt.is_some() {
             BTreeSet::new()
         } else {
@@ -184,6 +224,11 @@ impl PreparedWake {
         // Each attempt's projection round, by its kind and dedupe key.
         let mut rounds = BTreeMap::new();
         for attempt in records {
+            // A paused, stopped or expired pass stops collecting: what it left
+            // waits for the next pass.
+            if preempt.is_some_and(|preempt| preempt.preempted()) {
+                break;
+            }
             if attempt.kind != scope.attempt_kind()
                 || attempt.state.is_terminal()
                 || only_attempt.is_some_and(|id| id != attempt.id)
@@ -293,6 +338,9 @@ impl PreparedWake {
                     }
                 }
             }
+        }
+        if preempted() {
+            return abandoned();
         }
         // A host-supplied attenuation may carry additional exact prior CLAIM
         // grants not serialized into queued input. Pin them at this SAME txn;
@@ -465,6 +513,9 @@ impl PreparedWake {
         let mut texts = BTreeMap::new();
         let mut refused_texts = BTreeMap::new();
         for outcome in preparations.values() {
+            if preempted() {
+                return abandoned();
+            }
             let AttemptPreparation::Ready(plan) = outcome else {
                 continue;
             };
@@ -489,6 +540,11 @@ impl PreparedWake {
         let read_receipt = read.read_receipt_in(&txn, None, withheld)?;
         let mut known_rows = BTreeMap::new();
         for outcome in preparations.values_mut() {
+            // A paused, stopped or expired pass leaves its plans unfinished:
+            // the caller drops the partial wake.
+            if preempt.is_some_and(|preempt| preempt.preempted()) {
+                return abandoned();
+            }
             let AttemptPreparation::Ready(plan) = outcome else {
                 continue;
             };
@@ -575,6 +631,9 @@ impl PreparedWake {
                         .map(|(id, version)| (id, version.clone())),
                 )
                 .collect();
+        }
+        if preempted() {
+            return abandoned();
         }
         // The heads a neighbourhood lists are read at this snapshot too; the
         // branch admits them as priors from these bytes.

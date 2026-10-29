@@ -1,5 +1,6 @@
 //! Transactional entity-document storage, editable fields and immutable row pointers.
 
+use super::document::decode_frontier;
 use super::{DocAuthorization, EntityDoc, invalid};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, Result, StoreError};
@@ -635,7 +636,14 @@ pub(crate) fn record_document(
     let h = head(store, txn, entity)?;
     let doc = load(store, txn, &h)?;
     match frontier {
-        Some(frontier) => doc.fork(frontier).map(Some),
+        Some(frontier) => {
+            // A read at the live frontier reads the live document: no fork.
+            if frontier == doc.frontier().as_slice() {
+                Ok(Some(doc))
+            } else {
+                doc.fork(frontier).map(Some)
+            }
+        }
         None => Ok(Some(doc)),
     }
 }
@@ -648,8 +656,13 @@ pub(crate) fn record_body_at(
     frontier: &[u8],
 ) -> Result<Vec<u8>> {
     let h = head(store, txn, entity)?;
-    let doc = load(store, txn, &h)?.fork(frontier)?;
-    body_with_document(&h.field, body, &doc)
+    let doc = load(store, txn, &h)?;
+    // A read at the live frontier reads the live document: no fork.
+    if frontier == doc.frontier().as_slice() {
+        return body_with_document(&h.field, body, &doc);
+    }
+    let version = doc.fork(frontier)?;
+    body_with_document(&h.field, body, &version)
 }
 
 /// One state of an entity's document, as [`record_body_history_in_txn`]
@@ -697,11 +710,33 @@ pub(crate) fn record_body_history_in_txn(
             }
         })
         .map_err(|_| Error::CorruptedIndex("document change history"))?;
+    let live = doc.frontier();
+    // One private scratch copy, checked out per ancestor frontier, instead of
+    // an export and import per state. It stays `None` until the first
+    // ancestor needs it, and for a shallow document, whose fork keeps its own
+    // retained-state check.
+    let mut scratch: Option<EntityDoc> = None;
     let mut states: Vec<RetainedBody> = Vec::with_capacity(frontiers.len());
     for frontier in frontiers {
         let mut pin = h.incarnation.clone().into_bytes();
         pin.extend_from_slice(&frontier);
         if states.iter().any(|state| state.frontier == pin) {
+            continue;
+        }
+        if frontier == live {
+            states.push(RetainedBody {
+                frontier: pin,
+                body: body_with_document(&h.field, body, &doc)?,
+            });
+            continue;
+        }
+        if !doc.doc.is_shallow()
+            && let Some(read) = read_with_scratch(&doc, &h.field, body, &frontier, &mut scratch)
+        {
+            states.push(RetainedBody {
+                frontier: pin,
+                body: read,
+            });
             continue;
         }
         let Ok(version) = doc.fork(&frontier) else {
@@ -713,6 +748,25 @@ pub(crate) fn record_body_history_in_txn(
         });
     }
     Ok(Some(states))
+}
+
+/// The body at `frontier`, read by checking out one private scratch copy of
+/// `doc`. `None` where checkout cannot name the same state a fork would, so
+/// the caller falls back to the fork.
+fn read_with_scratch(
+    doc: &EntityDoc,
+    field: &TextField,
+    body: &[u8],
+    frontier: &[u8],
+    scratch: &mut Option<EntityDoc>,
+) -> Option<Vec<u8>> {
+    let at = decode_frontier(frontier).ok()?;
+    if scratch.is_none() {
+        *scratch = Some(EntityDoc::from_loro(doc.doc.fork()).ok()?);
+    }
+    let scratch = scratch.as_ref()?;
+    scratch.doc.checkout(&at).ok()?;
+    body_with_document(field, body, scratch).ok()
 }
 
 /// A typed read projection of the body and metadata at one document version.

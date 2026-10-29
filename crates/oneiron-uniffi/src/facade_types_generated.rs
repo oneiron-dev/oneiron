@@ -53155,6 +53155,8 @@ pub enum DreamerParkCauseView {
     Checkpoint,
     #[serde(rename = "retry")]
     Retry,
+    #[serde(rename = "paused")]
+    Paused,
     #[serde(rename = "cancelled")]
     Cancelled,
     #[serde(rename = "signal")]

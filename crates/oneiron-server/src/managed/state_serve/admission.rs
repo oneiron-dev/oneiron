@@ -7,14 +7,20 @@
 //! reads is exactly the writes it let in; a refused write is never counted.
 //! Each admission is released as it drops, wherever that is, and the lock is
 //! never held across an await or a storage call.
+//!
+//! The freeze is also the Dreamer's pause (FIX 6909), as one watch per
+//! epoch: `true` once frozen. A thaw starts a fresh epoch and leaves the
+//! last one `true`, closed, so a pass that read it stays paused and its
+//! next pass reads the new one.
 
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use oneiron_vault_contract::{IdleReapInFlight, REAP_PAUSE_REFUSAL};
 use tokio::sync::watch;
 
 use super::{ManagedState, WRITES_FROZEN_TAG};
+use crate::ai_host::DreamerControl;
 use crate::managed::ManagedError;
 use crate::server::{HousekeepingAdmission, PassControl};
 
@@ -92,10 +98,27 @@ impl InFlightCounts {
 }
 
 /// The freeze and the writes in flight, under one lock.
-#[derive(Default)]
 struct Gate {
-    frozen: bool,
+    /// The managed reap freeze: `true` while frozen. Alone it refuses
+    /// writes; with the owner's cause it reads as the one epoch.
+    managed: bool,
+    /// The owner's own Dreamer pause (`POST /dreamer/pause`): never refuses
+    /// a write, only holds the Dreamer's passes with the freeze.
+    owner: bool,
+    /// The current epoch both causes read as: `managed || owner`.
+    epoch: watch::Sender<bool>,
     in_flight: InFlightCounts,
+}
+
+impl Default for Gate {
+    fn default() -> Self {
+        Self {
+            managed: false,
+            owner: false,
+            epoch: watch::channel(false).0,
+            in_flight: InFlightCounts::default(),
+        }
+    }
 }
 
 /// A managed vault's write admission.
@@ -140,20 +163,48 @@ impl Admission {
         self.gate.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The managed reap freeze now (not the owner's own pause cause).
     pub(super) fn is_frozen(&self) -> bool {
-        self.gate().frozen
+        self.gate().managed
     }
 
-    /// Freezes: no write is admitted after. Returns the writes in flight at
-    /// that moment, read in the same hold.
+    /// Freezes: no write is admitted after, and the epoch's passes read
+    /// their pause. Returns the writes in flight at that moment, read in the
+    /// same hold.
     pub(super) fn freeze(&self) -> InFlightCounts {
         let mut gate = self.gate();
-        gate.frozen = true;
+        gate.managed = true;
+        gate.epoch.send_replace(true);
         gate.in_flight
     }
 
+    /// Lifts the freeze with a fresh epoch seeded by the owner's cause. The
+    /// last one keeps its `true` and closes. Unfrozen, nothing changes.
     pub(super) fn thaw(&self) {
-        self.gate().frozen = false;
+        let mut gate = self.gate();
+        if gate.managed {
+            gate.managed = false;
+            gate.epoch = watch::channel(gate.owner).0;
+        }
+    }
+
+    /// Sets the owner's own Dreamer pause cause: no new pass starts, and the
+    /// running attempt parks at its next boundary. The epoch reads both
+    /// causes as one, so a resume never lifts a managed freeze.
+    pub(super) fn set_owner_paused(&self, paused: bool) {
+        let mut gate = self.gate();
+        gate.owner = paused;
+        gate.epoch.send_replace(gate.managed || gate.owner);
+    }
+
+    /// The owner's own pause cause now (not the managed freeze).
+    pub(super) fn owner_paused(&self) -> bool {
+        self.gate().owner
+    }
+
+    /// The freeze's current epoch, as a Dreamer pass reads its pause.
+    pub(super) fn pass_pause(&self) -> watch::Receiver<bool> {
+        self.gate().epoch.subscribe()
     }
 
     /// The writes in flight now.
@@ -170,7 +221,7 @@ impl Admission {
     /// nothing is counted.
     fn admit(self: &Arc<Self>, kind: WriteKind) -> Option<Admitted> {
         let mut gate = self.gate();
-        if gate.frozen {
+        if gate.managed {
             return None;
         }
         *gate.in_flight.of(kind) += 1;
@@ -192,7 +243,34 @@ impl Admission {
     }
 }
 
+/// The Dreamer's control (FIX 6909), made before the managed state exists:
+/// a pass is admitted as a Dreamer write once `state` holds that state, and
+/// refused until then, and reads `admission`'s current epoch as its pause.
+pub(super) fn dreamer_control(
+    admission: &Arc<Admission>,
+    state: &Arc<OnceLock<Arc<ManagedState>>>,
+) -> DreamerControl {
+    let state = Arc::clone(state);
+    let epochs = Arc::clone(admission);
+    let setter = Arc::clone(admission);
+    let getter = Arc::clone(admission);
+    DreamerControl {
+        admission: Arc::new(move || state.get()?.admit_background(WriteKind::Dreamer)),
+        pause: Arc::new(move || epochs.pass_pause()),
+        set_owner_pause: Arc::new(move |paused| setter.set_owner_paused(paused)),
+        read_owner_pause: Arc::new(move || getter.owner_paused()),
+    }
+}
+
 impl ManagedState {
+    /// This state over `admission`, the reap freeze the Dreamer's control
+    /// was made on before the state existed (FIX 6909).
+    #[must_use]
+    pub(super) fn with_admission(mut self, admission: Arc<Admission>) -> Self {
+        self.admission = admission;
+        self
+    }
+
     /// Admits a `kind` write, counted until it drops. While the vault is
     /// frozen for reap it is refused, as [`Self::guard_write`] refuses, and
     /// not counted.

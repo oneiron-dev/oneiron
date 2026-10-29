@@ -44,10 +44,12 @@ impl DreamerWakeDriver<'_> {
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
         self.begin_wake(&input)?;
-        let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
+        let prepared = crate::dreamer_consolidation::PreparedWake::capture_for_pass(
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
+            &self.deadline,
+            cancel,
         )?;
         let mut workers: Vec<_> = (0..executors.len())
             .map(|index| {
