@@ -123,7 +123,7 @@ pub enum InboxExceptionClass {
 }
 
 /// B2 RS6 bulk verbs over one dreamer-run group.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxBulkVerb {
     AcceptAll,
@@ -211,6 +211,12 @@ impl InboxGroupCursor {
             decision_id: record.decision_id.as_bytes(),
             claim_id: record.claim_id,
         }
+    }
+
+    /// When the row at this position was proposed: its group's source time.
+    #[must_use]
+    pub(super) const fn created_at(&self) -> u64 {
+        self.created_at
     }
 
     /// The cursor as a page's `next` carries it: 80 lowercase hex.
@@ -341,7 +347,7 @@ pub struct InboxCheckInException {
 }
 
 /// Outcome of one bulk verb over a group.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxBundleResolution {
     pub group_key: String,
     pub verb: InboxBulkVerb,

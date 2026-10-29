@@ -678,17 +678,25 @@ async fn mcp_task_row<T: Send + 'static>(
     row: impl FnOnce(&oneiron::Memory<'_>) -> oneiron::memory::MemoryResult<T> + Send + 'static,
 ) -> Result<(oneiron::memory::MemoryResult<T>, Vec<oneiron::EntityId>), McpGatewayError> {
     let (server, actor) = (Arc::clone(server), actor.clone());
+    // A code-mode call writes for the leased run its origin seals, on this
+    // thread too (FIX 10748).
+    let run_writes = surface
+        .run
+        .as_ref()
+        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
         let producers = oneiron::memory::ProducerRows::default();
-        let output = server
-            .decision_host()
-            .task_decisions()
-            .map_err(oneiron::memory::MemoryError::from)
-            .and_then(|decisions| {
-                row(&surface
-                    .memory(&server, &actor, &producers)
-                    .with_task_decisions(decisions))
-            });
+        let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
+            server
+                .decision_host()
+                .task_decisions()
+                .map_err(oneiron::memory::MemoryError::from)
+                .and_then(|decisions| {
+                    row(&surface
+                        .memory(&server, &actor, &producers)
+                        .with_task_decisions(decisions))
+                })
+        });
         (output, producers.take())
     })
     .await
