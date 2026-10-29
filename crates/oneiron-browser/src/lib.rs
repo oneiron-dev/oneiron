@@ -115,8 +115,9 @@ pub use stop::{
 };
 use stop::{Stop, elapsed_ms};
 pub use switch::{
-    EngineSwitchRecord, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput,
-    SwitchEngineOutput, SwitchLoss, SwitchNotCarried, SwitchOutcome, SwitchStage,
+    EngineSwitchRecord, SnapshotBounds, StoragePhase, SwitchCarried, SwitchComponent,
+    SwitchEngineInput, SwitchEngineOutput, SwitchLoss, SwitchNotCarried, SwitchOutcome,
+    SwitchStage,
 };
 
 pub use contract::{BrowserDriver, paged};

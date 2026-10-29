@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4181 declarations.
+Census: 1162 facade rows, 4182 declarations.
 Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -21506,9 +21506,14 @@ class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
 BrowserHandoverOutput = BrowserAnswer
+class SnapshotBounds(TypedDict):
+    read_chars: NotRequired[int | None]
+    snapshot_origins: NotRequired[int | None]
+    snapshot_bytes: NotRequired[int | None]
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str
+    snapshot_bounds: NotRequired[SnapshotBounds | None]
 class SwitchEngineOutput(TypedDict):
     receipt: EffectReceipt
     observation: NotRequired[ObservationPage | None]

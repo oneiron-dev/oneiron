@@ -527,6 +527,11 @@ impl BrowserSession {
                 "a switch gives its reason in 1 to {SWITCH_REASON_CHARS} characters"
             )));
         }
+        // The snapshots' bounds the call names stand from now on, the same
+        // engine's too (FIX 10335).
+        if let (Some(bounds), Some(collector)) = (&input.snapshot_bounds, &self.snapshots) {
+            OriginSnapshots::bound(collector, bounds);
+        }
         let mut record = EngineSwitchRecord {
             from: self.driver.engine(),
             to: input.engine,

@@ -50,21 +50,23 @@ const EXIT_PRELOAD: &str = "(() => { const w = window; if (w !== w.top || w.__on
 /// open; Engine 10-21 01:4x): right before each act's input, inside the
 /// change check's mark and its window, and before a person's input, within
 /// the smaller pre-input bound; once an act's or an open's page settled and
-/// at hand-back, within the read bound; as a document is left, on Chromium
-/// only, through the driver's own world and binding. Lightpanda 1.0.0
-/// fires no `pagehide`: a switch reports each departed origin's unseen
-/// tail. Never on the check's polls, never by wrapping a storage method,
-/// and never a switch of its own. A switch reads the current origin's
-/// stores itself, one at a time, within PR3's bounds on one store.
+/// at hand-back, within the read bound `read_chars` (the session's own, FIX
+/// 10335); as a document is left, on Chromium only, through the driver's
+/// own world and binding. Lightpanda 1.0.0 fires no `pagehide`: a switch
+/// reports each departed origin's unseen tail. Never on the check's polls,
+/// never by wrapping a storage method, and never a switch of its own. A
+/// switch reads the current origin's stores itself, one at a time, within
+/// PR3's bounds on one store.
 pub(crate) fn switch_storage_capture_policy(
     engine: BrowserEngine,
     phase: StoragePhase,
+    read_chars: usize,
 ) -> Option<usize> {
     let limits = switch_state_limits();
     match phase {
         StoragePhase::PreInput => Some(limits.input_chars),
-        StoragePhase::PostAct | StoragePhase::HandBack => Some(limits.read_chars),
-        StoragePhase::Exit => (engine == BrowserEngine::Chromium).then_some(limits.read_chars),
+        StoragePhase::PostAct | StoragePhase::HandBack => Some(read_chars),
+        StoragePhase::Exit => (engine == BrowserEngine::Chromium).then_some(read_chars),
         StoragePhase::SwitchExport | StoragePhase::FreshExport => None,
     }
 }
@@ -189,7 +191,8 @@ pub(super) fn split_mark(answer: Option<Value>, read: &mut MarkRead) -> Option<V
 /// new document runs there, run at once in the live one. Best effort: a
 /// tab without it is read at its other points only.
 pub(super) fn hook_exits(pipe: &Pipe, session: &str, engine: BrowserEngine) {
-    let Some(chars) = switch_storage_capture_policy(engine, StoragePhase::Exit) else {
+    let bound = pipe.snapshot_read_chars();
+    let Some(chars) = switch_storage_capture_policy(engine, StoragePhase::Exit, bound) else {
         return;
     };
     if !pipe.collects() {
@@ -223,7 +226,8 @@ impl CdpDriver {
         if !self.pipe.collects() {
             return None;
         }
-        let chars = switch_storage_capture_policy(self.engine, StoragePhase::PreInput)?;
+        let bound = self.pipe.snapshot_read_chars();
+        let chars = switch_storage_capture_policy(self.engine, StoragePhase::PreInput, bound)?;
         let stores = stores_read(chars);
         let tail = "]; })()";
         let head = signals.strip_suffix(tail)?;
@@ -306,8 +310,8 @@ impl CdpDriver {
 
     /// The bound one read in `phase` takes on this engine.
     fn read_chars(&self, phase: StoragePhase) -> usize {
-        let fallback = switch_state_limits().read_chars;
-        switch_storage_capture_policy(self.engine, phase).unwrap_or(fallback)
+        let bound = self.pipe.snapshot_read_chars();
+        switch_storage_capture_policy(self.engine, phase, bound).unwrap_or(bound)
     }
 
     fn read_stores(&self, phase: StoragePhase, deadline: Instant) -> Option<Value> {
