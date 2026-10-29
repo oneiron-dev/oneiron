@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5482 | 902 | 115 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 5483 | 902 | 115 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 50 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 145 | 18 | 0 |
@@ -270,7 +270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `vault` | dir | 43 | L | yes | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `vault_cleanup` | dir | 25 | m | yes | ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931) |
 | `vault_shape` | dir | 19 | L | yes | Vault shape as code (ARCH-0070): the setup plane held in one hand |
-| `verbs` | dir | 96 | XL | — | Shared typed agent-verb inputs and generated transport dispatch |
+| `verbs` | dir | 97 | XL | — | Shared typed agent-verb inputs and generated transport dispatch |
 | `voice_cascade` | file+dir | 39 | L | yes | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `voice_identity` | dir | 21 | L | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
 | `voice_segment` | file | 1 | s | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
