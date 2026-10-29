@@ -219,7 +219,8 @@ pub(in crate::api::ai::chat) fn begin_sourced_answer(
 
 /// The conversation a reply is written into: a fresh turn's, as its caller
 /// bound it before generation (FIX 8132), or the continued MESSAGE's.
-/// `None` when it lies in none, or cannot be placed.
+/// `None` when it lies in none; a placement that cannot be read binds the
+/// record itself, where its stream is written anyway, and is never refused.
 pub(in crate::api::ai::chat) fn answer_container(
     vault: &Vault,
     open: &AnswerOpen,
@@ -238,8 +239,7 @@ pub(in crate::api::ai::chat) fn answer_container(
         .inspect_err(
             |error| tracing::warn!(%error, "chat: the reply's conversation was not placed"),
         )
-        .ok()
-        .flatten()
+        .unwrap_or(Some(record))
 }
 
 /// Keeps the craft a saved reply was shown on the receipt spine, as its

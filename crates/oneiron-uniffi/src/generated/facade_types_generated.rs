@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1180 facade rows, 4252 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1132.
+// UniFFI census: 1182 facade rows, 4259 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1134.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -6860,6 +6860,54 @@ pub enum RsiTopUp {
         #[serde(rename = "units")]
         units: u64,
     },
+}
+
+/// `oneiron::llm::run_admission::resident_doors::ResidentShareView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidentShareView {
+    #[serde(rename = "resident")]
+    pub resident: String,
+    #[serde(rename = "units", default, skip_serializing_if = "Option::is_none")]
+    pub units: Option<u64>,
+    #[serde(rename = "pinned")]
+    pub pinned: bool,
+    #[serde(
+        rename = "allocation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub allocation: Option<String>,
+    #[serde(
+        rename = "allocation_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub allocation_generation: Option<u64>,
+    #[serde(rename = "used_units")]
+    pub used_units: u64,
+    #[serde(rename = "overdraft_units")]
+    pub overdraft_units: u64,
+    #[serde(rename = "overdrafts")]
+    pub overdrafts: u64,
+}
+
+/// `oneiron::llm::run_admission::resident_doors::ResidentSharesView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidentSharesView {
+    #[serde(rename = "residents")]
+    pub residents: Vec<ResidentShareView>,
+}
+
+/// `oneiron::llm::run_admission::resident_doors::SetResidentShareRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetResidentShareRequest {
+    #[serde(rename = "resident")]
+    pub resident: String,
+    #[serde(rename = "units", default, skip_serializing_if = "Option::is_none")]
+    pub units: Option<u64>,
+    #[serde(rename = "pinned", default, skip_serializing_if = "Option::is_none")]
+    pub pinned: Option<bool>,
 }
 
 /// `oneiron::dispatch_byoa::seat::SeatAuth`.
@@ -16226,11 +16274,36 @@ pub struct SkillOptimizeGoalBindRequest {
     pub project: Option<String>,
 }
 
+/// `oneiron::verbs::goal_optimize::TradeoffCapacityAdvisory`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TradeoffCapacityAdvisory {
+    #[serde(rename = "authored_rules")]
+    AuthoredRules {
+        #[serde(rename = "held")]
+        held: u64,
+        #[serde(rename = "limit")]
+        limit: u64,
+    },
+    #[serde(rename = "learned_rules")]
+    LearnedRules {
+        #[serde(rename = "held")]
+        held: u64,
+        #[serde(rename = "limit")]
+        limit: u64,
+    },
+}
+
 /// `oneiron::verbs::goal_optimize::SkillOptimizeGoalRevision`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillOptimizeGoalRevision {
     #[serde(rename = "goal_revision")]
     pub goal_revision: String,
+    #[serde(
+        rename = "tradeoff_capacity_advisory",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tradeoff_capacity_advisory: Option<Vec<TradeoffCapacityAdvisory>>,
 }
 
 /// `oneiron::skill_optimize::gate::verdict::TradeoffChoice`.
@@ -16385,6 +16458,12 @@ pub struct SkillOptimizeTradeoffAskView {
     pub question_digest: String,
     #[serde(rename = "ask")]
     pub ask: SkillTradeoffAsk,
+    #[serde(
+        rename = "tradeoff_capacity_advisory",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tradeoff_capacity_advisory: Option<Vec<TradeoffCapacityAdvisory>>,
 }
 
 /// `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffPickRequest`.
@@ -59387,6 +59466,16 @@ pub struct ConsolidationWakeStatusRequest {
     pub cursor: Option<String>,
 }
 
+/// `oneiron::memory::dreamer_wake_read::DreamerWakeClaimAuthoringFallbackView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DreamerWakeClaimAuthoringFallbackView {
+    #[serde(rename = "ambiguous_campaigns")]
+    AmbiguousCampaigns {
+        #[serde(rename = "roots")]
+        roots: Vec<String>,
+    },
+}
+
 /// `oneiron::memory::dreamer_wake_read::DreamerWakeEndView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DreamerWakeEndView {
@@ -59396,6 +59485,12 @@ pub struct DreamerWakeEndView {
     pub elapsed_ms: u64,
     #[serde(rename = "stop", default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<String>,
+    #[serde(
+        rename = "claim_authoring_fallback",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claim_authoring_fallback: Option<DreamerWakeClaimAuthoringFallbackView>,
 }
 
 /// `oneiron::memory::dreamer_wake_read::DreamerWakeHeaderView`.
@@ -66488,6 +66583,13 @@ pub struct EngineSwitchRecord {
     pub outcome: SwitchOutcome,
 }
 
+/// `oneiron_browser::verbs::ReceiptOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ReceiptOutcome {
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
 /// `oneiron_browser::verbs::EffectReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EffectReceipt {
@@ -66593,6 +66695,8 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub result_unread: Option<String>,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<ReceiptOutcome>,
     #[serde(rename = "duration_ms")]
     pub duration_ms: u64,
 }
@@ -68217,6 +68321,30 @@ pub struct BrowserAnswerHandoverOutput {
     pub flattened: HandoverOutput,
 }
 
+/// `oneiron_browser::switch::SnapshotBounds`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotBounds {
+    #[serde(
+        rename = "read_chars",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub read_chars: Option<u64>,
+    #[serde(
+        rename = "snapshot_origins",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_origins: Option<u64>,
+    #[serde(
+        rename = "snapshot_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_bytes: Option<u64>,
+}
+
 /// `oneiron_browser::switch::SwitchEngineInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -68225,6 +68353,12 @@ pub struct SwitchEngineInput {
     pub engine: BrowserEngine,
     #[serde(rename = "reason")]
     pub reason: String,
+    #[serde(
+        rename = "snapshot_bounds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_bounds: Option<SnapshotBounds>,
 }
 
 /// `oneiron::verbs::live_run::LiveRunRequest` with `T` = `SwitchEngineInput`.

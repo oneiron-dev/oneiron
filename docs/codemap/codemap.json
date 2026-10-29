@@ -24535,7 +24535,7 @@
      "path": "src/dreamer_consolidation/executor/extraction/decided.rs",
      "purpose": "Every candidate a Dreamer attempt decided a correction for, kept at the attempt before the branch builds…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -25865,7 +25865,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "struct": 2
      }
     },
@@ -28616,7 +28616,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 3,
-      "fn": 16,
+      "fn": 17,
       "struct": 2
      }
     },
@@ -29345,6 +29345,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/surprise_wake.rs",
+     "purpose": "The wake at a surprising save (FIX 11317, the Engine's ruling (b)): a re-tag whose surprise reaches the wake…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -29392,7 +29402,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 7,
       "trait": 1
      }
@@ -40713,6 +40723,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/decision/asks/queue.rs",
+     "purpose": "One ask queued in the caller's own write (FIX 10789): an engine record that owes the owner a question keeps…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/decision/asks/signal.rs",
      "purpose": "The vault's one decision-answer signal (FIX 4706)",
      "surface": {
@@ -40806,7 +40826,7 @@
      "path": "src/llm/decision/ladder/mod.rs",
      "purpose": "Host-injected, one-step decision ladder",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 2,
       "struct": 1
      }
@@ -41247,7 +41267,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RefreshBatch",
@@ -41257,7 +41277,7 @@
      "purpose": "Host-driven answer work: observe under principal, invoke provider outside a write transaction, then…",
      "surface": {
       "crate-vis": 7,
-      "fn": 9,
+      "fn": 8,
       "re-export": 1,
       "struct": 2
      }
@@ -41276,9 +41296,40 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/decision/questions/refresh/calls.rs",
+     "purpose": "One unit's answer from a graph answerer (FIX 8914, pure moves from `refresh.rs`)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/execution.rs",
+     "purpose": "One refresh's execution path (FIX 8914, pure moves from `refresh.rs`)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/decision/questions/refresh/manual.rs",
      "purpose": "FIX 9176: a standing question refreshed by hand writes its answers as the asker its version keeps, as the…",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/pump.rs",
+     "purpose": "The due-refresh pump and its scheduling helpers (FIX 8914, pure moves from `refresh.rs`)",
+     "surface": {
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -41293,11 +41344,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "QuestionUnitAsk"
+     ],
      "path": "src/llm/decision/questions/role_asks.rs",
      "purpose": "A question unit's person ask (OF-506; ARCH-0076 role ladder): a graph or artifact answer whose dial reaches…",
      "surface": {
-      "fn": 1
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -42117,6 +42172,7 @@
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
+      "mod": 1,
       "re-export": 12
      }
     },
@@ -42171,6 +42227,22 @@
       "crate-vis": 6,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResidentShareView",
+      "ResidentSharesRequest",
+      "ResidentSharesView",
+      "SetResidentShareRequest"
+     ],
+     "path": "src/llm/run_admission/resident_doors.rs",
+     "purpose": "Typed owner doors over the resident shares (FIX 11310): set one resident's share of the host-paid…",
+     "surface": {
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -43725,7 +43797,21 @@
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
-      "fn": 8
+      "fn": 8,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DreamerDecidedCandidateView"
+     ],
+     "path": "src/memory/conflict_settle/candidate_decisions.rs",
+     "purpose": "The read door to a Dreamer attempt's decided candidates (FIX 11306): every candidate it decided a correction…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -43947,6 +44033,7 @@
       "DreamerWakeCallStateView",
       "DreamerWakeCallView",
       "DreamerWakeCheckpointView",
+      "DreamerWakeClaimAuthoringFallbackView",
       "DreamerWakeEndView",
       "DreamerWakeGenerationView",
       "DreamerWakeHeaderView",
@@ -43959,7 +44046,7 @@
      "path": "src/memory/dreamer_wake_read.rs",
      "purpose": "`vault.consolidation.wake.status` (DOOR-144 B): the typed wake read beside `vault.consolidation.status`",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "fn": 1,
       "struct": 11
      }
@@ -44523,7 +44610,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 27,
-      "re-export": 59
+      "re-export": 60
      }
     },
     {
@@ -52877,7 +52964,7 @@
      "path": "src/policy_model/in_force.rs",
      "purpose": "Whether an owner-plane verdict still answers the policy in force, and what the plane answers when it does not",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -58403,6 +58490,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "SavedQueryHealth",
+      "SavedQueryPass",
+      "SavedQueryWake",
+      "SavedQueryWakeOutcome"
+     ],
+     "path": "src/saved_query/health.rs",
+     "purpose": "Each swept saved query's health (FIX 11250): one row per query the host's evaluator wakes, written at every…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/saved_query/lifecycle.rs",
      "purpose": "—",
@@ -58463,7 +58568,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -75090,7 +75195,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1212
+      "fn": 1214
      }
     },
     {
@@ -75144,12 +75249,14 @@
       "SkillOptimizeProposalRequest",
       "SkillOptimizeProposeRequest",
       "SkillOptimizeTradeoffAskView",
-      "SkillOptimizeTradeoffPickRequest"
+      "SkillOptimizeTradeoffPickRequest",
+      "TradeoffCapacityAdvisory"
      ],
      "path": "src/verbs/goal_optimize.rs",
      "purpose": "Full witnessed goal intake and explicit optimizer proposal/admission doors",
      "surface": {
-      "fn": 14,
+      "enum": 1,
+      "fn": 15,
       "struct": 15
      }
     },
@@ -77053,6 +77160,16 @@
       "crate-vis": 3,
       "mod": 1,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/voice_identity/print_ask.rs",
+     "purpose": "The owner's typed question about a third party's voice print (FIX 10789)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81059,7 +81176,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81367,7 +81484,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 147,
+     "files": 152,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81388,7 +81505,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 290,
+     "files": 291,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81668,7 +81785,7 @@
      "purpose": "Runtime hooks (ARCH-0080)"
     },
     "saved_query": {
-     "files": 17,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82018,7 +82135,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82074,9 +82191,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5473,
+   "source_files": 5482,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85051,7 +85168,7 @@
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -85078,6 +85195,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/cdp/parsed.rs",
+     "purpose": "A reply read past the pipe's framing threshold, once parsed (FIX 7988): its raw bytes were charged to the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/cdp/paused.rs",
      "purpose": "Each paused request's host worker (FIX 7651, FIX 6302)",
      "surface": {
@@ -85091,7 +85218,7 @@
      "path": "src/cdp/recorder.rs",
      "purpose": "The road a demonstration's page events take to the host (CUA E9): the recorder's own binding, never the…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -85111,7 +85238,7 @@
      "path": "src/cdp/state.rs",
      "purpose": "What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 21
      }
     },
     {
@@ -85121,7 +85248,7 @@
      "path": "src/cdp/storage.rs",
      "purpose": "What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -85175,7 +85302,7 @@
      "path": "src/demonstration.rs",
      "purpose": "A demonstration (CUA E9; DESIGN-2 \"The owner, by demonstration\"): one opted-in span of a browser session…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 4,
       "struct": 6,
       "type": 1
@@ -85201,7 +85328,7 @@
      "path": "src/desktop/acts.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -85276,7 +85403,7 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -85326,7 +85453,7 @@
      "path": "src/driver/handles.rs",
      "purpose": "Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -85346,7 +85473,7 @@
      "path": "src/driver/pages.rs",
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 30
      }
     },
     {
@@ -85386,7 +85513,7 @@
      "path": "src/driver/secrets.rs",
      "purpose": "A page read's secrets (FIX 8028, OF-560; ARCH-0069): found on the outline's own candidates, before any row…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -85675,7 +85802,7 @@
      "path": "src/outline.rs",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -85795,6 +85922,7 @@
      "path": "src/retention.rs",
      "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)",
      "surface": {
+      "crate-vis": 1,
       "trait": 1
      }
     },
@@ -85997,7 +86125,7 @@
      "path": "src/session/storage.rs",
      "purpose": "The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -86070,6 +86198,7 @@
      "kind": "src",
      "notable": [
       "EngineSwitchRecord",
+      "SnapshotBounds",
       "StoragePhase",
       "SwitchCarried",
       "SwitchComponent",
@@ -86084,7 +86213,7 @@
      "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine…",
      "surface": {
       "enum": 5,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -86107,6 +86236,7 @@
       "OpenInput",
       "PartialTree",
       "PointInput",
+      "ReceiptOutcome",
       "ScreenshotInput",
       "ScreenshotOutput",
       "ScreenshotTrigger",
@@ -86124,7 +86254,7 @@
      "path": "src/verbs.rs",
      "purpose": "—",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 7,
       "struct": 26
      }
@@ -86146,7 +86276,7 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -86337,7 +86467,7 @@
    },
    "over_bar": 0,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 81,
+   "source_files": 82,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -94221,7 +94351,7 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 12,
+      "fn": 13,
       "struct": 4
      }
     },
@@ -94250,7 +94380,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1180
+      "fn": 1182
      }
     },
     {
@@ -95703,7 +95833,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1181
+      "fn": 1183
      }
     },
     {
@@ -97500,6 +97630,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/pause.rs",
+     "purpose": "The owner's own pause cause over the Dreamer (`POST /dreamer/pause`, `POST /dreamer/resume`), apart from the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/dreamer/request_sources.rs",
      "purpose": "The Dreamer's routes as this server sends on them, each able to send one call under the rows the engine read…",
      "surface": {
@@ -97683,7 +97823,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 17
      }
     },
@@ -99732,13 +99872,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/budget_doors.rs",
      "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -100188,7 +100328,7 @@
      "path": "src/api/facade/export_transfer.rs",
      "purpose": "Whole-vault exports kept on the server for their caller to read (FIX 3676)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -102250,7 +102390,7 @@
      "path": "src/api/memory/watch.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -107095,7 +107235,7 @@
      "path": "src/embedder/local/evidence.rs",
      "purpose": "Where vector evidence starts in a shipped model's space, and the profile its floors hold for",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -108848,13 +108988,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/admission.rs",
      "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -109868,6 +110008,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/cooldown/reply_budgets.rs",
+     "purpose": "The vault's model byte budgets a ladder's chat replies are read on (FIX 10626), kept beside its offers'…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/cooldown/world_hold.rs",
      "purpose": "Whether a fallback may take a call's world where the offer it falls back to sends it, and why not (FIX 4938…",
      "surface": {
@@ -109977,7 +110127,7 @@
      "path": "src/models/host_budgets.rs",
      "purpose": "The bytes one served vault's model host holds at once (FIX 9321, FIX 9323): one set per vault's runtime…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -110011,7 +110161,7 @@
      "path": "src/models/http/reply_line.rs",
      "purpose": "The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -113660,7 +113810,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 101,
+     "files": 102,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -114010,7 +114160,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 93,
+     "files": 94,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114159,7 +114309,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1386,
+   "source_files": 1388,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -114260,6 +114410,7 @@
       "EntityRefReceipt",
       "EntityView",
       "EntityViews",
+      "ExportReceipt",
       "FacadeReceipt",
       "ForgetSelector",
       "HabitCheckinInput",
@@ -114312,7 +114463,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 13,
-      "struct": 54
+      "struct": 55
      }
     },
     {
@@ -115634,6 +115785,7 @@
       "DreamerWakeCallStateView",
       "DreamerWakeCallView",
       "DreamerWakeCheckpointView",
+      "DreamerWakeClaimAuthoringFallbackView",
       "DreamerWakeEndView",
       "DreamerWakeGenerationView",
       "DreamerWakeHeaderView",
@@ -117265,6 +117417,7 @@
       "ReceiptAtom",
       "ReceiptEvidence",
       "ReceiptKind",
+      "ReceiptOutcome",
       "ReceiptRecord",
       "ReceiptView",
       "ReceivedFileOperation",
@@ -117429,6 +117582,8 @@
       "ResidenceQueued",
       "ResidenceResultStatusName",
       "ResidenceResultView",
+      "ResidentShareView",
+      "ResidentSharesView",
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "ResolvedTeam",
@@ -117844,6 +117999,7 @@
       "SessionManifest",
       "SessionSeccomp",
       "SetNoteOverridesRequest",
+      "SetResidentShareRequest",
       "SettleVerb",
       "SettleVerdict",
       "SettledHunkView",
@@ -118065,6 +118221,7 @@
       "SlotCandidate",
       "SlotField",
       "SmartArtNode",
+      "SnapshotBounds",
       "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
@@ -118343,6 +118500,7 @@
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
+      "TradeoffCapacityAdvisory",
       "TradeoffChoice",
       "TradeoffRole",
       "TradeoffRule",
@@ -118615,8 +118773,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1042,
-      "struct": 3210
+      "enum": 1045,
+      "struct": 3214
      }
     },
     {
@@ -118642,7 +118800,7 @@
      "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 11,
       "re-export": 7,
       "struct": 1
      }

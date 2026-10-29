@@ -2,11 +2,15 @@
 //! 8336). Chromium reads one document's accessibility tree per call: the
 //! page's own, then each frame's, a frame of the page's process by its
 //! frame on the page's session, an out-of-process frame (OOPIF) on its own
-//! session, which the browser attached for it. Each frame's tree is
+//! session, which the browser attached for it, and an OOPIF nested in one
+//! on its own, after the frame it is in (FIX 10332). Each frame's tree is
 //! grafted under the element that holds the frame, its node ids kept apart
 //! by the frame's, so its rows read where the page shows them and are
-//! classified as every row is, by the same read. A frame whose tree the
-//! read already holds, or that does not read, is left as it was.
+//! classified as every row is, by the same read. A nested OOPIF's element
+//! is found in the frame it is in, on that frame's session. A frame whose
+//! tree the read already holds, or that does not read, is left as it was.
+//! An OOPIF's rows act as the engine allows them: a row with no DOM node on
+//! the page's session stays read-only.
 //!
 //! A screenshot masks an OOPIF's secret rows on the frame's own session,
 //! and its secret-marked fields there too, as the front document's are
@@ -25,16 +29,28 @@ impl CdpDriver {
         if self.engine != BrowserEngine::Chromium {
             return;
         }
-        let mut frames = self.child_frames();
-        for (frame, _) in self.pipe.oopifs(&self.session) {
-            if !frames.contains(&frame) {
-                frames.push(frame);
-            }
+        let oopifs = self.pipe.oopifs(&self.session);
+        // The page's own frames, then its OOPIFs, each after the frame it
+        // is in: a nested one's element is in that frame's tree.
+        let mut frames: Vec<(String, Option<(String, String)>)> = self
+            .child_frames()
+            .into_iter()
+            .filter(|frame| !oopifs.iter().any(|(oopif, _, _)| oopif == frame))
+            .map(|frame| (frame, None))
+            .collect();
+        for (frame, _, parent) in &oopifs {
+            let within = oopifs
+                .iter()
+                .find(|(_, session, _)| session == parent)
+                .map(|(outer, session, _)| (outer.clone(), session.clone()));
+            frames.push((frame.clone(), within));
         }
-        for frame in frames {
+        for (frame, within) in frames {
             let apart = self.frame_session(Some(&frame)) != self.session;
             if let Some(tree) = self.frame_tree(&frame) {
-                graft(nodes, &frame, tree, self.frame_owner(&frame), apart);
+                let (outer, session) = within.unzip();
+                let owner = self.frame_owner(&frame, session.as_deref());
+                graft(nodes, &frame, tree, owner, apart, outer.as_deref());
             }
         }
     }
@@ -62,24 +78,25 @@ impl CdpDriver {
     }
 
     /// The session a frame's document is read and masked on: an OOPIF's
-    /// own, else the front tab's.
+    /// own, a nested one's too, else the front tab's.
     pub(super) fn frame_session(&self, frame: Option<&str>) -> String {
         frame
             .and_then(|frame| {
                 self.pipe
                     .oopifs(&self.session)
                     .into_iter()
-                    .find(|(oopif, _)| oopif == frame)
+                    .find(|(oopif, _, _)| oopif == frame)
             })
-            .map_or_else(|| self.session.clone(), |(_, session)| session)
+            .map_or_else(|| self.session.clone(), |(_, session, _)| session)
     }
 
-    /// The front tab's OOPIF sessions, for a screenshot's masks.
+    /// The front tab's OOPIF sessions, nested ones too, for a screenshot's
+    /// masks.
     pub(super) fn oopif_sessions(&self) -> Vec<String> {
         self.pipe
             .oopifs(&self.session)
             .into_iter()
-            .map(|(_, session)| session)
+            .map(|(_, session, _)| session)
             .collect()
     }
 
@@ -108,10 +125,18 @@ impl CdpDriver {
         }
     }
 
-    /// The backend node of the element that holds `frame` in its page.
-    fn frame_owner(&self, frame: &str) -> Option<u64> {
+    /// The backend node of the element that holds `frame`: in its page, or,
+    /// for a nested OOPIF, in the frame it is in, on that frame's `session`.
+    fn frame_owner(&self, frame: &str, session: Option<&str>) -> Option<u64> {
+        let session = session.unwrap_or(&self.session);
         let owner = self
-            .page("DOM.getFrameOwner", json!({"frameId": frame}))
+            .pipe
+            .call(
+                Some(session),
+                "DOM.getFrameOwner",
+                json!({"frameId": frame}),
+                Instant::now() + CALL,
+            )
             .ok()?;
         owner.get("backendNodeId").and_then(Value::as_u64)
     }
@@ -121,8 +146,17 @@ impl CdpDriver {
 /// frame, its root under the node of `owner`, the element holding it (else
 /// under the page's root), each node named by its frame. A same-process
 /// frame's tree whose nodes `nodes` already holds (by backend node) is the
-/// page's own read; an OOPIF's (`apart`) node ids are its own process's.
-fn graft(nodes: &mut Vec<Value>, frame: &str, tree: Vec<Value>, owner: Option<u64>, apart: bool) {
+/// page's own read; an OOPIF's (`apart`) node ids are its own process's. A
+/// nested OOPIF's element is sought only among the nodes of `within`, the
+/// grafted frame it is in, whose backend nodes are that frame's process's.
+fn graft(
+    nodes: &mut Vec<Value>,
+    frame: &str,
+    tree: Vec<Value>,
+    owner: Option<u64>,
+    apart: bool,
+    within: Option<&str>,
+) {
     if !apart {
         let held: HashSet<u64> = nodes
             .iter()
@@ -135,10 +169,18 @@ fn graft(nodes: &mut Vec<Value>, frame: &str, tree: Vec<Value>, owner: Option<u6
             return;
         }
     }
+    let inside = within.map(|outer| format!("{outer}/"));
     let host = nodes
         .iter()
         .position(|node| {
-            owner.is_some() && node.get("backendDOMNodeId").and_then(Value::as_u64) == owner
+            let placed = inside.as_deref().is_none_or(|prefix| {
+                node.get("nodeId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| id.starts_with(prefix))
+            });
+            owner.is_some()
+                && placed
+                && node.get("backendDOMNodeId").and_then(Value::as_u64) == owner
         })
         .or_else(|| nodes.iter().position(|node| node.get("parentId").is_none()));
     let Some(host) = host else {

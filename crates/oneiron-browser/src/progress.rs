@@ -4,9 +4,11 @@
 //! no count: the third such step has run, and the batch goes up after it.
 //!
 //! The monitor compares whole reads of the page taken around each step that
-//! counts ([`BatchStep::counts_for_progress`]), never the steps' answers:
-//! those edit the caller's base, which every step of the batch shares, and
-//! may come whole. Its reads are hidden, as a routine step's looks are:
+//! counts ([`BatchStep::counts_for_progress`]). A step's answer edits the
+//! caller's base, which every step of the batch shares; where it came
+//! whole and complete, it is the read after that step (FIX 8509), and
+//! otherwise (an edit, or a desktop walk the answer cut) the monitor reads
+//! the page itself. Its reads are hidden, as a routine step's looks are:
 //! unpaged, so the caller's base and pages stay where they were.
 
 use crate::observation::splice_of;
@@ -58,6 +60,9 @@ pub(crate) struct Progress {
     /// The viewport's scroll offset at that read, where the driver reads
     /// one (FIX 8508): a scroll that moved it is progress.
     offset: Option<(f64, f64)>,
+    /// What that read showed of its rows' places, where the driver tells
+    /// (FIX 10430): rows that moved are progress.
+    view: Option<[u8; 32]>,
     /// `page` was read after the last step, and no step ran since.
     fresh: bool,
     unchanged: u32,
@@ -68,6 +73,7 @@ impl Progress {
         Self {
             page: None,
             offset: None,
+            view: None,
             fresh: false,
             unchanged: 0,
         }
@@ -83,28 +89,46 @@ impl Progress {
         }
         let now = complete_read(driver);
         let offset = driver.viewport_offset();
-        if !unchanged(self.page.as_ref(), now.as_ref()) || moved(self.offset, offset) {
+        let view = driver.view_fingerprint();
+        if !unchanged(self.page.as_ref(), now.as_ref())
+            || moved(self.offset, offset)
+            || shifted(self.view, view)
+        {
             self.unchanged = 0;
         }
         self.page = now;
         self.offset = offset;
+        self.view = view;
     }
 
     /// After a step ran: for one that counts, the page as it is now against
-    /// the page before it. The read that makes [`NO_PROGRESS_STEPS`]
-    /// unchanged steps in a row comes back, for the batch to go up with.
+    /// the page before it: the step's own `answer` where it is a whole,
+    /// complete read (FIX 8509), else a hidden read. The read that makes
+    /// [`NO_PROGRESS_STEPS`] unchanged steps in a row comes back, for the
+    /// batch to go up with.
     pub(crate) fn after<D: BrowserDriver + ?Sized>(
         &mut self,
         driver: &mut D,
         counts: bool,
+        answer: Option<&Observation>,
     ) -> Option<Observation> {
         if !counts {
             self.fresh = false;
             return None;
         }
-        let now = complete_read(driver);
+        let now = match answer.filter(|page| complete(page)) {
+            Some(page) => Some(Observation {
+                // Its effect is in the batch's receipts already.
+                receipt: None,
+                ..page.clone()
+            }),
+            None => complete_read(driver),
+        };
         let offset = driver.viewport_offset();
-        let same = unchanged(self.page.as_ref(), now.as_ref()) && !moved(self.offset, offset);
+        let view = driver.view_fingerprint();
+        let same = unchanged(self.page.as_ref(), now.as_ref())
+            && !moved(self.offset, offset)
+            && !shifted(self.view, view);
         self.unchanged = if same {
             self.unchanged.saturating_add(1)
         } else {
@@ -112,6 +136,7 @@ impl Progress {
         };
         self.page = now;
         self.offset = offset;
+        self.view = view;
         self.fresh = true;
         if self.unchanged >= NO_PROGRESS_STEPS {
             return self.page.clone();
@@ -124,10 +149,13 @@ impl Progress {
 /// it is complete: a cut tree walk or a window with no tree leaves rows
 /// unseen, so it proves no page unchanged, and neither does a refused read.
 fn complete_read<D: BrowserDriver + ?Sized>(driver: &mut D) -> Option<Observation> {
-    driver
-        .observe_hidden()
-        .ok()
-        .filter(|page| page.full && page.partial.is_none() && !page.no_tree)
+    driver.observe_hidden().ok().filter(complete)
+}
+
+/// Whether `page` is a whole read that saw every row: not an edit, not cut,
+/// and with a tree.
+fn complete(page: &Observation) -> bool {
+    page.full && page.partial.is_none() && !page.no_tree
 }
 
 /// Whether two complete reads show the page unchanged: the same scope (its
@@ -155,6 +183,13 @@ fn moved(was: Option<(f64, f64)>, now: Option<(f64, f64)>) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether a window's rows moved between two reads of their places (FIX
+/// 10430): a desktop scroll that moved them is progress even where the
+/// tree already held its rows. A read that does not tell proves no move.
+fn shifted(was: Option<[u8; 32]>, now: Option<[u8; 32]>) -> bool {
+    matches!((was, now), (Some(was), Some(now)) if was != now)
 }
 
 /// The stop a batch's history notes when it went up for no progress at a
