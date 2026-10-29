@@ -200,7 +200,9 @@ impl SecretRevealAnswer {
 /// The reach of the owner's standing answer to one reveal (FIX 2354): the
 /// grant "approve and stop asking" writes covers this connection × this
 /// class × this reach. Each reach is its own grant; none is a wildcard.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RevealGrantScope {
     /// The project the reveal was asked in, until revoked: the default.
