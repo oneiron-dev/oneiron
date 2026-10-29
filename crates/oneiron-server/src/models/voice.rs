@@ -32,6 +32,50 @@ impl ModelRuntime {
         };
         let backend =
             vault.select_voice_backend(lane, explicit, &self.media.voice_backends(operation))?;
+        self.route_for(vault, lane, operation, backend)
+    }
+
+    /// The other tier-bound backends of `lane`'s seat as admitted routes,
+    /// in seat order: the fallback targets a banked voice may bind on when
+    /// the lane's own rung is down (FIX 3195). A rung this vault's policy
+    /// refuses is passed over with a warning; whether a route's target
+    /// holds the voice is for its bind to say.
+    pub fn voice_fallback_routes(
+        &self,
+        vault: &Vault,
+        lane: VoiceLane,
+        primary: &MediaVoiceRoute,
+    ) -> Vec<MediaVoiceRoute> {
+        let operation = match lane {
+            VoiceLane::AsrLive | VoiceLane::AsrBatch => AiOperation::Transcribe,
+            VoiceLane::TtsLive | VoiceLane::TtsBatch => AiOperation::Speech,
+        };
+        self.media
+            .voice_backends(operation)
+            .into_iter()
+            .filter(|backend| backend.model != primary.model)
+            .filter_map(|backend| {
+                let model = backend.model.clone();
+                match self.route_for(vault, lane, operation, backend) {
+                    Ok(route) => Some(route),
+                    Err(error) => {
+                        tracing::warn!(%error, model = %model, "a voice fallback rung was not admitted");
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// One rung of `lane`'s seat as an admitted route: its render target,
+    /// then a probe of the rung the vault's inference policy admits.
+    fn route_for(
+        &self,
+        vault: &Vault,
+        lane: VoiceLane,
+        operation: AiOperation,
+        backend: oneiron::llm::VoiceBackendBinding,
+    ) -> oneiron::Result<MediaVoiceRoute> {
         let (_, target, _) = self
             .media
             .rung_targets(operation, &backend.model)
