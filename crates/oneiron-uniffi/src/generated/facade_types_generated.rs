@@ -4189,6 +4189,8 @@ pub struct PersonaSnapshotExportedCopy {
     pub previous_export_id: Option<String>,
     #[serde(rename = "memory_pack")]
     pub memory_pack: PersonaSnapshotMemoryPack,
+    #[serde(rename = "memory_pack_json")]
+    pub memory_pack_json: String,
     #[serde(rename = "markdown")]
     pub markdown: String,
     #[serde(rename = "included_row_ids")]

@@ -493,7 +493,7 @@ export type PersonaSnapshotMemoryPack = { schema: string; kind: string; subject_
 /** `oneiron::verbs::persona::PersonaSnapshotCopyReceipt` */
 export type PersonaSnapshotCopyReceipt = { refs: CopyRefs; artifact_fingerprint: string; omitted_refs: string[] }
 /** `oneiron::verbs::persona::PersonaSnapshotExportedCopy` */
-export type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number; receipt: PersonaSnapshotCopyReceipt }
+export type PersonaSnapshotExportedCopy = { export_id: EntityId; subject: EntityId; stamp: string; previous_export_id?: EntityId | null; memory_pack: PersonaSnapshotMemoryPack; memory_pack_json: string; markdown: string; included_row_ids: string[]; struck_row_ids: string[]; compiled_at: string; stale_after_secs: number; receipt: PersonaSnapshotCopyReceipt }
 /** `oneiron::persona_snapshot::copy::PersonaSnapshotTextEdit` */
 export type PersonaSnapshotTextEdit = { row_id: string; text: string }
 /** `oneiron::persona_snapshot::copy::PersonaSnapshotCopyEditRequest` */
