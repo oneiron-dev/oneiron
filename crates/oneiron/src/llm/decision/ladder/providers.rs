@@ -207,6 +207,12 @@ pub trait DecisionProvider: Send + Sync {
     fn leaves_host(&self) -> bool {
         false
     }
+    /// What it costs per thousand units at its rung, as its host knows it (its registered
+    /// price over the units it reads); none when the host knows none. The receipt of an
+    /// answer it gives carries it (ARCH-0076, "Cost").
+    fn cost_per_thousand(&self) -> Option<f64> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
     /// question over the same state in turn, so a server's prompt cache carries the shared
@@ -298,6 +304,10 @@ pub trait DecisionModel: Send + Sync {
     fn leaves_host(&self) -> bool {
         false
     }
+    /// See [`DecisionProvider::cost_per_thousand`].
+    fn cost_per_thousand(&self) -> Option<f64> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -344,6 +354,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn leaves_host(&self) -> bool {
         self.model.leaves_host()
+    }
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.model.cost_per_thousand()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)
