@@ -109,6 +109,9 @@ impl From<MemoryError> for FacadeApiError {
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            // FIX 10011: the owner's model pin stands and no offered seat
+            // serves it. The owner's setting refuses it, as `error_map` does.
+            oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => StatusCode::CONFLICT,
             // FIX 8189: an OpenAI proxy call the caller's own deadline cut,
             // as its raw door answers it.
             crate::api::openai_proxy::TIMEOUT_CODE => StatusCode::GATEWAY_TIMEOUT,

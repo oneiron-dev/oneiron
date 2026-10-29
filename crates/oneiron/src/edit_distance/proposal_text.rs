@@ -234,12 +234,13 @@ impl ProposalTextArtifact {
     }
 
     /// Freezes the artifact: resolves the op window, replays it into
-    /// per-actor spans, persists the proposed/final pair, and returns the
-    /// record.
+    /// per-actor spans, retains the document beside the record, and returns
+    /// the record.
     ///
-    /// Persistence is not optional — ED-09's reservoir resolves its training
-    /// pairs from these rows by artifact ref, so a finalize that only returned
-    /// the record would silently make the export impossible.
+    /// Persistence is not optional — ED-09's reservoir reads its training
+    /// pairs through these rows by artifact ref, so a finalize that only
+    /// returned the record would silently make the export impossible. The
+    /// record holds refs only; the texts live in the retained document.
     pub fn finalize(self, vault: &Vault) -> Result<FinalizedProposalText> {
         let proposed_frontiers = self.window_base()?;
         if self.provenance(vault)?.is_none() {
@@ -249,19 +250,17 @@ impl ProposalTextArtifact {
         }
         let final_frontiers = self.doc.doc.oplog_frontiers();
 
-        // The base fork doubles as the replay scratch: read the proposed text
-        // out of it, then feed it the window one change at a time.
+        // The base fork is the replay scratch: feed it the window one change
+        // at a time.
         let scratch = self
             .doc
             .doc
             .fork_at(&proposed_frontiers)
             .map_err(|_| Error::CorruptedIndex("proposal artifact window base"))?;
-        let proposed_text = scratch.get_text(TEXT_CONTAINER).to_string();
 
         let ops_by_actor =
             self.replay_window(vault, &scratch, &proposed_frontiers, &final_frontiers)?;
-        let final_text = self.doc.doc.get_text(TEXT_CONTAINER).to_string();
-        if scratch.get_text(TEXT_CONTAINER).to_string() != final_text {
+        if scratch.get_text(TEXT_CONTAINER).to_string() != self.text() {
             return Err(Error::InvariantViolation(
                 "proposal artifact replay did not reconstruct the final text",
             ));
@@ -272,11 +271,9 @@ impl ProposalTextArtifact {
             proposed_ref: LoroOpRef::from_bytes(proposed_frontiers.encode()),
             final_ref: LoroOpRef::from_bytes(final_frontiers.encode()),
             ops_by_actor,
-            proposed_text,
-            final_text,
             source_turn_ref: self.source_turn_ref,
         };
-        put_finalized_proposal_text(vault, &record)?;
+        put_finalized_proposal_text(vault, &record, &self.doc)?;
         Ok(record)
     }
 
@@ -337,7 +334,7 @@ impl ProposalTextArtifact {
     }
 
     /// Replays every change in the window into `scratch`, one change at a
-    /// time, in causal order — so each span carries the exact text on either
+    /// time, in causal order — so each span names the exact version on either
     /// side of its own ops even when the window contains concurrent edits.
     fn replay_window(
         &self,
@@ -350,7 +347,7 @@ impl ProposalTextArtifact {
         window.sort_by_key(|change| (change.lamport, change.peer_id));
 
         let mut spans = Vec::with_capacity(window.len());
-        let mut before_text = scratch.get_text(TEXT_CONTAINER).to_string();
+        let mut before_ref = LoroOpRef::from_bytes(scratch.oplog_frontiers().encode());
         for change in window {
             let updates = self
                 .doc
@@ -362,7 +359,7 @@ impl ProposalTextArtifact {
                 )]))
                 .map_err(|_| Error::CorruptedIndex("proposal artifact window export"))?;
             import_doc(scratch, &updates)?;
-            let after_text = scratch.get_text(TEXT_CONTAINER).to_string();
+            let after_ref = LoroOpRef::from_bytes(scratch.oplog_frontiers().encode());
 
             let attribution = self.attribute(vault, &change)?;
             spans.push((
@@ -373,8 +370,8 @@ impl ProposalTextArtifact {
                     len: u32::from(change.len),
                     lamport: change.lamport,
                     timestamp: change.timestamp,
-                    before_text: std::mem::replace(&mut before_text, after_text.clone()),
-                    after_text,
+                    before_ref: std::mem::replace(&mut before_ref, after_ref.clone()),
+                    after_ref,
                 },
             ));
         }

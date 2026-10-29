@@ -390,7 +390,8 @@ side_tables! {
         => crate::edit_distance::miner::erase_principal_decision_entity_in_txn;
     /// Finalized proposal-text artifact (span attributions, actor/class per span), write-once keyed
     /// by artifact ref. Key: id16.
-    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored;
+    EDIT_DISTANCE_PROPOSAL_ARTIFACT: VaultMeta b"edit_distance/proposal_artifact/v1\0" Raw Authored
+        => crate::edit_distance::erase_proposal_texts_in_txn;
     /// Rebuildable training-reservoir candidate index row, keyed by the proposal artifact's entity
     /// id. Key: id16.
     EDIT_DISTANCE_RESERVOIR_CANDIDATE: VaultMeta b"edit_distance/reservoir_candidate/v1\0" Raw;

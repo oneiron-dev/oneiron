@@ -1042,7 +1042,7 @@ export class Oneiron {
         get: (input: Facade.SkillPackCreditRequest): Facade.LateCreditReceipt | null => this.#call(() => this.#client.vaultSkillsOutcomesGet(input) as Facade.LateCreditReceipt | null),
       },
       attribution: {
-        /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+        /** The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer. */
         settle: (input: Facade.ProposalDeltaSettleRequest): Facade.ProposalDeltaSettlement => this.#call(() => this.#client.vaultSkillsAttributionSettle(input) as Facade.ProposalDeltaSettlement),
         /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
         read: (input: Facade.ProposalDeltaReadRequest): Facade.ProposalDeltaRead => this.#call(() => this.#client.vaultSkillsAttributionRead(input) as Facade.ProposalDeltaRead),

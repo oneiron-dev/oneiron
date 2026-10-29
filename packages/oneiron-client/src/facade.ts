@@ -3177,7 +3177,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.models.routes.replace": { description: "Replaces one model slot route within its manifest pin without changing any other slot or role binding.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.roles.read": { description: "Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.roles.invoke": { description: "Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.skills.attribution.settle": { description: "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.skills.attribution.settle": { description: "The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.read": { description: "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.evidence.record": { description: "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.project": { description: "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4186,7 +4186,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           get: (input: Facade.SkillPackCreditRequest, options?: O): FacadeReturns<"vault.skills.outcomes.get">[K] => invoke("vault.skills.outcomes.get", input, options, newInvocation()),
         },
         attribution: {
-          /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+          /** The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer. */
           settle: (input: Facade.ProposalDeltaSettleRequest, options?: O): FacadeReturns<"vault.skills.attribution.settle">[K] => invoke("vault.skills.attribution.settle", input, options, newInvocation()),
           /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
           read: (input: Facade.ProposalDeltaReadRequest, options?: O): FacadeReturns<"vault.skills.attribution.read">[K] => invoke("vault.skills.attribution.read", input, options, newInvocation()),

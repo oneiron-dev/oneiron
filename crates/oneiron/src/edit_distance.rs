@@ -11,14 +11,13 @@
 //! * **Op windows** — [`LoroOpRef`] bounds the window: `proposed_ref` is the
 //!   version right after the artifact opened, `final_ref` the version at
 //!   finalize. ED-01 exports the delta between them.
-//! * **Attribution** — [`OpSpan`] is one change's replayed text run and
+//! * **Attribution** — [`OpSpan`] is one change's replayed version pair and
 //!   [`OpAttribution`] names who made it. The stamp rides the Loro commit
 //!   MESSAGE (durable in the `Change` record) rather than the commit ORIGIN
 //!   (local event metadata that does not survive snapshot/reopen).
-//! * **Retention** — [`put_finalized_proposal_text`] persists the
-//!   proposed/final pair keyed by the artifact ref. ED-09's reservoir resolves
-//!   its training pairs from these rows, so retention is a contract, not a
-//!   convenience.
+//! * **Retention** — [`put_finalized_proposal_text`] keeps the record's refs
+//!   and the proposal document they point into, keyed by the artifact ref;
+//!   [`RetainedProposal`] reads every text back through them (FIX 7818).
 //! * **Peer→actor registration** — [`register_peer_actor`] binds a device peer
 //!   id to a [`WriteActor`], which is how an unstamped op (an out-of-band edit)
 //!   still resolves to an actor, and how a stamped op is checked against the
@@ -53,13 +52,19 @@ pub mod proposal_text;
 pub mod publisher;
 pub mod reservoir;
 pub mod routing;
+mod text_ref;
+
+pub use text_ref::{
+    RetainedProposal, TextRead, TextUnavailable, finalized_proposal_text,
+    put_finalized_proposal_text, retained_proposal,
+};
+pub(crate) use text_ref::{StoredProposal, erase_proposal_texts_in_txn, put_imported_endpoints};
 
 use std::io::Cursor;
 
 use rmpv::Value;
 
 use crate::Vault;
-use crate::batch::secret_scan::admitted_from;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     PREDICATE_ACTOR_PEER_BINDING,
@@ -71,12 +76,12 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
 
-/// Finalized proposal-text artifact, keyed by artifact ref.
-const PROPOSAL_ARTIFACT: SideTable<EntityId, FinalizedProposalText, Raw> =
+/// Finalized proposal-text artifact and its retained document, keyed by artifact ref.
+const PROPOSAL_ARTIFACT: SideTable<EntityId, StoredProposal, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PROPOSAL_ARTIFACT);
 
 /// Schema version of the persisted proposal-artifact record.
-pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 1;
+pub const PROPOSAL_ARTIFACT_SCHEMA_VERSION: u64 = 2;
 
 /// Pinned MessagePack key set for a persisted proposal-artifact record.
 pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 8] = [
@@ -84,10 +89,10 @@ pub const PROPOSAL_ARTIFACT_RECORD_KEYS: [&str; 8] = [
     "artifact",
     "proposed_ref",
     "final_ref",
-    "proposed_text",
-    "final_text",
+    "document",
     "source_turn",
     "spans",
+    "lifted",
 ];
 
 /// Pinned MessagePack key set for one attributed op span inside a record.
@@ -99,10 +104,10 @@ const KEY_SCHEMA_VERSION: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[0];
 const KEY_ARTIFACT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[1];
 const KEY_PROPOSED_REF: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[2];
 const KEY_FINAL_REF: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[3];
-const KEY_PROPOSED_TEXT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[4];
-const KEY_FINAL_TEXT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[5];
-const KEY_SOURCE_TURN: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[6];
-const KEY_SPANS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[7];
+const KEY_DOCUMENT: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[4];
+const KEY_SOURCE_TURN: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[5];
+const KEY_SPANS: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[6];
+const KEY_LIFTED: &str = PROPOSAL_ARTIFACT_RECORD_KEYS[7];
 
 const SPAN_KEY_PEER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[0];
 const SPAN_KEY_COUNTER: &str = PROPOSAL_ARTIFACT_SPAN_KEYS[1];
@@ -175,10 +180,10 @@ impl LoroOpRef {
 /// peer merge into one change only when their commit MESSAGE is equal, and the
 /// actor stamp rides that message — so a change never mixes two actors.
 ///
-/// `before_text` / `after_text` are the artifact's full text on either side of
-/// this change during causal-order replay, which is the substitution pair
-/// ED-04 mines. Adjacent spans repeat text on purpose: a span handed to a
-/// miner in isolation still describes its own edit.
+/// `before_ref` / `after_ref` name the document version on either side of this
+/// change during causal-order replay: [`RetainedProposal::change_texts`] reads
+/// the substitution pair ED-04 mines from them, and the recorded-ops lane
+/// reads the change's own operations between them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpSpan {
     /// Loro peer id that authored the change (the device client id).
@@ -191,10 +196,10 @@ pub struct OpSpan {
     pub lamport: u32,
     /// Commit timestamp (Unix seconds) recorded on the change.
     pub timestamp: i64,
-    /// Artifact text immediately before this change replays.
-    pub before_text: String,
-    /// Artifact text immediately after this change replays.
-    pub after_text: String,
+    /// Version immediately before this change replays.
+    pub before_ref: LoroOpRef,
+    /// Version immediately after this change replays.
+    pub after_ref: LoroOpRef,
 }
 
 /// Pinned on-disk tokens for the [`OpAttribution`] arms.
@@ -247,12 +252,9 @@ impl OpAttribution {
     }
 }
 
-/// A finalized proposal artifact: both texts, the op window that produced the
-/// difference, and per-change attribution.
-///
-/// Both texts are retained deliberately. ED-09's reservoir exports
-/// (proposed, final) training pairs by proposal ref, so dropping either end
-/// makes the export impossible — retention is the contract.
+/// A finalized proposal artifact: refs into its retained document for both
+/// ends of the op window, and per-change attribution. No text is copied
+/// here; [`RetainedProposal`] reads every text through the refs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FinalizedProposalText {
     /// The artifact this record belongs to.
@@ -263,64 +265,11 @@ pub struct FinalizedProposalText {
     pub final_ref: LoroOpRef,
     /// Per-change attribution in causal (lamport) replay order.
     pub ops_by_actor: Vec<(OpAttribution, OpSpan)>,
-    /// Text as proposed (at `proposed_ref`).
-    pub proposed_text: String,
-    /// Text as finalized (at `final_ref`).
-    pub final_text: String,
     /// The TURN/entity the proposal text derives from, recorded at artifact
     /// mint. `None` for proposals with no turn source. ED-09's off-record
     /// fence probe keys off this, so an absent value there means "not
     /// turn-sourced", never "unknown".
     pub source_turn_ref: Option<EntityId>,
-}
-
-// ---------------------------------------------------------------------------
-// Retention
-// ---------------------------------------------------------------------------
-
-/// Persists a finalized proposal artifact, keyed by its artifact ref.
-///
-/// Called by `ProposalTextArtifact::finalize`; also the door a non-sync build
-/// would use to seed the reservoir from an already-finalized record.
-///
-/// **Write-once, read-before-write.** An artifact ref survives
-/// `from_snapshot`, so two clones of one artifact can each finalize their own
-/// divergent history under the SAME key. Last-writer-wins would swap ED-09's
-/// reservoir pair (proposed, final) for a different history's pair with no
-/// trace, so the divergence is surfaced instead: identical bytes are idempotent
-/// (a retried finalize is not an error), different bytes are an error. A stored
-/// record that holds handles where the retried one holds the secrets the side-row
-/// wall lifted (OF-067) is the same record.
-pub fn put_finalized_proposal_text(vault: &Vault, record: &FinalizedProposalText) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| {
-        let stored =
-            PROPOSAL_ARTIFACT.get(&vault.store, &*wtxn, &record.artifact_ref.entity_id())?;
-        match stored {
-            Some(stored) if stored == *record || admitted_record(&stored, record)? => Ok(()),
-            Some(_) => Err(Error::InvariantViolation(
-                "proposal artifact is already finalized with a different record",
-            )),
-            None => PROPOSAL_ARTIFACT.put(vault, wtxn, &record.artifact_ref.entity_id(), record),
-        }
-    })
-}
-
-/// Whether `held` is `record` as the side-row wall stored it.
-fn admitted_record(held: &FinalizedProposalText, record: &FinalizedProposalText) -> Result<bool> {
-    let tree = |record: &FinalizedProposalText| -> Result<Value> {
-        rmpv::decode::read_value(&mut Cursor::new(encode_finalized_proposal_text(record)?))
-            .map_err(|_| corrupt())
-    };
-    admitted_from(&tree(held)?, &tree(record)?)
-}
-
-/// Reads the finalized proposal artifact stored under `artifact_ref`.
-pub fn finalized_proposal_text(
-    vault: &Vault,
-    artifact_ref: ProposalArtifactRef,
-) -> Result<Option<FinalizedProposalText>> {
-    let rtxn = vault.store.env.read_txn()?;
-    PROPOSAL_ARTIFACT.get(&vault.store, &rtxn, &artifact_ref.entity_id())
 }
 
 // ---------------------------------------------------------------------------
@@ -620,7 +569,8 @@ pub(crate) fn actor_class_from_token(token: &str) -> Option<EdgeActorClass> {
 // Record codec
 // ---------------------------------------------------------------------------
 
-fn encode_finalized_proposal_text(record: &FinalizedProposalText) -> Result<Vec<u8>> {
+fn encode_stored_proposal(stored: &StoredProposal) -> Result<Vec<u8>> {
+    let record = &stored.record;
     let spans = record
         .ops_by_actor
         .iter()
@@ -644,12 +594,11 @@ fn encode_finalized_proposal_text(record: &FinalizedProposalText) -> Result<Vec<
             Value::Binary(record.final_ref.as_bytes().to_vec()),
         ),
         (
-            Value::from(KEY_PROPOSED_TEXT),
-            Value::from(record.proposed_text.as_str()),
-        ),
-        (
-            Value::from(KEY_FINAL_TEXT),
-            Value::from(record.final_text.as_str()),
+            Value::from(KEY_DOCUMENT),
+            stored
+                .document
+                .as_ref()
+                .map_or(Value::Nil, |bytes| Value::Binary(bytes.clone())),
         ),
         (
             Value::from(KEY_SOURCE_TURN),
@@ -658,6 +607,10 @@ fn encode_finalized_proposal_text(record: &FinalizedProposalText) -> Result<Vec<
                 .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
         ),
         (Value::from(KEY_SPANS), Value::Array(spans)),
+        (
+            Value::from(KEY_LIFTED),
+            text_ref::encode_lifted(stored.lifted.as_ref()),
+        ),
     ]);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value).map_err(|_| {
@@ -688,11 +641,11 @@ fn encode_span(attribution: OpAttribution, span: &OpSpan) -> Value {
         (Value::from(SPAN_KEY_TIMESTAMP), Value::from(span.timestamp)),
         (
             Value::from(SPAN_KEY_BEFORE),
-            Value::from(span.before_text.as_str()),
+            Value::Binary(span.before_ref.as_bytes().to_vec()),
         ),
         (
             Value::from(SPAN_KEY_AFTER),
-            Value::from(span.after_text.as_str()),
+            Value::Binary(span.after_ref.as_bytes().to_vec()),
         ),
         (
             Value::from(SPAN_KEY_TRUST),
@@ -703,7 +656,7 @@ fn encode_span(attribution: OpAttribution, span: &OpSpan) -> Value {
     ])
 }
 
-fn decode_finalized_proposal_text(bytes: &[u8]) -> Result<FinalizedProposalText> {
+fn decode_stored_proposal(bytes: &[u8]) -> Result<StoredProposal> {
     let entries = decode_map(bytes)?;
     if field(&entries, KEY_SCHEMA_VERSION).and_then(Value::as_u64)
         != Some(PROPOSAL_ARTIFACT_SCHEMA_VERSION)
@@ -714,14 +667,22 @@ fn decode_finalized_proposal_text(bytes: &[u8]) -> Result<FinalizedProposalText>
         Value::Array(items) => items.iter().map(decode_span).collect::<Result<Vec<_>>>()?,
         _ => return Err(corrupt()),
     };
-    Ok(FinalizedProposalText {
+    let document = match field(&entries, KEY_DOCUMENT).ok_or_else(corrupt)? {
+        Value::Nil => None,
+        _ => Some(field_binary(&entries, KEY_DOCUMENT)?),
+    };
+    let record = FinalizedProposalText {
         artifact_ref: ProposalArtifactRef::new(field_entity_id(&entries, KEY_ARTIFACT)?),
         proposed_ref: LoroOpRef::from_bytes(field_binary(&entries, KEY_PROPOSED_REF)?),
         final_ref: LoroOpRef::from_bytes(field_binary(&entries, KEY_FINAL_REF)?),
         ops_by_actor: spans,
-        proposed_text: field_str(&entries, KEY_PROPOSED_TEXT)?.to_owned(),
-        final_text: field_str(&entries, KEY_FINAL_TEXT)?.to_owned(),
         source_turn_ref: field_opt_entity_id(&entries, KEY_SOURCE_TURN)?,
+    };
+    let lifted = text_ref::decode_lifted(field(&entries, KEY_LIFTED).ok_or_else(corrupt)?)?;
+    Ok(StoredProposal {
+        record,
+        document,
+        lifted,
     })
 }
 
@@ -736,8 +697,8 @@ fn decode_span(value: &Value) -> Result<(OpAttribution, OpSpan)> {
         len: u32::try_from(field_u64(entries, SPAN_KEY_LEN)?).map_err(|_| corrupt())?,
         lamport: u32::try_from(field_u64(entries, SPAN_KEY_LAMPORT)?).map_err(|_| corrupt())?,
         timestamp: field_i64(entries, SPAN_KEY_TIMESTAMP)?,
-        before_text: field_str(entries, SPAN_KEY_BEFORE)?.to_owned(),
-        after_text: field_str(entries, SPAN_KEY_AFTER)?.to_owned(),
+        before_ref: LoroOpRef::from_bytes(field_binary(entries, SPAN_KEY_BEFORE)?),
+        after_ref: LoroOpRef::from_bytes(field_binary(entries, SPAN_KEY_AFTER)?),
     };
     Ok((attribution, span))
 }
@@ -822,13 +783,13 @@ fn corrupt() -> Error {
     Error::CorruptedIndex("proposal artifact record")
 }
 
-impl RawValue for FinalizedProposalText {
+impl RawValue for StoredProposal {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_finalized_proposal_text(self)?)
+        Ok(encode_stored_proposal(self)?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode_finalized_proposal_text(bytes)?)
+        Ok(decode_stored_proposal(bytes)?)
     }
 }
 

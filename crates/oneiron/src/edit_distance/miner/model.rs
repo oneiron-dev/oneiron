@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::config::{ROW_VERSION, SKILL_EDIT_VERDICT_ACCEPTED, SKILL_EDIT_VERDICT_REJECTED};
 use super::target::CompilationTarget;
-use crate::edit_distance::FinalizedProposalText;
+use crate::edit_distance::RetainedProposal;
 use crate::edit_distance::attribution::AmendmentJudgment;
-use crate::edit_distance::delta::{AmendmentDelta, DeltaSource};
+use crate::edit_distance::delta::{AmendmentDelta, DeltaSource, EndpointRef};
 use crate::entity_id::EntityId;
 use crate::write_envelope::WriteActor;
 
@@ -272,26 +272,56 @@ impl Bucket {
     }
 }
 
-/// What one judged amendment contributes: the routing facts and the text pair.
+/// What one judged amendment contributes: the routing facts and the texts
+/// its Δ's refs name.
 pub(super) struct AmendmentSource<'a> {
     pub(super) actor: EntityId,
     pub(super) skill: Option<EntityId>,
-    pub(super) delta_source: DeltaSource,
-    pub(super) artifact: &'a FinalizedProposalText,
+    pub(super) ends: SourceEnds<'a>,
 }
 
-/// Every persisted proposal artifact, addressable by either ref pair a Δ can
-/// name it with.
+/// The texts a Δ's refs name, read through the rows that retain them.
+pub(super) enum SourceEnds<'a> {
+    /// A recorded window: one artifact holds both ends and every change.
+    Recorded(&'a RetainedProposal),
+    /// Two endpoint texts, each read through its own row.
+    Endpoints(String, String),
+}
+
+/// Every persisted proposal row (finalized windows and endpoint-only
+/// imports) with its retained document, by row id.
 pub(super) struct ArtifactIndex {
-    pub(super) records: Vec<FinalizedProposalText>,
-    pub(super) by_refs: BTreeMap<(String, String), usize>,
+    pub(super) records: BTreeMap<EntityId, RetainedProposal>,
 }
 
 impl ArtifactIndex {
-    /// The artifact a Δ's `(proposed_ref, final_ref)` pair names.
-    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<&FinalizedProposalText> {
-        let key = (delta.proposed_ref.clone(), delta.final_ref.clone());
-        self.records.get(*self.by_refs.get(&key)?)
+    /// The texts a Δ's refs name, through the lane it was measured on: a
+    /// recorded-ops Δ's one artifact, or a reconstructed Δ's two ends. A
+    /// field-diff Δ names no text.
+    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<SourceEnds<'_>> {
+        match delta.source {
+            DeltaSource::RecordedOps => {
+                let artifact = delta.proposed_ref.proposal_artifact()?;
+                if delta.final_ref.proposal_artifact() != Some(artifact) {
+                    return None;
+                }
+                self.records
+                    .get(&artifact.entity_id())
+                    .map(SourceEnds::Recorded)
+            }
+            DeltaSource::Reconstructed => Some(SourceEnds::Endpoints(
+                self.end_text(&delta.proposed_ref)?,
+                self.end_text(&delta.final_ref)?,
+            )),
+            DeltaSource::FieldDiff => None,
+        }
+    }
+
+    fn end_text(&self, end: &EndpointRef) -> Option<String> {
+        self.records
+            .get(&end.proposal_artifact()?.entity_id())?
+            .end_text(end)
+            .into_text()
     }
 }
 

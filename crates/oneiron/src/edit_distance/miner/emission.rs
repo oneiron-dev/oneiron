@@ -510,7 +510,7 @@ pub(super) fn preference_value(cluster: &SubstitutionCluster, class: Substitutio
     ])
 }
 
-/// The citation array — trace-or-derivation, in the `skill.edit_cost` shape.
+/// The citation array — trace-or-derivation, the receipts a mined row rests on.
 pub(super) fn receipt_citations(cluster: &SubstitutionCluster) -> Value {
     Value::Array(
         cluster

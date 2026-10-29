@@ -246,8 +246,8 @@ pub fn judge_amendment_verdicts(
     let masses: Vec<f64> = hunks
         .iter()
         .map(|hunk| {
-            crate::edit_distance::delta::delta_from_reconstructed(hunk.before, hunk.after)
-                .ops_summary
+            crate::edit_distance::myers::myers_line_diff(hunk.before, hunk.after)
+                .ops
                 .edit_mass()
         })
         .collect();
@@ -310,6 +310,7 @@ fn persist_amendment_split(
         scope: normalized_scope(&evidence.scope)?.to_owned(),
         evidence_receipts: vec![receipt_id.to_owned()],
         d_norm: delta.d_norm,
+        engine_ver: delta.engine_ver.clone(),
         at: evidence.at,
         hunks: hunks
             .iter()
@@ -349,6 +350,7 @@ fn persist_amendment_split(
         scope: judgment.scope.clone(),
         evidence_receipts: judgment.evidence_receipts.clone(),
         d_norm: judgment.d_norm,
+        engine_ver: judgment.engine_ver.clone(),
         at: judgment.at,
         proposal: None,
         attempt,
@@ -554,6 +556,7 @@ fn judgment_from_row(
         scope: row.scope,
         evidence_receipts: row.evidence_receipts,
         d_norm: row.d_norm,
+        engine_ver: row.engine_ver,
         at: row.at,
         hunks,
     };

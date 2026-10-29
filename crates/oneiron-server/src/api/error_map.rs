@@ -167,6 +167,15 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Restart policy review from the current diff and read frontier."],
         ),
+        // FIX 10011: the owner's model pin stands and no offered seat
+        // serves it; no other model is put in its place.
+        ErrorKind::ModelPinUnavailable => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("model_pin_unavailable".to_owned()),
+            },
+            ["Offer a seat for the pinned model, or clear or change the owner's model pin."],
+        ),
         // A refusal that names its bound answers as the facade does (FIX
         // 4618): the message is the whole answer.
         ErrorKind::Refused => ApiError::new(

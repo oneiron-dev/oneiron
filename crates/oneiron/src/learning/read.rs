@@ -15,7 +15,7 @@ use crate::learning_setting::{self, LEARNING_BORROWED_PRIOR_RUNS};
 use super::cell::{LearningCell, TypeRef};
 use super::estimate::{Estimate, OwnTally, Prior, PriorOrigin};
 use super::evidence::{CELL, cells_for_subject_in_txn};
-use super::prior::cell_prior_in_txn;
+use super::prior::{cell_prior_in_txn, prior_for_cell_in_txn};
 use super::project::{
     StoredEstimateClaim, active_heads_in_txn, measured_tally_in_txn, window_in_txn,
 };
@@ -117,9 +117,10 @@ pub(crate) fn measured_outcomes_in_txn(
 /// Reads `cell` with backoff. `type_parents` is the cell's task-type chain
 /// from its parent up to the root, as the type tree reports it.
 ///
-/// Order: the cell's own head; an explicitly stored prior (an executor swap,
-/// a hub import, a fork); then borrowing at this executor from each parent
-/// type, then any type; then the same at any executor; else the shipped prior.
+/// Order: the cell's own head; a setting's owner seed or an explicitly stored
+/// prior (an executor swap, a hub import, a fork); then borrowing at this
+/// executor from each parent type, then any type; then the same at any
+/// executor; else a setting's catalog seed or the shipped prior.
 /// A project's cell borrows in its own scope first, then from the vault's
 /// same question by that order: its head, its stored prior, its parents.
 ///
@@ -155,16 +156,23 @@ pub(crate) fn read_learning_in_txn(
     }
     let window = window_in_txn(vault, txn)?;
     let digest = cell.digest();
-    let registered = CELL.get(&vault.store, txn, &digest)?;
-    if let Some(row) = &registered {
-        let prior = cell_prior_in_txn(vault, txn, row, &digest)?;
-        if prior.origin != PriorOrigin::Shipped {
-            return Ok(LearningRead {
-                estimate: Estimate::from_prior(prior, row.of.clone(), window),
-                own: false,
-                borrowed_from: None,
-            });
+    // An absent cell reads in its predicate's default form, from the same
+    // prior a registered one would (FIX 9888): an owner seed before any
+    // borrowing, a catalog seed at the end. Nothing is registered to read it.
+    let (form, of) = match CELL.get(&vault.store, txn, &digest)? {
+        Some(row) => (row.form, row.of),
+        None => {
+            let form = default_form(cell);
+            (form, cell.predicate.default_of(form).to_owned())
         }
+    };
+    let prior = prior_for_cell_in_txn(vault, txn, cell, form, &of, &digest)?;
+    if prior.origin != PriorOrigin::Shipped {
+        return Ok(LearningRead {
+            estimate: Estimate::from_prior(prior, of, window),
+            own: false,
+            borrowed_from: None,
+        });
     }
 
     let cap =
@@ -226,16 +234,6 @@ pub(crate) fn read_learning_in_txn(
         }
     }
 
-    let (prior, of) = match &registered {
-        Some(row) => (cell_prior_in_txn(vault, txn, row, &digest)?, row.of.clone()),
-        None => {
-            let form = default_form(cell);
-            (
-                Prior::shipped(form),
-                cell.predicate.default_of(form).to_owned(),
-            )
-        }
-    };
     Ok(LearningRead {
         estimate: Estimate::from_prior(prior, of, window),
         own: false,

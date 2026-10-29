@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4259 declarations.
+// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4261 declarations.
 // Replies: 1088 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
@@ -2065,7 +2065,9 @@ declare namespace Sdk {
   type LearningSettingMode = "seed" | "pin";
   type LearningSettingScope = "vault" | "goal" | "project" | "task_type";
   type LearningChoiceValue = { model: string } | { width: number } | { pattern: string } | { budget: number };
-  type LearningSettingRowView = { key: string; mode: LearningSettingMode; scope: LearningSettingScope; goal?: string | null; project?: string | null; task_type?: string | null; value?: number | null; choice?: LearningChoiceValue | null; weight_runs?: number | null; by: string; at: number; why: string };
+  type LearnedChoiceValueView = { choice: LearningChoiceValue; runs: number; share: number };
+  type LearnedChoiceView = { values: LearnedChoiceValueView[]; own_runs: number; origin: PriorOrigin };
+  type LearningSettingRowView = { key: string; mode: LearningSettingMode; scope: LearningSettingScope; goal?: string | null; project?: string | null; task_type?: string | null; value?: number | null; choice?: LearningChoiceValue | null; weight_runs?: number | null; by: string; at: number; why: string; learned?: LearnedChoiceView | null };
   type LearningSettingsView = { catalog: LearningSettingSpecView[]; rows: LearningSettingRowView[] };
   type LearningSettingPut = { key: string; mode: LearningSettingMode; value?: number | null; choice?: LearningChoiceValue | null; weight_runs?: number | null; why: string; goal?: string | null; project?: string | null; task_type?: string | null };
   type LearningSettingClear = { key: string; mode: LearningSettingMode; goal?: string | null; project?: string | null; task_type?: string | null };
@@ -3052,16 +3054,16 @@ declare namespace Sdk {
   type AttributionLabel = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
   type ProposalHunkVerdict = { verdict: AttributionLabel; confidence?: number; note?: string | null };
   type ProposalShareClaim = { class: AttributionLabel; share: number };
-  type ProposalDeltaSettleRequest = { proposed_text: string; replacements: ProposalReplacement[]; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; source_turn_ref?: EntityId | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number; hunk_verdicts?: ProposalHunkVerdict[] | null; shares?: ProposalShareClaim[] | null };
+  type ProposalDeltaSettleRequest = { proposed_text: string; replacements: ProposalReplacement[]; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; artifact_ref?: EntityId | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number; hunk_verdicts?: ProposalHunkVerdict[] | null; shares?: ProposalShareClaim[] | null };
   type OpsSummaryView = { ins: number; del: number; kept: number; moved: number; approx: boolean };
   type AmendmentDeltaView = { proposed_ref: string; final_ref: string; source: string; d_norm: number; ops_summary: OpsSummaryView; engine_ver: string };
   type SettledHunkView = { before: string; after: string; edit_mass: number; actor?: EntityId | null; trust?: string | null };
   type AmendmentShareView = { class: AttributionLabel; share: number; subject?: EntityId | null };
-  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; at: number };
-  type ProposalDeltaSettlement = { receipt_id: string; artifact_ref: EntityId; proposed_text: string; final_text: string; delta: AmendmentDeltaView; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] };
+  type AmendmentJudgmentView = { receipt_id: string; split: AmendmentShareView[]; scope: string; evidence_receipts: string[]; d_norm: number; engine_ver: string; at: number };
+  type ProposalDeltaSettlement = { receipt_id: string; artifact_ref?: EntityId | null; proposed_text: string; final_text: string; delta?: AmendmentDeltaView | null; hunks: SettledHunkView[]; judgment?: AmendmentJudgmentView | null; edit_cost_claims: EntityId[]; reliability_heads: EntityId[]; lessons: EntityId[] };
   type ProposalDeltaReadRequest = { receipt_id: string; artifact_ref?: EntityId | null };
-  type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text: string; after_text: string; lamport: number; timestamp: number };
-  type ProposalArtifactView = { artifact_ref: EntityId; proposed_text: string; final_text: string; source_turn_ref?: EntityId | null; spans: ProposalOpSpanView[] };
+  type ProposalOpSpanView = { actor?: EntityId | null; trust: string; before_text?: string | null; after_text?: string | null; lamport: number; timestamp: number };
+  type ProposalArtifactView = { artifact_ref: EntityId; proposed_text?: string | null; final_text?: string | null; source_turn_ref?: EntityId | null; spans: ProposalOpSpanView[] };
   type AmendmentEvidenceView = { receipt_id: string; actor: EntityId; skill?: EntityId | null; attempt_receipt?: string | null; scope: string; cause?: ProposalAmendmentCause | null; followed_skill?: boolean | null; skill_covered_step?: boolean | null; at: number };
   type PreferenceProposalView = { receipt_id: string; scope: string; evidence_receipts: string[]; share: number; at: number };
   type UnclearNoteView = { reason: string; leaning?: AttributionLabel | null; confidence: number; share: number; note?: string | null };
@@ -6994,7 +6996,7 @@ declare const vault: Sdk.VaultHost & {
       proposals(input: Sdk.AttributionListRequest): Promise<Sdk.AttributionProposalsView | StoredResult>;
       /** The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows. */
       read(input: Sdk.ProposalDeltaReadRequest): Promise<Sdk.ProposalDeltaRead | StoredResult>;
-      /** The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer. */
+      /** The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer. */
       settle(input: Sdk.ProposalDeltaSettleRequest): Promise<Sdk.ProposalDeltaSettlement | StoredResult>;
     };
     /** Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills. */

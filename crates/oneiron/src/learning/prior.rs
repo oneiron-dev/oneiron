@@ -76,61 +76,67 @@ pub(crate) fn capture_borrowed_prior_in_txn(
     PRIOR.put(&vault.store, wtxn, &digest, &read.estimate.prior)
 }
 
-/// The prior in force for a registered cell.
-///
-/// A `learning.setting` cell starts from the owner's seed for its scope when
-/// one is set (its project's, its type's, else the vault's),
-/// then from a stored prior, then from the catalog seed at the shipped
-/// weight. Every other cell starts from its stored prior, else the shipped
-/// default of its form.
+/// The prior in force for a registered cell: [`prior_for_cell_in_txn`] over
+/// its registration.
 pub(crate) fn cell_prior_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &CellRow,
     digest: &[u8; 32],
 ) -> Result<Prior> {
-    if row.cell.predicate == LearningPredicate::Setting
-        && let Some(spec) = row
-            .cell
+    prior_for_cell_in_txn(vault, txn, &row.cell, row.form, &row.of, digest)
+}
+
+/// The prior in force for `cell`, read in `form` with `of` its category,
+/// whether or not it is registered (FIX 9888): nothing is written to read it.
+///
+/// A `learning.setting` cell starts from the owner's seed for its scope when
+/// one is set (its project's goal's, its project's, its type's, else the
+/// vault's), then from a stored prior, then from the catalog seed at the
+/// shipped weight. Every other cell starts from its stored prior, else the
+/// shipped default of its form.
+pub(crate) fn prior_for_cell_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+    form: EstimateForm,
+    of: &str,
+    digest: &[u8; 32],
+) -> Result<Prior> {
+    let spec = match cell.predicate {
+        LearningPredicate::Setting => cell
             .setting_key
             .as_deref()
-            .and_then(learning_setting::setting_spec)
-        && let Some((value, weight_runs)) = learning_setting::owner_seed_in_txn(
-            &vault.store,
-            txn,
-            spec,
-            row.cell.subject,
-            row.cell.type_ref.as_ref(),
-        )?
+            .and_then(learning_setting::setting_spec),
+        _ => None,
+    };
+    if let Some(spec) = spec
+        && let Some((value, weight_runs)) =
+            learning_setting::owner_seed_in_txn(vault, txn, spec, cell)?
     {
         return Ok(Prior {
             origin: PriorOrigin::Seed,
-            value: point_value(row, value),
+            value: point_value(form, of, value),
             weight_runs,
             from: Some(format!("setting row {}", spec.key)),
         });
     }
     if let Some(prior) = PRIOR.get(&vault.store, txn, digest)?
-        && prior.value.form() == row.form
+        && prior.value.form() == form
     {
         return Ok(prior);
     }
-    if row.cell.predicate == LearningPredicate::Setting
-        && let Some(spec) = row
-            .cell
-            .setting_key
-            .as_deref()
-            .and_then(learning_setting::setting_spec)
-    {
-        return Ok(shipped_setting_prior(vault, txn, row, spec)?);
+    match spec {
+        Some(spec) => shipped_setting_prior(vault, txn, form, of, spec),
+        None => Ok(Prior::shipped(form)),
     }
-    Ok(Prior::shipped(row.form))
 }
 
 fn shipped_setting_prior(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    row: &CellRow,
+    form: EstimateForm,
+    of: &str,
     spec: &SettingSpec,
 ) -> Result<Prior> {
     let weight_runs = learning_setting::setting_value_in_txn(
@@ -140,18 +146,18 @@ fn shipped_setting_prior(
     )?;
     Ok(Prior {
         origin: PriorOrigin::Shipped,
-        value: point_value(row, spec.seed),
+        value: point_value(form, of, spec.seed),
         weight_runs,
         from: Some(format!("catalog {}", spec.key)),
     })
 }
 
-/// A point value in the cell's form: a mean with no spread, or one count of
-/// the cell's `of` category.
-fn point_value(row: &CellRow, value: f64) -> EstimateValue {
-    match row.form {
+/// A point value in `form`: a mean with no spread, or one count of the
+/// `of` category.
+fn point_value(form: EstimateForm, of: &str, value: f64) -> EstimateValue {
+    match form {
         EstimateForm::Counts => EstimateValue::Counts {
-            counts: std::iter::once((row.of.clone(), 1.0)).collect(),
+            counts: std::iter::once((of.to_owned(), 1.0)).collect(),
         },
         EstimateForm::Beta => EstimateValue::Beta {
             alpha: value.clamp(1e-6, 1.0 - 1e-6),
