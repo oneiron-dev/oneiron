@@ -3,6 +3,9 @@
 //! writer opens after them for the writes they decided, and only when no
 //! commit landed in between.
 
+use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::Vault;
@@ -19,7 +22,69 @@ const READ_PHASE_BACKOFF_MS: u64 = 50;
 const READ_PHASE_BACKOFF_JITTER_MS: u32 = 150;
 
 /// How long a trigger waits deferred before its pass reads in its writer.
-pub(crate) const READ_PHASE_STARVATION_SECS: u64 = 60;
+const READ_PHASE_STARVATION_SECS: u64 = 60;
+
+/// How long a deferred trigger's stamp stays with no word from its pass: a
+/// receipt that ended outside its executor never clears its own.
+const DEFERRAL_STAMP_KEPT_SECS: u64 = 10 * READ_PHASE_STARVATION_SECS;
+
+/// One vault's read-phase state, in memory only: how many passes read in
+/// their writer after stale reads, and when each deferred trigger first
+/// deferred. A restart forgets both, which only postpones a fallback.
+#[derive(Default)]
+pub(crate) struct ReadPhases {
+    one_writer_reads: AtomicU64,
+    deferred_since: Mutex<BTreeMap<[u8; 32], u64>>,
+}
+
+impl ReadPhases {
+    /// What `trigger`'s pass does when every guarded try goes stale at
+    /// `now`: it reads in one writer once the trigger first deferred
+    /// [`READ_PHASE_STARVATION_SECS`] or more ago, and defers before that.
+    pub(crate) fn on_stale(&self, trigger: &[u8; 32], now: u64) -> OnStale {
+        let stamps = self
+            .deferred_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match stamps.get(trigger) {
+            Some(since) if now.saturating_sub(*since) >= READ_PHASE_STARVATION_SECS => {
+                OnStale::OneWriter
+            }
+            _ => OnStale::Defer,
+        }
+    }
+
+    /// Stamps `trigger`'s first deferral at `now`, and forgets the stamps no
+    /// pass has come back to for [`DEFERRAL_STAMP_KEPT_SECS`].
+    pub(crate) fn deferred(&self, trigger: [u8; 32], now: u64) {
+        let mut stamps = self
+            .deferred_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        stamps.retain(|_, since| now.saturating_sub(*since) < DEFERRAL_STAMP_KEPT_SECS);
+        stamps.entry(trigger).or_insert(now);
+    }
+
+    /// Forgets `trigger`'s stamp: its pass ended any way but deferred.
+    pub(crate) fn settled(&self, trigger: &[u8; 32]) {
+        self.deferred_since
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(trigger);
+    }
+}
+
+impl Vault {
+    /// How many Dreamer passes read in their writer after their guarded
+    /// reads went stale, since this vault opened (FIX 11568).
+    #[must_use]
+    pub fn dreamer_one_writer_reads(&self) -> u64 {
+        self.active_wakes
+            .read_phases
+            .one_writer_reads
+            .load(Ordering::Relaxed)
+    }
+}
 
 /// What stops a read phase before its write: the host's pause or a stop
 /// raised on the pass's cancellation. A read phase holds no writer, so the
@@ -110,6 +175,11 @@ pub(crate) fn read_then_write<R, T>(
                 stale,
                 "a Dreamer pass read in its writer after stale reads"
             );
+            vault
+                .active_wakes
+                .read_phases
+                .one_writer_reads
+                .fetch_add(1, Ordering::Relaxed);
             break vault.with_write_txn(|txn| match read(txn)? {
                 Some(reads) => write(txn, reads).map(ReadWrite::Written),
                 None => Ok(ReadWrite::Stopped),

@@ -19,7 +19,7 @@ use super::driver::{DREAMER_CANCELLED_PARK_REASON, DREAMER_PAUSED_PARK_REASON};
 use super::policy::{
     WakePolicyTrigger, WakeRecipe, take_wake_recipe_input_in_txn, wake_policy_input_covers,
 };
-use super::read_phase::{OnStale, READ_PHASE_STARVATION_SECS, ReadWrite, WakeStop};
+use super::read_phase::{OnStale, ReadWrite, WakeStop};
 use super::scheduling::WakeTurnSubject;
 use super::types::{DreamerAttemptExecution, WakeAttemptContext, WakeTrigger};
 
@@ -84,14 +84,22 @@ fn continuous(
         return Ok(None);
     }
     let stop = WakeStop::new(ctx.cancel);
-    // The receipt's queue time is its attempt row's creation, in seconds.
-    let on_stale =
-        if now.saturating_sub(attempt.status.attempt.created_at) >= READ_PHASE_STARVATION_SECS {
-            OnStale::OneWriter
-        } else {
-            OnStale::Defer
-        };
-    match vault.wake_dreamer_on_turn_until(WakeTurnSubject::Vault, now, stop, on_stale)? {
+    // A retry may run as a new attempt row; its trigger is its input.
+    let input = attempt.status.payload.input.as_str().unwrap_or_default();
+    let trigger_key = *blake3::hash(input.as_bytes()).as_bytes();
+    let phases = &vault.active_wakes.read_phases;
+    let woke = vault.wake_dreamer_on_turn_until(
+        WakeTurnSubject::Vault,
+        now,
+        stop,
+        phases.on_stale(&trigger_key, now),
+    );
+    if matches!(woke, Ok(ReadWrite::Deferred)) {
+        phases.deferred(trigger_key, now);
+    } else {
+        phases.settled(&trigger_key);
+    }
+    match woke? {
         ReadWrite::Written(_) => {}
         ReadWrite::Stopped => {
             let (reason, cause) = if ctx.cancel.is_some_and(WakeCancellation::is_paused) {
