@@ -97,6 +97,23 @@ struct MemoryRead {
     producers: Vec<oneiron::EntityId>,
 }
 
+/// The host's per-image pick, only for a reader taking images with a
+/// non-empty task. No task keeps full-image behavior (L13 s30, 02:16).
+fn image_pick<'a>(
+    server: &'a SyncServer,
+    actor: &McpResolvedActor,
+    image_input: bool,
+    view: Option<View>,
+    task: Option<&str>,
+) -> Option<oneiron::memory::ImagePick<'a>> {
+    let task = task.filter(|task| {
+        image_input && !matches!(view, Some(View::Standard)) && !task.trim().is_empty()
+    })?;
+    server
+        .decision_host()
+        .image_pick(actor.actor_ref, task.to_owned())
+}
+
 fn execute_read(
     server: &SyncServer,
     args: &McpVerbToolArgs,
@@ -160,7 +177,17 @@ fn execute_read(
         VaultReadMethod::Hydrate => {
             let request: oneiron::code_run::vault_read::CoreHydrateRequest = request(body)?;
             let full = request.view.unwrap_or(View::Full) == View::Full;
-            let response = adapter.hydrate(request).map_err(native_error)?;
+            let pick = image_pick(
+                server,
+                actor,
+                request.image_input,
+                request.view,
+                request.task.as_deref(),
+            );
+            let response = adapter
+                .with_image_pick(pick)
+                .hydrate(request)
+                .map_err(native_error)?;
             observe_hydrate(&response, full, &mut served)?;
             encode(response)?
         }
@@ -168,7 +195,17 @@ fn execute_read(
             let request: oneiron::code_run::vault_read::CoreBatchShortIdHydrateRequest =
                 request(body)?;
             let full = request.view.unwrap_or(View::Full) == View::Full;
-            let response = adapter.hydrate_many(request).map_err(native_error)?;
+            let pick = image_pick(
+                server,
+                actor,
+                request.image_input,
+                request.view,
+                request.task.as_deref(),
+            );
+            let response = adapter
+                .with_image_pick(pick)
+                .hydrate_many(request)
+                .map_err(native_error)?;
             for item in &response.results {
                 if let Some(response) = &item.result {
                     observe_hydrate(response, full, &mut served)?;
