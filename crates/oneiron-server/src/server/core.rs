@@ -84,7 +84,9 @@ pub struct SyncServer {
     /// Process-local session component for lifecycle job debounce keys.
     pub(super) lifecycle_session_id: u64,
     /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
-    pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
+    /// Held only to insert or remove a key, never across an await, so a
+    /// job's guard ends it when dropped ([`super::lifecycle::LifecycleJob`]).
+    pub(super) lifecycle_in_flight: std::sync::Mutex<HashSet<LifecycleJobKey>>,
     /// Housekeeping passes in flight, scheduled or asked for by the owner.
     pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
     /// Server configuration.
