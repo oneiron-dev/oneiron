@@ -358,7 +358,7 @@ async fn supervise(
             Arc::new(now_ms),
         )?;
         let (push, _wake, hints) =
-            PushTick::channel(settings.idle_floor_secs.saturating_mul(1_000));
+            PushTick::channel(lifecycle.idle_floor_secs()?.saturating_mul(1_000));
         // The wake policy (ARCH-0026 #wake) reads its rows on each tick and
         // arms one quiet timer; a due recipe lands as a durable receipt the
         // deadline lane then drives.
@@ -795,6 +795,22 @@ impl PassExecutorFactory for ObservedFactory {
 
     fn actor(&self) -> Option<WriteActor> {
         Some(self.actor)
+    }
+
+    /// A driver wave cut's fan-out AUTO ruling on this server's decision host
+    /// (FIX 8599), on the ruling budget its served waves use; none until the
+    /// server staffs it.
+    fn wave_fanout_decisions<R, G>(&self, principal: oneiron::EntityId, rule: G) -> R
+    where
+        G: FnOnce(Option<&oneiron::fanout_auto::FanoutDecisions<'_>>) -> R,
+    {
+        let Some(host) = self.decisions.get() else {
+            return rule(None);
+        };
+        let deadline = oneiron::retrieval_depth::RetrievalDeadline::after(
+            crate::decision_host::WAVE_FANOUT_BUDGET,
+        );
+        rule(Some(&host.wave_fanout_decisions(principal, &deadline)))
     }
 
     /// The Coach's skill optimizer (OF-214), once serve has bound the server
