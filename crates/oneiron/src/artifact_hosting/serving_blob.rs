@@ -25,7 +25,7 @@ use crate::side_table::{self, Named, SideTable};
 
 /// A replica's descriptor of one published blob version. Key: id16
 /// (artifact) + u64be (version).
-const SERVING_BLOBS: SideTable<(EntityId, u64), ServingBlobDescriptor, Named> =
+pub(super) const SERVING_BLOBS: SideTable<(EntityId, u64), ServingBlobDescriptor, Named> =
     SideTable::new(&side_table::ARTIFACT_SERVING_BLOB);
 
 /// What serving one blob version reads, and nothing else: every field is

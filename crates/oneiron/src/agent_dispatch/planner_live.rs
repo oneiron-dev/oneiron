@@ -446,11 +446,11 @@ impl AgentDispatcher<'_> {
             }
         }
 
-        // Every team receipt, read once before the snapshot below (its read
-        // opens its own) and folded at one evaluation time (FIX 9568).
-        let outcomes = WidthOutcomes::read(self.vault, at, !patterns.is_empty())?;
         // The tree in force and every measured read: one snapshot.
         let txn = self.vault.store.env.read_txn()?;
+        // Every team receipt, read once in the planner's own snapshot and
+        // folded at one evaluation time (FIX 9568).
+        let outcomes = WidthOutcomes::read_in_txn(self.vault, &txn, at, !patterns.is_empty())?;
         let tree = load_team_type_tree_in_txn(self.vault, &txn, project)?;
         tree.validate_current_ref(&need.type_ref)
             .map_err(|_| invalid("spawn type stamp is not in the tree in force"))?;
