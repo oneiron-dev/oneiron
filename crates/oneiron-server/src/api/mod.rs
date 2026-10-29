@@ -93,7 +93,6 @@ mod conversation_transcript;
 mod conversations;
 mod core;
 mod courtesy_delete;
-use self::courtesy_delete as cooperative_deletion;
 mod discover;
 mod entity;
 mod error_map;
