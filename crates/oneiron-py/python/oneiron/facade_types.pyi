@@ -11000,7 +11000,7 @@ DisclosureCeilingSet = TypedDict("DisclosureCeilingSet", {"connection": str, "cl
 class RevealAsksRequest(TypedDict):
     pending: NotRequired[bool]
     limit: NotRequired[int | None]
-RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None]})
+RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None], "cause": NotRequired[str | None], "scope": NotRequired[str | None]})
 class RevealAskView(TypedDict):
     receipt: RevealReceipt
     state: str
@@ -11025,7 +11025,7 @@ class RevealPending(TypedDict):
     reveal: str
 class RevealWaitRequest(TypedDict):
     reveal: str
-RevealDecision = Literal["pending", "granted", "denied", "expired"]
+RevealDecision = Literal["pending", "granted", "denied", "expired", "unavailable"]
 class RevealWaitAnswer(TypedDict):
     decision: RevealDecision
     value: NotRequired[str | None]
