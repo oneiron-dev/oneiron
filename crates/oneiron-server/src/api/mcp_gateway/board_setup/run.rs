@@ -5,17 +5,21 @@
 use super::*;
 
 /// A pumped run's CURRENT board (OF-533): [`mcp_current_board`] for the run's
-/// agent, which holds no MCP credential. Its host door binds no session or
-/// room turn, so it renders no SCRATCHPAD and no ROOM (FIX 2340, 1051). Its rows are read under the agent's
-/// own lane on this device, its epoch and STREAM state are keyed on the
-/// run's own connection, and nothing is narrowed: the agent reads its board
-/// as a vault-wide connector of its own would: MEMORIES pins the policy
-/// manifest's rows its lane reads (FIX 2646). Its hook rows are those of
-/// the blocks [`run_hook_pins`] keeps.
+/// agent, which holds no MCP credential. It binds no room turn, so it renders
+/// no ROOM (FIX 1051). Its SCRATCHPAD is the live pad of `session`, the
+/// session the run's host origin binds (FIX 2340): a pumped run's host door
+/// binds none, so its board renders no pad, and a live run's board doors
+/// bind the session the attached agent's own request names. Its rows are
+/// read under the agent's own lane on this device, its epoch and STREAM
+/// state are keyed on the run's own connection, and nothing is narrowed: the
+/// agent reads its board as a vault-wide connector of its own would:
+/// MEMORIES pins the policy manifest's rows its lane reads (FIX 2646). Its
+/// hook rows are those of the blocks [`run_hook_pins`] keeps.
 pub(crate) async fn run_current_board(
     server: &Arc<SyncServer>,
     actor: oneiron::WriteActor,
     connection: &oneiron::context_board::StreamConnectionId,
+    session: Option<&str>,
 ) -> Result<McpBoardState, McpGatewayError> {
     let read = run_lane(server, actor)?;
     let packs = run_visible_pack_inventory(server, &read)?;
@@ -24,7 +28,7 @@ pub(crate) async fn run_current_board(
     let mut rows = Vec::new();
     let pins = run_hook_pins(server, &read)?;
     let (mut sections, omissions, hooks) =
-        run_board_sections(server, actor, &read, &packs, &pins, &mut rows)?;
+        run_board_sections(server, actor, &read, &packs, &pins, session, &mut rows)?;
     rows.extend(crate::device_local::changed_line_rows(&changes));
     rows.extend(crate::device_local::changed_line_rows(&board));
     sections.push(
@@ -149,7 +153,7 @@ pub(super) fn run_lane_reads(
 
 /// [`mcp_board_sections`] for a pumped run's agent: VERBS, WORLDS, the
 /// MEMORIES the policy manifest and its hook `pins` reach, TASKS with its
-/// people and children, PACKS
+/// people and children, the SCRATCHPAD of the run's bound `session`, PACKS
 /// and the packs' own sections. `pins` tag the TASKS rows they name and pin
 /// their other rows into MEMORIES, as on a connector's board.
 pub(super) fn run_board_sections(
@@ -158,6 +162,7 @@ pub(super) fn run_board_sections(
     read: &oneiron::claim::ScopedRead<'_>,
     packs: &[(String, String)],
     pins: &[oneiron::context_board::HookPin],
+    session: Option<&str>,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<
     (
@@ -261,6 +266,7 @@ pub(super) fn run_board_sections(
         hooks.receipt = Some(memories.receipt);
     }
     sections.push(tasks_section);
+    sections.extend(run_scratchpad_section(server, actor, session, served));
     sections.push(
         oneiron::context_board::BoardSection::new(
             "PACKS".to_owned(),
@@ -293,6 +299,38 @@ pub(super) fn run_board_sections(
         &oneiron::context_board::PeopleView::new(&people, &resident),
     ));
     Ok((sections, omissions, hooks))
+}
+
+/// SCRATCHPAD (FIX 2340): the live pad of `session`, the session the run's
+/// host origin binds, read as the run's agent itself on this device, as the
+/// MCP and HTTP boards serve an agent's. No bound session, an actor that is
+/// not an agent, or a session with no live pad renders none: no pad is made
+/// and no session is picked in its place.
+fn run_scratchpad_section(
+    server: &SyncServer,
+    actor: oneiron::WriteActor,
+    session: Option<&str>,
+    served: &mut Vec<oneiron::EntityId>,
+) -> Option<oneiron::context_board::BoardSection> {
+    let session = session?;
+    if actor.actor_class() != oneiron::EdgeActorClass::Agent {
+        return None;
+    }
+    let memory = server
+        .vault
+        .memory(actor.entity_ref(), actor.actor_class())
+        .at(oneiron::claim::CallerLocality::OnDevice);
+    match memory.scratchpad_board_section(session) {
+        Ok(Some(board)) => {
+            served.push(board.pad);
+            Some(board.section)
+        }
+        Ok(None) => None,
+        Err(error) => {
+            tracing::debug!(code = %error.code, "run board scratchpad omitted");
+            None
+        }
+    }
 }
 
 /// [`mcp_pack_sections`] under the agent's own lane.
