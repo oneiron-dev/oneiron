@@ -359,6 +359,26 @@ pub(super) fn drop_witness_in_txn(
     Ok(())
 }
 
+/// A re-delivered capture's refresh of the binding an ended job dropped
+/// (FIX 10717), in the row's own scope only: witness and digest stand again.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn refresh_witness_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    caller: &SavedBrowserCaller,
+) -> Result<()> {
+    let Some(witness) = caller.witness.clone() else { return Ok(()); };
+    let Some(mut kept) = AUTHORITY.get(&vault.store, wtxn, id)? else { return Ok(()); };
+    if kept.scope != caller.scope { return Ok(()); }
+    kept.witness_digest = caller.witness_digest;
+    kept.witness = Some(witness);
+    AUTHORITY.put(vault, wtxn, id, &kept)
+}
+
 /// Erasing `actor` from the solved-run index (CUA E8a): each evidence it
 /// was captured under loses its source authority and its group ref, so no
 /// work is induced or admitted for it; its claims go with their own erase.
