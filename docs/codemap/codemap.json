@@ -1417,13 +1417,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/spend_handoff.rs",
      "purpose": "FIX 5661 seam (L09's spend tree, Engine-approved 10-20 11:5x): a home move carries each free-time cycle's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -26712,7 +26712,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/free_time/handoff/actor_content.rs",
+     "purpose": "FIX 8875 stage 2: the free-time rows a home move carries, split into content-free facts and each actor's…",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/free_time/handoff/cycle_rows.rs",
@@ -68511,13 +68521,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/home_handoff.rs",
      "purpose": "The old home's end of a home handoff on the residence RPC lane (FIX 5661 C2a)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -69091,6 +69101,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/home_handoff/actor_content.rs",
+     "purpose": "FIX 8875 stage 2: each actor's content a handoff carries, sealed under an erasable key of its own, never…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/home_handoff/arrival.rs",
      "purpose": "FIX 5661 C2b (FIX 6211): the new home's ordering",
      "surface": {
@@ -69124,7 +69144,17 @@
      "path": "src/sync/home_handoff/envelope.rs",
      "purpose": "The sealed handoff and its ack",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/key_transit.rs",
+     "purpose": "FIX 8875 stage 2: the erasable keys a handoff's actor content is sealed under (`super::actor_content`), in…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -69144,7 +69174,7 @@
      "path": "src/sync/home_handoff/mod.rs",
      "purpose": "FIX 5661 C1: the typed home-to-home handoff carrier",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -69184,7 +69214,7 @@
      "path": "src/sync/home_handoff/store.rs",
      "purpose": "The carrier's four side tables and their typed access",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -69194,7 +69224,7 @@
      "path": "src/sync/home_handoff/table.rs",
      "purpose": "The tables a home move carries",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -70067,19 +70097,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FreeTimeArming",
       "HomeHandoffCancel",
+      "HomeHandoffKey",
+      "HomeHandoffSession",
       "HomeHandoffStanding"
      ],
      "path": "src/sync/residence/home_handoff.rs",
      "purpose": "The new home's doors for a home handoff (FIX 5661 C2a): the target end of `residence.home_handoff.status`…",
      "surface": {
       "enum": 2,
-      "fn": 6,
-      "struct": 1
+      "fn": 10,
+      "struct": 3
      }
     },
     {
@@ -82217,7 +82249,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 174,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83043,7 +83075,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 284,
+     "files": 286,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83255,7 +83287,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5569,
+   "source_files": 5572,
    "test_files": 902
   },
   "oneiron-android": {
