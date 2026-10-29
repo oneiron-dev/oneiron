@@ -1,11 +1,14 @@
 //! The OpenAPI schemas of the owner routes handled in [`super`] itself (FIX 11611):
 //! `POST /v1/owner/backups/rehearse`, the five `POST /v1/owner/cleanup*`
-//! writes and the three `POST /v1/owner/imports/*` writes. [`super`] is
-//! already past the file-size bar, so their schema fns live here, beside
-//! the route files' own.
+//! writes, the three `POST /v1/owner/imports/*` writes and `POST
+//! /v1/owner/secret-scan`. [`super`] is already past the file-size bar, so
+//! their schema fns live here, beside the route files' own.
 
-use super::{DecideCleanup, DecideImport, RehearseRequest, RestoreArchived, RevertCleanupRun};
+use super::{
+    DecideCleanup, DecideImport, RehearseRequest, RestoreArchived, RevertCleanupRun, SetSecretScan,
+};
 use crate::owner::{backup, cleanup, imports};
+use oneiron::policy_model::SecretScanReceipt;
 
 /// The OpenAPI schema of `POST /v1/owner/backups/rehearse`'s body (FIX 11611):
 /// [`RehearseRequest`].
@@ -89,4 +92,14 @@ pub(crate) fn import_approved_schema() -> serde_json::Value {
 /// [`imports::ImportDeclined`].
 pub(crate) fn import_declined_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<imports::ImportDeclined>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secret-scan`'s body (FIX 11611): [`SetSecretScan`].
+pub(crate) fn set_secret_scan_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetSecretScan>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secret-scan`'s answer (FIX 11611): [`SecretScanReceipt`].
+pub(crate) fn secret_scan_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SecretScanReceipt>()
 }

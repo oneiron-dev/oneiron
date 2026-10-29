@@ -15,7 +15,7 @@
 //! length (`sealed_spool`, FIX 5674). Each act's surface is audit only: no
 //! route here refuses on where the owner said yes.
 
-mod pending;
+pub(crate) mod pending;
 mod sealed_spool;
 
 use std::sync::Arc;
@@ -55,6 +55,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secrets/rewrap", post(rewrap_secret))
         .route("/secrets/custody", get(custody_view).post(sealed_change))
         .merge(pending::routes())
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/rewrap`'s body (FIX 11611): [`RewrapBody`].
+pub(crate) fn rewrap_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RewrapBody>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/rewrap`'s answer (FIX 11611):
+/// [`secrets::CustodyReply`].
+pub(crate) fn custody_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<secrets::CustodyReply>()
 }
 
 /// The body is read by `RegisterSecret::read`, as rotation's is: the owner
@@ -124,7 +135,7 @@ async fn revoke_secret(
 }
 
 /// `POST /v1/owner/secrets/rewrap`: the installs the owner permits now.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RewrapBody {
     name: String,
