@@ -3228,17 +3228,17 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.models.bindings.accept": { description: "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.bindings.deny": { description: "Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.options": { description: "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "ai.image": { description: "One image out of the host's image model; reference images make it an edit.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.speech": { description: "Speech audio out of text, from the host's speech model.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "ai.image": { description: "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "ai.speech": { description: "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.voices.packs.put": { description: "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.voices.render_consent": { description: "A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.voices.targets.provision": { description: "The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.voices.targets.evict": { description: "A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.voices.inspect": { description: "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.voices.lineage": { description: "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "ai.transcribe": { description: "Text out of speech audio, from the host's transcription model.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.embed": { description: "One embedding vector per input text, from the host's embedding model.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.video": { description: "Starts a video render as a provider job and answers with its ticket.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "ai.transcribe": { description: "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "ai.embed": { description: "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "ai.video": { description: "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.video.poll": { description: "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.video.cancel": { description: "Stops a video job at its provider.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.verdict": { description: "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -6465,15 +6465,15 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       anonymous_chat: (input: Facade.AnonymousChatRequest, options?: O): FacadeReturns<"ai.anonymous_chat">[K] => invoke("ai.anonymous_chat", input, options, newInvocation()),
       /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
       options: (input: Facade.AiOptionsRequest, options?: O): FacadeReturns<"ai.options">[K] => invoke("ai.options", input, options, newInvocation()),
-      /** One image out of the host's image model; reference images make it an edit. */
+      /** One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. */
       image: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.image">[K] => invoke("ai.image", input, options, newInvocation()),
-      /** Speech audio out of text, from the host's speech model. */
+      /** Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. */
       speech: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.speech">[K] => invoke("ai.speech", input, options, newInvocation()),
-      /** Text out of speech audio, from the host's transcription model. */
+      /** Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. */
       transcribe: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.transcribe">[K] => invoke("ai.transcribe", input, options, newInvocation()),
-      /** One embedding vector per input text, from the host's embedding model. */
+      /** One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. */
       embed: (input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.embed">[K] => invoke("ai.embed", input, options, newInvocation()),
-      /** Starts a video render as a provider job and answers with its ticket. */
+      /** Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. */
       video: Object.assign((input: Facade.AiCallRequest, options?: O): FacadeReturns<"ai.video">[K] => invoke("ai.video", input, options, newInvocation()), {
         /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
         poll: (input: Facade.AiVideoJobRequest, options?: O): FacadeReturns<"ai.video.poll">[K] => invoke("ai.video.poll", input, options, newInvocation()),

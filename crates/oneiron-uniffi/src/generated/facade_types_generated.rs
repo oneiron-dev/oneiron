@@ -50182,6 +50182,12 @@ pub struct AiCallRequest {
     pub params: Option<std::collections::HashMap<String, crate::WireJson>>,
     #[serde(rename = "voice", default, skip_serializing_if = "Option::is_none")]
     pub voice: Option<AiVoice>,
+    #[serde(
+        rename = "idempotency_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotency_key: Option<String>,
 }
 
 /// `oneiron_model::llm::media::response::MediaUsage`.

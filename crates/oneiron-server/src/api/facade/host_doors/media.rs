@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::llm::media::{AiOperation, MediaRequest, Modality};
+use oneiron::llm::media::{AiOperation, MediaReplayKey, MediaRequest, Modality};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
@@ -119,8 +119,21 @@ pub(crate) async fn ai_media_as_owner(
         Some(AiVoice::Bank { voice_id, .. }) => voice_owner(server, voice_id),
         Some(AiVoice::Stock { .. }) | None => Some(Vec::new()),
     };
+    let key = input.idempotency_key.clone();
     let (request, voices) = prepare(server, operation, input)?;
-    rendered(server, operation, request, voices, None, sources).await
+    let replay = owner_replay(key, &request);
+    rendered(server, operation, request, voices, None, sources, replay).await
+}
+
+/// The partition an owner's own keyed media call is kept in (FIX 2962):
+/// every door that reaches these calls is the vault owner's.
+const OWNER_REPLAY_PARTITION: &str = "owner";
+
+/// The replay key an owner's call sent as `key` for `request` (FIX 2962);
+/// none without a key, or with an empty one.
+fn owner_replay(key: Option<String>, request: &MediaRequest) -> Option<MediaReplayKey> {
+    let key = key.filter(|key| !key.is_empty())?;
+    MediaReplayKey::caller(OWNER_REPLAY_PARTITION.to_owned(), key, request).ok()
 }
 
 /// `ai.speech` for a pumped agent run (FIX 3194): prepared as the owner's
@@ -132,7 +145,7 @@ pub(crate) async fn ai_speech_for_run(
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
     let (request, voices) = prepare(server, AiOperation::Speech, input)?;
-    rendered(server, AiOperation::Speech, request, voices, Some(run), None).await
+    rendered(server, AiOperation::Speech, request, voices, Some(run), None, None).await
 }
 
 /// `ai.image`: one image out; reference images make it an edit. Beside it,
@@ -233,13 +246,16 @@ pub(crate) async fn ai_video_as_owner(
     input: AiCallRequest,
     actor: Option<EntityId>,
 ) -> MemoryResult<AiVideoTicket> {
+    let key = input.idempotency_key.clone();
     let (request, _) = prepare(server, AiOperation::Video, input)?;
+    // A repeat under its key answers its first's ticket (FIX 2962).
+    let replay = owner_replay(key, &request);
     let ticket = server
         .ai
         .model_runtime()
         .media()
         // Its parts come inline: it reads no row.
-        .submit(request, None, actor, Some(Vec::new()))
+        .submit_replayed(request, None, actor, Some(Vec::new()), replay)
         .await
         .map_err(|error| failure(AiOperation::Video, &error))?;
     Ok(AiVideoTicket {

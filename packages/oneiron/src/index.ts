@@ -3315,15 +3315,15 @@ export class Oneiron {
     anonymous_chat: (input: Facade.AnonymousChatRequest): Facade.AnonymousChatResponse => this.#call(() => this.#client.aiAnonymousChat(input) as Facade.AnonymousChatResponse),
     /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
-    /** One image out of the host's image model; reference images make it an edit. */
+    /** One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. */
     image: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiImage(input) as Facade.AiAnswer),
-    /** Speech audio out of text, from the host's speech model. */
+    /** Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. */
     speech: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiSpeech(input) as Facade.AiAnswer),
-    /** Text out of speech audio, from the host's transcription model. */
+    /** Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. */
     transcribe: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiTranscribe(input) as Facade.AiAnswer),
-    /** One embedding vector per input text, from the host's embedding model. */
+    /** One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. */
     embed: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiEmbed(input) as Facade.AiAnswer),
-    /** Starts a video render as a provider job and answers with its ticket. */
+    /** Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. */
     video: Object.assign((input: Facade.AiCallRequest): Facade.AiVideoTicket => this.#call(() => this.#client.aiVideo(input) as Facade.AiVideoTicket), {
       /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
       poll: (input: Facade.AiVideoJobRequest): Facade.AiVideoJob => this.#call(() => this.#client.aiVideoPoll(input) as Facade.AiVideoJob),

@@ -12985,9 +12985,11 @@ impl AgentVerb {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
             }
             Self::AiImage => {
-                "One image out of the host's image model; reference images make it an edit."
+                "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."
             }
-            Self::AiSpeech => "Speech audio out of text, from the host's speech model.",
+            Self::AiSpeech => {
+                "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."
+            }
             Self::VaultVoicesPacksPut => {
                 "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."
             }
@@ -13006,11 +13008,15 @@ impl AgentVerb {
             Self::VaultVoicesLineage => {
                 "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."
             }
-            Self::AiTranscribe => "Text out of speech audio, from the host's transcription model.",
-            Self::AiEmbed => {
-                "One embedding vector per input text, from the host's embedding model."
+            Self::AiTranscribe => {
+                "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."
             }
-            Self::AiVideo => "Starts a video render as a provider job and answers with its ticket.",
+            Self::AiEmbed => {
+                "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."
+            }
+            Self::AiVideo => {
+                "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."
+            }
             Self::AiVideoPoll => {
                 "Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."
             }

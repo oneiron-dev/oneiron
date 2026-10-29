@@ -5777,16 +5777,16 @@ class Oneiron:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
         def image(self, spec):
-            """One image out of the host's image model; reference images make it an edit."""
+            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."""
             return json.loads(_translate(lambda: self._client.ai_image(json.dumps(spec))))
         def speech(self, spec):
-            """Speech audio out of text, from the host's speech model."""
+            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."""
             return json.loads(_translate(lambda: self._client.ai_speech(json.dumps(spec))))
         def transcribe(self, spec):
-            """Text out of speech audio, from the host's transcription model."""
+            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."""
             return json.loads(_translate(lambda: self._client.ai_transcribe(json.dumps(spec))))
         def embed(self, spec):
-            """One embedding vector per input text, from the host's embedding model."""
+            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."""
             return json.loads(_translate(lambda: self._client.ai_embed(json.dumps(spec))))
         @property
         def video(self) -> "Oneiron._AiVideoVerbs":
@@ -5879,7 +5879,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def __call__(self, spec):
-            """Starts a video render as a provider job and answers with its ticket."""
+            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."""
             return json.loads(_translate(lambda: self._client.ai_video(json.dumps(spec))))
         def poll(self, spec):
             """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""

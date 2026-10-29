@@ -16057,6 +16057,7 @@ class AiCallRequest(TypedDict):
     references: NotRequired[list[AiPart]]
     params: NotRequired[dict[str, Any]]
     voice: NotRequired[AiVoice | None]
+    idempotency_key: NotRequired[str | None]
 class MediaUsage(TypedDict):
     input_tokens: NotRequired[int]
     output_tokens: NotRequired[int]

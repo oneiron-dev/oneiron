@@ -6333,7 +6333,7 @@ export type AiPart = { kind: "text"; text: string } | { kind: "image"; media_typ
 /** `oneiron::verbs::host::AiVoice` */
 export type AiVoice = { kind: "stock"; name: string } | { kind: "bank"; voice_id: string; include_generated?: boolean }
 /** `oneiron::verbs::host::AiCallRequest` */
-export type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null }
+export type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null; idempotency_key?: string | null }
 /** `oneiron_model::llm::media::response::MediaUsage` */
 export type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown }
 /** `oneiron::verbs::host::AiAnswer` */

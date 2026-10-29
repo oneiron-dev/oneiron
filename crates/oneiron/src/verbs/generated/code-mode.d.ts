@@ -3184,7 +3184,7 @@ declare namespace Sdk {
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
   type AiVoice = { kind: "stock"; name: string } | { kind: "bank"; voice_id: string; include_generated?: boolean };
-  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null };
+  type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null; idempotency_key?: string | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
   type VoiceRefOrigin = { kind: "captured"; consent_event_ref: string } | { kind: "designed"; vendor: string } | { kind: "generated" };
@@ -4266,15 +4266,15 @@ declare const ai: {
     /** Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling. */
     completions(input: Sdk.ChatCompletionRequest): Promise<Sdk.ChatCompletionResponse | StoredResult>;
   };
-  /** One embedding vector per input text, from the host's embedding model. */
+  /** One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. */
   embed(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
-  /** One image out of the host's image model; reference images make it an edit. */
+  /** One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. */
   image(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
   options(input: Sdk.AiOptionsRequest): Promise<Sdk.AiOptions | StoredResult>;
   /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
   reply(input: Sdk.AiReplyRequest): Promise<Sdk.AiReply | StoredResult>;
-  /** Speech audio out of text, from the host's speech model. */
+  /** Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. */
   speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   steps: {
     /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain. */
@@ -4296,11 +4296,11 @@ declare const ai: {
     /** Read the one durable terminal of the caller's model stream by key (its ordered ContentParts, usage and finish reason, or its recorded failure) after any restart, without calling a model. */
     terminal(input: Sdk.ModelStreamTerminalRequest): Promise<Sdk.ModelStreamTerminal | StoredResult>;
   };
-  /** Text out of speech audio, from the host's transcription model. */
+  /** Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. */
   transcribe(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
   verdict(input: Sdk.AiVerdictRequest): Promise<Sdk.AiVerdict | StoredResult>;
-  /** Starts a video render as a provider job and answers with its ticket. */
+  /** Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. */
   video: ((input: Sdk.AiCallRequest) => Promise<Sdk.AiVideoTicket | StoredResult>) & {
     /** Stops a video job at its provider. */
     cancel(input: Sdk.AiVideoJobRequest): Promise<Sdk.AiVideoCancelled | StoredResult>;

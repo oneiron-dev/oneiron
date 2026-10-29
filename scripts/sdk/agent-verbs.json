@@ -13693,7 +13693,7 @@
     },
     {
       "name": "ai.image",
-      "description": "One image out of the host's image model; reference images make it an edit.",
+      "description": "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
@@ -13707,7 +13707,7 @@
     },
     {
       "name": "ai.speech",
-      "description": "Speech audio out of text, from the host's speech model.",
+      "description": "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
@@ -13812,7 +13812,7 @@
     },
     {
       "name": "ai.transcribe",
-      "description": "Text out of speech audio, from the host's transcription model.",
+      "description": "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
@@ -13826,7 +13826,7 @@
     },
     {
       "name": "ai.embed",
-      "description": "One embedding vector per input text, from the host's embedding model.",
+      "description": "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
@@ -13840,7 +13840,7 @@
     },
     {
       "name": "ai.video",
-      "description": "Starts a video render as a provider job and answers with its ticket.",
+      "description": "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiVideoTicket",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",

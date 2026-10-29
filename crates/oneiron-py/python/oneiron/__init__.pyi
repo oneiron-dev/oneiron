@@ -3609,13 +3609,13 @@ class Oneiron:
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """One image out of the host's image model; reference images make it an edit."""
+            """One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid."""
         def speech(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """Speech audio out of text, from the host's speech model."""
+            """Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice."""
         def transcribe(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """Text out of speech audio, from the host's transcription model."""
+            """Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid."""
         def embed(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:
-            """One embedding vector per input text, from the host's embedding model."""
+            """One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid."""
         @property
         def video(self) -> "Oneiron._AiVideoVerbs": ...
         def verdict(self, spec: Facade.AiVerdictRequest) -> Facade.AiVerdict:
@@ -3671,7 +3671,7 @@ class Oneiron:
             """Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
-            """Starts a video render as a provider job and answers with its ticket."""
+            """Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job."""
         def poll(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoJob:
             """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
