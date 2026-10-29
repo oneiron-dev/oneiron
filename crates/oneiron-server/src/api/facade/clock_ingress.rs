@@ -1,5 +1,5 @@
-//! A facade or MCP call over a damaged authority clock floor (FIX 11190, FIX
-//! 11201, FIX 11202).
+//! A facade, owner-table or MCP call over a damaged authority clock floor (FIX
+//! 11190, FIX 11201, FIX 11202, FIX 11523).
 //!
 //! A damaged floor, on a handle that holds no anchor, refuses every reading
 //! of the authority clock, so every proof judged against it refuses before a
@@ -57,6 +57,26 @@ const MCP_PATHS: [&str; 2] = ["/mcp", "/mcp/tool-first"];
 /// The header an MCP call's slip rides in, ahead of `Authorization`.
 const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
 
+/// The owner routes that share a facade verb, by full path (FIX 11523):
+/// H1-H4, the four owner doors whose `hooked_row` runs the same row as the
+/// facade. Each classifies as a direct call of its verb, so the owner's
+/// revoke lands over a damaged floor; any other owner route keeps today's
+/// path.
+const OWNER_VERBS: [(&str, &str); 4] = [
+    ("/v1/owner/guests/revoke", "vault.guests.revoke"),
+    ("/v1/owner/support-grants/revoke", "vault.support_grants.revoke"),
+    ("/v1/owner/legal-holds/lift-and-erase", "vault.legal_holds.lift_and_erase"),
+    ("/v1/owner/embedding-spaces/probes/delete", "vault.embedding_spaces.probes.delete"),
+];
+
+/// The facade verb of an owner route in [`OWNER_VERBS`], if it names one.
+fn owner_verb(path: &str) -> Option<&'static str> {
+    OWNER_VERBS
+        .iter()
+        .find(|(route, _)| *route == path)
+        .map(|(_, verb)| *verb)
+}
+
 /// What the binding door decided about a request over a floor that refuses
 /// readings. It rides the request's extensions; only [`classify_request`]
 /// makes one.
@@ -69,10 +89,11 @@ pub(crate) enum ClockIngress {
 }
 
 /// The binding door's decision on `request`: `None` for every request that
-/// is not a facade, action or MCP call, and for every call while this
-/// handle's authority readings hold. Otherwise the call's verb and its own
-/// payload are classified (an MCP `tools/call` by the tool it names and the
-/// input its arguments assemble; an action by the verb-table row its table
+/// is not a facade, action, owner-table or MCP call, and for every call
+/// while this handle's authority readings hold. Otherwise the call's verb
+/// and its own payload are classified (an owner-table route by its row and
+/// its body as sent; an MCP `tools/call` by the tool it names and the input
+/// its arguments assemble; an action by the verb-table row its table
 /// resolves and that row's input from its one argument), with the body read
 /// here and handed back unchanged: a content-encoded body is classified on
 /// a decoded copy, and a body that is not JSON, and a call classified as
@@ -84,7 +105,12 @@ pub(crate) async fn classify_request(
     request: Request,
 ) -> Result<(Request, Option<ClockIngress>), Response> {
     let path = request.uri().path();
-    let verb = path.strip_prefix(FACADE_PREFIX).map(str::to_owned);
+    // An owner route in the table classifies as a direct call of its verb
+    // (FIX 11523); any other owner route is no call.
+    let verb = path
+        .strip_prefix(FACADE_PREFIX)
+        .map(str::to_owned)
+        .or_else(|| owner_verb(path).map(str::to_owned));
     let action = path.strip_prefix(ACTIONS_PREFIX).map(str::to_owned);
     let mcp = MCP_PATHS.contains(&path);
     if (verb.is_none() && action.is_none() && !mcp)
