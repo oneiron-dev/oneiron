@@ -423,13 +423,27 @@ pub(crate) fn restrictive(verb: &str, args: &Value) -> Option<&'static Row> {
     }
 }
 
-/// Whether a call of `verb` on the caller's own `args` is a restrictive one
-/// (an erase or a revoke), a polymorphic row's judged on what it carries: the
-/// one classification a transport asks before it admits the call, so its
+/// Whether a call of `verb` on the caller's own `args` is wholly an owner's
+/// restriction-only act, an erase or a revoke and nothing else: the one
+/// classification a transport asks before it admits the call, so its
 /// ingress, owner proof, hooks and door read the restriction-only clock as
-/// this boundary's run does (FIX 11201).
-pub fn is_restrictive_call(vault: &Vault, verb: &str, args: &Value) -> bool {
-    restrictive(verb, args).is_some() || payload::restrictive(vault, verb, args).is_some()
+/// this boundary's run does (FIX 11201). A table row the call meets is one,
+/// but a courtesy answer only when it deletes; a polymorphic call only when
+/// every part it writes withdraws or erases ([`payload::wholly_restrictive`]).
+/// A call that also grants, sets or keeps anything is not, whatever the hooks
+/// pin of it.
+///
+/// # Errors
+/// A read the classification needs (the kind of a pending shared act)
+/// failing: no answer is guessed from it.
+pub fn restriction_only_call(vault: &Vault, verb: &str, args: &Value) -> crate::Result<bool> {
+    if verb == "vault.courtesy_delete.answer" {
+        return Ok(args.get("choice").and_then(Value::as_str) == Some("delete"));
+    }
+    if restrictive(verb, args).is_some() {
+        return Ok(true);
+    }
+    payload::wholly_restrictive(vault, verb, args)
 }
 
 /// A restrictive call's landing: its verb, its pinned fields and its row's
