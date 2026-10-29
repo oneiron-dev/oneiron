@@ -59,8 +59,8 @@ pub(crate) const LIVE_RUN_UNAVAILABLE: &str = "live_run_unavailable";
 /// The run's lease moved on.
 pub(crate) const LIVE_RUN_STALE: &str = "live_run_stale";
 /// The run stayed mid-entry or mid-action for the whole guard wait. Its
-/// own code, apart from `execute_code`'s `code_run_busy` (FIX 3456), so
-/// each door states only its own hints.
+/// own code, apart from `execute_code`'s codes (FIX 3456), so each door
+/// states only its own hints.
 pub(crate) const LIVE_RUN_BUSY: &str = "live_run_busy";
 /// Another credential is attached to this lease generation, and the attach
 /// did not ask to rebind.
@@ -414,6 +414,24 @@ impl LiveRuns {
         caller: LiveRunCaller,
     ) -> Result<ResolvedLiveRun, LiveRunRefusal> {
         self.attached_for(run, caller, None)
+    }
+
+    /// The exact leased try run `run`'s runner registered, and the model it
+    /// executes on, while that is still the run's registered entry and its
+    /// lease still holds, read live (CUA E10): the lease a site skill loads
+    /// under. None for a run with no registered entry, or whose lease moved
+    /// on. It takes no guard: the call that loads may hold the run's.
+    pub(crate) fn skill_lease(
+        &self,
+        vault: &Vault,
+        run: EntityId,
+    ) -> oneiron::Result<Option<(AttemptRecord, String)>> {
+        let Some(entry) = self.get(run) else {
+            return Ok(None);
+        };
+        Ok(self
+            .holds(vault, &entry)?
+            .then(|| (entry.leased.clone(), entry.executor.clone())))
     }
 
     /// The run `run` for `caller`, its own agent, while `caller`'s credential

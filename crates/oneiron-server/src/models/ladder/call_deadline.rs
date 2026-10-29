@@ -132,6 +132,19 @@ impl OfferLadder {
             .await
     }
 
+    /// [`Self::generate_served`], asking `may_send` as
+    /// [`Self::generate_while`] does, on the vault's longest wait.
+    pub async fn generate_served_while(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        selector: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+    ) -> LlmResult<(LlmResponse, ModelId)> {
+        self.generate_served_by(run, request, selector, may_send, self.host_wait())
+            .await
+    }
+
     /// [`Self::generate_exact_within`] on `deadline` (FIX 7792): only a
     /// ladder that is one picked model takes the call.
     pub async fn generate_exact_by(

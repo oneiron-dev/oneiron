@@ -419,22 +419,17 @@ impl ReaderTxn<'_, '_> {
                 .unwrap_or(result);
             self.delete_index(&due_key(set.until_ms, set.id))?;
             // The reply carries the settled children's type feedback as it
-            // stands, beside the reduction the row keeps (FIX 8277).
+            // stands, beside the reduction the row keeps, read on this
+            // transaction's route (FIX 8277, FIX 10389).
             let mut reply = result.clone();
-            if let Some(vault) = self.vault {
-                let settled: Vec<EntityId> = jobs
-                    .iter()
-                    .filter_map(|(task, job)| {
-                        job.as_ref().filter(|_| !reply.pending.contains(task))
-                    })
-                    .map(|job| job.run)
-                    .collect();
-                reply.program_steps = super::type_diagnostics::runs_program_steps_in_txn(
-                    &vault.store,
-                    &*self.txn,
-                    &settled,
-                );
-            }
+            let settled: Vec<EntityId> = jobs
+                .iter()
+                .filter_map(|(task, job)| job.as_ref().filter(|_| !reply.pending.contains(task)))
+                .map(|job| job.run)
+                .collect();
+            reply.program_steps = super::type_diagnostics::runs_program_steps_in_txn(
+                &self.read, &*self.txn, &settled,
+            );
             self.deliver_settled_task_wait(set.id, &reply, now_ms)?;
             return Ok(result);
         }

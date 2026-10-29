@@ -55,9 +55,16 @@ pub(crate) use self::replay_capsule::{
     fork_response, fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
     step_replay_capsules_in_txn, store_fork_response,
 };
+pub(crate) use self::replay_capsule::{
+    drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
+    release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
+    settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
+};
 pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn};
 pub(crate) use self::response_owners::stamp_response_owner_in_txn;
-pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
+pub(crate) use self::routing::{
+    ExecutorStorage, FeedbackRoute, SessionInstanceBind, require_facet_placement_in, unplaceable,
+};
 pub(crate) use self::spawn_erase::erase_spawn_targets_in_txn;
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;
@@ -72,6 +79,7 @@ pub(crate) use self::speech_identity::{
 };
 pub(crate) use self::type_diagnostics::{
     StepKey, StoredStepFeedback, erase_type_diagnostics_actor_in_txn, runs_program_steps,
+    session_type_diagnostics_row,
 };
 pub use self::wait_delivery::{
     WaitDeliveries, WaitDelivery, WaitKey, bind_wait_trap, park_and_bind_wait_trap,

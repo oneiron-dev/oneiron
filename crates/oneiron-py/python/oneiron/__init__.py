@@ -397,7 +397,7 @@ class Oneiron:
     def graph_fs(self) -> "Oneiron._GraphFsVerbs":
         return Oneiron._GraphFsVerbs(self._client)
     def execute_code(self, spec):
-        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
+        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
         return json.loads(_translate(lambda: self._client.execute_code(json.dumps(spec))))
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
         """Read-only ask routing or attributed partial answers."""
@@ -1712,7 +1712,7 @@ class Oneiron:
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
             return json.loads(_translate(lambda: self._client.vault_inbox_lens(json.dumps(spec))))
         def groups(self, spec):
-            """Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."""
+            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
             return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
     class _VaultInboxConcernsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -3671,7 +3671,7 @@ class Oneiron:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
             return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
         def type_diagnostics(self, spec):
-            """Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again."""
+            """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
             return json.loads(_translate(lambda: self._client.vault_code_type_diagnostics(json.dumps(spec))))
         @property
         def waits(self) -> "Oneiron._VaultCodeWaitsVerbs":
@@ -5553,7 +5553,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def execute(self, spec):
-            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
     class _SelfConsentVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -5621,10 +5621,10 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def open(self, spec):
-            """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded."""
             return json.loads(_translate(lambda: self._client.self_browser_open(json.dumps(spec))))
         def observe(self, spec):
-            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle."""
+            """Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles."""
             return json.loads(_translate(lambda: self._client.self_browser_observe(json.dumps(spec))))
         def find(self, spec):
             """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
@@ -5678,13 +5678,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def find(self, spec):
-            """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
+            """The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed."""
             return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
         def draft(self, spec):
             """Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."""
             return json.loads(_translate(lambda: self._client.self_browser_library_draft(json.dumps(spec))))
         def propose(self, spec):
-            """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
+            """Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires."""
             return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))
         def retire(self, spec):
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""

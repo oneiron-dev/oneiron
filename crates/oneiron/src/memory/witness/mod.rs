@@ -5,6 +5,7 @@
 mod assertions;
 mod base;
 mod codec;
+mod linked;
 mod program;
 mod reply_assertions;
 mod session;

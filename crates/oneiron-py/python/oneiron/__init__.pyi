@@ -445,7 +445,7 @@ class Oneiron:
     @property
     def graph_fs(self) -> "Oneiron._GraphFsVerbs": ...
     def execute_code(self, spec: Facade.ForeignCodeRunRequest) -> Facade.ForeignCodeRunResult:
-        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
+        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."""
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
     @overload
@@ -1222,8 +1222,8 @@ class Oneiron:
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
         def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
-        def groups(self, spec: Facade.InboxRunGroupsRequest) -> list[Facade.InboxGroup]:
-            """Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."""
+        def groups(self, spec: Facade.InboxRunGroupsRequest) -> Facade.InboxGroupPage:
+            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
     class _VaultInboxConcernsVerbs:
         def review(self, spec: Facade.EmptyRequest | None = None) -> Facade.DreamerAttemptRef:
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
@@ -2365,7 +2365,7 @@ class Oneiron:
         def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
         def type_diagnostics(self, spec: Facade.CodeRunTypeDiagnosticsRequest) -> Facade.ProgramStepFeedbackRelease | None:
-            """Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again."""
+            """Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."""
         @property
         def waits(self) -> "Oneiron._VaultCodeWaitsVerbs": ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
@@ -3475,7 +3475,7 @@ class Oneiron:
             """Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
-            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer."""
     class _SelfConsentVerbs:
         @property
         def graduation(self) -> "Oneiron._SelfConsentGraduationVerbs": ...
@@ -3512,9 +3512,9 @@ class Oneiron:
             """Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."""
     class _SelfBrowserVerbs:
         def open(self, spec: Facade.LiveRunRequest[Facade.OpenInput]) -> Facade.BrowserObservationPage:
-            """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
+            """Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded."""
         def observe(self, spec: Facade.LiveRunRequest[Facade.ObserveInput]) -> Facade.BrowserObservationPage:
-            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle."""
+            """Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles."""
         def find(self, spec: Facade.LiveRunRequest[Facade.FindInput]) -> Facade.BrowserFindOutput:
             """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
         def click(self, spec: Facade.LiveRunRequest[Facade.ClickInput]) -> Facade.BrowserObservationPage:
@@ -3549,11 +3549,11 @@ class Oneiron:
             """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
     class _SelfBrowserLibraryVerbs:
         def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.BrowserLibraryFindOutput:
-            """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
+            """The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed."""
         def draft(self, spec: Facade.LiveRunRequest[Facade.DraftInput]) -> Facade.BrowserLibraryDraftOutput:
             """Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."""
         def propose(self, spec: Facade.LiveRunRequest[Facade.ProposeInput]) -> Facade.BrowserLibraryProposeOutput:
-            """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
+            """Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires."""
         def retire(self, spec: Facade.LiveRunRequest[Facade.LibraryRetireInput]) -> Facade.BrowserLibraryRetireOutput:
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
         def retired(self, spec: Facade.LiveRunRequest[Facade.LibraryRetiredInput]) -> Facade.BrowserLibraryRetiredOutput:
