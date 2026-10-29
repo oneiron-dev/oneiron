@@ -51,6 +51,25 @@ pub(in crate::recovery::checkpoint) fn scrub_in_txn(
     Ok(())
 }
 
+/// On a side copy, once it opened: every catalog route bound to a pack
+/// source its live source hard-erased halts, as that erase halted the
+/// source's own (FIX 6034, 6086). The copy's install and route rows came
+/// from its image or archive, so they still name the erased source. An id
+/// that is no pack source, and that no install names, halts nothing.
+pub(in crate::recovery::checkpoint) fn halt_erased_pack_routes(
+    vault: &crate::Vault,
+    erased: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if erased.is_empty() {
+        return Ok(());
+    }
+    vault.with_write_txn_grouped(|txn| {
+        erased
+            .iter()
+            .try_for_each(|id| vault.halt_erased_pack_source_routes_in_txn(txn, id))
+    })
+}
+
 impl SideRestoreSource<'_> {
     /// Every id this source has hard-erased, read now, so a side copy's
     /// sweep takes what it erased after the image's cut too (FIX 4753). A
