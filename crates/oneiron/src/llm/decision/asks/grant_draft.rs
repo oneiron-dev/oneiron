@@ -115,7 +115,7 @@ impl Vault {
             &effect,
             &bound,
             OwnerReasonConfirm {
-                reason: Some(reason),
+                reason: Some(reason.as_str()),
                 notice_text,
             },
         )?;
