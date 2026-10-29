@@ -147,6 +147,7 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.policy.update`
 - `vault.export`
 - `self.credential.attenuate`
+- `self.actor`
 - `vault.scope.position`
 - `vault.scope.ceiling`
 - `vault.export.scoped`

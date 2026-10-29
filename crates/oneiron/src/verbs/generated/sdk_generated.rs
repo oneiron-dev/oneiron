@@ -776,6 +776,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.actor",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
                 "vault.scope.position",
                 crate::code_run::vault_read::request_schema::<crate::memory::RecordPositionRequest>(
                 ),
@@ -6961,6 +6966,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.retrieval.policy.admit",
     "vault.retrieval.policy.update",
     "self.credential.attenuate",
+    "self.actor",
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
@@ -8002,6 +8008,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.credential.attenuate" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CredentialAttenuated,
         >(),
+        "self.actor" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SelfActorRefs>()
+        }
         "vault.scope.position" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::RecordPosition>>,
         >(),
@@ -11348,6 +11357,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.credential.attenuate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.actor" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19145,6 +19161,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::CredentialAttenuationRequest =
                 decode(value.clone())?;
         }
+        "self.actor" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
         "vault.scope.position" => {
             let _input: crate::memory::RecordPositionRequest = decode(value.clone())?;
         }
@@ -23074,6 +23093,7 @@ pub fn invoke(
         }
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
         "self.credential.attenuate" => encode(self_credential_attenuate(memory, decode(value)?)?),
+        "self.actor" => encode(self_actor(memory, decode(value)?)?),
         "vault.scope.position" => encode(vault_scope_position(memory, decode(value)?)?),
         "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
         "vault.export.scoped" => encode(vault_export_scoped(memory, decode(value)?)?),
@@ -26595,6 +26615,12 @@ pub fn self_credential_attenuate(
     input: crate::task_verb::sdk::CredentialAttenuationRequest,
 ) -> MemoryResult<crate::task_verb::sdk::CredentialAttenuated> {
     crate::task_verb::sdk::host_only(memory, "self.credential.attenuate", &input)
+}
+pub fn self_actor(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::SelfActorRefs> {
+    crate::task_verb::sdk::host_only(memory, "self.actor", &input)
 }
 pub fn vault_scope_position(
     memory: &Memory<'_>,

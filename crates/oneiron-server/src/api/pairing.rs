@@ -170,6 +170,7 @@ pub(super) async fn oauth_exchange(
         token: slip.to_token().map_err(|_| ApiError::unauthorized())?,
         pin: None,
         home: None,
+        re_paired: false,
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
     }))
 }
@@ -185,6 +186,12 @@ pub(super) struct RedeemLink {
     /// link that adds a machine.
     #[serde(default)]
     machine: Option<MachineEnrolment>,
+    /// The joining machine's install-key signature over this redemption
+    /// (`oneiron::authority::machine_possession_transcript`), hex: with it a
+    /// machine this home already holds pairs again under its own identity
+    /// and class, credential only (FIX 8636). Read only beside `machine`.
+    #[serde(default)]
+    machine_possession: Option<String>,
 }
 /// [`MachineEnrolmentRequest`] on the wire: hex ids and keys, base64 for the
 /// 1600-byte encryption key.
@@ -235,6 +242,10 @@ pub(super) struct Paired {
     /// device dials (`oneiron device enrol`).
     #[serde(skip_serializing_if = "Option::is_none")]
     home: Option<PairedHome>,
+    /// The link paired again a machine this home already holds, credential
+    /// only (FIX 8636): its identity and profile stand as they were.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    re_paired: bool,
     /// Whom the paired slip may message (FIX 3899): the reach the owner set
     /// on the link, `vault` when he set none.
     comm: oneiron::authority::CommReach,
@@ -282,14 +293,22 @@ pub(super) async fn redeem(
         .as_ref()
         .map(MachineEnrolment::request)
         .transpose()?;
+    let possession = request
+        .machine_possession
+        .as_deref()
+        .map(parse_signature)
+        .transpose()?
+        .map(|proof| <[u8; 64]>::try_from(proof).map_err(|_| ApiError::unauthorized()))
+        .transpose()?;
     let redeemed = with_issuer(&server, |issuer| {
-        server.vault().redeem_pairing_link_pinned(
+        server.vault().redeem_pairing_link_with_possession(
             issuer,
             &request.code,
             &request.holder_ref,
             binding_key,
             &signature,
             machine.as_ref(),
+            possession.as_ref(),
         )
     })?;
     let slip = &redeemed.slip;
@@ -324,6 +343,7 @@ pub(super) async fn redeem(
         token,
         pin: redeemed.pin,
         home,
+        re_paired: redeemed.re_paired,
         comm: oneiron::authority::effective_slip_comm(redeemed.slip.claims.comm),
     }))
 }
