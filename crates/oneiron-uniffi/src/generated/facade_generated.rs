@@ -1981,8 +1981,8 @@ export_facade! {
     let output = client.vault_off_record_rooms_save_from_here(&input)?;
     crate::codec::lift_record("vault.off_record.rooms.save_from_here", &output)
 };
-"vault.off_record.rooms.export" => fn vault_off_record_rooms_export(&self, input: OffRecordRoomRequest) -> OffRecordRoomExport = |client| {
-    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.export", input)?;
+"vault.off_record.rooms.export" => fn vault_off_record_rooms_export(&self, input: OffRecordRoomExportRequest) -> OffRecordRoomExport = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomExportRequest = crate::codec::lower_record("vault.off_record.rooms.export", input)?;
     let output = client.vault_off_record_rooms_export(&input)?;
     crate::codec::lift_record("vault.off_record.rooms.export", &output)
 };

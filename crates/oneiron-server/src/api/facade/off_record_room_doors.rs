@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, WitnessReceipt};
 use oneiron::task_verb::sdk::{
-    OffRecordRoomExport, OffRecordRoomRequest, OffRecordRoomSaved, OffRecordRoomStartRequest,
-    OffRecordRoomView, OffRecordRoomWitnessRequest,
+    OffRecordRoomExport, OffRecordRoomExportRequest, OffRecordRoomRequest, OffRecordRoomSaved,
+    OffRecordRoomStartRequest, OffRecordRoomView, OffRecordRoomWitnessRequest,
 };
 
 use super::FacadeApiError;
@@ -82,7 +82,7 @@ pub(crate) async fn vault_off_record_rooms_save_from_here(
 pub(crate) async fn vault_off_record_rooms_export(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
-    input: OffRecordRoomRequest,
+    input: OffRecordRoomExportRequest,
 ) -> MemoryResult<OffRecordRoomExport> {
     off_record_rooms::room_export(server, auth, input)
         .await

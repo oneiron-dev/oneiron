@@ -756,7 +756,7 @@
     },
     {
       "name": "vault.personas.export",
-      "description": "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent.",
+      "description": "Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent.",
       "input": "crate::persona_snapshot::PersonaSnapshotCopyRequest",
       "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.export\", &input)?",
@@ -771,7 +771,7 @@
     },
     {
       "name": "vault.personas.edit",
-      "description": "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version.",
+      "description": "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out.",
       "input": "crate::persona_snapshot::PersonaSnapshotCopyEditRequest",
       "output": "crate::task_verb::sdk::PersonaSnapshotExportedCopy",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.personas.edit\", &input)?",
@@ -6242,8 +6242,8 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in.",
-      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "description": "A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in.",
+      "input": "crate::task_verb::sdk::OffRecordRoomExportRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
       "host_door": true,

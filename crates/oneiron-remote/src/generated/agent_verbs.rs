@@ -8549,7 +8549,7 @@ impl OneironClient {
     }
     pub fn vault_off_record_rooms_export(
         &self,
-        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+        input: &oneiron::task_verb::sdk::OffRecordRoomExportRequest,
     ) -> Result<oneiron::task_verb::sdk::OffRecordRoomExport, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
