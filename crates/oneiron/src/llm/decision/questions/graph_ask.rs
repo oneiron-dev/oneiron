@@ -481,6 +481,7 @@ fn answer_unit(
                     unit,
                     source.hash,
                     source.entity_type,
+                    None,
                     &decision,
                 );
                 return Ok(UnitOutcome::Declined(Box::new(decision)));
