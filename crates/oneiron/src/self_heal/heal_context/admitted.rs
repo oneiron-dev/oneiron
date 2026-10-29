@@ -342,6 +342,11 @@ impl Gather<'_> {
         attempt: &str,
         entry: &mut Map<String, Value>,
     ) {
+        if !admit.owner {
+            self.unavailable(format!("kept_requests:{attempt}"), UNPROVABLE);
+            entry.insert("kept_requests".into(), Value::Array(Vec::new()));
+            return;
+        }
         let steps = match step_sources_in(self.vault, admit.txn, id) {
             Ok(steps) => steps,
             Err(error) => {
