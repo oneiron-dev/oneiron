@@ -396,6 +396,13 @@ async fn durable_step(
             settle_failed_usage(guard, &admission.lease, &failed_usage);
             // FIX 2146: a fresh call that failed counts once.
             ctx.vault.count_failed_step(ctx, step_hash, Some(&error));
+            // A provider limit's stated reset stays on the call's end row: the
+            // Retry park the refusal makes comes due then (FIX 11226).
+            if let DurableStepError::Llm(source) = &error
+                && let Some(reset) = super::retry::stated_reset_at(source)
+            {
+                observed.refused_until(reset);
+            }
             return Err(match error {
                 DurableStepError::Llm(LlmError::Fatal(source))
                     if matches!(request.envelope.class, CallClass::BestEffort) =>
