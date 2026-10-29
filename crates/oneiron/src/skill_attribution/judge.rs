@@ -53,6 +53,10 @@ pub(crate) struct JudgeTrace {
     pub(crate) source: AuditAnswerSource,
     pub(crate) answers: Vec<RawAnswer>,
     pub(crate) revision: Option<String>,
+    /// The answering model's identity (`provider/name@revision`) when one
+    /// model gave every answer; `revision` adds the provider's own version.
+    /// An executor is compared with this, never with the revision.
+    pub(crate) model: Option<String>,
     /// The receipt of each decision that gave `answers`, in order; empty when
     /// no ladder was asked (FIX 447).
     #[allow(dead_code, reason = "the amendment judgment row keeps them (FIX 447)")]
@@ -159,7 +163,7 @@ impl AttributionDecisions<'_> {
             Reversibility::ReversibleRead,
             &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
-        let revision = revision(&decisions);
+        let (model, revision) = answering_provider(&decisions).unzip();
         let trace = JudgeTrace {
             source: AuditAnswerSource::Model,
             answers: decisions
@@ -173,6 +177,7 @@ impl AttributionDecisions<'_> {
                 })
                 .collect(),
             revision: revision.clone(),
+            model,
             receipts: decisions
                 .iter()
                 .map(|decision| decision.receipt.clone())
@@ -234,16 +239,22 @@ fn narrow(probability: f64) -> f32 {
     probability as f32
 }
 
-/// The one provider every answer came from, as `model@version`; `None` when
-/// they differ, so the verdicts stay unstamped.
-fn revision(decisions: &[TypedDecision]) -> Option<String> {
+/// The one provider every answer came from: its answering model identity,
+/// and its revision as `model@version`; `None` when they differ, so the
+/// verdicts stay unstamped.
+fn answering_provider(decisions: &[TypedDecision]) -> Option<(String, String)> {
     let mut pins = decisions
         .iter()
         .map(|decision| decision.receipt.providers.last());
     let first = pins.next()??;
     pins.all(|pin| pin == Some(first))
-        .then(|| format!("{}@{}", first.model, first.version))
-        .filter(|revision| revision.len() <= 256)
+        .then(|| {
+            (
+                first.model.clone(),
+                format!("{}@{}", first.model, first.version),
+            )
+        })
+        .filter(|(_, revision)| revision.len() <= 256)
 }
 
 /// The call's bounded state. Each side of each hunk is cut shorter, halving,
@@ -389,6 +400,7 @@ impl AttributionRules {
                 request.regions()
             ],
             revision: revision.clone(),
+            model: None,
             receipts: Vec::new(),
         };
         let attributed = verdict.map(|verdict| Attributed {

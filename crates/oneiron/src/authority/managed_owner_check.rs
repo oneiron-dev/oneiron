@@ -157,6 +157,25 @@ impl Vault {
     }
 }
 
+/// Whether `txn` holds positive evidence that `holder`'s PERSON is gone
+/// for good: its lifecycle state is not Active (merged or split), or its
+/// deletion state reads deleted. An absent row with neither, or any read
+/// error, is not evidence.
+fn attested_owner_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, holder: EntityId) -> bool {
+    let gone = || -> crate::Result<bool> {
+        if vault.entity_lifecycle_state_in_txn(txn, &holder)?
+            != crate::identity_topology::EntityLifecycleState::Active
+        {
+            return Ok(true);
+        }
+        Ok(
+            crate::ports::TombstoneStoreRead::port_deletion_state(&vault.store, txn, &holder)?
+                .deleted,
+        )
+    };
+    gone().unwrap_or(false)
+}
+
 /// Whether `holder`, a managed vault's attested owner, is its live owner at
 /// `txn`'s revision: the host's fresh proof for him, revalidated in `txn`
 /// as every owner door revalidates its proof in its acting transaction,
@@ -165,28 +184,38 @@ impl Vault {
 /// # Errors
 ///
 /// [`ManagedOwnerCheckError::OwnerNotLive`] when the host or `txn` finds
-/// he is not the live owner; [`ManagedOwnerCheckError::Unavailable`] when
-/// either could not judge it.
+/// he is not the live owner, or `txn` holds him merged, split or deleted;
+/// [`ManagedOwnerCheckError::Unavailable`] when either could not judge it.
 pub(crate) fn require_live_managed_owner_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     holder: EntityId,
 ) -> Result<(), ManagedOwnerCheckError> {
-    let check = vault
-        .managed_owner_check
-        .get()
-        .ok_or(ManagedOwnerCheckError::Unavailable)?;
-    let proof = check.require_live(holder)?;
-    // A proof of another open vault judges nothing here.
-    if !proof.belongs_to(vault) {
-        return Err(ManagedOwnerCheckError::Unavailable);
-    }
-    match proof.revalidate_in_txn(vault, txn) {
-        Ok(actor) if actor == holder => Ok(()),
-        Ok(_) => Err(ManagedOwnerCheckError::Unavailable),
-        Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => {
+    let judged = (|| -> Result<(), ManagedOwnerCheckError> {
+        let check = vault
+            .managed_owner_check
+            .get()
+            .ok_or(ManagedOwnerCheckError::Unavailable)?;
+        let proof = check.require_live(holder)?;
+        // A proof of another open vault judges nothing here.
+        if !proof.belongs_to(vault) {
+            return Err(ManagedOwnerCheckError::Unavailable);
+        }
+        match proof.revalidate_in_txn(vault, txn) {
+            Ok(actor) if actor == holder => Ok(()),
+            Ok(_) => Err(ManagedOwnerCheckError::Unavailable),
+            Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => {
+                Err(ManagedOwnerCheckError::OwnerNotLive)
+            }
+            Err(_) => Err(ManagedOwnerCheckError::Unavailable),
+        }
+    })();
+    match judged {
+        Err(ManagedOwnerCheckError::Unavailable)
+            if attested_owner_gone_in_txn(vault, txn, holder) =>
+        {
             Err(ManagedOwnerCheckError::OwnerNotLive)
         }
-        Err(_) => Err(ManagedOwnerCheckError::Unavailable),
+        judged => judged,
     }
 }

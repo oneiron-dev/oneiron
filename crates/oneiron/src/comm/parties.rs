@@ -438,3 +438,51 @@ pub(super) fn reconcile_comm_party_twins(vault: &Vault, now: u64) -> CommResult<
 pub fn resolve_or_create_comm_party(vault: &Vault, party: &str) -> CommResult<EntityId> {
     resolve_or_create_party(vault, party)
 }
+
+/// Resolves an ACTOR entity as a comm counterparty in the caller's write
+/// (ARCH-0056: a publisher is "a normal comm channel with that actor as
+/// counterparty"). An actor is a role, not a kind (`subject_model.rs`): the
+/// party is the actor's own vault-resident PERSON under the actor's id,
+/// provisioned with `display_name` when absent, the way a publisher's pack
+/// hooks provision it. No party key is minted: an actor is not a contact
+/// addressed by key. `None` when the actor is deleted or is not a PERSON.
+pub(crate) fn resolve_actor_party_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    display_name: &str,
+) -> CommResult<Option<EntityId>> {
+    if crate::ports::TombstoneStore::port_tombstone_is_deleted(vault, &*wtxn, &actor)? {
+        return Ok(None);
+    }
+    if let Some(raw) = vault.store.port_entity_record(&*wtxn, &actor)? {
+        return Ok((raw.entity_type == ENTITY_TYPE_PERSON).then_some(actor));
+    }
+    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let body = encode_value(&Value::Map(vec![(
+        Value::from("display_name"),
+        Value::from(display_name),
+    )]))?;
+    apply_ops(
+        &vault.store,
+        &vault.config,
+        &vault.analyzer,
+        wtxn,
+        vec![BatchOp::Put {
+            id: actor,
+            entity_type: ENTITY_TYPE_PERSON,
+            occurred: TimeRange { start: 0, end: 0 },
+            learned_at: mutation_recorded_at,
+            data: body,
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        }],
+        vault
+            .text_index_trusted
+            .load(std::sync::atomic::Ordering::Acquire),
+        false,
+        true,
+    )?;
+    Ok(Some(actor))
+}

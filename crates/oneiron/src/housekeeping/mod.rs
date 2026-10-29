@@ -522,6 +522,8 @@ pub(crate) struct HousekeepingHandle {
 enum Selection {
     Due,
     All,
+    /// One engine sweep now, asked by a support holder (FIX 4407).
+    One(HousekeepingSweep),
 }
 
 /// A sweep a pass will start if its budget allows.
@@ -548,6 +550,16 @@ impl Vault {
     /// now: the owner's "run housekeeping now".
     pub fn housekeeping_all(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_pass(Selection::All, budget)
+    }
+
+    /// Runs the engine sweep `sweep` alone now and reschedules it from now: a
+    /// support holder's repair (FIX 4407), never [`Self::housekeeping_all`].
+    pub(crate) fn housekeeping_one(
+        &self,
+        sweep: HousekeepingSweep,
+        budget: HousekeepingBudget,
+    ) -> Result<HousekeepingReport> {
+        self.housekeeping_pass(Selection::One(sweep), budget)
     }
 
     /// When a vault that is not running must next run a pass, or `None` when
@@ -605,10 +617,15 @@ impl Vault {
         let mut rows: Vec<Option<SweepOutcome>> = vec![None; HousekeepingSweep::ALL.len()];
         let mut due: Vec<Due> = Vec::new();
         for (index, sweep) in HousekeepingSweep::ALL.into_iter().enumerate() {
+            if let Selection::One(asked) = selection
+                && asked != sweep
+            {
+                continue;
+            }
             match sweep.runner() {
                 Runner::Host(reason) => rows[index] = Some(SweepOutcome::HostOnly { reason }),
                 Runner::Engine { every, at_open } => {
-                    if selection == Selection::All || (at_open && !handle.first_pass_done) {
+                    if selection != Selection::Due || (at_open && !handle.first_pass_done) {
                         due.push(Due {
                             at: 0,
                             index,
@@ -652,11 +669,14 @@ impl Vault {
             rows[index] =
                 Some(self.run_scheduled_sweep(sweep, state, every, &deadline, owner_asked));
         }
-        handle.first_pass_done = true;
+        if !matches!(selection, Selection::One(_)) {
+            handle.first_pass_done = true;
+        }
 
         let sweeps = HousekeepingSweep::ALL
             .into_iter()
             .zip(rows)
+            .filter(|(sweep, _)| !matches!(selection, Selection::One(asked) if asked != *sweep))
             .map(|(sweep, outcome)| SweepReport {
                 sweep,
                 outcome: outcome.unwrap_or(SweepOutcome::OutOfBudget),
