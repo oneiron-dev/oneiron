@@ -39,7 +39,7 @@ use super::record::{append_record_in_txn, head_record};
 use super::repo_binding::{ByoaRepoBinding, repo_stale_lease_reason};
 use super::seat::{RunnerSeatPolicy, SeatPassedOver, SeatSpent, SkippedRunnerSeat};
 use super::seat_candidate::runner_seat_candidate;
-use super::seat_quota::seat_quotas_in_txn;
+use super::seat_quota::{seat_quota_id, seat_quotas_in_txn};
 use super::staged_input::{StagedInputPin, carry_staged_input};
 use super::work_usage::captured_usage;
 
@@ -266,6 +266,11 @@ pub enum RunnerWorkOutcome {
 pub(super) struct RunnerWorkHop {
     pub(super) attempt: [u8; 16],
     pub(super) seat: u64,
+    /// The seat's index-free quota identity (FIX 9239).
+    pub(super) quota: [u8; 16],
+    /// The seats the search that made this hop passed over (FIX 9242).
+    #[serde(default)]
+    pub(super) skipped: Vec<SkippedRunnerSeat>,
     pub(super) spent: Option<SeatSpent>,
     pub(super) observed_at: u64,
 }
@@ -297,6 +302,49 @@ pub(super) fn head_hop(
     binding: RunnerWorkBindingId,
 ) -> ByoaResult<Option<RunnerWorkHop>> {
     head_record(vault, rtxn, &binding.0)
+}
+
+/// The current-policy index of `hop`'s quota identity when exactly one seat
+/// has it, else `fallback` (FIX 9239). A removed or duplicated seat never
+/// becomes a new refusal.
+pub(super) fn remap_seat(
+    policy: &RunnerSeatPolicy,
+    hop: &RunnerWorkHop,
+    fallback: usize,
+) -> ByoaResult<usize> {
+    let mut matched = None;
+    for (index, seat) in policy.seats.iter().enumerate() {
+        if seat_quota_id(seat)?.as_bytes() == &hop.quota {
+            if matched.is_some() {
+                return Ok(fallback);
+            }
+            matched = Some(index);
+        }
+    }
+    Ok(matched.unwrap_or(fallback))
+}
+
+/// The seat a capture's own head hop maps to in the current policy. An
+/// unbound capture, a missing or later head, or an ambiguous map keeps the
+/// caller's index, exactly as before FIX 9239.
+pub(super) fn capture_seat_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &RunnerSeatPolicy,
+    receipt: &ByoaTerminalReceipt,
+    fallback: usize,
+) -> ByoaResult<usize> {
+    let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
+        return Ok(fallback);
+    };
+    let binding = RunnerWorkBindingId::from_bytes(work.binding)?;
+    let Some(head) = head_hop(vault, txn, binding)? else {
+        return Ok(fallback);
+    };
+    if head.attempt != *receipt.attempt.id.as_bytes() {
+        return Ok(fallback);
+    }
+    remap_seat(policy, &head, fallback)
 }
 
 /// Appends `hop` to `binding`'s record when its head names `from`: the
@@ -339,6 +387,7 @@ pub(super) fn note_spent_hop_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     receipt: &ByoaTerminalReceipt,
     seat: usize,
+    quota: [u8; 16],
     spent: &SeatSpent,
 ) -> ByoaResult<()> {
     let Some(work) = decode_byoa_record(&receipt.attempt)?.work else {
@@ -352,6 +401,8 @@ pub(super) fn note_spent_hop_in_txn(
         &RunnerWorkHop {
             attempt: *receipt.attempt.id.as_bytes(),
             seat: seat as u64,
+            quota,
+            skipped: Vec::new(),
             spent: Some(spent.clone()),
             observed_at: receipt.attempt.updated_at,
         },
@@ -370,6 +421,8 @@ pub(super) fn note_next_hop_in_txn(
     from: AttemptId,
     attempt: AttemptId,
     seat: usize,
+    quota: [u8; 16],
+    skipped: &[SkippedRunnerSeat],
     now: u64,
 ) -> ByoaResult<()> {
     append_hop_in_txn(
@@ -380,6 +433,8 @@ pub(super) fn note_next_hop_in_txn(
         &RunnerWorkHop {
             attempt: *attempt.as_bytes(),
             seat: seat as u64,
+            quota,
+            skipped: skipped.to_vec(),
             spent: None,
             observed_at: now,
         },
@@ -496,6 +551,7 @@ where
                     connector,
                     task_ref: request.task_ref.map(|task_ref| task_ref.to_hex()),
                     parent_attempt: Some(*request.parent_attempt_id.as_bytes()),
+                    dev_refs: None,
                     run_id: request.run_id,
                     dedupe_key: Some(format!("{RUNNER_WORK_DEDUPE_PREFIX}{}", binding.to_hex())),
                     now: request.now,
@@ -518,6 +574,8 @@ where
                 &RunnerWorkHop {
                     attempt: *attempt.as_bytes(),
                     seat: index as u64,
+                    quota: *seat_quota_id(seat)?.as_bytes(),
+                    skipped: Vec::new(),
                     spent: None,
                     observed_at: request.now,
                 },

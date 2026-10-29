@@ -18,7 +18,7 @@ mod execution_binding;
 mod filters;
 pub mod retrieval_loop;
 mod scoped_channels;
-pub(crate) use types::{CandidateFilter, TurnFold};
+pub(crate) use types::{CandidateFilter, CandidateGate, SnapshotCandidateFilter, TurnFold};
 mod l2_evidence;
 mod media_channel;
 pub mod retrieval_policy;
