@@ -37,14 +37,27 @@ impl PipelineBuilder<'_> {
         )?;
         let corpus = CorpusFilter::new(&self.corpus_scope)?;
         let device_local = self.device_local_worlds(txn)?;
-        let mut filters = corpus.config(self, self.occurred_range, authority_filter);
+        let admission = self.snapshot_admission(txn);
+        let mut filters = corpus.config(self, &admission, self.occurred_range, authority_filter);
         filters.world_active_set = authority.as_ref().map(|authority| &authority.active_set);
         filters.device_local = device_local.as_ref();
         let stale_worlds = crate::federation::stale_stamped_worlds(store, txn)?;
         let subjects: BTreeSet<_> = subjects.iter().copied().collect();
         let mut ids = BTreeSet::new();
-        let mut scanned = 0usize;
         for subject in &subjects {
+            self.answer_checkpoint(Error::IndexOverflow("L2 subject adjacency"))?;
+            let scope = [
+                &[EdgeDirection::In as u8][..],
+                subject.as_bytes(),
+                &[EdgeKind::ClaimOf as u8][..],
+            ]
+            .concat();
+            let mut count = crate::scan_check::ScanCount::start(
+                content,
+                txn,
+                crate::scan_check::EngineScan::EdgePeerRows,
+                &scope,
+            )?;
             for edge in content.port_edges(
                 txn,
                 subject,
@@ -52,25 +65,21 @@ impl PipelineBuilder<'_> {
                 Some(EdgeKind::ClaimOf),
                 None,
             )? {
-                scanned += 1;
-                if scanned > 2048 {
-                    return Err(Error::IndexOverflow("L2 subject adjacency"));
-                }
+                self.answer_checkpoint(Error::IndexOverflow("L2 subject adjacency"))?;
+                count.row();
                 ids.insert(edge?.target);
             }
+            count.defer(content);
         }
         let mut metadata = EntityMetadataCache::default();
         let mut gate = ClaimStatusGateCache::default();
         let mut evidence = Vec::new();
-        let mut evidence_bytes = 0usize;
         for id in ids {
+            self.answer_checkpoint(Error::IndexOverflow("L2 evidence claims"))?;
             let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(content, txn, &id)?
             else {
                 continue;
             };
-            if raw.len() > 256 * 1024 {
-                return Err(Error::IndexOverflow("L2 evidence bytes"));
-            }
             if !pipeline_candidate_matches_filters_and_gate(
                 content,
                 txn,
@@ -113,13 +122,6 @@ impl PipelineBuilder<'_> {
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             ) {
                 continue;
-            }
-            evidence_bytes = evidence_bytes.saturating_add(raw.len());
-            if evidence_bytes > 256 * 1024 {
-                return Err(Error::IndexOverflow("L2 evidence bytes"));
-            }
-            if evidence.len() >= 256 {
-                return Err(Error::IndexOverflow("L2 evidence claims"));
             }
             evidence.push((id, body));
         }

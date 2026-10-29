@@ -35,6 +35,7 @@ impl Vault {
                 Step::Delivered {
                     intent,
                     result: Some(result),
+                    budget_steering,
                     ..
                 },
             ) => match self.cleared_connector_reply(&custody, &pending.name, result) {
@@ -42,11 +43,13 @@ impl Vault {
                     intent,
                     result: Some(result),
                     result_absence: None,
+                    budget_steering,
                 },
                 Err(absence) => Step::Delivered {
                     intent,
                     result: None,
                     result_absence: Some(absence),
+                    budget_steering,
                 },
             },
             (_, step) => step,

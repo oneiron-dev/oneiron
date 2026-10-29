@@ -1706,7 +1706,7 @@
      "surface": {
       "crate-vis": 20,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -2546,7 +2546,7 @@
      "path": "src/attempt_queue/engine/workflow.rs",
      "purpose": "Transactional point-claim and retry lineage reads for ordered host composition",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -2598,13 +2598,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -13814,7 +13814,7 @@
      "path": "src/claim/scoped_read/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 18,
       "fn": 7
      }
     },
@@ -15834,7 +15834,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ClaimOutcome",
@@ -16443,9 +16443,9 @@
      "path": "src/code_run/storage/reader_jobs.rs",
      "purpose": "One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 31,
       "enum": 1,
-      "fn": 11,
+      "fn": 13,
       "struct": 2
      }
     },
@@ -19303,10 +19303,22 @@
      "path": "src/connector_key/events.rs",
      "purpose": "Durable, revocable connector-event subscriptions and atomic wake decisions",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
       "enum": 1,
       "fn": 7,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/events/paced.rs",
+     "purpose": "Connector event wakes a full count-bound budget window paces (FIX 8686)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -19498,7 +19510,8 @@
      "purpose": "Effector budget windows, usage rows and the budget charge facade",
      "surface": {
       "const": 4,
-      "crate-vis": 22,
+      "crate-vis": 23,
+      "fn": 1,
       "re-export": 2,
       "struct": 6
      }
@@ -19518,9 +19531,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/meter/rate_window.rs",
-     "purpose": "Whether a key's exhausted rows only pace its next effect (FIX 8788)",
+     "purpose": "Whether a key's exhausted rows only pace its next effect (FIX 8788, FIX 8686)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19552,6 +19565,16 @@
       "enum": 1,
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/meter/spend_reserve.rs",
+     "purpose": "Spend reserved before a call (FIX 8689)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -19647,10 +19670,12 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CalendarPeriod",
+      "ConnectorSpendBasis",
+      "ConnectorSpendEstimate",
       "EffectorBudget",
       "EffectorBudgetDimension",
       "EffectorBudgetOnExhaust",
@@ -19661,9 +19686,9 @@
      "purpose": "Effector-budget rows: dimension/window/exhaust/reserve enums, EffectorBudget constructors, row and…",
      "surface": {
       "crate-vis": 3,
-      "enum": 5,
+      "enum": 6,
       "fn": 11,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -21502,7 +21527,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/context_pack/builder/assembly.rs",
@@ -21579,7 +21604,7 @@
      "path": "src/context_pack/builder/scoped.rs",
      "purpose": "Candidate narrowing passthrough to the existing retrieval pipeline",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -21600,7 +21625,7 @@
      "path": "src/context_pack/edge_walk.rs",
      "purpose": "Edge loading and multi-hop neighbor expansion during pack assembly",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 6
      }
     },
     {
@@ -23970,6 +23995,7 @@
       "ByoaDispatchOutcome",
       "ByoaDispatchStatus",
       "CliSandboxSpec",
+      "DevRunnerRefs",
       "DispatchByoa",
       "ProtocolAttachKind",
       "ProtocolAttachSpec"
@@ -23981,7 +24007,7 @@
       "crate-vis": 19,
       "enum": 5,
       "fn": 12,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -24083,7 +24109,7 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 1,
       "re-export": 16
      }
@@ -24239,7 +24265,7 @@
      "path": "src/dispatch_byoa/seat_quota.rs",
      "purpose": "What each runner seat's quota last read as (OF-137), kept by the route so a pass picks seats without reading…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -24275,9 +24301,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dispatch_byoa/staged_input/erase.rs",
-     "purpose": "A staged job's artifact erased with its TASK (FIX 7502, 7614)",
+     "purpose": "A staged job's artifact erased with its TASK (FIX 7502, 7614, 7612)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -24339,7 +24365,7 @@
      "path": "src/dispatch_byoa/work_binding.rs",
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 5,
       "fn": 6,
       "struct": 4
@@ -31884,7 +31910,7 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1,
       "fn": 5,
       "struct": 2,
@@ -34610,7 +34636,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ReportDisclosureBasis",
@@ -41475,7 +41501,7 @@
      "path": "src/llm/decision/questions/graph_ask.rs",
      "purpose": "One-off graph judgment: scoped context, injected answerer, and proposed claims",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 7,
       "struct": 7,
@@ -51468,7 +51494,7 @@
      "path": "src/outbound_chokepoint/budget.rs",
      "purpose": "The new-effect admission's budget steps, moved out of `admission.rs` whole: the co-actor's preflight and the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -51620,7 +51646,7 @@
      "path": "src/outbound_consent/connector_call_asks.rs",
      "purpose": "The owner ask a held connector call queues (ONE-2510)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -51770,7 +51796,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorAwaitingInput",
@@ -51849,7 +51875,7 @@
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -52576,7 +52602,7 @@
      "path": "src/pipeline/builder/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 43,
       "struct": 1
      }
@@ -52609,7 +52635,7 @@
      "path": "src/pipeline/builder_effort.rs",
      "purpose": "Shared five-level stage selection for the raw pipeline and memory facade",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -52640,7 +52666,7 @@
      "path": "src/pipeline/corpus_filter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -53155,7 +53181,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "crate-vis": 36,
+      "crate-vis": 38,
       "enum": 5,
       "fn": 15,
       "re-export": 1,
@@ -57992,7 +58018,7 @@
      "path": "src/retrieval_depth/controls.rs",
      "purpose": "Per-request retrieval deadlines: stage boundaries, in-stage checkpoints and the share of the budget the…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 11,
       "struct": 5
      }
@@ -81299,7 +81325,7 @@
     "attempt_queue": {
      "files": 59,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
@@ -81577,7 +81603,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 48,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81614,7 +81640,7 @@
     "context_pack": {
      "files": 25,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out"
     },
@@ -82781,9 +82807,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 114,
+   "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5529,
+   "source_files": 5531,
    "test_files": 902
   },
   "oneiron-android": {
@@ -98552,7 +98578,7 @@
      "path": "src/ai_host/payer_funding.rs",
      "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -116431,6 +116457,7 @@
       "ConnectorSlateRevisionOffersRequest",
       "ConnectorSlateRevisionOffersView",
       "ConnectorSlateView",
+      "ConnectorSpendEstimate",
       "ConnectorToolResult",
       "ConnectorView",
       "ConnectorWitnessReadGrantRequest",
@@ -117202,6 +117229,7 @@
       "GraphFsPlan",
       "GraphFsReference",
       "GraphNode",
+      "GraphQuestionInput",
       "GroundingContext",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
@@ -119816,7 +119844,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1060,
-      "struct": 3242
+      "struct": 3244
      }
     },
     {

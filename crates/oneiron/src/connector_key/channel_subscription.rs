@@ -25,7 +25,9 @@ const SUBSCRIBABLE_CHANNELS: [&str; 2] = [
 ];
 
 /// One agent's standing subscription to a built-in channel's messages.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct ChannelMessageSubscription {
     pub subscription: String,
     pub connector_key: String,
