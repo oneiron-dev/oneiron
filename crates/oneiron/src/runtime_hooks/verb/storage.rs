@@ -336,30 +336,6 @@ impl SessionHookKeep {
             .remove(key);
     }
 
-    /// Saves the call `invocation`'s hook ask paused under `key`, over any
-    /// earlier one: false, saving nothing, once its session is closing or
-    /// gone.
-    pub(super) fn save_ask(
-        &self,
-        vault: &Vault,
-        key: &SessionHookKey,
-        invocation: [u8; 16],
-        ask: SessionVerbAsk,
-    ) -> bool {
-        let paused_at = vault.store.clock.now_recorded_at();
-        self.with_live(vault, key, |kept| {
-            kept.asks.insert(
-                invocation,
-                KeptAsk {
-                    ask,
-                    paused_at,
-                    used_at: None,
-                },
-            );
-        })
-        .is_some()
-    }
-
     /// The call `invocation`'s hook ask paused under `key`, if this process
     /// holds one.
     pub(super) fn ask(&self, key: &SessionHookKey, invocation: [u8; 16]) -> Option<SessionVerbAsk> {

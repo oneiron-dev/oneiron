@@ -19,7 +19,7 @@ pub const APPLIED_GROUP: &str = "dreamer.applied";
 pub const APPLIED_VIEW: &str = "/v1/owner/dreamer/maintenance/applied";
 
 /// The applied writes no digest carried yet, still standing, oldest first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestApplied {
     pub items: Vec<DigestAppliedItem>,
@@ -27,7 +27,7 @@ pub struct DigestApplied {
 }
 
 /// One applied write, as the owner's list names it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestAppliedItem {
     /// The write's target as the revert takes it: a finding's 32 hex, an

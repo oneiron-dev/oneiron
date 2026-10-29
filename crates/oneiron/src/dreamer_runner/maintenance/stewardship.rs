@@ -54,22 +54,24 @@ const DRAFTED: SideTable<EntityId, u64, side_table::Raw> =
 const READ_CHUNK: usize = 256;
 
 /// The owner's keep-in-touch rules, set whole.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StewardshipRules {
     /// The owner who set the rules; a draft speaks in their voice.
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub owner: EntityId,
     pub rules: Vec<StewardshipRule>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StewardshipRule {
     /// The owner's own stable name for the rule, unique in the set.
     pub id: String,
     /// The PERSON to keep in touch with.
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub person: EntityId,
     /// The longest quiet stretch, in seconds, before the rule falls due.
     pub every_secs: u64,
@@ -82,7 +84,7 @@ pub struct StewardshipRule {
 }
 
 /// Where a drafted follow-up would go, and how the owner wants it written.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StewardshipDraftRoute {
     pub verb: String,

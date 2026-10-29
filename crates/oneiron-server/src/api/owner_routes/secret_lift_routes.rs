@@ -29,6 +29,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secrets/lift/close", post(close))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/secrets/lift/close`'s body (FIX 11611):
+/// [`SecretLiftClose`].
+pub(crate) fn secret_lift_close_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SecretLiftClose>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/lift/close`'s answer (FIX 11611):
+/// [`SecretLiftHistoryProposal`].
+pub(crate) fn secret_lift_proposal_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SecretLiftHistoryProposal>()
+}
+
 /// `GET /v1/owner/secrets/lift`: the run in progress, the last run's receipt
 /// and the open proposals, counted by cause.
 async fn status(
