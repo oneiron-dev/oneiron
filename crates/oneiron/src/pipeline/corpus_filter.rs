@@ -10,8 +10,8 @@ use crate::store::StoreRead;
 use super::builder::PipelineBuilder;
 use super::filters::claim_status_gate_allows;
 use super::types::{
-    CandidateFilter, ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig,
-    ScoredEntity, SnapshotCandidateFilter,
+    CandidateFilter, ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity,
+    SnapshotCandidateFilter,
 };
 
 /// The candidate admission of one retrieval snapshot (FIX 11648): the run's

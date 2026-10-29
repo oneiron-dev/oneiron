@@ -178,8 +178,8 @@ pub(crate) type CandidateFilter<'a> = dyn Fn(&crate::store::StoreRead<'_>, &heed
 
 /// A [`CandidateFilter`] for one retrieval snapshot, used on the thread that
 /// opened its transaction, so it need be neither `Send` nor `Sync`.
-pub(crate) type SnapshotCandidateFilter<'a> = dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>
-    + 'a;
+pub(crate) type SnapshotCandidateFilter<'a> =
+    dyn Fn(&crate::store::StoreRead<'_>, &heed::RoTxn<'_>, &EntityId) -> crate::Result<bool> + 'a;
 
 /// A candidate admission that holds state for one read transaction (FIX
 /// 11648): a run asks it once for each snapshot it opens, beside that
