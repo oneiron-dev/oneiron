@@ -209,9 +209,10 @@ impl Vault {
             })
             .map(|(id, _)| id)
             .collect();
-        // Each withdrawal stays known here, in this writer (FIX-LIST 5107).
+        // Each withdrawal stays known here and reaches its peers, in this
+        // writer (FIX-LIST 5107, 10772).
         for id in &ids {
-            crate::authority::mark_withdrawn_grant_in_txn(&self.store, txn, *id)?;
+            crate::authority::withdraw_grant_row_in_txn(&self.store, txn, *id)?;
         }
         self.apply_grant_ops(
             txn,
