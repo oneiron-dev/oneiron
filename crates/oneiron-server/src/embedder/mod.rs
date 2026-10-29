@@ -442,7 +442,8 @@ impl EmbedderSlot {
         self.admit_holding_rung(
             Admission {
                 transform: Some(local.transform()),
-                evidence: evidence_floors(&self.config),
+                evidence: local::evidence::pinned_evidence_resolved(&self.config, Some(&resolved))
+                    .unwrap_or_default(),
             },
             admit,
         )?;

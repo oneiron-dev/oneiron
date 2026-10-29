@@ -1134,6 +1134,9 @@ class Oneiron:
         @property
         def rsi(self) -> "Oneiron._VaultBudgetsRsiVerbs":
             return Oneiron._VaultBudgetsRsiVerbs(self._client)
+        @property
+        def resident_shares(self) -> "Oneiron._VaultBudgetsResidentSharesVerbs":
+            return Oneiron._VaultBudgetsResidentSharesVerbs(self._client)
     class _VaultBudgetsLeaseVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1179,6 +1182,15 @@ class Oneiron:
         def resume(self, spec):
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
             return json.loads(_translate(lambda: self._client.vault_budgets_rsi_hold_resume(json.dumps(spec))))
+    class _VaultBudgetsResidentSharesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_resident_shares(json.dumps(spec))))
+        def set(self, spec):
+            """The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands."""
+            return json.loads(_translate(lambda: self._client.vault_budgets_resident_shares_set(json.dumps(spec))))
     class _VaultRunnersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5170,6 +5182,9 @@ class Oneiron:
         def set(self, spec):
             """The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
             return json.loads(_translate(lambda: self._client.vault_free_time_policy_set(json.dumps(spec))))
+        def set_as(self, spec):
+            """An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
+            return json.loads(_translate(lambda: self._client.vault_free_time_policy_set_as(json.dumps(spec))))
     class _VaultMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

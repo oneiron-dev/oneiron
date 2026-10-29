@@ -556,6 +556,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_budgets_resident_shares(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.resident_shares", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_resident_shares_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.resident_shares.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_runners_seats_quotas(
         &self,
         input: serde_json::Value,
@@ -9570,6 +9588,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.free_time.policy.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_free_time_policy_set_as(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.free_time.policy.set_as", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

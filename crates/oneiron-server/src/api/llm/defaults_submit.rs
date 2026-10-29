@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
@@ -16,7 +16,7 @@ use oneiron::llm::{PurposeDefaultSubmission, PurposeDefaultSubmitter, PurposeDef
 use serde::Deserialize;
 
 use super::refusal;
-use crate::api::owner_routes::machine_routes::act_surface;
+use crate::api::owner_routes::machine_routes::act_surface_admitted;
 use crate::{auth::CoreAuth, server::SyncServer};
 
 /// Submits `table`, already validated, for the caller of `auth`: the owner
@@ -28,11 +28,12 @@ pub(super) fn submit(
     server: &SyncServer,
     auth: &CoreAuth,
     headers: &HeaderMap,
+    extensions: &Extensions,
     table: &PurposeDefaultTable,
 ) -> Response {
     let now = crate::api::unix_seconds_now();
     let vault = &server.vault;
-    let submitted = match person_of(server, auth, headers) {
+    let submitted = match person_of(server, auth, headers, extensions) {
         Err(refused) => return refused,
         Ok(Some((person, surface))) => vault.submit_purpose_default_table(
             PurposeDefaultSubmitter::Person(&person),
@@ -95,12 +96,13 @@ pub(super) async fn rule_proposal(
     State(server): State<Arc<SyncServer>>,
     Path(proposal): Path<String>,
     headers: HeaderMap,
+    extensions: Extensions,
     Json(ruling): Json<ProposalRuling>,
 ) -> Response {
     if let Some(refused) = owner_grade_refusal(&server, &auth) {
         return refused;
     }
-    let (person, surface) = match person_of(&server, &auth, &headers) {
+    let (person, surface) = match person_of(&server, &auth, &headers, &extensions) {
         Err(refused) => return refused,
         Ok(Some(found)) => found,
         Ok(None) => return refusal(StatusCode::FORBIDDEN, "policy_holder_required"),
@@ -149,11 +151,15 @@ fn person_of(
     server: &SyncServer,
     auth: &CoreAuth,
     headers: &HeaderMap,
+    extensions: &Extensions,
 ) -> Result<Option<(AuthenticatedOwner, Option<ActSurface>)>, Response> {
     let owner =
         crate::api::facade::owner_authorship(auth, server).map_err(IntoResponse::into_response)?;
     if let Some(owner) = owner {
-        return Ok(Some((owner, Some(act_surface(server, auth, headers)))));
+        return Ok(Some((
+            owner,
+            Some(act_surface_admitted(server, auth, headers, extensions)),
+        )));
     }
     Ok(person(server, auth).map(|person| (person, None)))
 }

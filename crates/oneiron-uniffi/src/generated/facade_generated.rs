@@ -368,6 +368,16 @@ export_facade! {
     let output = client.vault_budgets_rsi_hold_resume(&input)?;
     crate::codec::lift_record("vault.budgets.rsi.hold.resume", &output)
 };
+"vault.budgets.resident_shares" => fn vault_budgets_resident_shares(&self) -> ResidentSharesView = |client| {
+    let input: oneiron::llm::run_admission::resident_doors::ResidentSharesRequest = crate::codec::lower_empty("vault.budgets.resident_shares")?;
+    let output = client.vault_budgets_resident_shares(&input)?;
+    crate::codec::lift_record("vault.budgets.resident_shares", &output)
+};
+"vault.budgets.resident_shares.set" => fn vault_budgets_resident_shares_set(&self, input: SetResidentShareRequest) -> ResidentSharesView = |client| {
+    let input: oneiron::llm::run_admission::resident_doors::SetResidentShareRequest = crate::codec::lower_record("vault.budgets.resident_shares.set", input)?;
+    let output = client.vault_budgets_resident_shares_set(&input)?;
+    crate::codec::lift_record("vault.budgets.resident_shares.set", &output)
+};
 "vault.runners.seats.quotas" => fn vault_runners_seats_quotas(&self, input: RunnerSeatQuotasRequest) -> RunnerSeatQuotasView = |client| {
     let input: oneiron::dispatch_byoa::RunnerSeatQuotasRequest = crate::codec::lower_record("vault.runners.seats.quotas", input)?;
     let output = client.vault_runners_seats_quotas(&input)?;
@@ -5305,6 +5315,11 @@ export_facade! {
     let input: oneiron::dreamer_runner::FreeTimePolicySetRequest = crate::codec::lower_record("vault.free_time.policy.set", input)?;
     let output = client.vault_free_time_policy_set(&input)?;
     crate::codec::lift_record("vault.free_time.policy.set", &output)
+};
+"vault.free_time.policy.set_as" => fn vault_free_time_policy_set_as(&self, input: FreeTimePolicySetRequest) -> FreeTimePolicyView = |client| {
+    let input: oneiron::dreamer_runner::FreeTimePolicySetRequest = crate::codec::lower_record("vault.free_time.policy.set_as", input)?;
+    let output = client.vault_free_time_policy_set_as(&input)?;
+    crate::codec::lift_record("vault.free_time.policy.set_as", &output)
 };
 "vault.free_time.cycles" => fn vault_free_time_cycles(&self, input: FreeTimeCyclesRequest) -> FreeTimeCyclesPage = |client| {
     let input: oneiron::dreamer_runner::FreeTimeCyclesRequest = crate::codec::lower_record("vault.free_time.cycles", input)?;

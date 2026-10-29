@@ -2176,6 +2176,75 @@ async fn vault_budgets_rsi_hold_resume(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_budgets_resident_shares(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.budgets.resident_shares")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.budgets.resident_shares", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.budgets.resident_shares", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_budgets_resident_shares(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_budgets_resident_shares_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.budgets.resident_shares.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.budgets.resident_shares.set", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.budgets.resident_shares.set", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_budgets_resident_shares_set(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_runners_seats_quotas(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -33258,6 +33327,40 @@ async fn vault_free_time_policy_set(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_free_time_policy_set_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.free_time.policy.set_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.free_time.policy.set_as", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.free_time.policy.set_as", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_free_time_policy_set_as(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_free_time_cycles(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37533,6 +37636,10 @@ async fn call_verb_row(
         "vault.budgets.rsi.top_up" => vault_budgets_rsi_top_up(server, call, input).await,
         "vault.budgets.rsi.hold" => vault_budgets_rsi_hold(server, call, input).await,
         "vault.budgets.rsi.hold.resume" => vault_budgets_rsi_hold_resume(server, call, input).await,
+        "vault.budgets.resident_shares" => vault_budgets_resident_shares(server, call, input).await,
+        "vault.budgets.resident_shares.set" => {
+            vault_budgets_resident_shares_set(server, call, input).await
+        }
         "vault.runners.seats.quotas" => vault_runners_seats_quotas(server, call, input).await,
         "vault.runners.seats.top_up" => vault_runners_seats_top_up(server, call, input).await,
         "vault.fanout.resume" => vault_fanout_resume(server, call, input).await,
@@ -38996,6 +39103,7 @@ async fn call_verb_row(
         "vault.sieve.lease.refill" => vault_sieve_lease_refill(server, call, input).await,
         "vault.free_time.policy.get" => vault_free_time_policy_get(server, call, input).await,
         "vault.free_time.policy.set" => vault_free_time_policy_set(server, call, input).await,
+        "vault.free_time.policy.set_as" => vault_free_time_policy_set_as(server, call, input).await,
         "vault.free_time.cycles" => vault_free_time_cycles(server, call, input).await,
         "vault.free_time.cycle" => vault_free_time_cycle(server, call, input).await,
         "vault.claims.vet" => vault_claims_vet(server, call, input).await,

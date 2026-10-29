@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use super::ladder::OfferLadder;
 use super::status::{HealthState, LimitHold, RungHealth};
 
+mod reply_budgets;
 mod world_hold;
 
 /// The engine's `MODEL_OFFER_COOLDOWN` side table: never replicated, and
@@ -283,6 +284,9 @@ pub struct OfferCooldowns {
     /// Which prefixes its offers hold warm in their providers' prompt
     /// caches (FIX 6029). In memory: a restart starts every prefix cold.
     pub(super) warmth: super::ladder::cache_warmth::CacheWarmth,
+    /// The vault's model byte budgets its ladders' chat replies are read on
+    /// (FIX 10626), the rows' defaults without a server.
+    budgets: super::ModelHostBudgets,
     /// A test's vault clock, which a call's wait moves to the end it waited
     /// for, as time would.
     #[cfg(test)]
@@ -300,6 +304,7 @@ impl OfferCooldowns {
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
+            budgets: super::ModelHostBudgets::unhosted(),
             #[cfg(test)]
             waits_move: None,
         })
@@ -309,17 +314,7 @@ impl OfferCooldowns {
     /// world settings.
     #[must_use]
     pub fn in_vault(vault: Arc<Vault>) -> Arc<Self> {
-        Arc::new(Self {
-            vault: Some(vault),
-            fallbacks: RwLock::default(),
-            health: Mutex::default(),
-            probes: AtomicU64::new(0),
-            health_changed: tokio::sync::watch::Sender::new(0),
-            recovered: tokio::sync::watch::Sender::new(0),
-            warmth: super::ladder::cache_warmth::CacheWarmth::default(),
-            #[cfg(test)]
-            waits_move: None,
-        })
+        Self::in_vault_with(vault, super::ModelHostBudgets::unhosted())
     }
 
     /// [`Self::in_vault`] for a vault on the test's `clock`: a call that
@@ -337,6 +332,7 @@ impl OfferCooldowns {
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
+            budgets: super::ModelHostBudgets::unhosted(),
             waits_move: Some(clock),
         })
     }

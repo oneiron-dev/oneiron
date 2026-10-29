@@ -417,6 +417,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.budgets.resident_shares",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::run_admission::resident_doors::ResidentSharesRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.resident_shares.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::run_admission::resident_doors::SetResidentShareRequest,
+                >(),
+            ),
+            (
                 "vault.runners.seats.quotas",
                 crate::code_run::vault_read::request_schema::<
                     crate::dispatch_byoa::RunnerSeatQuotasRequest,
@@ -5957,6 +5969,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.free_time.policy.set_as",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::FreeTimePolicySetRequest,
+                >(),
+            ),
+            (
                 "vault.free_time.cycles",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_runner::FreeTimeCyclesRequest,
@@ -6839,6 +6857,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.rsi.top_up",
     "vault.budgets.rsi.hold",
     "vault.budgets.rsi.hold.resume",
+    "vault.budgets.resident_shares",
+    "vault.budgets.resident_shares.set",
     "vault.runners.seats.quotas",
     "vault.runners.seats.top_up",
     "vault.commit_message",
@@ -7502,6 +7522,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.sieve.lease.refill",
     "vault.free_time.policy.get",
     "vault.free_time.policy.set",
+    "vault.free_time.policy.set_as",
     "vault.free_time.cycles",
     "vault.free_time.cycle",
     "vault.claims.vet",
@@ -7743,6 +7764,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.rsi.hold.resume" => {
             crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
         }
+        "vault.budgets.resident_shares" => crate::code_run::vault_read::request_schema::<
+            crate::llm::run_admission::resident_doors::ResidentSharesView,
+        >(),
+        "vault.budgets.resident_shares.set" => crate::code_run::vault_read::request_schema::<
+            crate::llm::run_admission::resident_doors::ResidentSharesView,
+        >(),
         "vault.runners.seats.quotas" => crate::code_run::vault_read::request_schema::<
             crate::dispatch_byoa::RunnerSeatQuotasView,
         >(),
@@ -9754,6 +9781,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.free_time.policy.set" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::FreeTimePolicyView,
         >(),
+        "vault.free_time.policy.set_as" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::FreeTimePolicyView,
+        >(),
         "vault.free_time.cycles" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::FreeTimeCyclesPage,
         >(),
@@ -10694,6 +10724,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.rsi.hold.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.resident_shares" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.resident_shares.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17567,6 +17611,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.free_time.policy.set_as" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.free_time.cycles" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18666,6 +18717,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.budgets.rsi.hold.resume" => {
             let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
+        "vault.budgets.resident_shares" => {
+            let _input: crate::llm::run_admission::resident_doors::ResidentSharesRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.resident_shares.set" => {
+            let _input: crate::llm::run_admission::resident_doors::SetResidentShareRequest =
+                decode(value.clone())?;
         }
         "vault.runners.seats.quotas" => {
             let _input: crate::dispatch_byoa::RunnerSeatQuotasRequest = decode(value.clone())?;
@@ -22000,6 +22059,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.free_time.policy.set" => {
             let _input: crate::dreamer_runner::FreeTimePolicySetRequest = decode(value.clone())?;
         }
+        "vault.free_time.policy.set_as" => {
+            let _input: crate::dreamer_runner::FreeTimePolicySetRequest = decode(value.clone())?;
+        }
         "vault.free_time.cycles" => {
             let _input: crate::dreamer_runner::FreeTimeCyclesRequest = decode(value.clone())?;
         }
@@ -22674,6 +22736,12 @@ pub fn invoke(
         "vault.budgets.rsi.hold" => encode(vault_budgets_rsi_hold(memory, decode(value)?)?),
         "vault.budgets.rsi.hold.resume" => {
             encode(vault_budgets_rsi_hold_resume(memory, decode(value)?)?)
+        }
+        "vault.budgets.resident_shares" => {
+            encode(vault_budgets_resident_shares(memory, decode(value)?)?)
+        }
+        "vault.budgets.resident_shares.set" => {
+            encode(vault_budgets_resident_shares_set(memory, decode(value)?)?)
         }
         "vault.runners.seats.quotas" => encode(vault_runners_seats_quotas(memory, decode(value)?)?),
         "vault.runners.seats.top_up" => encode(vault_runners_seats_top_up(memory, decode(value)?)?),
@@ -24520,6 +24588,9 @@ pub fn invoke(
         "vault.sieve.lease.refill" => encode(vault_sieve_lease_refill(memory, decode(value)?)?),
         "vault.free_time.policy.get" => encode(vault_free_time_policy_get(memory, decode(value)?)?),
         "vault.free_time.policy.set" => encode(vault_free_time_policy_set(memory, decode(value)?)?),
+        "vault.free_time.policy.set_as" => {
+            encode(vault_free_time_policy_set_as(memory, decode(value)?)?)
+        }
         "vault.free_time.cycles" => encode(vault_free_time_cycles(memory, decode(value)?)?),
         "vault.free_time.cycle" => encode(vault_free_time_cycle(memory, decode(value)?)?),
         "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
@@ -25679,6 +25750,28 @@ pub fn vault_budgets_rsi_hold_resume(
     crate::llm::rsi_doors::resume_rsi_budget_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.budgets.rsi.hold.resume")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_resident_shares(
+    memory: &Memory<'_>,
+    input: crate::llm::run_admission::resident_doors::ResidentSharesRequest,
+) -> MemoryResult<crate::llm::run_admission::resident_doors::ResidentSharesView> {
+    crate::llm::run_admission::resident_doors::resident_shares_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.resident_shares")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_resident_shares_set(
+    memory: &Memory<'_>,
+    input: crate::llm::run_admission::resident_doors::SetResidentShareRequest,
+) -> MemoryResult<crate::llm::run_admission::resident_doors::ResidentSharesView> {
+    crate::llm::run_admission::resident_doors::set_resident_share_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.resident_shares.set")?,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
@@ -34011,6 +34104,12 @@ pub fn vault_free_time_policy_set(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_free_time_policy_set_as(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::FreeTimePolicySetRequest,
+) -> MemoryResult<crate::dreamer_runner::FreeTimePolicyView> {
+    crate::task_verb::sdk::free_time_policy_set_as_agent(memory, input)
 }
 pub fn vault_free_time_cycles(
     memory: &Memory<'_>,
