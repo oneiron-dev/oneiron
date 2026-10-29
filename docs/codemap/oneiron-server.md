@@ -623,7 +623,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/recovery_kit_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173) |
 | `src/api/owner_routes/recovery_kit_target_routes.rs` | src | m | 8 crate-vis | — | The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the material a root change or a late… |
 | `src/api/owner_routes/recovery_kit_target_routes/pad_access.rs` | src | m | 3 crate-vis | — | A late joiner's pad access by the owner's kit, and what the sealed bundle upkeep last moved (FIX 4564, 4953… |
-| `src/api/owner_routes/recovery_kit_target_routes/root_doors.rs` | src | s | 5 crate-vis | — | The root ceremonies made directly on this install while its server runs (FIX 4955): where the owner is… |
+| `src/api/owner_routes/recovery_kit_target_routes/root_doors.rs` | src | m | 5 crate-vis | — | The root ceremonies made directly on this install while its server runs (FIX 4955): where the owner is… |
 | `src/api/owner_routes/recovery_kit_target_routes/secret_anchor.rs` | src | s | 3 crate-vis | — | `POST /v1/owner/secrets/anchor-sign` (FIX 1956): the owner's recovery kit pushes a portable secret's current… |
 | `src/api/owner_routes/room_thread_setting_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/settings/room-threads`: the owner's two switches over Admins and private room threads (owner… |
 | `src/api/owner_routes/root_routes.rs` | src | m | 4 crate-vis | — | `/v1/owner/roots/requests`: the owner decides a change to one install's recovery root from any surface he is… |
@@ -967,7 +967,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/device_sync.rs` | src | m | 7 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
 | `src/device_sync/dial.rs` | src | s | 2 crate-vis | — | What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron… |
 | `src/device_sync/enrolment.rs` | src | m | 7 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
-| `src/device_sync/removal_delivery.rs` | src | s | 6 crate-vis | — | The device's receiver of the archives its person's removals kept for it (FIX 3215, 3396) |
+| `src/device_sync/removal_delivery.rs` | src | m | 6 crate-vis | — | The device's receiver of the archives its person's removals kept for it (FIX 3215, 3396) |
 | `src/device_sync/renewal.rs` | src | m | 8 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the… |
 | `src/device_sync/route.rs` | src | s | 6 crate-vis | — | FIX 3131: the home device sync dials over the mesh |
 | `src/document_memory.rs` | src | s | 1 crate-vis | — | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
