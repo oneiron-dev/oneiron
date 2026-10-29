@@ -108,7 +108,7 @@ impl InputKind {
 }
 
 /// A declared embedding space: its own pin, its own vector rows.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpace {
     /// `model@revision@where`: the whole document function this space's vectors come from.
     /// `where` is the place of the model's offer, the `[models]` provider key that binds it.
@@ -123,6 +123,7 @@ pub struct EmbeddingSpace {
     /// vault's own floors ([`Vault::vector_evidence`]); a pair a host set for one kind in this
     /// space ([`Vault::set_vector_evidence_for`]) still takes its place for that kind.
     #[serde(default, with = "evidence_floors")]
+    #[schemars(with = "Option<VectorEvidenceFloors>")]
     pub evidence: Option<VectorEvidenceFloors>,
 }
 
