@@ -248,8 +248,8 @@ impl Memory<'_> {
         }
         let intent = LensIntentRecord::new(input.intent_prompt)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-        // An axis its binding leaves open is declared only by an author whose
-        // read is not narrowed; no declaration reads nothing.
+        // An axis the credential's binding leaves open is declared only by an
+        // author whose read is not narrowed; only a declaration asks.
         let declared = input.scope;
         let vault_wide = match &declared {
             Some(_) => !reads_narrowed(self.read_lane(ClaimReadStatus::Recorded)?.actor_key()),
