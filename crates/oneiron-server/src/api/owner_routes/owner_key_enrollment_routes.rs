@@ -50,7 +50,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/owner-signing-keys/enroll", post(enroll))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ChallengeRequest {
     /// The machine that holds the key, as 32 hex.
@@ -59,7 +59,7 @@ struct ChallengeRequest {
     public_key: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EnrollRequest {
     /// As for the challenge.
@@ -70,13 +70,13 @@ struct EnrollRequest {
     proof: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ChallengeReply {
     /// The bytes the new key signs, as lower-case hex.
     challenge: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReceiptReply {
     /// The enrollment's authority entry, as 64 hex.
     entry: String,
@@ -108,6 +108,26 @@ struct KeyReply {
 struct ListReply {
     /// Ascending by key; empty before any enrollment.
     keys: Vec<KeyReply>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/challenge`'s body (FIX 11617): [`ChallengeRequest`].
+pub(crate) fn challenge_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ChallengeRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/challenge`'s answer (FIX 11617): [`ChallengeReply`].
+pub(crate) fn challenge_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ChallengeReply>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/enroll`'s body (FIX 11617): [`EnrollRequest`].
+pub(crate) fn enroll_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<EnrollRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/owner-signing-keys/enroll`'s answer (FIX 11617): [`ReceiptReply`].
+pub(crate) fn enroll_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReceiptReply>()
 }
 
 /// Policy hook (CALLS "FIX 4920 enrollment HTTP representation"): the hex

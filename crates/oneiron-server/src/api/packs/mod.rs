@@ -6,7 +6,7 @@ use axum::Router;
 
 use crate::server::SyncServer;
 
-mod defaults;
+pub(super) mod defaults;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     defaults::routes()

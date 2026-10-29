@@ -46,6 +46,23 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secrets/found/not-a-secret", post(not_a_secret))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/secrets/found/delete`'s body (FIX 11611),
+/// shared with `POST /v1/owner/secrets/found/not-a-secret`: [`FoundKey`].
+pub(crate) fn found_key_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<FoundKey>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/found/grant`'s body (FIX 11611):
+/// [`GrantFoundKey`].
+pub(crate) fn grant_found_key_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GrantFoundKey>()
+}
+
+/// The OpenAPI schema of the three found-key answers (FIX 11611): [`SettledView`].
+pub(crate) fn found_key_settled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SettledView>()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FoundQuery {
@@ -122,7 +139,7 @@ impl From<FoundKeyCard> for KeyView {
 }
 
 /// What the owner did about a key, and its receipt.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SettledView {
     action: &'static str,
     by: Option<String>,
@@ -145,14 +162,14 @@ impl From<FoundKeySettled> for SettledView {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct FoundKey {
     /// The key's handle, such as `sc12`.
     handle: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct GrantFoundKey {
     handle: String,

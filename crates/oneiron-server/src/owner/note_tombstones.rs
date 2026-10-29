@@ -14,12 +14,12 @@ use super::stamp::rfc3339_secs;
 use super::{OwnerError, OwnerResult, entity_id};
 
 /// The open NOTE tombstone proposals, oldest first.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct TombstoneReview {
     pub(crate) proposals: Vec<Proposal>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Proposal {
     pub(crate) note: String,
     pub(crate) kind: String,
@@ -31,7 +31,7 @@ pub(crate) struct Proposal {
 }
 
 /// Which proposal the owner decides.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Decide {
     /// A `note` from `GET /v1/owner/notes/tombstones`.
@@ -39,7 +39,7 @@ pub(crate) struct Decide {
 }
 
 /// What accepting a tombstone did.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Tombstoned {
     pub(crate) note: String,
     /// The deletion receipt, when the rail wrote one.
