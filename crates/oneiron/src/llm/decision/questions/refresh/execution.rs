@@ -5,6 +5,7 @@ use super::super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};
 use super::super::graph_ask;
 use super::super::reader_authority::question_lane;
 use super::super::records::*;
+use super::super::saved_reader::saved_reader_in_txn;
 use super::super::store::*;
 use super::asker;
 use super::{
@@ -116,7 +117,7 @@ pub(super) fn refresh_with(
     for (unit, evidence) in units {
         let snapshot = {
             let txn = vault.store.env.read_txn()?;
-            source(vault, &txn, principal, reader, unit)?
+            source(vault, &txn, principal, &record.read_lane, reader, unit)?
         };
         let Some(SourceRow {
             kind,
@@ -174,16 +175,17 @@ pub(super) fn refresh_with(
         }
         // Every input is checked before the first write. A batch is all-or-nothing.
         // A graph context's neighbours and every source it showed are read
-        // again through the principal's lane in this snapshot.
+        // again through the principal's saved lane in this snapshot.
         let lane = if prepared.iter().any(|p| p.context.is_some()) {
-            let key = graph_ask::asker_reader_in_txn(vault, txn, principal)?;
+            let key = saved_reader_in_txn(vault, txn, principal, &record.read_lane)?;
             Some(question_lane(vault, key))
         } else {
             None
         };
         let mut inputs = Vec::new();
         for p in &prepared {
-            let Some(row) = source(vault, txn, principal, reader, p.unit)? else {
+            let Some(row) = source(vault, txn, principal, &record.read_lane, reader, p.unit)?
+            else {
                 return Err(Error::ConcurrentWrite("standing question source changed"));
             };
             if row.frontier != p.frontier {

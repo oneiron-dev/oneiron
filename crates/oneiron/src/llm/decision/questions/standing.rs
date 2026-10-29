@@ -170,7 +170,7 @@ fn standing_record(
 fn sources_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    principal: EntityId,
+    record: &QuestionRecord,
     actor: WriteActor,
     unit: EntityId,
     evidence: &[EntityId],
@@ -181,8 +181,11 @@ fn sources_in_txn(
     // Relationship membership and AccessGrants are the question principal's,
     // for both reads: the writer's own grant never widens what the
     // principal's answer may rest on. The vault's live owner reads its
-    // relationships' rows as it does on every lane.
-    let reader = super::graph_ask::asker_reader_in_txn(vault, txn, principal)?;
+    // relationships' rows as it does on every lane, inside the lane the
+    // version was saved under (OF-506).
+    let principal = record.principal;
+    let reader =
+        super::saved_reader::saved_reader_in_txn(vault, txn, principal, &record.read_lane)?;
     let holder = ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
@@ -315,7 +318,7 @@ pub fn standing_source_frontier(
     if !record.definition.units.contains(&unit) {
         return Err(Error::EntityNotFound);
     }
-    Ok(sources_in_txn(vault, &txn, principal, actor, unit, evidence, &[])?.0)
+    Ok(sources_in_txn(vault, &txn, &record, actor, unit, evidence, &[])?.0)
 }
 
 /// Keep a graph answer and its immutable-version receipt atomically. Repeated
@@ -361,14 +364,14 @@ pub(super) fn prepare_graph_answer(
     let (frontier, _) = sources_in_txn(
         vault,
         &txn,
-        principal,
+        &record,
         actor,
         input.unit,
         &input.evidence,
         proposals,
     )?;
-    let key = super::graph_ask::asker_reader_in_txn(vault, &txn, principal)?;
-    let scoped = question_lane(vault, key);
+    let key = super::saved_reader::saved_reader_in_txn(vault, &txn, principal, &record.read_lane)?;
+    let scoped = question_lane(vault, key.clone());
     let mut sources = Vec::with_capacity(input.evidence.len() + 1);
     for id in std::iter::once(&input.unit).chain(input.evidence.iter()) {
         let lane = if proposals
@@ -377,8 +380,7 @@ pub(super) fn prepare_graph_answer(
         {
             scoped.recorded_lane()?
         } else {
-            let key = super::graph_ask::asker_reader_in_txn(vault, &txn, principal)?;
-            question_lane(vault, key)
+            question_lane(vault, key.clone())
         };
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Err(Error::EntityNotFound);
@@ -550,7 +552,7 @@ fn backfill_answer(
         let (frontier, sources) = sources_in_txn(
             vault,
             txn,
-            principal,
+            &record,
             actor,
             input.unit,
             &input.evidence,
