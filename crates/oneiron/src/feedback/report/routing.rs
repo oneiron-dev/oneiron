@@ -149,15 +149,21 @@ impl Vault {
                 return Err(invalid("a local report needs no publisher disclosure"));
             };
             // Stop-asking mints the publisher's standing grant in this writer.
+            let round = issue.disclosure_round;
             let (disclosure, basis) = self.report_disclosure_choice_in_txn(
                 txn,
                 owner,
                 (&issue.issue_ref, publisher_ref),
                 &issue.request,
+                round,
                 choice,
             )?;
             issue.disclosure = disclosure;
             issue.disclosure_basis = basis;
+            // A successful Deny burns this round: the next choice mints under a fresh bound (FIX 9368).
+            if choice == ReportDisclosureChoice::Deny {
+                issue.disclosure_round = round.saturating_add(1);
+            }
             self.write_report_in_txn(txn, &issue)?;
             Ok(issue)
         })
