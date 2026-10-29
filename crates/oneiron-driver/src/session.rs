@@ -46,6 +46,7 @@ use oneiron::{EndedSession, EntityId, Result, SessionClosePredicate, SessionMint
 
 use crate::tick::{
     ArmedLane, NowMillis, SessionHintCarrier, SessionHintStamp, Tick, TickSource, sleep_until_due,
+    wait_for_change,
 };
 
 mod policy;
@@ -378,7 +379,9 @@ impl<'v> SessionLifecycleDriver<'v> {
 ///   inner source's deadline/wake priority;
 /// * the idle-floor / ceiling expiry is a sleep armed from DURABLE session
 ///   state, re-read every cycle (the [`TimerTick`](crate::TimerTick)
-///   pattern — no heartbeat, no poll);
+///   pattern — no heartbeat, no poll), and re-armed when an owner policy
+///   change commits under it (FIX 11402): a shorter floor closes sooner, a
+///   longer one keeps the sitting open;
 /// * a close (hint or expiry) enqueues the durable meso attempts atomically
 ///   with the end and simply loops: the INNER source's attempt-queue deadline
 ///   lane surfaces them as due [`Tick::Deadline`]s, so this decorator mints
@@ -394,17 +397,24 @@ pub struct SessionTicks<'v, T> {
     retry_hint: Option<SessionHintCarrier>,
     /// Consecutive retained-hint drain failures, used for capped backoff.
     retry_backoff_failures: u32,
+    /// Changes after each commit that may have moved the vault's policy
+    /// rows; an armed expiry sleep wakes on it (FIX 11402).
+    policy_changes: Option<tokio::sync::watch::Receiver<u64>>,
 }
 
 impl<'v, T: TickSource> SessionTicks<'v, T> {
     #[must_use]
     pub fn new(inner: T, lifecycle: SessionLifecycleDriver<'v>) -> Self {
+        // Subscribed before the first expiry read: a policy that commits
+        // after it always wakes the sleep that read arms.
+        let policy_changes = Some(lifecycle.vault.subscribe_policy_manifest_changes());
         Self {
             inner,
             lifecycle,
             pending_hints: VecDeque::new(),
             retry_hint: None,
             retry_backoff_failures: 0,
+            policy_changes,
         }
     }
 
@@ -562,6 +572,7 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                     tokio::select! {
                         biased;
                         () = sleep_until_due(&clock, due_at_ms) => None,
+                        () = wait_for_change(&mut self.policy_changes) => None,
                         tick = self.inner.next_tick() => Some(tick),
                     }
                 }
@@ -569,9 +580,12 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
             };
 
             match tick {
-                // Expiry fired: loop so buffered pre-expiry hints are drained
-                // before the top closes anything still due at its exact
-                // instant. A genuine idle then closes at that same top.
+                // Expiry fired, or the owner's policy changed under the
+                // sleep: loop so buffered pre-expiry hints are drained before
+                // the top re-resolves the policy and closes anything still
+                // due at its exact instant. A genuine idle then closes at
+                // that same top; a policy that moved the due instant re-arms
+                // the sleep for it (FIX 11402).
                 None => continue,
                 Some(Some(Tick::Hint(signal))) => {
                     let Some(hint) = signal.session else {
@@ -597,7 +611,13 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
                     match self.lifecycle.next_expiry_ms() {
                         Ok(Some(due_at_ms)) => {
                             let clock = self.lifecycle.clock();
-                            sleep_until_due(&clock, due_at_ms).await;
+                            tokio::select! {
+                                biased;
+                                () = sleep_until_due(&clock, due_at_ms) => {}
+                                // A policy change re-resolves the due instant
+                                // before anything closes (FIX 11402).
+                                () = wait_for_change(&mut self.policy_changes) => continue,
+                            }
                             if let Err(error) = self.lifecycle.close_due_session_at(due_at_ms) {
                                 tracing::error!(
                                     ?error,
@@ -623,6 +643,10 @@ impl<T: TickSource> TickSource for SessionTicks<'_, T> {
 
     fn note_armed(&mut self, lane: ArmedLane, at_ms: Option<u64>) {
         self.inner.note_armed(lane, at_ms);
+    }
+
+    fn rest_deadlines(&mut self, until: Option<tokio::time::Instant>) -> bool {
+        self.inner.rest_deadlines(until)
     }
 }
 
