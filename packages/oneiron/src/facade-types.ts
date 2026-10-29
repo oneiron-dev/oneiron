@@ -3753,7 +3753,7 @@ export type TypedDecision = { answer: DecisionAnswer; probability?: number | nul
 /** `oneiron::policy_model::verdict::PolicyReadError` */
 export type PolicyReadError = "settlement_invariant"
 /** `oneiron::policy_model::verdict::PolicyPassAudit` */
-export type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; typed_decisions?: TypedDecision[]; read_error?: PolicyReadError | null }
+export type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; model_notes_cut?: boolean; typed_decisions?: TypedDecision[]; read_error?: PolicyReadError | null }
 /** `oneiron::policy_model::planes::PolicyPlane` */
 export type PolicyPlane = "owner_policy" | "hosted_legal"
 /** `oneiron::policy_model::request::HostedOutagePolicy` */

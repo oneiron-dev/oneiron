@@ -9459,6 +9459,7 @@ class PolicyPassAudit(TypedDict):
     model_rule_ids_dropped: NotRequired[int]
     model_confidence: NotRequired[str | None]
     model_rationale: NotRequired[str | None]
+    model_notes_cut: NotRequired[bool]
     typed_decisions: NotRequired[list[TypedDecision]]
     read_error: NotRequired[PolicyReadError | None]
 PolicyPlane = Literal["owner_policy", "hosted_legal"]

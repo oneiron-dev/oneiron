@@ -1894,7 +1894,7 @@ declare namespace Sdk {
   type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
   type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type PolicyReadError = "settlement_invariant";
-  type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; typed_decisions?: TypedDecision[]; read_error?: PolicyReadError | null };
+  type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; model_notes_cut?: boolean; typed_decisions?: TypedDecision[]; read_error?: PolicyReadError | null };
   type PolicyPlane = "owner_policy" | "hosted_legal";
   type HostedOutagePolicy = "halt" | "proceed_receipted";
   type HostedPlaneAttestation = { plane: PolicyPlane; policy_version: string; policy_hash: string; classifier_mode?: RelayClassifierMode | null; decision_binding?: string | null; outage_policy?: HostedOutagePolicy | null; degraded?: boolean | null };

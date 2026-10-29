@@ -281,6 +281,11 @@ pub struct PolicyPassAudit {
     /// The model's stated reason, bounded and otherwise untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_rationale: Option<String>,
+    /// The notes generation was already running when the read's one budget
+    /// ran out, and was cut there (FIX 10531): the verdict stands without its
+    /// notes, as it does on a failed notes call.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub model_notes_cut: bool,
     /// Registered row questions and their shared-ladder receipts. These
     /// contain answers and hashes/ids, never the candidate or policy text.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
