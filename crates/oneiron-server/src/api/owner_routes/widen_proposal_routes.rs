@@ -32,6 +32,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/widen-proposals/decline", post(decline))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/widen-proposals/approve`'s body
+/// (FIX 11611), shared with `/widen-proposals/decline`: [`WidenProposalAnswer`].
+pub(crate) fn widen_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WidenProposalAnswer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/widen-proposals/approve`'s answer
+/// (FIX 11611), shared with `/widen-proposals/decline`: [`WidenProposalView`].
+pub(crate) fn widen_proposal_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WidenProposalView>()
+}
+
 /// `GET /v1/owner/widen-proposals[?state=pending|approved|declined]`: the
 /// proposals, newest first.
 async fn list(

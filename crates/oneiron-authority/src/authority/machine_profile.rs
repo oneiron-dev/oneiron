@@ -54,7 +54,17 @@ const MACHINE_PROFILE_KEYS: [&str; 10] = [
 
 /// The owner's answer when a machine is added. Only `Yours` makes it mine.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MachineOwnership {
@@ -68,7 +78,17 @@ pub enum MachineOwnership {
 /// the operating system (CALLS: MACHINE_DEVICE_CLASS_SOURCE). A sealed copy
 /// never goes to a phone (DEC-0005 "Sealed copies").
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MachineDeviceClass {

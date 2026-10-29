@@ -32,6 +32,8 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 
+/// The KS7 getter of the hosting rows, under each blob artifact (FIX 10436).
+pub(crate) mod checkpoint;
 /// Typed requests and replies for publication and live-preview host doors.
 pub mod door_types;
 mod pointer_rows;

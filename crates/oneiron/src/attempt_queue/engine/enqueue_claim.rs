@@ -17,6 +17,9 @@ use crate::attempt_queue::validate::{
 use crate::error::Result;
 
 use super::AttemptQueue;
+
+mod claim_scan;
+
 /// The readiness entries an owner-retained claim acts on, in index order,
 /// each as its key and the id it named when read: the entries it repairs,
 /// then the one it claims. Empty when the claim has nothing to do.
@@ -92,6 +95,15 @@ struct ClaimKindReadScan {
     /// Ready rows whose record did not decode, skipped (FIX 10708).
     undecodable: usize,
     candidate: Option<ClaimKindCandidate>,
+}
+impl ClaimKindReadScan {
+    /// No index entry to delete or put back and no row to hold.
+    fn changes_nothing(&self) -> bool {
+        self.stale_ready_keys.is_empty()
+            && self.ready_replacements.is_empty()
+            && self.stale_missing_record_ids.is_empty()
+            && self.held.is_empty()
+    }
 }
 #[derive(Debug)]
 struct ClaimKindCandidate {
@@ -624,6 +636,26 @@ impl<'a> AttemptQueue<'a> {
     ) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
 
+        // FIX 11664: a pass with nothing to lease, repair or hold takes no
+        // write, so idle workers never queue in the group commit ahead of a
+        // claim that has work. The write scans again under the writer, so two
+        // claimers that both read one row lease it once.
+        {
+            let rtxn = self.store.env.read_txn()?;
+            let now = crate::ports::job_recorded_at_in_txn(self.store, &rtxn)?;
+            let (scan, claimed) = self.claim_matching_scan_in_txn(
+                &rtxn,
+                &input.lease_owner,
+                kind_filter,
+                now,
+                input.now.min(now),
+            )?;
+            if claimed.is_none() && scan.changes_nothing() {
+                warn_undecodable_rows("claim", scan.undecodable);
+                return Ok(ClaimOutcome::Empty);
+            }
+        }
+
         let outcome = self.store.write_in_group(|wtxn| {
             crate::ports::JobQueue::port_job_claim(self, wtxn, kind_filter, input)
         })?;
@@ -645,85 +677,16 @@ impl<'a> AttemptQueue<'a> {
     ) -> Result<ClaimOutcome> {
         validate_lease_owner(&input.lease_owner)?;
 
-        let mut stale_ready_keys = Vec::new();
-        let mut ready_replacements = Vec::new();
-        let mut stale_missing_record_ids = HashSet::new();
-        let mut held = Vec::new();
-        let mut undecodable = 0usize;
-        let mut claimed = None;
-        for row in self.store.attempt_ready.iter(&*wtxn)? {
-            let (key, value) = row?;
-            let Ok((key_ready_at, key_id)) = decode_ready_key(&key) else {
-                stale_ready_keys.push(key.to_vec());
-                continue;
-            };
-            let Ok(id) = AttemptId::from_bytes(&value) else {
-                stale_ready_keys.push(key.to_vec());
-                continue;
-            };
-            if id != key_id {
-                stale_ready_keys.push(key.to_vec());
-                continue;
-            }
-            let Some(raw_record) = self.store.attempt_records.get(&*wtxn, id.as_bytes())? else {
-                stale_missing_record_ids.insert(id);
-                stale_ready_keys.push(key.to_vec());
-                continue;
-            };
-            // FIX 10708: skipped and counted, as in the kind scan.
-            let Ok(mut record) = decode_record(&raw_record, id) else {
-                undecodable += 1;
-                continue;
-            };
-            if !record.state.is_ready_indexed() {
-                stale_ready_keys.push(key.to_vec());
-                continue;
-            }
-            let record_ready_at = ready_at(&record);
-            if record_ready_at != key_ready_at {
-                stale_ready_keys.push(key.to_vec());
-                if record_ready_at > cutoff {
-                    ready_replacements.push((ready_key(record_ready_at, id), id));
-                    continue;
-                }
-            } else if record_ready_at > cutoff {
-                continue;
-            }
-            if kind_filter.is_some_and(|kind| record.kind != kind)
-                || !record.accepts_worker(&input.lease_owner)
-            {
-                if record_ready_at != key_ready_at {
-                    ready_replacements.push((ready_key(record_ready_at, id), id));
-                }
-                continue;
-            }
-            if !crate::task_verb::task_dispatch_ready(
-                self.store,
-                &*wtxn,
-                record.task_ref.as_deref(),
-                input.now,
-            )? {
-                continue;
-            }
-            // OF-368: a TASK whose comment is unattached is paused, not
-            // leased, so no claim walks past it again until a reattach.
-            if let Some(hold) = self.annotation_hold_for_row_in_txn(&*wtxn, &record)? {
-                held.push((id, hold));
-                continue;
-            }
-            lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
-            claimed = Some((key.to_vec(), id, record));
-            break;
-        }
-
-        warn_undecodable_rows("claim", undecodable);
-        self.delete_dedupe_entries_for_ids(wtxn, &stale_missing_record_ids)?;
-        for key in stale_ready_keys {
-            self.store.attempt_ready.delete(wtxn, &key)?;
-        }
-        for (key, id) in ready_replacements {
-            self.store.attempt_ready.put(wtxn, &key, id.as_bytes())?;
-        }
+        let (mut scan, claimed) = self.claim_matching_scan_in_txn(
+            wtxn,
+            &input.lease_owner,
+            kind_filter,
+            input.now,
+            cutoff,
+        )?;
+        warn_undecodable_rows("claim", scan.undecodable);
+        let held = std::mem::take(&mut scan.held);
+        self.apply_claim_kind_read_repairs(wtxn, scan)?;
         for (id, hold) in held {
             self.hold_for_annotation_in_txn(wtxn, id, hold, input.now)?;
         }
@@ -731,6 +694,7 @@ impl<'a> AttemptQueue<'a> {
         let Some((ready_key, id, mut record)) = claimed else {
             return Ok(ClaimOutcome::Empty);
         };
+        lease_claimed_record(&mut record, &input.lease_owner, input.now)?;
 
         crate::task_verb::acquire_task_symbols(
             self.store,

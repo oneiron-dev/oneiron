@@ -186,7 +186,8 @@ impl BrowserSession {
     /// The proposal's two modes (CALL 5): a program given whole goes on as
     /// it is; a candidate's resolved program and provenance stand in for
     /// every program field the proposal gave, and its `args`,
-    /// `replay_args` and `supersedes` stay the caller's. Either then takes
+    /// `replay_args`, `supersedes`, `secret_args` and `snapshot_bounds`
+    /// stay the caller's. Either then takes
     /// the same two checks.
     pub(super) fn seeded_proposal(
         &self,
@@ -202,6 +203,8 @@ impl BrowserSession {
             args: input.args,
             replay_args: input.replay_args,
             supersedes: input.supersedes,
+            secret_args: input.secret_args,
+            snapshot_bounds: input.snapshot_bounds,
             seed: Some(body.seed),
             candidate: Some(candidate),
             ..body.program

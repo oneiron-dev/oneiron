@@ -74,7 +74,7 @@ struct RootChangeWire {
     machine: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RootRequest {
     /// The install that is to make the change, 32 hex.
@@ -130,6 +130,12 @@ impl From<RootChange> for RootChangeWire {
             machine,
         }
     }
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/requests`'s body (FIX 11611): [`RootRequest`].
+/// Its answer reuses [`super::owner_work_routes::owner_work_view_schema`].
+pub(crate) fn root_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RootRequest>()
 }
 
 /// The owner's cancel of one root request: `vault.roots.requests.cancel`'s
@@ -335,12 +341,23 @@ async fn roots(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PinRoot {
     /// The root's fingerprint, 64 hex, read on one of the owner's machines
     /// that pins it.
     root: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/pin`'s body (FIX 11611): [`PinRoot`].
+pub(crate) fn pin_root_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PinRoot>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/roots/pin`'s answer (FIX 11611):
+/// [`super::recovery_kit_target_routes::RepinView`].
+pub(crate) fn repin_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RepinView>()
 }
 
 /// `POST /v1/owner/roots/pin`: pins the root on this install and re-wraps
