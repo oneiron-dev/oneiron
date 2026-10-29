@@ -97,5 +97,7 @@ pub(super) fn overlay_receipt(
         // them.
         turn: None,
         messages: Vec::new(),
+        // An off-record turn wakes no program.
+        wake_outcome: None,
     })
 }

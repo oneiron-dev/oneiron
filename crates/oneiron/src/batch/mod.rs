@@ -46,6 +46,7 @@ pub use self::builder::BatchBuilder;
 pub(crate) use self::vad_postcommit::VadPostcommitScope;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_committed_rows;
+pub(crate) use self::vad_postcommit::queue_notification_change;
 pub(crate) use self::vad_postcommit::queue_pad_tombstone_window;
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
 #[cfg(feature = "sync")]
