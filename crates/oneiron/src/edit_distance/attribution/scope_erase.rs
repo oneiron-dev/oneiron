@@ -1,5 +1,5 @@
 //! A project's erase takes the project off the amendment rows that carry it
-//! (FIX 6038). An evidence or judgment row whose project is the erased one
+//! (FIX 6038). An evidence, judgment or cause row whose project is erased
 //! names one fresh opaque scope instead, as the attempt receipt it came from
 //! does (`learning::scope_carriers`): a later pass lands its
 //! `learning.edit_cost` rows apart from the vault's and never under the
@@ -9,7 +9,7 @@
 //! the id its old event minted, so a later escalation in the fresh scope
 //! mints its own row and the carried one stays until its owner deletes it.
 
-use super::stored::{StoredEvidence, StoredJudgment};
+use super::stored::{StoredAmendmentCause, StoredEvidence, StoredJudgment};
 use super::triage::{NOTIFICATION_PRODUCER_WORSENING, TriagePacket};
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -29,9 +29,14 @@ const EVIDENCE_RAW: SideTable<Vec<u8>, StoredEvidence, Raw> =
 const JUDGMENT_RAW: SideTable<Vec<u8>, StoredJudgment, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_JUDGMENT);
 
-/// Re-keys the project of every amendment evidence and judgment row naming
-/// erased `entity` to one fresh opaque scope. Registered on both stores; the
-/// first call does both, so a judgment keeps its evidence's scope.
+/// Amendment cause rows, by their raw key.
+const CAUSE_RAW: SideTable<Vec<u8>, StoredAmendmentCause, Raw> =
+    SideTable::new(&side_table::EDIT_DISTANCE_AMENDMENT_CAUSE);
+
+/// Re-keys the project of every amendment evidence, judgment and cause
+/// row naming erased `entity` to one fresh opaque scope. Registered on all
+/// three stores; the first call does all of them, so a judgment keeps the
+/// scope its evidence and cause rows take.
 ///
 /// # Errors
 ///
@@ -59,6 +64,7 @@ pub(crate) fn erase_amendment_project_in_txn(
         &mut scope,
         judgment_project,
     )?;
+    rescope_rows_in_txn(vault, wtxn, CAUSE_RAW, &named, &mut scope, cause_project)?;
     rescope_notifications_in_txn(vault, wtxn, &named, &mut scope)
 }
 
@@ -115,6 +121,10 @@ fn evidence_project(row: &mut StoredEvidence) -> &mut Option<String> {
 }
 
 fn judgment_project(row: &mut StoredJudgment) -> &mut Option<String> {
+    &mut row.project
+}
+
+fn cause_project(row: &mut StoredAmendmentCause) -> &mut Option<String> {
     &mut row.project
 }
 

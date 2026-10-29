@@ -214,6 +214,12 @@ fn judge_rejection_cause_in_txn(
         skill: rejection.skill,
         rejected: true,
     };
+    // A displaced judge's answers no longer land (FIX 11638): the fence
+    // the attempt lane checks before its judgment put. The deciding
+    // write's savepoint drops everything above when the fence refuses.
+    if let Some(revision) = judgment.judge.as_deref() {
+        crate::skill_attribution::ensure_current_attribution_judge_in_txn(vault, &*wtxn, revision)?;
+    }
     EVIDENCE.put(&vault.store, wtxn, &judgment.receipt_id, &evidence_row)?;
     JUDGMENT.put(
         &vault.store,
@@ -221,6 +227,8 @@ fn judge_rejection_cause_in_txn(
         &judgment.receipt_id,
         &judgment_row(&judgment),
     )?;
+    // The labels settle their write-once cause row beside the judgment.
+    super::causes::put_amendment_cause_in_txn(vault, wtxn, &judgment)?;
     // A rejection has no Δ to mine, so a `preference_shift` share files no
     // preference note, and a `discovery` share mints no edit proposal here. A
     // re-judgment that left nothing unclear withdraws the note the first
