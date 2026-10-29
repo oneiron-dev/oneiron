@@ -247,7 +247,7 @@
         "output": "crate::task_verb::sdk::BoardFrameReply",
         "description": "Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -272,7 +272,7 @@
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -297,7 +297,7 @@
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Unsubscribes the attached run's board STREAM connection from the named scopes.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },

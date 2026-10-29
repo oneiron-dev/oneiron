@@ -28,9 +28,9 @@ use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
-    BudgetLease, DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
-    DreamerClaimAuthoringStrategy, DreamerRunnerStore, LlmBackend, LlmCapability,
-    LlmGenerateFuture, LlmRequest, LlmStreamResult, Vault, WakeAttemptContext, WriteActor,
+    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
+    DreamerClaimAuthoringStrategy, DreamerRunnerStore, LlmBackend, Vault, WakeAttemptContext,
+    WriteActor,
 };
 use oneiron_driver::{
     AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
@@ -45,14 +45,16 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 mod claim_authoring;
 mod compaction_check;
 mod free_time;
+mod request_sources;
 mod run_log;
 mod urgent_digest;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
-use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, RunBackend, Seat};
+use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
 use crate::runtime::wall_clock_ms as now_ms;
+use request_sources::{ServedRealization, SourcedRunBackend};
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
@@ -579,15 +581,19 @@ impl ObservedFactory {
                 line.clone(),
             );
             runs.insert(*role, (Arc::clone(&route.ladder), run.clone()));
+            // Each call the engine knows the rows of sends under them, on
+            // this same run (FIX 6998).
+            let backend = Arc::new(SourcedRunBackend::new(Arc::clone(&route.ladder), run));
             roles = roles.with(
                 *role,
                 RoleBackend {
-                    backend: Arc::new(RunBackend::new(Arc::clone(&route.ladder), run)),
+                    backend: Arc::clone(&backend) as Arc<dyn LlmBackend>,
                     model: route.model.clone(),
                     binding: HostInferenceBinding::Advertised {
                         model: route.model.clone(),
                         locality: route.locality,
                     },
+                    sourced: Some(backend),
                 },
             );
         }
@@ -640,7 +646,10 @@ impl ObservedFactory {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
         if let Some(host) = host {
-            factory = factory.with_decisions(host.consolidation_decisions()?);
+            factory = factory.with_decisions(
+                host.consolidation_decisions()?
+                    .with_checker(host.auto_checker().cloned()),
+            );
         }
         // A subscribed Slack or LINE message wakes the agent it addressed,
         // which answers on the chat seat through the served sink (OF-519).
@@ -1038,11 +1047,7 @@ impl TaskLend<'_> {
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
         let (ladder, run) = self.sends;
-        let backend = ServedRealization {
-            ladder: Arc::clone(ladder),
-            run: run.clone(),
-            served: std::sync::Mutex::new(None),
-        };
+        let backend = ServedRealization::new(Arc::clone(ladder), run.clone());
         let realized = run_task_realize(
             attempt,
             ctx,
@@ -1058,6 +1063,7 @@ impl TaskLend<'_> {
                 actor: self.actor,
                 instruction: self.instruction,
                 confession: self.confession,
+                sourced: Some(&backend),
             },
         )
         .await?;
@@ -1067,10 +1073,7 @@ impl TaskLend<'_> {
         // not failed.
         let record = &attempt.status.attempt;
         if matches!(realized, DreamerAttemptExecution::Completed { .. })
-            && let Some(served) = backend
-                .served
-                .into_inner()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            && let Some(served) = backend.served()
             && let Some(owner) = record.lease_owner.as_deref()
             && let Err(error) = AttemptQueue::new(ctx.vault).set_executor_model(
                 record.id,
@@ -1107,6 +1110,7 @@ impl TaskLend<'_> {
                 },
                 role: self.role,
                 actor: self.actor,
+                sourced: self.route.sourced.as_deref(),
             },
         )
         .await
@@ -1115,35 +1119,6 @@ impl TaskLend<'_> {
 
 /// The ladder a role's backend sends on, and the run it sends under.
 type RoleSends = (Arc<OfferLadder>, RunAdmission);
-
-/// A TASK realization's backend: the task route's ladder on its role's run,
-/// sending as the route's own backend does, and keeping the model of the
-/// rung that answered, fallback included.
-struct ServedRealization {
-    ladder: Arc<OfferLadder>,
-    run: RunAdmission,
-    served: std::sync::Mutex<Option<ModelId>>,
-}
-
-impl LlmBackend for ServedRealization {
-    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
-        self.ladder.supports(model, &capability)
-    }
-
-    fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
-        Box::pin(async move {
-            let generated = self.ladder.generate_served(&self.run, request, None).await;
-            generated.map(|(response, served)| {
-                *self.served.lock().expect("served model mutex poisoned") = Some(served);
-                response
-            })
-        })
-    }
-
-    fn stream<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
-        self.ladder.stream(&self.run, request, None)
-    }
-}
 
 /// A resident's own dreaming model as this server serves it.
 pub(super) type OwnModel = (
@@ -1198,7 +1173,7 @@ impl ResidentLend<'_> {
                 oneiron::BudgetExhaustionPolicy::Suspend,
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
-            let backend = RunBackend::new(
+            let backend = SourcedRunBackend::new(
                 ladder,
                 self.runtime.undeclared_run(
                     format!("{DREAMER_PASS_RUN}/resident/{}", resident.to_hex()),
@@ -1233,6 +1208,7 @@ impl ResidentLend<'_> {
                     role: None,
                     instruction: self.instruction,
                     window_tokens,
+                    sourced: Some(&backend),
                 },
             )
             .await;
@@ -1261,6 +1237,7 @@ impl ResidentLend<'_> {
                 role: Some(DREAMER_NARRATIVE_ROLE),
                 instruction: self.instruction,
                 window_tokens: self.windows.get(&self.weaver.model).copied(),
+                sourced: self.weaver.sourced.as_deref(),
             },
         )
         .await
