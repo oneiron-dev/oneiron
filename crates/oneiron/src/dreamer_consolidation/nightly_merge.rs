@@ -372,13 +372,16 @@ impl ConsolidationExecutor<'_> {
                         return super::residency::spent_or_deferred(error, ctx, &charges);
                     }
                     if failure_policy.is_some() {
-                        return charges.park_on_fallback(
+                        return match charges.park_on_fallback(
                             ctx.vault,
                             attempt.status.attempt.id,
                             hash,
                             NARRATIVE_FALLBACK,
                             &response,
-                        );
+                        ) {
+                            Ok(parked) => Ok(parked),
+                            Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+                        };
                     }
                     response
                 }
@@ -410,12 +413,15 @@ impl ConsolidationExecutor<'_> {
                 // Only a memo stored before the check can be empty: it goes,
                 // and the Retry asks again (FIX 7431).
                 Err(reason) => {
-                    return charges.park_refused_reply(
+                    return match charges.park_refused_reply(
                         ctx.vault,
                         attempt.status.attempt.id,
                         hash,
                         reason,
-                    );
+                    ) {
+                        Ok(parked) => Ok(parked),
+                        Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+                    };
                 }
             };
             // A call's labels mean nothing past it: the stored text names

@@ -225,13 +225,18 @@ impl ConsolidationExecutor<'_> {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
                 if failure_policy.is_some() {
-                    return charges.park_on_fallback(
+                    return match charges.park_on_fallback(
                         ctx.vault,
                         attempt.status.attempt.id,
                         step_hash,
                         SIEVE_FALLBACK,
                         &response,
-                    );
+                    ) {
+                        Ok(parked) => Ok(parked),
+                        Err(error) => {
+                            super::super::residency::spent_or_deferred(error, ctx, &charges)
+                        }
+                    };
                 }
                 response
             }

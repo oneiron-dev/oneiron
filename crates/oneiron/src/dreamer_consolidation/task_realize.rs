@@ -267,7 +267,12 @@ pub async fn run_task_realize(
         Ok(answer) => answer,
         // Only a memo stored before the check can be empty: it goes, and the
         // Retry asks again (FIX 7431, OF-193a).
-        Err(reason) => return charges.park_refused_reply(ctx.vault, record.id, step_hash, reason),
+        Err(reason) => {
+            return match charges.park_refused_reply(ctx.vault, record.id, step_hash, reason) {
+                Ok(parked) => Ok(parked),
+                Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+            };
+        }
     };
     // The NOTE parts and the row's result commit together, under ids the
     // attempt derives, so a replay never writes a second NOTE (FIX 1334).

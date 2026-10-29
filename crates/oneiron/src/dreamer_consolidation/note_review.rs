@@ -302,13 +302,16 @@ impl ConsolidationExecutor<'_> {
                 // A fallback reply is no review: the NOTE stays unseen, so
                 // the next pass asks the model again.
                 if failure_policy.is_some() {
-                    return Ok(Some(charges.park_on_fallback(
+                    return match charges.park_on_fallback(
                         ctx.vault,
                         run.attempt_id,
                         hash,
                         NOTE_FALLBACK,
                         &response,
-                    )?));
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => spent_or_deferred(error, ctx, charges).map(Some),
+                    };
                 }
                 response
             }

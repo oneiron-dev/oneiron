@@ -632,8 +632,19 @@ pub async fn run_resident_dream(
     let (entry, craft) = match reply::diary_entry(&response) {
         Ok(read) => read,
         // Only a memo stored before the check can hold no entry: it goes,
-        // and the Retry asks again (FIX 7431, OF-193a).
-        Err(reason) => return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason),
+        // and the Retry asks again (FIX 7431, OF-193a). A memo that does
+        // not go keeps its park with its spend on the tally, as a commit
+        // failure does below: this fn also dreams metered free-time items,
+        // so a handover here would charge that spend twice.
+        Err(reason) => {
+            return match charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason) {
+                Ok(parked) => Ok(parked),
+                Err(error) => {
+                    tracing::warn!(?error, "a refused reply's memo did not go");
+                    Ok(charges.park_on_error(&error))
+                }
+            };
+        }
     };
     let now = ctx.now_ms / 1_000;
     // The entry, every part of it, its craft notes, its landing marker and

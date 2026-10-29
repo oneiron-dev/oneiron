@@ -699,7 +699,12 @@ impl<E> PersonAboutExecutor<'_, E> {
                 // Only a memo stored before the check can be empty: it goes,
                 // and the Retry asks again (FIX 7431, OF-193a).
                 Err(reason) => {
-                    return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason);
+                    return match charges
+                        .park_refused_reply(ctx.vault, attempt_id, step_hash, reason)
+                    {
+                        Ok(parked) => Ok(parked),
+                        Err(error) => spent_or_deferred(error, ctx, &charges),
+                    };
                 }
             };
             lines.push(AboutLine {

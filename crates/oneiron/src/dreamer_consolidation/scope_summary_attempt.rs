@@ -7,7 +7,7 @@
 
 use super::call_labels::{CallLabelMap, LabelKind};
 use super::note_text::NoteText;
-use super::residency::{residency_deferral, waits_on_residency};
+use super::residency::{residency_deferral, spent_or_deferred, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, invalid_consolidation};
@@ -287,7 +287,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         .await
         {
             Ok(StepOutcome::Finished { response, .. }) => {
-                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                {
+                    return spent_or_deferred(error, ctx, &charges);
+                }
                 response
             }
             Ok(StepOutcome::Trapped { .. }) => {

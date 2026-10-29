@@ -291,15 +291,18 @@ impl ConsolidationExecutor<'_> {
                     return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
                 }
                 if failure_policy.is_some() {
-                    return charges
-                        .park_on_fallback(
-                            vault,
-                            attempt_id,
-                            step_hash,
-                            FOLLOWER_FALLBACK,
-                            &response,
-                        )
-                        .map(Some);
+                    return match charges.park_on_fallback(
+                        vault,
+                        attempt_id,
+                        step_hash,
+                        FOLLOWER_FALLBACK,
+                        &response,
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => {
+                            super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some)
+                        }
+                    };
                 }
                 (response, memoized)
             }
@@ -464,15 +467,18 @@ impl ConsolidationExecutor<'_> {
                     return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
                 }
                 if failure_policy.is_some() {
-                    return charges
-                        .park_on_fallback(
-                            vault,
-                            attempt_id,
-                            step_hash,
-                            FOLLOWER_FALLBACK,
-                            &response,
-                        )
-                        .map(Some);
+                    return match charges.park_on_fallback(
+                        vault,
+                        attempt_id,
+                        step_hash,
+                        FOLLOWER_FALLBACK,
+                        &response,
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => {
+                            super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some)
+                        }
+                    };
                 }
                 run.calls
                     .push(output::evidence(&response, step_hash, memoized));
