@@ -607,6 +607,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.secrets.register", post(facade_route))
         .route("/vault.secrets.rotate", post(facade_route))
         .route("/vault.secrets.rewrap", post(facade_route))
+        .route("/vault.secrets.revoke", post(facade_route))
         .route("/vault.secrets.custody.get", post(facade_route))
         .route("/vault.secrets.custody.submit", post(facade_route))
         .route("/vault.widen_proposals", post(facade_route))

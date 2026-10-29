@@ -690,6 +690,7 @@ pub(crate) fn mcp_agent_verb_input(
         "vault.secrets.register" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.rotate" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.rewrap" => a.spec.clone().ok_or_else(invalid),
+        "vault.secrets.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.custody.get" => a.spec.clone().ok_or_else(invalid),
         "vault.secrets.custody.submit" => a.spec.clone().ok_or_else(invalid),
         "vault.widen_proposals" => a.spec.clone().ok_or_else(invalid),
@@ -3136,6 +3137,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.secrets.rewrap" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.secrets.revoke" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.secrets.custody.get" => {
@@ -13328,6 +13332,25 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::SecretRewrapRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = crate::api::facade::host_doors::vault_secrets_rewrap(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.secrets.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.secrets.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SecretRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_secrets_revoke(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
