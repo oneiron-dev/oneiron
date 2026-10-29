@@ -74,8 +74,9 @@ fn choice_label(choice: CodeConsentChoice, row: &CodeConsentWaitRow) -> String {
 }
 
 /// The ask a wait's question carries: to its owner, offering the wait's
-/// choices, holding with no deadline of its own. The held call's own expiry
-/// ends the wait, and silence never approves.
+/// choices, holding with no deadline of its own. A held connector call's
+/// own expiry ends its wait; a held browser act waits for its answer.
+/// Silence never approves.
 fn ask_spec(row: &CodeConsentWaitRow) -> MemoryResult<TaskAskSpec> {
     let question = &row.binding.question;
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(question.turn));
