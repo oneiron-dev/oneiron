@@ -17809,6 +17809,21 @@
       "openapi": true
     },
     {
+      "name": "vault.free_time.policy.set_as",
+      "description": "An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming.",
+      "input": "crate::dreamer_runner::FreeTimePolicySetRequest",
+      "output": "crate::dreamer_runner::FreeTimePolicyView",
+      "call": "crate::task_verb::sdk::free_time_policy_set_as_agent(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.free_time.cycles",
       "description": "The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page.",
       "input": "crate::dreamer_runner::FreeTimeCyclesRequest",
