@@ -27,6 +27,11 @@ pub struct ConsentAskCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_receipt_ref: Option<String>,
     pub scope_escalators: Vec<ConsentScopeEscalator>,
+    /// What the change reaches, before and after, in one read-only line
+    /// (ARCH-0070 `reach-line`): display only. It informs the tap and never
+    /// decides an action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach_line: Option<String>,
 }
 
 impl ConsentAskCard {
@@ -53,6 +58,7 @@ impl ConsentAskCard {
             channel: None,
             origin_receipt_ref: None,
             scope_escalators,
+            reach_line: None,
         })
     }
 
@@ -72,6 +78,22 @@ impl ConsentAskCard {
     pub fn with_origin_receipt_ref(mut self, origin_receipt_ref: impl Into<String>) -> Self {
         self.origin_receipt_ref = Some(origin_receipt_ref.into());
         self
+    }
+
+    /// The card with `reach_line` shown whole beside its preview. A blank
+    /// line shows nothing.
+    #[must_use]
+    pub fn with_reach_line(mut self, reach_line: impl Into<String>) -> Self {
+        let reach_line = reach_line.into();
+        self.reach_line = Some(reach_line).filter(|line| !line.trim().is_empty());
+        self
+    }
+
+    /// The card with the line of a reach the vault already computed: a
+    /// plan's, a slate stamp's or a ramp offer's.
+    #[must_use]
+    pub fn with_reach(self, reach: &crate::vault_shape::ShapePlanReach) -> Self {
+        self.with_reach_line(reach.line.clone())
     }
 
     #[must_use]
@@ -178,7 +200,10 @@ impl ConsentAskCard {
 
     #[must_use]
     pub fn fallback_text(&self) -> String {
-        format!("{} {}", self.prompt, self.preview)
+        match &self.reach_line {
+            Some(reach_line) => format!("{} {}\n{reach_line}", self.prompt, self.preview),
+            None => format!("{} {}", self.prompt, self.preview),
+        }
     }
 
     fn grant_scope(&self, scope: ConsentScopeEscalator) -> Result<GrantMintIntentScope> {
