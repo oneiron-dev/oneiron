@@ -224,11 +224,14 @@ async fn begin(
     // the worker. Foreground arrival yields only update-capable background
     // calls on the same device.
     let mut work = worker_host::admit_bound_work(&route.worker, context);
-    if work.is_foreground() {
-        if let Some(device) = work.device() {
-            updates::foreground_arrival(device).await;
+    let _foreground = if work.is_foreground() {
+        match work.device() {
+            Some(device) => Some(updates::foreground_arrival(device).await),
+            None => None,
         }
-    }
+    } else {
+        None
+    };
     work.wait_runnable()
         .await
         .map_err(|_| OpenAiCompatTransportError::Connection)?;
