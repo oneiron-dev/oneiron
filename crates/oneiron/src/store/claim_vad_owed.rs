@@ -101,7 +101,7 @@ impl crate::Vault {
                     } else {
                         drop(wtxn);
                         tracing::warn!(
-                            claim = %id,
+                            claim = %id.to_hex(),
                             error = %error,
                             "owed claim VAD consolidation failed; the debt stays for a later pass"
                         );
