@@ -6,8 +6,8 @@ use super::booking_call::resolve_handshake_caller;
 use super::call_meta::MCP_INVOCATION_META;
 use super::tool_receipt::mcp_call_receipt;
 use super::{
-    admission, booking_call, device_release, ensure_mcp_actor_matches, execute_mcp_tool,
-    mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
+    admission, booking_call, clock_repair_call, device_release, ensure_mcp_actor_matches,
+    execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
     mcp_validated_call_args, wakes, wire,
 };
 use crate::api::facade::{self, DoorClaim};

@@ -3337,6 +3337,21 @@
       "crate-vis": 3,
       "enum": 2,
       "fn": 2,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ClockRepairCaller"
+     ],
+     "path": "src/authority/clock_repair/caller.rs",
+     "purpose": "Who asks for the owner's repair of the authority clock, as its ingress took them before anything read the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -25081,7 +25096,7 @@
      "path": "src/dreamer_consolidation/resources/pins.rs",
      "purpose": "What reading an extraction candidate needs from its branch: the pinned sources, the prior heads and the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -44767,7 +44782,7 @@
      "path": "src/memory/owner_door.rs",
      "purpose": "The embedded owner's door for the verb-table rows that are the vault owner's (`vault.packs.put`, the…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -44930,7 +44945,7 @@
      "purpose": "Call mode (retrieval hub #call-mode): recall for live calls",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5
      }
@@ -71935,7 +71950,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -71945,7 +71960,7 @@
      "path": "src/task_verb/revoke_lands/payload.rs",
      "purpose": "The polymorphic restrictive rows (FIX 5137-5139): calls whose restrictive part is in what they carry, judged…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -74512,7 +74527,7 @@
      "path": "src/verbs/authority_history.rs",
      "purpose": "Byte-preserving signed authority history transfer for the vault owner, and the owner's repair of a damaged…",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -80550,7 +80565,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 220,
+     "files": 221,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82022,7 +82037,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5468,
+   "source_files": 5469,
    "test_files": 902
   },
   "oneiron-android": {
@@ -99502,7 +99517,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -99733,6 +99748,16 @@
      "purpose": "Archive cleanup and evidence-backed re-mention, under the owner's own proof",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/clock_ingress.rs",
+     "purpose": "A facade or MCP call over a damaged authority clock floor (FIX 11190, FIX 11201, FIX 11202)",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -100832,7 +100857,7 @@
      "path": "src/api/facade/release.rs",
      "purpose": "A facade answer's destination release, once its call has nothing left to wait on (FIX 8170), and again for…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -101758,6 +101783,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/clock_repair_call.rs",
+     "purpose": "An MCP `tools/call` of the owner's authority clock repair whose caller the repair's own writer judges (FIX…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -101984,7 +102019,7 @@
      "path": "src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -102014,7 +102049,7 @@
      "path": "src/api/mcp_gateway/owner_call.rs",
      "purpose": "A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -102212,7 +102247,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 49
+      "crate-vis": 50
      }
     },
     {
@@ -113550,7 +113585,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 605,
+     "files": 607,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114042,7 +114077,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1383,
+   "source_files": 1385,
    "test_files": 182
   },
   "oneiron-spawn": {
