@@ -66042,6 +66042,12 @@ pub struct SessionManifest {
         skip_serializing_if = "Option::is_none"
     )]
     pub fence_unproven: Option<bool>,
+    #[serde(
+        rename = "image_release",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub image_release: Option<crate::WireJson>,
 }
 
 /// `oneiron_browser::press_answer::PressOutcome`.

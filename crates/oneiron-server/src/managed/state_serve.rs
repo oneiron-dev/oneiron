@@ -220,6 +220,12 @@ pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
 
+/// The person a supervisor-signed `ManagedPersonAction` names for one
+/// request at a member door (FIX 1302), verified at ingress; never the
+/// owner and never the host root.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedPersonHolder(pub(crate) oneiron::EntityId);
+
 /// Managed ingress's mark on every request it hands the app (FIX 5125): the
 /// supervisor forwarded it on its caller's behalf, so the caller sits off this
 /// device whatever socket it arrived on, and the machine its own proof shows

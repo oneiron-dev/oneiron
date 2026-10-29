@@ -383,6 +383,9 @@ pub enum TokenCommand {
     /// Mint a scoped credential for one named agent (Claude Code, Codex) on
     /// the stopped vault, for `oneiron mcp`.
     Agent(Box<TokenAgentArgs>),
+    /// Mint the host operator's own credential on the stopped self-hosted
+    /// vault: the operator's doors without the host's root (FIX 1814).
+    Operator(Box<commands::TokenOperatorArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
@@ -998,6 +1001,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
         Command::Token(TokenCommand::Agent(args)) => commands::token_agent(*args),
+        Command::Token(TokenCommand::Operator(args)) => commands::token_operator(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         // Blocking: the enrolment is redeemed over blocking HTTP.
         Command::Device(DeviceCommand::Enrol(args)) => {

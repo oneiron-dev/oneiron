@@ -2,8 +2,8 @@
 // of scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 // Census: 1180 facade rows, 4271 declarations.
 // Inputs: 1111 of 1180 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Results: 1051 of 1180 fully typed, 129 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-// Opaque serde_json::Value leaves: 115; unread shapes: 0.
+// Results: 1030 of 1180 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+// Opaque serde_json::Value leaves: 116; unread shapes: 0.
 /** `oneiron::memory::commitment_doors::types::CommitmentObligorKind` */
 export type CommitmentObligorKind = "owner" | "agent" | "third_party"
 /** `oneiron::memory::commitment_doors::types::CommitmentObligor` */
@@ -8239,7 +8239,7 @@ export type SessionSeccomp = "runtime_default" | "guest_sandbox" | "engine_fence
 /** `oneiron_browser::answer::SessionFenceProof` */
 export type SessionFenceProof = { ruleset_hash: string; seccomp_hash: string; network_routes: string[]; network_evidence_digest: string; sandbox_generation: string; launcher_digest: string }
 /** `oneiron_browser::answer::SessionManifest` */
-export type SessionManifest = { backend: string; runtime: string; image: string; argv_digest: string; network: string; seccomp: SessionSeccomp; generation: string; fence_proof?: SessionFenceProof | null; fence_unproven?: boolean }
+export type SessionManifest = { backend: string; runtime: string; image: string; argv_digest: string; network: string; seccomp: SessionSeccomp; generation: string; fence_proof?: SessionFenceProof | null; fence_unproven?: boolean; image_release?: unknown | null }
 /** `oneiron_browser::press_answer::PressOutcome` */
 export type PressOutcome = "delivered" | "refused" | "delivery_unknown"
 /** `oneiron_browser::observation::RowSplice` */

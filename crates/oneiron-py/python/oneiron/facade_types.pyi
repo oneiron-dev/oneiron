@@ -6,8 +6,8 @@ are `Any`, and the census below counts them.
 
 Census: 1180 facade rows, 4271 declarations.
 Inputs: 1111 of 1180 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1051 of 1180 fully typed, 129 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 115; unread shapes: 0.
+Results: 1030 of 1180 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 116; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -21473,6 +21473,7 @@ class SessionManifest(TypedDict):
     generation: str
     fence_proof: NotRequired[SessionFenceProof | None]
     fence_unproven: NotRequired[bool]
+    image_release: NotRequired[Any | None]
 PressOutcome = Literal["delivered", "refused", "delivery_unknown"]
 class RowSplice(TypedDict):
     start: int

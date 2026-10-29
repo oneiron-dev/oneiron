@@ -4070,8 +4070,18 @@
      "path": "src/authority/machine_write.rs",
      "purpose": "MACHINE origin signatures for claim writes; enrollment is `machine_enroll`",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/machine_write/after_mask.rs",
+     "purpose": "Renewing a MACHINE claim's proof after the write door's secret mask rewrote it in the same transaction (FIX…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -9725,7 +9735,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 5,
       "fn": 6,
       "re-export": 4,
@@ -9749,9 +9759,9 @@
      "purpose": "The browser program admission job (CUA E8b; DESIGN-2 \"The Coach\", row E8): the Coach proposes a program it…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 4
      }
     },
@@ -9805,7 +9815,7 @@
      "purpose": "The solved-run index (CUA E8a; DESIGN-2 \"The Coach\", row E8): group, coverage, failure, dirty and seen rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 7,
       "struct": 6
      }
@@ -53656,7 +53666,7 @@
      "purpose": "Per-store clock and id source",
      "surface": {
       "crate-vis": 13,
-      "fn": 6,
+      "fn": 8,
       "struct": 1,
       "trait": 2
      }
@@ -59085,7 +59095,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -80127,7 +80137,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 219,
+     "files": 220,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81599,7 +81609,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5438,
+   "source_files": 5439,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97148,7 +97158,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 17
      }
     },
@@ -102893,7 +102903,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -103535,7 +103545,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 47
+      "crate-vis": 49
      }
     },
     {
@@ -103633,6 +103643,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/managed_person.rs",
+     "purpose": "A managed shared vault's member, as his supervisor signed one request at a member door (FIX 1302 stage 1…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -103640,6 +103660,16 @@
      "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
      "surface": {
       "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/operator_credential.rs",
+     "purpose": "The host operator's own credential (FIX 1814, Engine ruling 10-29): a slip apart from the host's root, for…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -104257,7 +104287,7 @@
       "const": 1,
       "crate-vis": 10,
       "fn": 12,
-      "re-export": 23,
+      "re-export": 24,
       "struct": 1
      }
     },
@@ -104797,6 +104827,19 @@
      "path": "src/commands/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TokenOperatorArgs"
+     ],
+     "path": "src/commands/token_operator.rs",
+     "purpose": "`oneiron token operator`: the host operator's own credential (FIX 1814), minted on a stopped self-hosted…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -107767,7 +107810,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 10,
       "struct": 3
      }
@@ -108091,7 +108134,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 15,
       "re-export": 2,
       "struct": 3,
@@ -112874,7 +112917,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 13,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -112944,7 +112987,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 55,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -113359,7 +113402,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1361,
+   "source_files": 1364,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -118331,14 +118374,15 @@
       "ManagedOwnerHead",
       "ManagedOwnerRequest",
       "ManagedOwnerTranscript",
+      "ManagedPersonAction",
       "ManagedWidenAction"
      ],
      "path": "src/lib/managed_holder.rs",
-     "purpose": "Host-attested account actions: one managed widen request, and one request the vault owner makes in person…",
+     "purpose": "Host-attested account actions: one managed widen request, one request the vault owner makes in person…",
      "surface": {
-      "const": 6,
-      "fn": 12,
-      "struct": 5,
+      "const": 7,
+      "fn": 14,
+      "struct": 6,
       "type": 1
      }
     },
