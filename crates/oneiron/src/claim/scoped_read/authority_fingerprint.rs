@@ -262,7 +262,7 @@ impl ScopedReadActorKey {
         key_fold_str(&mut hasher, self.actor_ref());
         key_fold_opt_str(&mut hasher, self.actor_class());
         key_fold_id(&mut hasher, self.principal_ref);
-        hasher.update([
+        hasher.update(&[
             u8::from(self.enforce_access_grants),
             u8::from(self.unscoped_rows_open),
         ]);
@@ -277,7 +277,7 @@ impl ScopedReadActorKey {
         key_fold_destination(&mut hasher, self.destination());
         key_fold_host_action(&mut hasher, self.host_action_guard());
         key_fold_owner_proof(&mut hasher, self.owner_proof_guard());
-        hasher.update([u8::from(self.owner_by_census())]);
+        hasher.update(&[u8::from(self.owner_by_census())]);
         *hasher.finalize().as_bytes()
     }
 }
@@ -297,20 +297,24 @@ fn key_fold_str(hasher: &mut blake3::Hasher, value: &str) {
 fn key_fold_opt_str(hasher: &mut blake3::Hasher, value: Option<&str>) {
     match value {
         Some(value) => {
-            hasher.update([1u8]);
+            hasher.update(&[1u8]);
             key_fold_str(hasher, value);
         }
-        None => hasher.update([0u8]),
+        None => {
+            hasher.update(&[0u8]);
+        }
     }
 }
 
 fn key_fold_id(hasher: &mut blake3::Hasher, id: Option<EntityId>) {
     match id {
         Some(id) => {
-            hasher.update([1u8]);
+            hasher.update(&[1u8]);
             hasher.update(id.as_bytes());
         }
-        None => hasher.update([0u8]),
+        None => {
+            hasher.update(&[0u8]);
+        }
     }
 }
 
@@ -330,10 +334,12 @@ fn key_fold_json_opt(
 ) {
     match value {
         Some(value) => {
-            hasher.update([1u8]);
+            hasher.update(&[1u8]);
             key_fold_json(hasher, value);
         }
-        None => hasher.update([0u8]),
+        None => {
+            hasher.update(&[0u8]);
+        }
     }
 }
 
@@ -341,20 +347,22 @@ fn key_fold_json_opt(
 /// it is unattenuated or transferred.
 fn key_fold_proof(hasher: &mut blake3::Hasher, proof: Option<&VerifiedSlip>) {
     let Some(proof) = proof else {
-        hasher.update([0u8]);
+        hasher.update(&[0u8]);
         return;
     };
-    hasher.update([1u8]);
+    hasher.update(&[1u8]);
     key_fold_json(hasher, proof.claims());
     match proof.pact() {
         Some((grant, scope)) => {
-            hasher.update([1u8]);
+            hasher.update(&[1u8]);
             hasher.update(grant.as_bytes());
             key_fold_json(hasher, scope);
         }
-        None => hasher.update([0u8]),
+        None => {
+            hasher.update(&[0u8]);
+        }
     }
-    hasher.update([
+    hasher.update(&[
         u8::from(proof.is_unattenuated()),
         u8::from(proof.is_transferred()),
     ]);
@@ -365,17 +373,17 @@ fn key_fold_proof(hasher: &mut blake3::Hasher, proof: Option<&VerifiedSlip>) {
 /// order never moves the digest), its thread and whether it is personal.
 fn key_fold_room_turn(hasher: &mut blake3::Hasher, ceiling: Option<&RoomTurnCeiling>) {
     let Some(ceiling) = ceiling else {
-        hasher.update([0u8]);
+        hasher.update(&[0u8]);
         return;
     };
-    hasher.update([1u8]);
+    hasher.update(&[1u8]);
     hasher.update(ceiling.room.as_bytes());
     hasher.update(ceiling.caller.as_bytes());
     let terms = ceiling.terms.get();
     key_fold_json(hasher, &terms.worlds);
     key_fold_json(hasher, &terms.facets);
     key_fold_json_opt(hasher, terms.clearance.as_ref());
-    hasher.update([u8::from(terms.p7)]);
+    hasher.update(&[u8::from(terms.p7)]);
     let mut roster = ceiling.roster.clone();
     roster.sort_unstable();
     key_fold_len(hasher, roster.len());
@@ -393,17 +401,17 @@ fn key_fold_room_turn(hasher: &mut blake3::Hasher, ceiling: Option<&RoomTurnCeil
         hasher.update(peer);
     }
     key_fold_id(hasher, ceiling.branch);
-    hasher.update([u8::from(ceiling.personal)]);
+    hasher.update(&[u8::from(ceiling.personal)]);
 }
 
 /// The asked-worlds ceiling: whether base reality reads, and each world in
 /// sorted order.
 fn key_fold_worlds(hasher: &mut blake3::Hasher, worlds: Option<&WorldAuthoritySet>) {
     let Some(worlds) = worlds else {
-        hasher.update([0u8]);
+        hasher.update(&[0u8]);
         return;
     };
-    hasher.update([1u8, u8::from(worlds.include_base())]);
+    hasher.update(&[1u8, u8::from(worlds.include_base())]);
     key_fold_len(hasher, worlds.worlds().len());
     for world in worlds.worlds() {
         hasher.update(world.as_bytes());
@@ -414,7 +422,7 @@ fn key_fold_worlds(hasher: &mut blake3::Hasher, worlds: Option<&WorldAuthoritySe
 /// connection proved beside that, sorted, so order never moves the digest.
 /// The effective destination the reads judge, not latent proof state.
 fn key_fold_destination(hasher: &mut blake3::Hasher, destination: &ReadDestination) {
-    hasher.update([u8::from(destination.is_off_device())]);
+    hasher.update(&[u8::from(destination.is_off_device())]);
     let mut peers: Vec<Vec<u8>> = destination
         .peers()
         .iter()
@@ -440,17 +448,19 @@ fn key_fold_destination(hasher: &mut blake3::Hasher, destination: &ReadDestinati
 /// root it acts under by slip id (`None` for the dev mode).
 fn key_fold_host_action(hasher: &mut blake3::Hasher, guard: Option<&HostActionGuard>) {
     let Some(guard) = guard else {
-        hasher.update([0u8]);
+        hasher.update(&[0u8]);
         return;
     };
-    hasher.update([1u8]);
+    hasher.update(&[1u8]);
     hasher.update(guard.owner().as_bytes());
     match guard.root_slip_id() {
         Some(id) => {
-            hasher.update([1u8]);
-            hasher.update(id);
+            hasher.update(&[1u8]);
+            hasher.update(&id);
         }
-        None => hasher.update([0u8]),
+        None => {
+            hasher.update(&[0u8]);
+        }
     }
 }
 
@@ -461,9 +471,11 @@ fn key_fold_host_action(hasher: &mut blake3::Hasher, guard: Option<&HostActionGu
 fn key_fold_owner_proof(hasher: &mut blake3::Hasher, proof: Option<&AuthenticatedOwner>) {
     match proof {
         Some(proof) => {
-            hasher.update([1u8]);
+            hasher.update(&[1u8]);
             key_fold_str(hasher, &format!("{proof:?}"));
         }
-        None => hasher.update([0u8]),
+        None => {
+            hasher.update(&[0u8]);
+        }
     }
 }
