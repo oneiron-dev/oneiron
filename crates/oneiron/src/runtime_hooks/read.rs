@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use crate::claim::{ClaimBody, ClaimSubject, PointRead, ScopedRead};
 use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::vault::ReadMode;
+use crate::vault::{ReadMode, RevisionRef};
 use crate::{EdgeKind, EntityId, Result};
 
 use super::filter::glob_match;
@@ -34,6 +34,48 @@ pub(super) struct SeenFact {
     pub(super) claim_json: Value,
     /// BLAKE3 of the selected body.
     pub(super) body_hash: [u8; 32],
+}
+
+/// Whether a saved dependency is shown, withheld by the current grant, or
+/// missing. An expected full body hash keeps a wrong revision from standing
+/// in for the saved bytes.
+pub(super) enum HistoryAdmission {
+    Shown,
+    Withheld,
+    Missing,
+}
+
+pub(super) fn history_admission(
+    lane: &ScopedRead<'_>,
+    grant: &HookGrant,
+    id: EntityId,
+    revision: Option<RevisionRef>,
+    expected_body_hash: Option<[u8; 32]>,
+) -> Result<HistoryAdmission> {
+    let point = match revision {
+        Some(revision) => PointRead::id(id).at(ReadMode::Pinned(revision)),
+        None => PointRead::id(id),
+    };
+    let Some(row) = lane
+        .read(&[point], None)?
+        .value
+        .into_iter()
+        .next()
+        .flatten()
+    else {
+        return Ok(HistoryAdmission::Missing);
+    };
+    let Some(body) = row.body.as_deref() else {
+        return Ok(HistoryAdmission::Missing);
+    };
+    if expected_body_hash.is_some_and(|expected| expected != *blake3::hash(body).as_bytes()) {
+        return Ok(HistoryAdmission::Missing);
+    }
+    if grant_view::shows_row(grant, &row)? {
+        Ok(HistoryAdmission::Shown)
+    } else {
+        Ok(HistoryAdmission::Withheld)
+    }
 }
 
 /// Reads the fact's entity under `lane` and `grant`. `None` is withheld or

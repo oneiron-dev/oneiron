@@ -30,8 +30,10 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     pub(in crate::runtime_hooks) phase: HookPhase,
     pub(in crate::runtime_hooks) verb: String,
     /// The exact input the body saw, as its grant showed it (FIX 10084);
-    /// `None` past the pin bound.
+    /// `None` past the pin bound or after erase.
     pub(in crate::runtime_hooks) input_json: Option<String>,
+    /// Source erasure retired this run's retained payload (FIX 10080).
+    pub(in crate::runtime_hooks) history_erased: bool,
     pub(in crate::runtime_hooks) input_hash: String,
     /// The rows whose content that input showed: a replay runs it again only
     /// while the hook's current grant still shows each of them.

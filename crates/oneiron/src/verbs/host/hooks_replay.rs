@@ -96,6 +96,8 @@ pub enum HookReplayOutcome {
         /// No run pinned this entry's reads; they read current rows.
         reads_live: bool,
     },
+    /// The hook's current grant no longer shows a saved dependency.
+    Withheld { reason: String },
     /// The entry's inputs are gone: replay will not read newer state instead.
     MissingHistory { reason: String },
 }
@@ -125,6 +127,9 @@ impl From<crate::runtime_hooks::HookReplayEntry> for HookReplayRow {
                     from_memo,
                     reads_live,
                 },
+                HookReplayResult::Withheld { reason } => {
+                    HookReplayOutcome::Withheld { reason }
+                }
                 HookReplayResult::MissingHistory { reason } => {
                     HookReplayOutcome::MissingHistory { reason }
                 }

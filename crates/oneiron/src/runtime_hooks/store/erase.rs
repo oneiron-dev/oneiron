@@ -39,6 +39,7 @@ pub(super) fn dependencies_erased_in_txn(
 /// delivery identity, derivation digest, outcome token and commit position.
 pub(super) fn scrub_memo_payload(memo: &mut HookRunRecord) {
     memo.input_json = None;
+    memo.history_erased = true;
     memo.reads.clear();
     memo.verdicts.clear();
     memo.verdicts_complete = false;
@@ -49,6 +50,7 @@ pub(super) fn scrub_memo_payload(memo: &mut HookRunRecord) {
 /// The verb-record half of [`scrub_memo_payload`].
 fn scrub_verb_payload(record: &mut HookVerbRunRecord) {
     record.input_json = None;
+    record.history_erased = true;
     record.reads.clear();
     record.outcome_json = None;
     record.reason = Some(ERASED_HISTORY_REASON.to_owned());
