@@ -176,6 +176,27 @@ pub(crate) fn wake_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, now: u64) ->
     Ok(true)
 }
 
+/// The sieve pass's wake, for a pass that just queued spans: queues the
+/// follower when it is on, without the queue-wide novelty scan, since every
+/// new span owes the novelty rung. Returns whether it queued.
+pub(crate) fn wake_queued_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    now: u64,
+) -> Result<bool> {
+    if !policy_in_txn(vault, txn)?.follower_enabled {
+        return Ok(false);
+    }
+    enqueue_in_txn(
+        &DreamerRunnerStore::new(vault),
+        txn,
+        None,
+        &session_key()?,
+        now,
+    )?;
+    Ok(true)
+}
+
 /// One follower attempt's fixed inputs for a transaction.
 pub(crate) struct FollowerCall<'a> {
     pub(crate) key: SessionKey,

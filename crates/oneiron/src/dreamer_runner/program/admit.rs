@@ -143,6 +143,9 @@ fn judge_in_txn(
         // His own refusal, recorded on this wake's admission alone (FIX
         // 11090); a host that cannot judge him keeps the wake instead.
         Standing::OwnerNotLive => return Ok(Err(crate::authority::OWNER_NOT_LIVE)),
+        // Its own refusal, recorded on this wake's admission alone (FIX
+        // 11593).
+        Standing::Withdrawn { reason } => return Ok(Err(reason)),
     }
     if !super::arm::pin_stands_in_txn(vault, txn, &arming.definition)? {
         return Ok(Err(PIN_MOVED));

@@ -13,7 +13,9 @@
 //! A managed vault's attested owner seals his person alone (FIX 11090):
 //! each judgment asks the host whether the vault records him as its live
 //! owner then. One who no longer is refuses that wake, or ends that program
-//! Failed; it is never a lapse that waits for his standing to return.
+//! Failed; it is never a lapse that waits for his standing to return. A turn
+//! program whose original authorization was positively withdrawn ends the
+//! same way (FIX 11593).
 
 use serde::{Deserialize, Serialize};
 
@@ -194,6 +196,23 @@ impl TurnProgramAuthority {
         }
     }
 
+    /// The slip that authorized the turn, when it was a slip's (FIX 11593).
+    pub(super) fn slip_id(&self) -> Option<[u8; 32]> {
+        match &self.proof {
+            Proof::Slip { slip_id, .. } => Some(*slip_id),
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
+        }
+    }
+
+    /// The host root the turn acted under, when it was a host action's with
+    /// one (FIX 11593).
+    pub(super) fn host_root(&self) -> Option<[u8; 32]> {
+        match &self.proof {
+            Proof::HostAction { root } => *root,
+            Proof::Slip { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
+        }
+    }
+
     /// Whether this authority still stands in `txn`: the actor is a live
     /// authority-bearing row whose binding no revocation took, and its
     /// witness still holds (the same slip live and held by the actor under
@@ -210,8 +229,25 @@ impl TurnProgramAuthority {
     /// [`Self::stands_in_txn`], with the slip's live, verified view when it
     /// stands on one: the scope, ceiling and verbs the program runs under.
     /// An attested owner stands on his live ownership alone, never on the
-    /// native writer checks.
+    /// native writer checks. A lapsed authority whose original authorization
+    /// was positively withdrawn answers so (FIX 11593), never merely lapsed.
     pub(super) fn standing_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Standing> {
+        match self.standing_before_withdrawal_in_txn(vault, txn)? {
+            Standing::Lapsed => match super::withdrawn::withdrawn_in_txn(vault, txn, self)? {
+                Some(reason) => Ok(Standing::Withdrawn { reason }),
+                None => Ok(Standing::Lapsed),
+            },
+            standing => Ok(standing),
+        }
+    }
+
+    /// The standing with a withdrawal still reading as a lapse:
+    /// [`Self::standing_in_txn`] tells them apart.
+    fn standing_before_withdrawal_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Standing> {
         if let Proof::AttestedOwner { holder } = self.proof {
             return self.owner_standing_in_txn(vault, txn, holder);
         }
@@ -330,6 +366,9 @@ pub(super) enum Standing {
     /// Its attested owner is not the vault's live owner (FIX 11090): the
     /// item is refused or ends Failed, never held.
     OwnerNotLive,
+    /// Its original authorization was positively withdrawn (FIX 11593): the
+    /// program ends, never held.
+    Withdrawn { reason: &'static str },
     /// It stands, with the slip's live, verified view when it is a slip's.
     Stands(Option<VerifiedSlip>),
 }
@@ -482,6 +521,7 @@ impl Vault {
                 return Ok(TurnProgramBound::Lapsed(ProgramHold::AuthorityLapsed));
             }
             Standing::OwnerNotLive => return Ok(TurnProgramBound::OwnerNotLive),
+            Standing::Withdrawn { reason } => return Ok(TurnProgramBound::Withdrawn { reason }),
         };
         if !super::arm::pin_stands_in_txn(self, txn, &pin)? {
             return Ok(TurnProgramBound::Lapsed(ProgramHold::PinMoved));
@@ -531,6 +571,8 @@ pub(crate) fn require_program_authority_in_txn(
         })),
         // His own reason, never a generic lapse (FIX 11090).
         Standing::OwnerNotLive => Err(ManagedOwnerCheckError::OwnerNotLive.into_error()),
+        // Its own reason, never a generic lapse (FIX 11593).
+        Standing::Withdrawn { reason } => Err(super::withdrawn::withdrawn_refusal(reason)),
     }
 }
 
@@ -543,6 +585,11 @@ pub(crate) enum TurnProgramBound {
     /// Its attested owner is not the vault's live owner (FIX 11090): the
     /// program ends Failed, held by nothing.
     OwnerNotLive,
+    /// Its original authorization was positively withdrawn (FIX 11593): the
+    /// program ends Failed, held by nothing.
+    Withdrawn {
+        reason: &'static str,
+    },
 }
 
 /// The actor `id`'s stamp names, in `txn`.

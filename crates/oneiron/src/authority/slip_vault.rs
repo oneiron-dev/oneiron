@@ -387,7 +387,13 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
+        let id = self.store.env.info().last_txn_id + 1;
         txn.commit()?;
+        // Without a delegation's support receipt the commit wrote only replay
+        // rows and the clock floors, which change no Dreamer input (FIX 11568).
+        if verified.claims().delegation.is_none() {
+            self.diagnostics().replay_only_commits.note(id);
+        }
         Ok(verified)
     }
     /// [`Self::admit_capability_slip_request`] in the caller's writer.
