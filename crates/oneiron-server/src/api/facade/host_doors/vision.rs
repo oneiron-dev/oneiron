@@ -41,9 +41,38 @@ pub(crate) async fn ai_ask_image(
     }
 }
 
-/// The facade's error for one refusal of the shared answering path: its
-/// HTTP status as the facade code that maps back to it, with the path's own
-/// code and words kept in the message.
+/// The HTTP status `POST /v1/ai/ask_image` answers each of its own refusal
+/// codes with (`api/ai/vision.rs`, and its provider failures in
+/// `api/ai/media.rs` `failure`), so the facade answers the door's refusal
+/// under the same code with the same status.
+pub(crate) fn ask_image_refusal_status(code: &str) -> Option<StatusCode> {
+    Some(match code {
+        "empty_question"
+        | "box_reads_whole_image"
+        | "contract_not_answered"
+        | "invalid_question"
+        | "invalid_request" => StatusCode::BAD_REQUEST,
+        "principal_required" => StatusCode::FORBIDDEN,
+        "call_not_admitted" | "budget_denied" => StatusCode::PAYMENT_REQUIRED,
+        "kept_on_device" => StatusCode::CONFLICT,
+        "content_filtered" => StatusCode::UNPROCESSABLE_ENTITY,
+        "rate_limited" | "quota_spent" => StatusCode::TOO_MANY_REQUESTS,
+        "pixels_missing" => StatusCode::INTERNAL_SERVER_ERROR,
+        "decision_failed" | "provider_auth" | "empty_response" | "provider_unavailable" => {
+            StatusCode::BAD_GATEWAY
+        }
+        "no_model_configured" | "model_route_not_served" => StatusCode::SERVICE_UNAVAILABLE,
+        _ => return None,
+    })
+}
+
+/// The facade's error for one refusal of the shared answering path. A
+/// route code [`ask_image_refusal_status`] answers with the refusal's own
+/// status stays the code, so the facade answers both alike; any other
+/// refusal (a read lane's, a credential's) takes the facade code its status
+/// maps back to, with its own code kept in the message. A provider failure's
+/// structured detail rides in the message as its JSON, as the sibling media
+/// doors carry it.
 async fn refusal_error(refused: Response) -> MemoryError {
     let status = refused.status();
     let body = axum::body::to_bytes(refused.into_body(), REFUSAL_BODY_BYTES)
@@ -96,5 +125,8 @@ async fn refusal_error(refused: Response) -> MemoryError {
         ),
         _ => (MEMORY_CODE_INTERNAL, "This is an Oneiron server bug; please report it."),
     };
+    if ask_image_refusal_status(&reason) == Some(status) {
+        return MemoryError::new(&reason, format!("{VERB}: {words}"), &[suggestion]);
+    }
     MemoryError::new(code, format!("{VERB}: {reason}: {words}"), &[suggestion])
 }
