@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use super::Shutdown;
+use crate::Vault;
 use crate::voice_cascade::RetrievalContext;
+use crate::voice_cascade::spilled_audio::{AudioSpool, SpilledFrame};
 
 const FRAME_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -65,9 +67,17 @@ pub(super) enum Frame {
     Fatal(&'static str),
 }
 
-/// Never drain an oversized frame: close instead of waiting for its newline.
-pub(super) fn read_frame(reader: &mut impl BufRead, shutdown: &Shutdown) -> io::Result<Frame> {
-    let mut frame = Vec::with_capacity(1024);
+/// One frame, however long its newline takes: past the spool's inline
+/// bound it waits spilled, not in memory (FIX 3728), and is read back
+/// whole at its newline. The timeouts still close a frame that never
+/// ends.
+pub(super) fn read_frame(
+    reader: &mut impl BufRead,
+    shutdown: &Shutdown,
+    spool: &AudioSpool,
+    vault: &Vault,
+) -> io::Result<Frame> {
+    let mut frame = SpilledFrame::new();
     let idle_start = Instant::now();
     let mut frame_start = None;
     loop {
@@ -102,10 +112,18 @@ pub(super) fn read_frame(reader: &mut impl BufRead, shutdown: &Shutdown) -> io::
         frame_start.get_or_insert_with(Instant::now);
         let newline = bytes.iter().position(|byte| *byte == b'\n');
         let count = newline.unwrap_or(bytes.len());
-        frame.extend_from_slice(&bytes[..count]);
+        // A spill that fails after it opened ends the frame like a
+        // timeout does: the peer gets one error, not a bare close.
+        if frame.append(spool, &bytes[..count]).is_err() {
+            return Ok(Frame::Fatal("frame_unreadable"));
+        }
         reader.consume(count + usize::from(newline.is_some()));
         if newline.is_some() {
-            return Ok(Frame::Data(frame));
+            let bytes = match frame.finish(spool, vault) {
+                Ok(bytes) => bytes,
+                Err(_) => return Ok(Frame::Fatal("frame_unreadable")),
+            };
+            return Ok(Frame::Data(bytes));
         }
     }
 }

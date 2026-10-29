@@ -35,6 +35,7 @@ use super::policy::FreeTimePolicyRecord;
 use super::{CLOCK, CYCLE, FreeTimeClock, FreeTimeItemReceipt, POLICY, RECEIPT};
 use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::AttemptQueue;
+use crate::authority::{GrantStanding, OwnerActKind, grant_standing_in_txn};
 use crate::side_table::{self, SideCodec, SideKey, SideTable, SideTableDecl};
 use crate::sync::home_handoff::{
     HomeFence, HomeMove, HomeTable, TableAdopt, froze_home_state_in_txn,
@@ -140,6 +141,24 @@ impl HomeTable for FreeTimePolicyRows {
     ) -> Result<TableAdopt> {
         for PolicyRow { agent, record } in rows.rows {
             if erased_in_txn(vault, txn, &agent)? {
+                continue;
+            }
+            // A carried agent set whose Grant this install holds refused does not land (FIX 11608);
+            // absent or unstamped rows are trusted as today.
+            if let Some(policy) = record.policy.as_ref()
+                && let (Some(acting), Some(grant)) = (policy.set_by_agent, policy.set_grant)
+                && matches!(
+                    grant_standing_in_txn(
+                        &vault.store,
+                        txn,
+                        grant,
+                        acting,
+                        OwnerActKind::FreeTimePolicy,
+                        policy.set_at
+                    ),
+                    Ok(GrantStanding::Refused)
+                )
+            {
                 continue;
             }
             if let Some(local) = POLICY.get(&vault.store, txn, &agent)? {

@@ -1,6 +1,7 @@
 //! The owner's custody doors as typed rows (WILL L04 row 04, FIX 4993):
 //! `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
-//! `vault.secrets.custody.get` and `vault.secrets.custody.submit`. Each runs
+//! `vault.secrets.revoke`, `vault.secrets.custody.get` and
+//! `vault.secrets.custody.submit`. Each runs
 //! the same engine door as its `/v1/owner/secrets/*` route, with the same
 //! request and reply fields, under the owner's proof. A host passes its own
 //! reading of where the request came from as the act's surface, for audit
@@ -176,6 +177,14 @@ pub struct SecretRewrapRequest {
     pub recipients: Vec<String>,
 }
 
+/// `vault.secrets.revoke`'s input: the secret's custody name, as `POST
+/// /v1/owner/secrets/revoke` reads it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRevokeRequest {
+    pub name: String,
+}
+
 /// `vault.secrets.custody.get`'s input: the secret's custody name.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -309,6 +318,17 @@ pub struct SecretRotationReceipt {
     pub rotated_at: u64,
     /// The receipt's own kind, `rotated`.
     pub kind: String,
+}
+
+/// A revoke's reply, as the owner route writes it: the receipt this install
+/// wrote when it revoked the record, beside what the custody request says.
+/// `kind` is `revoked`, with `from_generation` equal to `to_generation`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretRevokeReply {
+    /// Always present: a revoke writes its receipt here.
+    #[serde(flatten)]
+    pub receipt: Option<SecretRotationReceipt>,
+    pub custody: SecretCustodyReply,
 }
 
 /// What a surface reads to ask a custody change, value-free: the binding a
@@ -462,6 +482,26 @@ pub fn rewrap_secret_as(
     Ok(vault
         .rewrap_secret_as_owner(owner, surface, &input.name, &plan, vault.now_recorded_at())?
         .into())
+}
+
+/// `vault.secrets.revoke`: revokes the secret, a portable one as a custody
+/// revoke request carried for the owner's other machines, by the door `POST
+/// /v1/owner/secrets/revoke` runs.
+///
+/// # Errors
+/// Every refusal of [`Vault::revoke_secret_as_owner`].
+pub fn revoke_secret_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    surface: ActSurface,
+    input: SecretRevokeRequest,
+) -> MemoryResult<SecretRevokeReply> {
+    let revoked =
+        vault.revoke_secret_as_owner(owner, surface, &input.name, vault.now_recorded_at())?;
+    Ok(SecretRevokeReply {
+        receipt: Some(SecretRotationReceipt::from(revoked.rotation)),
+        custody: revoked.custody.into(),
+    })
 }
 
 /// `vault.secrets.custody.get`: the secret's custody binding, live

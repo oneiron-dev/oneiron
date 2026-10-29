@@ -206,6 +206,7 @@ impl AiHandle {
             runtime: live.runtime.clone(),
         };
         let policy = live.policy;
+        let mut driver = driver;
         spawn.spawn(Box::new(move || {
             let ChatBreakpointCall {
                 vault,
@@ -214,9 +215,43 @@ impl AiHandle {
                 ..
             } = call;
             let flight = match seal_conversation_flight(
-                &vault, driver, policy, byline, captured, &log, message,
+                &vault,
+                &mut driver,
+                policy,
+                byline,
+                captured.clone(),
+                &log,
+                message,
             ) {
                 Ok(flight) => flight,
+                Err(Why::Pending(stop)) => {
+                    tracing::info!(
+                        %stop,
+                        "a chat compaction hook left Pending; settled asks drain before its retry"
+                    );
+                    if let Err(error) = vault.drain_verb_asks() {
+                        tracing::warn!(%error, "a chat compaction's Pending could not drain");
+                        return;
+                    }
+                    match seal_conversation_flight(
+                        &vault,
+                        &mut driver,
+                        policy,
+                        byline,
+                        captured,
+                        &log,
+                        message,
+                    ) {
+                        Ok(flight) => flight,
+                        Err(why) => {
+                            tracing::info!(
+                                reason = why.as_str(),
+                                "a chat turn's own compaction did not fly; its log stays raw"
+                            );
+                            return;
+                        }
+                    }
+                }
                 Err(why) => {
                     tracing::info!(
                         reason = why.as_str(),

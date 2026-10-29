@@ -14,7 +14,7 @@ use super::secrets::CustodyReply;
 use super::{OwnerError, OwnerResult};
 
 /// One binding as the owner reads it.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BindingView {
     effector: String,
     tier_ceiling: u8,
@@ -22,7 +22,7 @@ pub(crate) struct BindingView {
 }
 
 /// What a bind or an unbind left.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BoundView {
     secret_id: String,
     handle: String,

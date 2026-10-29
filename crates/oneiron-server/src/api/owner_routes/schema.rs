@@ -1,11 +1,17 @@
 //! The OpenAPI schemas of the owner routes handled in [`super`] itself (FIX 11611):
 //! `POST /v1/owner/backups/rehearse`, the five `POST /v1/owner/cleanup*`
-//! writes and the three `POST /v1/owner/imports/*` writes. [`super`] is
-//! already past the file-size bar, so their schema fns live here, beside
-//! the route files' own.
+//! writes, the three `POST /v1/owner/imports/*` writes, the two
+//! `POST /v1/owner/runs/*` writes and `POST /v1/owner/secret-scan`
+//! (FIX 11611 part D). [`super`] is already past the file-size bar, so
+//! their schema fns live here, beside the route files' own.
 
-use super::{DecideCleanup, DecideImport, RehearseRequest, RestoreArchived, RevertCleanupRun};
-use crate::owner::{backup, cleanup, imports};
+use oneiron::policy_model::SecretScanReceipt;
+
+use super::{
+    DecideCleanup, DecideImport, DecideRun, ModelCatalogSynced, RehearseRequest, RestoreArchived,
+    RevertCleanupRun, SetModelCatalog, SetSecretScan,
+};
+use crate::owner::{backup, cleanup, imports, note_tombstones, off_record, runs};
 
 /// The OpenAPI schema of `POST /v1/owner/backups/rehearse`'s body (FIX 11611):
 /// [`RehearseRequest`].
@@ -89,4 +95,92 @@ pub(crate) fn import_approved_schema() -> serde_json::Value {
 /// [`imports::ImportDeclined`].
 pub(crate) fn import_declined_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<imports::ImportDeclined>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/model-catalog`'s body (FIX 11617): [`SetModelCatalog`].
+pub(crate) fn set_model_catalog_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetModelCatalog>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/model-catalog`'s answer (FIX 11617): [`oneiron::skill_hub::ModelCatalogSync`].
+pub(crate) fn model_catalog_sync_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<oneiron::skill_hub::ModelCatalogSync>(
+    )
+}
+
+/// The OpenAPI schema of `POST /v1/owner/model-catalog/sync`'s answer (FIX 11617): [`ModelCatalogSynced`].
+pub(crate) fn model_catalog_synced_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ModelCatalogSynced>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/backups`'s answer (FIX 11613): [`backup::BackupOutcome`].
+pub(crate) fn backup_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<backup::BackupOutcome>()
+}
+
+/// The OpenAPI schema of the note-tombstone decides' body (FIX 11617): [`note_tombstones::Decide`].
+pub(crate) fn decide_note_tombstone_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<note_tombstones::Decide>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/notes/tombstones/accept`'s answer (FIX 11617): [`note_tombstones::Tombstoned`].
+pub(crate) fn tombstoned_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<note_tombstones::Tombstoned>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/notes/tombstones/decline`'s answer (FIX 11617): [`note_tombstones::TombstoneReview`].
+pub(crate) fn tombstone_review_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<note_tombstones::TombstoneReview>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/off-record/mode`'s body (FIX 11617): [`off_record::Flip`].
+pub(crate) fn flip_off_record_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<off_record::Flip>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/off-record/mode`'s answer (FIX 11617): [`off_record::Session`].
+pub(crate) fn off_record_session_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<off_record::Session>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/off-record/promote`'s body (FIX 11617): [`off_record::Promote`].
+pub(crate) fn promote_off_record_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<off_record::Promote>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/off-record/promote`'s answer (FIX 11617): [`off_record::Promoted`].
+pub(crate) fn off_record_promoted_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<off_record::Promoted>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/off-record/save`'s body (FIX 11617): [`off_record::SessionName`].
+pub(crate) fn save_off_record_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<off_record::SessionName>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/off-record/save`'s answer (FIX 11617): [`off_record::Saved`].
+pub(crate) fn off_record_saved_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<off_record::Saved>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/runs/approve`'s body (FIX 11611),
+/// shared with `POST /v1/owner/runs/decline`: [`DecideRun`].
+pub(crate) fn decide_run_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DecideRun>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/runs/approve`'s answer (FIX 11611),
+/// shared with `POST /v1/owner/runs/decline`: [`runs::RunResolved`].
+pub(crate) fn run_resolved_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<runs::RunResolved>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secret-scan`'s body (FIX 11611): [`SetSecretScan`].
+pub(crate) fn set_secret_scan_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetSecretScan>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secret-scan`'s answer (FIX 11611): [`SecretScanReceipt`].
+pub(crate) fn secret_scan_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SecretScanReceipt>()
 }

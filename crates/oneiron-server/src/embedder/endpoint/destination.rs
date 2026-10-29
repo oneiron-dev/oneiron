@@ -19,7 +19,7 @@ use oneiron::embed::{EgressDecision, EgressPredicate, PendingEmbeddingInput};
 use oneiron::federation::derivation::DerivationScope;
 
 use super::{PodRoute, pod_error};
-use crate::runtime::{GpuLeaseGuard, GpuRegistryError};
+use crate::runtime::{GpuDerivationJob, GpuLeaseGuard, GpuRegistryError};
 
 /// The vault's world release toward a pod: for each row, in order, whether
 /// it may leave this device for a destination nobody proved.
@@ -62,8 +62,9 @@ pub(super) enum PodTarget {
     Lease(GpuLeaseGuard),
     /// A vault bound to an account: each request is a derivation job bound
     /// to the rows it carries, so the job is acquired over the admitted
-    /// rows, and sealed to the account. A pool with no healthy pod then
-    /// sends those rows to the on-device primary, which may take any row.
+    /// rows before its door is chosen, and sealed to the account. A pool
+    /// with no healthy pod then sends those rows through the on-device
+    /// primary, which may take any row.
     Derivation(DerivationScope),
 }
 
@@ -139,7 +140,10 @@ fn egress_allows(egress: &dyn EgressPredicate, input: &PendingEmbeddingInput) ->
 impl PodRoute {
     /// Sends one request of a batch to its pod `target`. An answer from a
     /// pod whose lease lapsed meanwhile (preempted, or unhealthy at the last
-    /// poll) is dropped, and the worker's retry sends the rows again.
+    /// poll) is dropped, and the worker's retry sends the rows again. A
+    /// derivation request's job is acquired before its door is chosen, so a
+    /// pool with no healthy pod rides the primary door instead of falling
+    /// back inside a pod-door send.
     pub(super) fn post_to(
         &self,
         http: &super::HttpEmbedder,
@@ -165,24 +169,34 @@ impl PodRoute {
                     super::batch_digest(texts),
                 ) {
                     Ok(job) => job,
-                    // The admitted rows may go anywhere on this device.
-                    Err(GpuRegistryError::Unavailable) => {
-                        return http.post_at(&http.client, &http.endpoint, texts, side, Ok);
-                    }
                     Err(error) => return Err(pod_error(&error)),
                 };
-                let url = job.url().to_owned();
-                http.post_at(&self.client, &url, texts, side, |body| {
-                    if !job.is_live() {
-                        return Err(pod_error(&GpuRegistryError::LeaseExpired));
-                    }
-                    let sealed = job.complete(body).map_err(|error| pod_error(&error))?;
-                    sealed
-                        .read(scope.owner())
-                        .map(<[u8]>::to_vec)
-                        .ok_or_else(|| pod_error(&GpuRegistryError::InvalidInput))
-                })
+                self.post_with_job(http, job, scope, texts, side)
             }
         }
+    }
+
+    /// Sends one derivation request through its held `job`: the job was
+    /// acquired over these rows before the request's door was chosen, and
+    /// seals the answer to `scope`'s account.
+    pub(super) fn post_with_job(
+        &self,
+        http: &super::HttpEmbedder,
+        job: GpuDerivationJob,
+        scope: DerivationScope,
+        texts: &[&str],
+        side: super::Side<'_>,
+    ) -> oneiron::Result<super::Answer> {
+        let url = job.url().to_owned();
+        http.post_at(&self.client, &url, texts, side, |body| {
+            if !job.is_live() {
+                return Err(pod_error(&GpuRegistryError::LeaseExpired));
+            }
+            let sealed = job.complete(body).map_err(|error| pod_error(&error))?;
+            sealed
+                .read(scope.owner())
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| pod_error(&GpuRegistryError::InvalidInput))
+        })
     }
 }

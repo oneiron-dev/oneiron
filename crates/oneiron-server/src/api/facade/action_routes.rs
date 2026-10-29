@@ -172,11 +172,20 @@ async fn invoke_action_stamped(
     verb: String,
     request: ActionRequest,
 ) -> (Result<ActionDispatch, FacadeApiError>, CallStamp) {
-    let (bound, call) = match admit_action(server, auth, &headers, &extensions, verb, request) {
-        Ok(admitted) => admitted,
-        Err(refused) => return (Err(refused), CallStamp::Unrecorded),
-    };
-    execute_stamped(server, headers, extensions, bound, credential, call).await
+    // An owner's erase or revoke reads the restriction-only clock through
+    // its admission and its rows (FIX 11524), as its direct call does; any
+    // other action runs as it is. This covers the callers that bypass the
+    // binding door's own mark.
+    let restrictive = super::clock_ingress::restrictive_action(server, &verb, &request.args);
+    super::clock_ingress::scoped(restrictive, async {
+        let admitted = admit_action(server, auth, &headers, &extensions, verb, request);
+        let (bound, call) = match admitted {
+            Ok(admitted) => admitted,
+            Err(refused) => return (Err(refused), CallStamp::Unrecorded),
+        };
+        execute_stamped(server, headers, extensions, bound, credential, call).await
+    })
+    .await
 }
 
 /// An action call's scope check, binding, live-run resolution and key: what

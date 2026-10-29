@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1190 facade rows, 4312 declarations.
-Inputs: 1119 of 1190 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1035 of 1190 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1191 facade rows, 4314 declarations.
+Inputs: 1120 of 1191 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1036 of 1191 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -1139,6 +1139,7 @@ class ShapeApplyItem(TypedDict):
     state: ShapeItemState
     approval: NotRequired[ShapeApprovalDependencies | None]
     slips_kept: NotRequired[bool]
+    receipt_refs: NotRequired[list[str] | None]
 class ShapeApplyRun(TypedDict):
     run_id: str
     root: str
@@ -5562,10 +5563,13 @@ class HookReplayOutcomeRan(TypedDict):
     compare: HookReplayCompare
     from_memo: bool
     reads_live: bool
+class HookReplayOutcomeWithheld(TypedDict):
+    status: Literal["withheld"]
+    reason: str
 class HookReplayOutcomeMissingHistory(TypedDict):
     status: Literal["missing_history"]
     reason: str
-HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
+HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeWithheld | HookReplayOutcomeMissingHistory
 class HookReplayRow(TypedDict):
     case: HookReplayCase
     result: HookReplayOutcome
@@ -10595,6 +10599,16 @@ class SecretRewrapRequest(TypedDict):
     name: str
     holder: NotRequired[str | None]
     recipients: list[str]
+class SecretRevokeRequest(TypedDict):
+    name: str
+class SecretRevokeReply(TypedDict):
+    receipt_id: NotRequired[str]
+    name: NotRequired[str]
+    from_generation: NotRequired[int]
+    to_generation: NotRequired[int]
+    rotated_at: NotRequired[int]
+    kind: NotRequired[str]
+    custody: SecretCustodyReply
 class SecretCustodyGetRequest(TypedDict):
     name: str
 class SecretCustodyLiveRequest(OwnerWorkReceipt):
@@ -11110,6 +11124,9 @@ class HookContractStamp(TypedDict):
 class HookGoldenDiff(TypedDict):
     cases: int
     changed: list[str]
+    execution_failed: list[str]
+    withheld: list[str]
+    missing_history: list[str]
 HookRegenFailurePhase = Literal["intent", "generate", "validate", "golden_replay"]
 class HookRegenFailure(TypedDict):
     phase: HookRegenFailurePhase
@@ -21463,6 +21480,7 @@ class FieldSpec(TypedDict):
     instruction: NotRequired[str | None]
     enum_values: NotRequired[list[str] | None]
     secret: NotRequired[str | None]
+    secret_is_text: NotRequired[bool]
 class ReplayActionOpen(TypedDict):
     action: Literal["open"]
     url: str
@@ -21590,6 +21608,15 @@ class WorkflowSeed(TypedDict):
     path: str
     digest: str
     license: str
+class SecretArgHandle(TypedDict):
+    handle: str
+class SecretArgText(TypedDict):
+    text: str
+SecretArg = SecretArgHandle | SecretArgText
+class SnapshotBounds(TypedDict):
+    read_chars: NotRequired[int | None]
+    snapshot_origins: NotRequired[int | None]
+    snapshot_bytes: NotRequired[int | None]
 class ProposeInput(TypedDict):
     subgoal: NotRequired[str]
     params: NotRequired[list[str]]
@@ -21600,6 +21627,8 @@ class ProposeInput(TypedDict):
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
     candidate: NotRequired[str | None]
+    secret_args: NotRequired[dict[str, SecretArg]]
+    snapshot_bounds: NotRequired[SnapshotBounds | None]
 SlotField = Literal["text", "option"]
 class SlotCandidate(TypedDict):
     step: int
@@ -22123,11 +22152,6 @@ class LibraryRetiredOutput(TypedDict):
     retired: list[RetiredCard]
 BrowserLibraryRetiredOutput = BrowserAnswer
 LibraryRunMode = Literal["strict", "assisted"]
-class SecretArgHandle(TypedDict):
-    handle: str
-class SecretArgText(TypedDict):
-    text: str
-SecretArg = SecretArgHandle | SecretArgText
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
@@ -22150,10 +22174,6 @@ class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
 BrowserHandoverOutput = BrowserAnswer
-class SnapshotBounds(TypedDict):
-    read_chars: NotRequired[int | None]
-    snapshot_origins: NotRequired[int | None]
-    snapshot_bytes: NotRequired[int | None]
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str
