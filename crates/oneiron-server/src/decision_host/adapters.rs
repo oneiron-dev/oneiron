@@ -2,15 +2,16 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
-use oneiron::llm::decision::{AnswerContract, RemoteDecisionCapability};
+use oneiron::llm::decision::{AnswerContract, HostRuleRef, RemoteDecisionCapability};
 use oneiron::llm::routing::DescriptionNotes;
+use oneiron::skill_hub::claim_replay_filled_state;
 
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
     DecisionCall, DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
     HouseGate, HouseRead, LadderNotes, ModelId, ProviderCapability, ProviderDecision, ProviderPin,
     ReasoningEffort, RemoteDecisionSeat, RetrievalDeadline, SeatCandidate, SeatNotes, SeatPhase,
-    SeatRequest, SeatTask, SystemOneRung,
+    SeatRequest, SeatTask, SystemOneRung, Vault,
 };
 
 impl DecisionReadGate for HouseGate {
@@ -193,6 +194,74 @@ impl DecisionProvider for SystemOneRung {
             person: None,
             served: None,
         })
+    }
+}
+
+/// A model rung of a claim refinement's held-out replay that reads the
+/// label bodies the replay's state left to evidence ids (FIX 1327). Each
+/// call goes to `inner` with those bodies added, read by id from `vault`,
+/// while the state still fits the ladder's bound; every other answer is
+/// `inner`'s own.
+pub(super) struct ClaimBodyRead<'a> {
+    pub(super) inner: &'a dyn DecisionProvider,
+    pub(super) vault: &'a Vault,
+}
+
+impl DecisionProvider for ClaimBodyRead<'_> {
+    fn pin(&self) -> ProviderPin {
+        self.inner.pin()
+    }
+
+    fn capability(&self) -> ProviderCapability {
+        self.inner.capability()
+    }
+
+    fn reads_images(&self) -> bool {
+        self.inner.reads_images()
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        self.inner.image_edge()
+    }
+
+    fn reads_audio(&self) -> bool {
+        self.inner.reads_audio()
+    }
+
+    fn leaves_host(&self) -> bool {
+        self.inner.leaves_host()
+    }
+
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.inner.cost_per_thousand()
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        match claim_replay_filled_state(self.vault, call.evidence, call.state)? {
+            Some(state) => self.inner.decide(&DecisionCall {
+                state: &state,
+                ..*call
+            }),
+            None => self.inner.decide(call),
+        }
+    }
+
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        match claim_replay_filled_state(self.vault, pack.evidence, pack.state)? {
+            Some(state) => self.inner.decide_pack(&DecisionPack {
+                state: &state,
+                ..*pack
+            }),
+            None => self.inner.decide_pack(pack),
+        }
+    }
+
+    fn rule_row(
+        &self,
+        call: &DecisionCall<'_>,
+        decision: &ProviderDecision,
+    ) -> Option<HostRuleRef> {
+        self.inner.rule_row(call, decision)
     }
 }
 
