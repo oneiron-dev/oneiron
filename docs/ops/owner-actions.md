@@ -1743,8 +1743,45 @@ private world's state. `covered` means only that the world's current key has a w
 root. `checkpoint_pin` is the 64-hex pin digest of the checkpoint image this install adopted, or
 null when it adopted none; it is neither the root nor a bundle generation. A running server shows
 the same at `GET /v1/owner/recovery-kit`. The commands above run on
-a stopped vault. On a running server, a root change goes through your request and its target
-install:
+a stopped vault. On a running server, make a change to this install's own root here, and a
+change to another install's root through your request and that target install.
+
+On the install you are signed in on, while its server runs:
+
+- `GET /v1/owner/roots` shows the root this install pins, one page of the foreign roots it sees
+  (each with how many machines it admits), the root a pin awaits and whether it has arrived, and
+  this install's `machine`. Pass `limit` for a larger page (100 by default) and `after` set to
+  the page's `next` to read the next page.
+- `POST /v1/owner/roots/pin` with `root` (64 hex) pins that root here and re-wraps the keys this
+  machine may still read. A root this install does not store yet is awaited, and `GET
+  /v1/owner/roots` says when it has arrived; pin again then.
+- `POST /v1/owner/roots/issue`, `/roots/confirm`, `/roots/restore` and `/roots/anchor` are the
+  kit ceremonies, made here as the stopped-vault commands make them. Each is a kit call (see
+  below): it names its `target`. `issue` takes `homes` and the passphrase where a home is
+  `passphrase`, and answers the pieces to you alone. `confirm` takes two pieces (or one and the
+  passphrase) and `carry`. `restore` takes the pieces. `anchor` takes the pieces, the machine's
+  `enrolment` and the `code` that machine shows. `restore` and `anchor` take `fingerprint` or
+  `confirm_root` for a kit opened with one piece. A kit this install cannot verify is refused as
+  `kit_unverified`, and a go-ahead for another root as `kit_confirmation_stale`. Each refusal
+  names the root the pieces rebuild. Each door answers as a request's run answers.
+- The CLI asks the running server the same, with the credential `oneiron api` reads
+  (`--url`, `ONEIRON_SECRET`, `ONEIRON_BINDING_KEY`):
+
+```sh
+oneiron recovery-kit roots
+oneiron recovery-kit pin --root <hex>
+oneiron recovery-kit anchor --piece piece-1.txt --piece piece-2.txt --enrolment machine.json --code <code>
+oneiron recovery-kit pad-access --piece piece-1.txt --piece piece-2.txt
+oneiron recovery-kit upkeep
+```
+
+A machine's request code is the 26 characters `oneiron device enrol` prints as `request_code`,
+beside the `enrolment` request it sent: save that object as the file `--enrolment` reads. The code
+is Crockford base32, the alphabet of recovery codes. Typing it back ignores case, dashes and
+spaces, and reads O as 0 and I or L as 1. The anchoring checks that it is the code of that
+request, so a host that relays the request cannot swap it.
+
+Another install's root changes through your request and its target install:
 
 - Any install you are signed in on records the request with `POST /v1/owner/roots/requests`:
   `target`, and `change` = `pin`, `activate`, `restore` or `anchor`, with `root` and `machine` as
@@ -1765,16 +1802,19 @@ install:
   route's `*_text` lines, and an embedded handle records it as its own owner on this install.
 
 Kit material travels only in the body of the named target's own call:
-`POST /v1/owner/roots/requests/run` and `POST /v1/owner/recovery-kit/pad-access`. That means the
-pieces as recovery codes, the passphrase, a confirm's `carry` machines, and an anchoring's
-enrolment request and code.
+`POST /v1/owner/roots/requests/run`, the four kit doors above and
+`POST /v1/owner/recovery-kit/pad-access`. That means the pieces as recovery codes, the
+passphrase, a confirm's `carry` machines, and an anchoring's enrolment request and code. The CLI
+reads pieces from their files and the passphrase from `--secret-file` or stdin, never from an
+argument, and sends kit material only to an `https://` server or to `http://` on this machine.
 
 - Each call names its `target`. The target must be the install that answers, proved by its
   machine proof: it verifies under the key that machine stands on in the vault.
 - The target must also be a machine the worlds' privacy lets hold their keys, as the
   verified-destination judge reads each world's recipient choice. For one-machine and
-  my-machines worlds that means one of your own machines (marked mine), and the host too on a
-  hosted vault. Any other proven machine qualifies only where no world keeps its keys off it.
+  my-machines worlds that means one of your own machines (marked mine). Any other proven machine
+  qualifies only where no world keeps its keys off it. A hosted or managed install takes no kit
+  material at all (`kit_requires_owner_device`): the work runs on your own device.
 - A target that is another install, or is unproved, or is disallowed, gets a named refusal
   (`kit_target_elsewhere`, `kit_target_unproved`, `kit_target_not_allowed`) before any kit is
   read.
@@ -1782,6 +1822,26 @@ enrolment request and code.
   `confirm_kit` reads two back and closes the request.
 - Kit material is never stored, logged or put in a receipt, and no install relays it for
   another.
+
+`pad-access` grants a machine (this install unless `machine` names another) every pad object the
+home keeps, so a machine added after older sealed generations can open them. It runs through this
+install's connection to its home. On the home itself, the install that keeps the generations, it
+runs here with no connection. An install with neither answers `home_unavailable`, and nothing is
+granted. The answer lists by generation what was `offered`, what is `usable` here and what stays
+`pending` for an older machine to grant. An offered grant is not yet access.
+
+`GET /v1/owner/recovery-kit/upkeep` (or `oneiron recovery-kit upkeep`) shows what the sealed
+bundle upkeep last did on this install, each part with its time:
+
+- `relay`: the last relay that reached the home, and what it moved. A tick that did not reach the
+  home changes nothing here.
+- `pending`: `pending_pad_access` and `pending_erases`, from the last relay whose erase sweep
+  counted them.
+- `relay_failure`: the last relay that failed, and its error.
+- `grant`: the last kit grant answered here.
+
+A part with no observation yet says `unobserved`, which is not zero. The counts are what the
+upkeep saw, not promises, and the upkeep never waits for them. A server restart starts unobserved.
 
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own: the

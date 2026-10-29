@@ -399,6 +399,11 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
                 ApiError::not_found("secret_manifest", None)
             }
             oneiron::ErrorKind::GitHttpRepoNotFound => ApiError::not_found("repo", None),
+            // FIX 4955: the root a kit's pieces rebuild, for its confirmation.
+            oneiron::ErrorKind::UnverifiedKitRestore | oneiron::ErrorKind::KitConfirmationStale => {
+                recovery_kit_target_routes::kit_root_refusal(&error)
+                    .unwrap_or_else(|| core_engine_error("owner action failed", *error))
+            }
             // Each reason is a fixed sentence about the request's shape; none
             // carries a value.
             oneiron::ErrorKind::InvalidSecretCustodyBody => {

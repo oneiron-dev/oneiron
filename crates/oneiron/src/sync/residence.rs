@@ -34,9 +34,10 @@ pub use bundle::{
     BundlePartRead, PadObjectRefill, PadObjectUnavailable, SEALED_BUNDLE_PUT_PART_MAX,
     SEALED_BUNDLE_READ_PART_MAX, SealedBundleCommitReceipt, SealedBundleEntry, SealedBundleIndex,
     SealedBundleKitRoot, SealedBundleObject, SealedBundleStage, commit_sealed_bundle,
-    replace_sealed_bundle_pads, sealed_bundle_commit_receipt, sealed_bundle_generations,
-    sealed_bundle_index, sealed_bundle_part, sealed_bundle_refill, sealed_digest_from_hex,
-    sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex, stage_sealed_bundle_part,
+    grant_local_sealed_pad_access_with_kit, replace_sealed_bundle_pads,
+    sealed_bundle_commit_receipt, sealed_bundle_generations, sealed_bundle_index,
+    sealed_bundle_part, sealed_bundle_refill, sealed_digest_from_hex, sealed_digest_hex,
+    sealed_generation_from_hex, sealed_generation_hex, stage_sealed_bundle_part,
 };
 #[allow(unused_imports, reason = "02A2 wires the object copy (L02)")]
 pub(crate) use bundle::{
