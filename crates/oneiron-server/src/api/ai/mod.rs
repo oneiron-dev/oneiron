@@ -190,6 +190,13 @@ async fn session(
         Ok(key) => key,
         Err(response) => return *response,
     };
+    if !server.ai.takes_session_hints() {
+        return refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "dreamer_unavailable",
+            "the Dreamer is not running",
+        );
+    }
     // The request carries no deadline, so none bounds the hint's wait.
     server.ai.session_hint(
         key,
