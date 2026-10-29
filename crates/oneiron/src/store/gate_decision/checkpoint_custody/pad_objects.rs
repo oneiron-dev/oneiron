@@ -1,9 +1,13 @@
 //! A source vault's current pad objects, read with its live custody (PAD-1,
-//! the L01 seam approved 10-22 10:3x): what its home keeps of the vault's
-//! sealed bundle pad objects (`sync::residence` `rb:g`, `rb:p` pad parts and
-//! `rb:a` rows), carried whole and opaque from the same read that read its
-//! custody, and installed over a restored copy's or an activated archive's
-//! own while that store still holds what the caller saw there.
+//! the L01 seam approved 10-22 10:3x, its identity and bundle rows FIX 11293
+//! and 11294): what its home keeps of the vault's sealed bundle pad objects
+//! (`sync::residence` `rb:g`, `rb:p` pad parts and `rb:a` rows), with the
+//! bundle parts of the generations a copy may adopt, carried whole and opaque
+//! from the same read that read its custody and named for the vault and home
+//! that read names, and installed over a restored copy's or an activated
+//! archive's own while that store still holds what the caller saw there, its
+//! generations first brought to the source's where the source's rows prove
+//! them (`PadObjectMembership`).
 //!
 //! Nothing here is a new refusal. An empty capture means the source keeps no
 //! pad object. A read, decode or identity fault leaves the objects
@@ -14,15 +18,19 @@
 
 use heed::RwTxn;
 
+use crate::error::Result;
 use crate::side_table;
-use crate::store::Store;
+use crate::store::{PairedIdentityRows, PairedSourceAsk, PairedSyncRows, Store};
 #[cfg(feature = "sync")]
 use crate::sync::residence::{
-    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, capture_current_pad_objects_in_txn,
-    install_captured_pad_objects_in_txn, read_back_captured_in_txn,
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMembership,
+    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
+    generations_an_install_retires_in_txn, install_captured_pad_objects_in_txn,
+    read_back_captured_in_txn,
 };
 
-type Rows = Vec<(Vec<u8>, Vec<u8>)>;
+/// A bundle part key's generation, in hex, after its table prefix.
+const GENERATION_HEX: usize = 48;
 
 /// The `sync_state` families a paired read takes: each kept generation, the
 /// stored parts, and the grants with the admission outbox.
@@ -38,9 +46,30 @@ pub(super) fn pad_object_prefixes() -> [&'static [u8]; 3] {
 /// object capture carries: every one but a bundle's stored part, whose key is
 /// hex48 (the generation) ":" b|k ":" hex16 after its table prefix.
 pub(super) fn is_pad_object_row(key: &[u8]) -> bool {
-    const GENERATION_HEX: usize = 48;
     key.strip_prefix(side_table::SYNC_RESIDENCE_BUNDLE_PART.prefix)
         .is_none_or(|rest| rest.get(GENERATION_HEX..GENERATION_HEX + 3) == Some(b":k:".as_slice()))
+}
+
+/// Whether a `sync_state` row under [`pad_object_prefixes`] is a bundle's
+/// stored part, hex48 ":" b ":" hex16 after its table prefix: a paired read
+/// takes these apart from the pad object rows ([`is_pad_object_row`]), for
+/// the generations a copy adopts.
+pub(super) fn is_bundle_part_row(key: &[u8]) -> bool {
+    key.strip_prefix(side_table::SYNC_RESIDENCE_BUNDLE_PART.prefix)
+        .is_some_and(|rest| rest.get(GENERATION_HEX..GENERATION_HEX + 3) == Some(b":b:".as_slice()))
+}
+
+/// What a paired read takes beside a source's custody: its pad object rows
+/// under `prefixes` and, apart from them, its bundle parts; its install's
+/// machine id; and its AUTHORITY_LOG records, whose fold names its vault.
+pub(super) fn paired_source_ask<'a>(prefixes: &'a [&'a [u8]]) -> PairedSourceAsk<'a> {
+    PairedSourceAsk {
+        sync_state: prefixes,
+        pad_object: is_pad_object_row,
+        bundle_part: is_bundle_part_row,
+        machine_id: side_table::IDENTITY_MACHINE_ID.prefix,
+        entity_type: crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+    }
 }
 
 /// What a source's live custody read got of its home's current pad objects.
@@ -65,9 +94,11 @@ pub(crate) enum UncapturedPadObjects {
     /// The vault and home its objects are named for did not read in that
     /// transaction.
     IdentityUnread,
-    /// A source read off its disk has no authority fold beside the read-only
-    /// door, so which vault its objects are for is not proven (CALLS: PAD-1
-    /// paired source identity).
+    /// A source read off its disk whose stored authority records fold to no
+    /// one vault (no valid genesis among them, more than one root, or a
+    /// genesis held only through an adopted checkpoint image), so which vault
+    /// its objects are for is not proven (CALLS: PAD-1 paired source
+    /// identity).
     SourceVaultUnfolded,
 }
 
@@ -79,7 +110,7 @@ impl UncapturedPadObjects {
             Self::NoSync => "this build keeps no pad object",
             Self::RowsUnread => "the source's pad object rows did not read",
             Self::IdentityUnread => "the source's vault and home did not read",
-            Self::SourceVaultUnfolded => "the source read off its disk names no folded vault",
+            Self::SourceVaultUnfolded => "the source read off its disk folds to no one vault",
         }
     }
 }
@@ -87,51 +118,100 @@ impl UncapturedPadObjects {
 /// Which vault and home a capture names its objects for (CALLS: PAD-1 paired
 /// source identity).
 pub(crate) enum PadSourceIdentity {
-    /// A vault open in this process: the vault id its authority folds to
-    /// and its machine id, read in the transaction its custody and objects
-    /// are read in, as its home names them to its machines. A vault read off
-    /// its disk: no fold runs beside the read-only door, so objects it keeps
-    /// are not carried, and one that keeps none is an empty capture.
-    OpenFoldInCustodyReadDiskUnproven,
+    /// The vault id its authority folds to and its machine id, read in the
+    /// transaction its custody and objects are read in, as its home names
+    /// them to its machines. A vault open in this process folds its own log
+    /// there; a vault read off its disk folds the AUTHORITY_LOG records that
+    /// read took, Store-free (`authority::folded_vault_id_of_records`).
+    /// A disk source whose records fold to no one vault keeps its objects
+    /// uncarried; one that keeps none is an empty capture.
+    FoldedInCustodyRead,
 }
 
-pub(crate) const PAD_SOURCE_IDENTITY: PadSourceIdentity =
-    PadSourceIdentity::OpenFoldInCustodyReadDiskUnproven;
+pub(crate) const PAD_SOURCE_IDENTITY: PadSourceIdentity = PadSourceIdentity::FoldedInCustodyRead;
 
-/// The capture of a source read off its disk, from the `sync_state` rows of
-/// the read that read its custody ([`PAD_SOURCE_IDENTITY`]). A source that
-/// keeps no pad object row is an empty capture; one that keeps some names no
-/// vault the read proves, so they are not carried
+/// The capture of a source read off its disk, from the rows of the read that
+/// read its custody ([`PAD_SOURCE_IDENTITY`]): its pad object rows and bundle
+/// parts, named for the vault its stored authority records fold to and its
+/// machine id. A source that keeps no pad object row is an empty capture;
+/// one whose records fold to no one vault is not carried
 /// ([`UncapturedPadObjects::SourceVaultUnfolded`]).
-pub(super) fn disk_capture(rows: crate::error::Result<Rows>) -> PadObjectsCapture {
+pub(super) fn disk_capture(
+    rows: Result<PairedSyncRows>,
+    identity: Result<PairedIdentityRows>,
+) -> PadObjectsCapture {
     match PAD_SOURCE_IDENTITY {
-        PadSourceIdentity::OpenFoldInCustodyReadDiskUnproven => {}
+        PadSourceIdentity::FoldedInCustodyRead => {}
     }
-    match rows {
-        // No row to bind to a vault: the empty capture names none.
-        #[cfg(feature = "sync")]
-        Ok(rows) if rows.is_empty() => {
-            match crate::sync::residence::capture_current_pad_objects_in_rows(
-                [0; 32],
-                crate::entity_id::EntityId::from_bytes_unchecked([0; 16]),
-                &rows,
-            ) {
-                Ok(captured) => PadObjectsCapture::Captured(captured),
-                Err(_) => uncaptured(UncapturedPadObjects::RowsUnread),
-            }
-        }
-        #[cfg(not(feature = "sync"))]
-        Ok(_) => uncaptured(UncapturedPadObjects::NoSync),
-        #[cfg(feature = "sync")]
-        Ok(_) => uncaptured(UncapturedPadObjects::SourceVaultUnfolded),
+    let rows = match rows {
+        Ok(rows) => rows,
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
                 "a side restore's source pad object rows did not read; the copy keeps its own"
             );
-            uncaptured(UncapturedPadObjects::RowsUnread)
+            return uncaptured(UncapturedPadObjects::RowsUnread);
+        }
+    };
+    #[cfg(feature = "sync")]
+    {
+        // No row to bind to a vault: the empty capture names none.
+        let named = if rows.pad_objects.is_empty() {
+            Ok(Some((
+                [0; 32],
+                crate::entity_id::EntityId::from_bytes_unchecked([0; 16]),
+            )))
+        } else {
+            disk_identity(identity)
+        };
+        let (vault_id, home) = match named {
+            Ok(Some(named)) => named,
+            Ok(None) => return uncaptured(UncapturedPadObjects::SourceVaultUnfolded),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a side restore's source vault and home did not read; the copy keeps its own"
+                );
+                return uncaptured(UncapturedPadObjects::IdentityUnread);
+            }
+        };
+        match capture_current_pad_objects_in_rows(
+            vault_id,
+            home,
+            &rows.pad_objects,
+            &rows.bundle_parts,
+        ) {
+            Ok(captured) => PadObjectsCapture::Captured(captured),
+            Err(_) => uncaptured(UncapturedPadObjects::RowsUnread),
         }
     }
+    #[cfg(not(feature = "sync"))]
+    {
+        let _ = (rows, identity);
+        uncaptured(UncapturedPadObjects::NoSync)
+    }
+}
+
+/// The vault and the home a disk source's objects are named for, from the
+/// read that read its custody: the vault id its stored authority records
+/// fold to, and its machine id (the zero id before it has one). `None` when
+/// the records fold to no one vault.
+#[cfg(feature = "sync")]
+fn disk_identity(
+    identity: Result<PairedIdentityRows>,
+) -> Result<Option<([u8; 32], crate::entity_id::EntityId)>> {
+    let identity = identity?;
+    let home = match identity.machine_id {
+        Some(raw) => <[u8; 16]>::try_from(raw.as_slice())
+            .ok()
+            .and_then(|bytes| crate::entity_id::EntityId::from_bytes(bytes).ok())
+            .ok_or(crate::error::Error::CorruptedIndex("machine id row"))?,
+        None => crate::entity_id::EntityId::from_bytes_unchecked([0; 16]),
+    };
+    Ok(
+        crate::authority::folded_vault_id_of_records(&identity.records)?
+            .map(|vault_id| (vault_id, home)),
+    )
 }
 
 /// Not carried, for `reason`.
@@ -185,13 +265,16 @@ pub(crate) fn install_source_pad_objects_in_txn(
 ) -> PadObjectsLanding {
     #[cfg(feature = "sync")]
     if let (PadObjectsCapture::Captured(captured), Some(expected)) = (capture, expected) {
-        return install_in_savepoint(store, wtxn, expected, captured).unwrap_or_else(|error| {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a source's pad objects did not install; the store keeps its own"
-            );
-            PadObjectsLanding::Fault
-        });
+        let membership = PadObjectMembership::SourceKeepRuleProvesRetired;
+        return install_in_savepoint(store, wtxn, expected, captured, membership).unwrap_or_else(
+            |error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a source's pad objects did not install; the store keeps its own"
+                );
+                PadObjectsLanding::Fault
+            },
+        );
     }
     let _ = (store, wtxn, capture, expected);
     PadObjectsLanding::NotAttempted
@@ -208,7 +291,13 @@ pub(crate) fn put_back_pad_objects_in_txn(
     installed: &CurrentPadObjects,
     baseline: &CapturedPadObjects,
 ) -> bool {
-    match install_in_savepoint(store, wtxn, installed, baseline) {
+    match install_in_savepoint(
+        store,
+        wtxn,
+        installed,
+        baseline,
+        PadObjectMembership::StoreOwnPutBack,
+    ) {
         Ok(PadObjectsLanding::Installed { .. }) => true,
         Ok(_) => false,
         Err(error) => {
@@ -227,10 +316,11 @@ pub(crate) fn put_back_pad_objects_in_txn(
 enum PadObjectInstallStaging {
     /// In a savepoint of the caller's writer, committed only once what it
     /// wrote reads back in it, so the store's own objects stay until then;
-    /// those objects, captured in the same savepoint first, are kept apart
-    /// and put back when the read after the commit fails. An activation's
-    /// install runs before its archive lifts, in the same writer, and its
-    /// read after the commit comes before the vault is returned.
+    /// those objects, with the bundles of the generations the install
+    /// retires, captured in the same savepoint first, are kept apart and put
+    /// back when the read after the commit fails. An activation's install
+    /// runs before its archive lifts, in the same writer, and its read after
+    /// the commit comes before the vault is returned.
     SavepointCommittedOnReadBackBaselineKept,
 }
 
@@ -244,25 +334,38 @@ fn install_in_savepoint(
     wtxn: &mut RwTxn<'_>,
     expected: &CurrentPadObjects,
     captured: &CapturedPadObjects,
-) -> crate::error::Result<PadObjectsLanding> {
+    membership: PadObjectMembership,
+) -> Result<PadObjectsLanding> {
     match PAD_OBJECT_INSTALL_STAGING {
         PadObjectInstallStaging::SavepointCommittedOnReadBackBaselineKept => {}
     }
     let mut savepoint = store.env.nested_write_txn(wtxn)?;
-    let baseline =
-        capture_current_pad_objects_in_txn(store, &savepoint, expected.vault_id, expected.home)?;
-    let landing =
-        match install_captured_pad_objects_in_txn(store, &mut savepoint, expected, captured)? {
-            PadObjectInstall::Installed(after) => {
-                if read_back_captured_in_txn(store, &savepoint, &after, captured)? {
-                    PadObjectsLanding::Installed { after, baseline }
-                } else {
-                    PadObjectsLanding::NotReadBack
-                }
+    let retiring =
+        generations_an_install_retires_in_txn(store, &savepoint, expected, captured, membership)?;
+    let baseline = capture_current_pad_objects_in_txn(
+        store,
+        &savepoint,
+        expected.vault_id,
+        expected.home,
+        |generation| retiring.contains(generation),
+    )?;
+    let landing = match install_captured_pad_objects_in_txn(
+        store,
+        &mut savepoint,
+        expected,
+        captured,
+        membership,
+    )? {
+        PadObjectInstall::Installed(after) => {
+            if read_back_captured_in_txn(store, &savepoint, &after, captured)? {
+                PadObjectsLanding::Installed { after, baseline }
+            } else {
+                PadObjectsLanding::NotReadBack
             }
-            PadObjectInstall::CurrentChanged => PadObjectsLanding::CurrentChanged,
-            PadObjectInstall::Unavailable(_) => PadObjectsLanding::Unavailable,
-        };
+        }
+        PadObjectInstall::CurrentChanged => PadObjectsLanding::CurrentChanged,
+        PadObjectInstall::Unavailable(_) => PadObjectsLanding::Unavailable,
+    };
     if matches!(landing, PadObjectsLanding::Installed { .. }) {
         savepoint.commit()?;
     }
