@@ -3737,7 +3737,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false,
       "openapi": true
@@ -8178,7 +8179,8 @@
       "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false,
       "host_door": true,
@@ -9158,7 +9160,8 @@
       "openapi": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -9173,7 +9176,8 @@
       "openapi": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },

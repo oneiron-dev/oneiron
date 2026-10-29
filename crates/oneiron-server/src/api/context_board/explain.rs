@@ -26,7 +26,7 @@ use super::super::{
     scoped_read_for_core_auth,
 };
 use super::{resolved_session_id, session_read_set};
-use crate::api::facade::host_doors::Listed;
+use crate::api::facade::host_doors::support::Listed;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError, ErrorCode};
 use crate::server::SyncServer;
