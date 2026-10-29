@@ -489,6 +489,7 @@ impl<'a> DreamerWakeDriver<'a> {
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at: input.now.saturating_add(1),
+                    step_hashes: Vec::new(),
                 })
             } else if let Some(crate::dreamer_consolidation::AttemptPreparation::Refused {
                 reason,
@@ -514,6 +515,7 @@ impl<'a> DreamerWakeDriver<'a> {
                     retry_at: input
                         .now
                         .saturating_add(crate::dreamer_consolidation::RESIDENCY_RETRY_SECS),
+                    step_hashes: Vec::new(),
                 })
             } else {
                 let mut ctx = WakeAttemptContext {
@@ -548,7 +550,10 @@ impl<'a> DreamerWakeDriver<'a> {
                         == crate::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
                     {
                         crate::vault_cleanup::run_vault_cleanup(self.vault, &attempt_id)?;
-                        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                        Ok(DreamerAttemptExecution::Completed {
+                            completed_units: 0,
+                            step_hashes: Vec::new(),
+                        })
                     } else if admitted.status.attempt.kind
                         == crate::dreamer_runner::DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND
                     {

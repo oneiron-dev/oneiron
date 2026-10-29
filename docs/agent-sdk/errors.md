@@ -15,6 +15,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `IDENTITY_UNSETTLED` | The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act. |
 | `BUDGET_SPENT` | The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line. |
 | `MODEL_UNAVAILABLE` | The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route. |
+| `MODEL_PIN_UNAVAILABLE` | The owner pinned a model that no offered seat serves; nothing stands in for it. Offer a seat for that model, or ask the owner to change or clear the pin. |
 | `OFF_RECORD_SESSION_DOOR` | Use the owning off-record session handle. The canonical witness door is not that handle. |
 | `OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE` | No record holds a room's consent to one caller managing its whole off-record stretch, on any host. Act as a member instead: status and witness, and save or export your own copy through the room's routes. |
 | `OWNER_BINDING_REQUIRED` | An owner device must bind this human actor in the authority log. Scope changes do not grant ownership. |

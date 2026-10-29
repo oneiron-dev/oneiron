@@ -40,6 +40,9 @@ pub enum OneironError {
         /// Each time the refused call's limit resets, as Unix seconds in the
         /// source's order; empty when it said none.
         resets_at: Vec<u64>,
+        /// The refusal's stable reason codes, in its producer's order (FIX
+        /// 7398); empty when it named none.
+        reason_codes: Vec<String>,
     },
 }
 
@@ -69,6 +72,7 @@ impl From<oneiron::MemoryError> for OneironError {
             pending,
             retry_after: error.retry_after,
             resets_at: error.resets_at,
+            reason_codes: error.reason_codes,
         }
     }
 }

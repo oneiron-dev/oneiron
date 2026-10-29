@@ -226,6 +226,7 @@ fn owner_context_at(
         room_turn,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 

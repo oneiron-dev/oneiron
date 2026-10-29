@@ -133,8 +133,13 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let proposals = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some(completed_units) = landed_units_in_txn(ctx.vault, &txn, attempt_id)? {
-                return Ok(DreamerAttemptExecution::Completed { completed_units });
+            if let Some((completed_units, step_hashes)) =
+                landed_units_in_txn(ctx.vault, &txn, attempt_id)?
+            {
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units,
+                    step_hashes,
+                });
             }
             let merged = merged_snapshot_in_txn(ctx.vault, &txn, input.merge)?;
             match proposals_in_txn(ctx.vault, &txn, &read, &merged.children)? {
@@ -143,6 +148,7 @@ impl ConsolidationExecutor<'_> {
                     return Ok(DreamerAttemptExecution::Deferred {
                         completed_units: 0,
                         retry_at: (ctx.now_ms / 1_000).saturating_add(merged.retry_secs),
+                        step_hashes: Vec::new(),
                     });
                 }
             }
@@ -227,6 +233,7 @@ impl ConsolidationExecutor<'_> {
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             // A proposal that moved before the commit lands again on resume;
             // a gate only an owner act opens keeps the private park.
@@ -260,7 +267,14 @@ impl ConsolidationExecutor<'_> {
         // The call labels its claims and questions before its state renders
         // (FIX 7506).
         let mut labels = CallLabelMap::default();
-        let pack = NightlyLinkQuestion::pack(&self.decisions.nightly_link_wording, partners.len())?;
+        let pack =
+            match NightlyLinkQuestion::pack(&self.decisions.nightly_link_wording, partners.len()) {
+                Ok(pack) => pack,
+                Err(error) => {
+                    return super::residency::spent_or_deferred(error, ctx, charges)
+                        .map(ControlFlow::Break);
+                }
+            };
         self.label_questions(&mut labels, pack.questions());
         let state = pack.state(anchor, partners, &mut labels);
         let mut scope = Scope {
@@ -358,7 +372,10 @@ impl ConsolidationExecutor<'_> {
         // Every generation that finished is spent, whatever the call's
         // outcome.
         for (hash, usage) in &spent {
-            charges.record_terminal(vault, step.attempt_id, *hash, usage)?;
+            if let Err(error) = charges.record_terminal(vault, step.attempt_id, *hash, usage) {
+                return super::residency::spent_or_deferred(error, ctx, charges)
+                    .map(ControlFlow::Break);
+            }
         }
         let decisions = match decided {
             Ok(Some(decisions)) => decisions,

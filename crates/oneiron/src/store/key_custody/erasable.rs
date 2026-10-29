@@ -33,10 +33,6 @@ pub(crate) enum ErasablePurpose {
     /// One actor's content in a home handoff: parent = the actor.
     HomeHandoff,
     /// One federation grant's scope opening: parent = the grant.
-    #[allow(
-        dead_code,
-        reason = "KC-B's per-grant adapter (FIX 7907, 7958) mints under it"
-    )]
     GrantScope,
 }
 

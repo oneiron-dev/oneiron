@@ -13,8 +13,9 @@ mod opening;
 
 pub(crate) const LIVEQUERY_RING_CAPACITY: usize = 1024;
 /// The local path every notification view follows: notification puts and
-/// marks commit to LMDB, so the refresh re-derives these views on its local
-/// cadence, as it does the owner feed.
+/// marks commit to LMDB, outside Observer B, so the refresh re-derives these
+/// views when the vault's committed-notification signal changes (FIX 3084),
+/// and on its local cadence for a writer that sends no signal.
 pub(crate) const NOTIFICATIONS_PATH: &str = "notifications";
 const MAX_RING_BYTES: usize = 8 * 1024 * 1024;
 
@@ -270,6 +271,10 @@ pub(crate) struct LiveQueries {
     state: Mutex<State>,
     tracker: super::publication::PublicationTracker,
     last_owner_feed_poll: Mutex<Instant>,
+    /// The vault's committed-notification signal, subscribed before this
+    /// session's first derive (FIX 3084). `None` follows notifications on
+    /// the local cadence alone.
+    notification_wake: Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
 }
 
 struct State {
@@ -336,7 +341,20 @@ impl LiveQueries {
             }),
             tracker: super::publication::PublicationTracker::with_limits(limits),
             last_owner_feed_poll: Mutex::new(Instant::now()),
+            notification_wake: Mutex::new(None),
         }
+    }
+
+    /// Follows the vault's committed-notification signal: each refresh after
+    /// it changes re-derives the notification views (FIX 3084). Take the
+    /// subscription before the session's first derive, so no commit between
+    /// the two is missed.
+    pub(super) fn following_notifications(
+        mut self,
+        wake: tokio::sync::watch::Receiver<u64>,
+    ) -> Self {
+        self.notification_wake = Mutex::new(Some(wake));
+        self
     }
 
     #[cfg(test)]

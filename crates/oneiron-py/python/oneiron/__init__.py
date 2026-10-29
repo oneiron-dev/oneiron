@@ -42,7 +42,8 @@ class OneironError(RuntimeError):
     "invocation", "ask"}``, and :meth:`Oneiron.retry` resends the call under
     that invocation. ``retry_after`` (seconds) and ``resets_at`` (Unix
     seconds, in the source's order) say when to call again, when the
-    refusal's source said (FIX 8190).
+    refusal's source said (FIX 8190). ``reason_codes`` are the refusal's
+    stable reason codes, in its producer's order, when it named any (FIX 7398).
     """
 
     def __init__(
@@ -54,6 +55,7 @@ class OneironError(RuntimeError):
         hook: dict[str, Any] | None = None,
         retry_after: int | None = None,
         resets_at: list[int] | None = None,
+        reason_codes: list[str] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -66,6 +68,8 @@ class OneironError(RuntimeError):
         # When to call again, as the refusal's source said (FIX 8190).
         self.retry_after = retry_after
         self.resets_at = tuple(resets_at) if resets_at is not None else None
+        # The refusal's stable reason codes, as its producer named them (FIX 7398).
+        self.reason_codes = tuple(reason_codes) if reason_codes is not None else None
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -99,8 +103,21 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
             if isinstance(resets_at, list) and all(isinstance(entry, int) for entry in resets_at)
             else None
         )
+        reason_codes = payload.get("reason_codes")
+        reason_codes = (
+            reason_codes
+            if isinstance(reason_codes, list) and all(isinstance(entry, str) for entry in reason_codes)
+            else None
+        )
         return OneironError(
-            payload["code"], payload["message"], suggestions, wrong_root, hook, retry_after, resets_at
+            payload["code"],
+            payload["message"],
+            suggestions,
+            wrong_root,
+            hook,
+            retry_after,
+            resets_at,
+            reason_codes,
         )
     return OneironError(
         "INTERNAL_SERVER_ERROR",
@@ -644,6 +661,9 @@ class Oneiron:
         def roots(self) -> "Oneiron._VaultRootsVerbs":
             return Oneiron._VaultRootsVerbs(self._client)
         @property
+        def owner_work(self) -> "Oneiron._VaultOwnerWorkVerbs":
+            return Oneiron._VaultOwnerWorkVerbs(self._client)
+        @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
         @property
@@ -1052,10 +1072,10 @@ class Oneiron:
             """Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."""
             return json.loads(_translate(lambda: self._client.vault_personas_preview(json.dumps(spec))))
         def export(self, spec):
-            """Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."""
+            """Issues the exact previewed mode-A persona copy after explicit row strikes, with a receipt of its digest and the vault refs it left out; a changed preview refuses stale consent."""
             return json.loads(_translate(lambda: self._client.vault_personas_export(json.dumps(spec))))
         def edit(self, spec):
-            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."""
+            """Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version; its receipt names its digest and the vault refs it left out."""
             return json.loads(_translate(lambda: self._client.vault_personas_edit(json.dumps(spec))))
     class _VaultFanoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1595,7 +1615,7 @@ class Oneiron:
         def digest(self) -> "Oneiron._VaultWeaveDigestVerbs":
             return Oneiron._VaultWeaveDigestVerbs(self._client)
         def lens(self, spec):
-            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
+            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events."""
             return json.loads(_translate(lambda: self._client.vault_weave_lens(json.dumps(spec))))
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs":
@@ -2377,6 +2397,9 @@ class Oneiron:
         def change(self, spec):
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
             return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
+        def changes(self, spec):
+            """A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_changes(json.dumps(spec))))
     class _VaultOrgAdminVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2719,7 +2742,7 @@ class Oneiron:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save_from_here(json.dumps(spec))))
         def export(self, spec):
-            """A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in."""
+            """A person or an agent on its own slip exports its visible room talk as a JSON attachment, with or without its vault refs, with a content-free notice; an Owner's export also audits and tells members of threads the Owner is not in."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_export(json.dumps(spec))))
         def suggest_save(self, spec):
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
@@ -2916,6 +2939,18 @@ class Oneiron:
         def cancel(self, spec):
             """The owner cancels one root request from any surface he is signed in on, ids only; the target applies it whenever it syncs. The receipt says cancelled, or that the target answered it first, which stands."""
             return json.loads(_translate(lambda: self._client.vault_roots_requests_cancel(json.dumps(spec))))
+        def create(self, spec):
+            """The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was."""
+            return json.loads(_translate(lambda: self._client.vault_roots_requests_create(json.dumps(spec))))
+        def list(self, spec):
+            """The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only."""
+            return json.loads(_translate(lambda: self._client.vault_roots_requests_list(json.dumps(spec))))
+    class _VaultOwnerWorkVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it."""
+            return json.loads(_translate(lambda: self._client.vault_owner_work_get(json.dumps(spec))))
     class _VaultCleanupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2949,6 +2984,9 @@ class Oneiron:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs":
             return Oneiron._VaultUsageEventsVerbs(self._client)
+        @property
+        def repair(self) -> "Oneiron._VaultUsageRepairVerbs":
+            return Oneiron._VaultUsageRepairVerbs(self._client)
     class _VaultUsageEventsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2958,6 +2996,12 @@ class Oneiron:
         def remove_undecodable(self, spec):
             """Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."""
             return json.loads(_translate(lambda: self._client.vault_usage_events_remove_undecodable(json.dumps(spec))))
+    class _VaultUsageRepairVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def receipts(self, spec):
+            """Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted."""
+            return json.loads(_translate(lambda: self._client.vault_usage_repair_receipts(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3267,6 +3311,27 @@ class Oneiron:
         def lift_history(self, spec):
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
             return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
+        def register(self, spec):
+            """The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_register(json.dumps(spec))))
+        def rotate(self, spec):
+            """The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_rotate(json.dumps(spec))))
+        def rewrap(self, spec):
+            """The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_rewrap(json.dumps(spec))))
+        @property
+        def custody(self) -> "Oneiron._VaultSecretsCustodyVerbs":
+            return Oneiron._VaultSecretsCustodyVerbs(self._client)
+    class _VaultSecretsCustodyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_custody_get(json.dumps(spec))))
+        def submit(self, spec):
+            """The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_custody_submit(json.dumps(spec))))
     class _VaultWidenProposalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3303,6 +3368,9 @@ class Oneiron:
         def list(self, spec):
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
+        def export_pack(self, spec):
+            """Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_export_pack(json.dumps(spec))))
         def select(self, spec):
             """Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."""
             return json.loads(_translate(lambda: self._client.vault_lenses_select(json.dumps(spec))))
@@ -4205,6 +4273,9 @@ class Oneiron:
         def cancel(self) -> "Oneiron._VaultTasksCancelVerbs":
             return Oneiron._VaultTasksCancelVerbs(self._client)
         @property
+        def comm_widen(self) -> "Oneiron._VaultTasksCommWidenVerbs":
+            return Oneiron._VaultTasksCommWidenVerbs(self._client)
+        @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
             return Oneiron._VaultTasksLinearVerbs(self._client)
     class _VaultTasksCancelVerbs:
@@ -4213,6 +4284,12 @@ class Oneiron:
         def force(self, spec):
             """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
             return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
+    class _VaultTasksCommWidenVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def revoke(self, spec):
+            """The owner revokes one run's recorded stop-asking choice: its descendants ask again for wider reach, the run keeps the reach it was approved once, and the receipt says when the standing ended."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_comm_widen_revoke(json.dumps(spec))))
     class _VaultTasksLinearVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4480,6 +4557,9 @@ class Oneiron:
         def retry(self, spec):
             """Queues a new answer to the user turn an assistant turn answered; the old reply stays."""
             return json.loads(_translate(lambda: self._client.vault_conversations_turn_retry(json.dumps(spec))))
+        def rebind(self, spec):
+            """Rebinds the caller's queued turn action whose credential no longer stands to the live credential this request was admitted on; the action keeps its scope."""
+            return json.loads(_translate(lambda: self._client.vault_conversations_turn_rebind(json.dumps(spec))))
     class _VaultConversationsTurnsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4610,7 +4690,7 @@ class Oneiron:
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs":
             return Oneiron._VaultVoicesTargetsVerbs(self._client)
         def inspect(self, spec):
-            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it: identity, pack metadata without audio, the render decision, and the target's clone or reference fence, or that this host renders no such target."""
             return json.loads(_translate(lambda: self._client.vault_voices_inspect(json.dumps(spec))))
         def lineage(self, spec):
             """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""
@@ -5552,6 +5632,30 @@ class Oneiron:
         def execute(self, spec):
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
+        @property
+        def results(self) -> "Oneiron._SelfOffRecordResultsVerbs":
+            return Oneiron._SelfOffRecordResultsVerbs(self._client)
+        @property
+        def waits(self) -> "Oneiron._SelfOffRecordWaitsVerbs":
+            return Oneiron._SelfOffRecordWaitsVerbs(self._client)
+    class _SelfOffRecordResultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """The session's manager reads a page of a session run's result cards through the session, newest first; a card previews only a clean body, and none shows while the run's served rows stay where the caller is not."""
+            return json.loads(_translate(lambda: self._client.self_off_record_results_list(json.dumps(spec))))
+        def read(self, spec):
+            """The session's manager reads one result of a session run through the session, its card or a slice, search, query or chunks page, under the run's served rows and the result's taint."""
+            return json.loads(_translate(lambda: self._client.self_off_record_results_read(json.dumps(spec))))
+    class _SelfOffRecordWaitsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The session's manager reads the wait a session run is parked on, whether a reply answers it and whether one was delivered."""
+            return json.loads(_translate(lambda: self._client.self_off_record_waits_get(json.dumps(spec))))
+        def answer(self, spec):
+            """The session's manager delivers a reply once to the human-input or effect-approval wait a session run is parked on; peer, connector and consent waits keep their own settlers. Enter the run again to go on."""
+            return json.loads(_translate(lambda: self._client.self_off_record_waits_answer(json.dumps(spec))))
     class _SelfConsentVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5779,6 +5883,9 @@ class Oneiron:
         @property
         def video(self) -> "Oneiron._AiVideoVerbs":
             return Oneiron._AiVideoVerbs(self._client)
+        def ask_image(self, spec):
+            """One question about an image the caller can read, by its view handle, to the host's Local-vision seat: a text answer, or a box or point under that contract with its decisions, and the call's pull, model and spend receipt."""
+            return json.loads(_translate(lambda: self._client.ai_ask_image(json.dumps(spec))))
         def verdict(self, spec):
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
             return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))

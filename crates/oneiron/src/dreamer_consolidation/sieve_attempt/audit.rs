@@ -76,10 +76,13 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         input: WindowAuditInput,
     ) -> Result<DreamerAttemptExecution> {
-        if let Some(completed_units) =
+        if let Some((completed_units, step_hashes)) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units,
+                step_hashes,
+            });
         }
         let retry_at = ctx
             .now_ms
@@ -88,13 +91,17 @@ impl ConsolidationExecutor<'_> {
         let evidence = match sieve::window_read(ctx.vault, &input)? {
             WindowRead::Ready(evidence) => evidence,
             WindowRead::Superseded => {
-                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
             }
             // The source may be withheld for now: the audit waits for it.
             WindowRead::Withheld => {
                 return Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at,
+                    step_hashes: Vec::new(),
                 });
             }
         };
@@ -209,20 +216,27 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(
+                if let Err(error) = charges.record_terminal(
                     ctx.vault,
                     attempt.status.attempt.id,
                     step_hash,
                     &response.usage,
-                )?;
+                ) {
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
+                }
                 if failure_policy.is_some() {
-                    return charges.park_on_fallback(
+                    return match charges.park_on_fallback(
                         ctx.vault,
                         attempt.status.attempt.id,
                         step_hash,
                         SIEVE_FALLBACK,
                         &response,
-                    );
+                    ) {
+                        Ok(parked) => Ok(parked),
+                        Err(error) => {
+                            super::super::residency::spent_or_deferred(error, ctx, &charges)
+                        }
+                    };
                 }
                 response
             }
@@ -277,10 +291,12 @@ impl ConsolidationExecutor<'_> {
         ) {
             Ok(true) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Ok(false) => Ok(DreamerAttemptExecution::Deferred {
                 completed_units: charges.units,
                 retry_at,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(error) => Ok(charges.park_on_error(&error)),
         }

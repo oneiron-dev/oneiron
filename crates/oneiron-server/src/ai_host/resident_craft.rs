@@ -49,16 +49,20 @@ pub(crate) struct SnapshotCraft {
 }
 
 /// The craft message a call on the queue attempt `attempt` sends as
-/// `resident`, read at `at`: each note loaded on the attempt through the
-/// resident's pack door. `None` without craft, or when it does not read.
+/// `resident`, read at `at`, with the row each note was read from: each
+/// note loaded on the attempt through the resident's pack door. `None`
+/// without craft, or when it does not read.
 pub(crate) fn queue_craft(
     vault: &Vault,
     attempt: AttemptId,
     resident: &EntityId,
     at: u64,
-) -> Option<LlmMessage> {
+) -> Option<(LlmMessage, Vec<EntityId>)> {
     match vault.load_resident_craft(attempt, resident, at) {
-        Ok(notes) => craft_message_text(&notes).map(system),
+        Ok(notes) => {
+            let rows = notes.iter().map(|note| note.claim).collect();
+            craft_message_text(&notes).map(|text| (system(text), rows))
+        }
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), agent = %resident.to_hex(), "a resident's craft did not read; its call goes on without it");
             None
@@ -340,7 +344,7 @@ fn system(text: String) -> LlmMessage {
     }
 }
 
-fn message_text(message: &LlmMessage) -> String {
+pub(super) fn message_text(message: &LlmMessage) -> String {
     message
         .content
         .iter()

@@ -60,6 +60,7 @@ fn unfinished() -> AgentVerbRefusalWords {
         code: MEMORY_CODE_INTERNAL.to_owned(),
         message: "the action did not finish".to_owned(),
         suggestions: Vec::new(),
+        reason_codes: Vec::new(),
     }
 }
 
@@ -131,12 +132,8 @@ impl FacadeRowDoor {
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
         };
-        let fallback = unfinished();
-        Err(AgentVerbRefusalWords {
-            code: text("/error/code").unwrap_or(fallback.code),
-            message: text("/error/message").unwrap_or(fallback.message),
-            suggestions: body
-                .pointer("/error/suggestions")
+        let texts = |pointer: &str| -> Vec<String> {
+            body.pointer(pointer)
                 .and_then(serde_json::Value::as_array)
                 .map(|all| {
                     all.iter()
@@ -144,7 +141,14 @@ impl FacadeRowDoor {
                         .map(str::to_owned)
                         .collect()
                 })
-                .unwrap_or_default(),
+                .unwrap_or_default()
+        };
+        let fallback = unfinished();
+        Err(AgentVerbRefusalWords {
+            code: text("/error/code").unwrap_or(fallback.code),
+            message: text("/error/message").unwrap_or(fallback.message),
+            suggestions: texts("/error/suggestions"),
+            reason_codes: texts("/error/reasonCodes"),
         })
     }
 }
@@ -176,6 +180,7 @@ impl FacadeRowDoor {
                             code: error.body.error.code,
                             message: error.body.error.message,
                             suggestions: error.body.error.suggestions,
+                            reason_codes: error.body.error.reason_codes,
                         });
                 let _ = sender.send(answer);
             };
@@ -186,7 +191,7 @@ impl FacadeRowDoor {
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
                 AgentVerbRefusal { code }
             })?;
-            return Ok(AgentVerbAnswer { output, rows: None });
+            return Ok(AgentVerbAnswer::new(output, None));
         }
         let body = serde_json::to_vec(&call.input).map_err(|_| refused())?;
         let mut request = axum::http::Request::post(format!("/{}", call.verb.as_str()))
@@ -221,7 +226,7 @@ impl FacadeRowDoor {
             *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
             AgentVerbRefusal { code }
         })?;
-        Ok(AgentVerbAnswer { output, rows: None })
+        Ok(AgentVerbAnswer::new(output, None))
     }
 }
 

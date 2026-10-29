@@ -30,6 +30,7 @@
 pub mod anonymous_chat;
 mod lifecycle;
 mod promote;
+mod run_view;
 
 pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordCreator,
@@ -41,6 +42,10 @@ pub use lifecycle::{
 pub use promote::{
     OffRecordPromoteReceipt, PROMOTE_INITIATOR_OWNER, PROMOTE_INITIATOR_ROOM_HOLDER,
     PROMOTE_INITIATOR_ROOM_OWNER, PromoteOutcome,
+};
+pub use run_view::{
+    SessionCodeRun, SessionRunCards, SessionRunRead, SessionRunWait, SessionWaitAnswer,
+    answerable as session_wait_answerable,
 };
 
 pub(crate) use lifecycle::OffRecordSessionRegistry;

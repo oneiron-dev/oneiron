@@ -88,14 +88,16 @@ impl HostedLensRender {
 
 impl Memory<'_> {
     /// `vault.lenses.default` where no host keeps the frame: the same card,
-    /// lowered for the whole atom kit. Its events need a server, which holds
-    /// the frame of each card it answers.
+    /// lowered for the surface the call names, else for the whole atom kit.
+    /// Its events need a server, which holds the frame of each card it
+    /// answers.
     pub fn lenses_default(
         &self,
         input: LensDefaultRequest,
     ) -> MemoryResult<ScopedReadResult<LensFrameCard>> {
+        let surface = input.surface.clone().unwrap_or_default();
         let ScopedReadResult { value, receipt } = self.lenses_default_framed(input)?;
-        let (_, card) = value.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+        let (_, card) = value.lower(&surface)?;
         Ok(ScopedReadResult {
             value: card,
             receipt,

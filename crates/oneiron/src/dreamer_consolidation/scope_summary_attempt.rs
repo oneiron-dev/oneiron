@@ -7,7 +7,7 @@
 
 use super::call_labels::{CallLabelMap, LabelKind};
 use super::note_text::NoteText;
-use super::residency::{residency_deferral, waits_on_residency};
+use super::residency::{residency_deferral, spent_or_deferred, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, invalid_consolidation};
@@ -132,14 +132,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         // A replay after the body landed completes without a second call: the
         // landed reply is part of the scope now, so it would compose anew.
         if ctx.vault.composed_scope_summary_landed(attempt_id)? {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         // A source TURN partly away from this replica (OF-534) is owed: the
         // declaration waits, queued, for the promotion (FIX 3861).
         let (plan, evidence) = match ctx.vault.plan_scope_summary(&attempt.status.payload.input) {
             Ok(planned) => planned,
             Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0));
+                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
             }
             Err(error) => return Err(error),
         };
@@ -171,13 +174,19 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 &plan.sources,
             )
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let Some(first) = evidence.covers.first().copied() else {
             // A sitting that retained no text has no summary (FIX 7509): its
             // attempt completes with none, never with invented prose.
             if plan.session.is_some() {
-                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
             }
             return Err(invalid_consolidation("summary scope has no text"));
         };
@@ -221,10 +230,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             &memo,
             &params_hash,
         ) {
-            Ok(true) => return Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            Ok(true) => {
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
+            }
             Ok(false) => {}
             Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0));
+                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
             }
             Err(error) => return Err(error),
         }
@@ -273,7 +287,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         .await
         {
             Ok(StepOutcome::Finished { response, .. }) => {
-                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                {
+                    return spent_or_deferred(error, ctx, &charges);
+                }
                 response
             }
             Ok(StepOutcome::Trapped { .. }) => {
@@ -309,7 +327,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
             }
             // Parks Retry unless only an owner act clears it (FIX 7369).
+            // A failed call's paid usage has no terminal step: it is handed
+            // to the driver's settlement with the park (FIX 11554).
             Err(other) => {
+                if let DurableStepError::SpentLlm { usage, .. } = &other {
+                    charges.record_usage(usage);
+                }
+                ctx.note_spend_before_error(charges.units, &charges.step_hashes);
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),
                     cause: DreamerParkCause::of_step(&other),
@@ -349,13 +373,16 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
             // A source demoted while the model wrote waits for its promotion,
             // the paid call settled, as a moved scope composes again.
-            Err(error) if waits_on_residency(&error) => {
-                Ok(residency_deferral(ctx.now_ms, charges.units))
-            }
+            Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
+                ctx.now_ms,
+                charges.units,
+                charges.step_hashes.clone(),
+            )),
             // A refusal at the landing door (the requester's gate, a landing
             // turn gone) is this declaration's end; the paid call still settles.
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
@@ -452,6 +479,7 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
         retry_at: now_ms
             .div_ceil(1_000)
             .saturating_add(SCOPE_DRIFT_RETRY_SECS),
+        step_hashes: charges.step_hashes.clone(),
     }
 }
 

@@ -56,6 +56,7 @@ mod code_run_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
+mod comm_widen_doors;
 mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;
@@ -158,6 +159,7 @@ mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;
+mod secret_custody_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
@@ -409,6 +411,10 @@ struct FacadeErrorBody {
     /// source said (FIX 8190).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     resets_at: Vec<u64>,
+    /// The refusal's stable reason codes, in its producer's order, when it
+    /// named any (FIX 7398).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    reason_codes: Vec<String>,
     /// A failed run's program type feedback (FIX 10389), beside the refusal
     /// and never among its words: each item released whole, or withheld
     /// with none of its text when its own release check holds it.
@@ -445,6 +451,7 @@ pub(crate) struct MemoryErrorBodySchema {
     receipt_ref: Option<String>,
     retry_after: Option<u64>,
     resets_at: Option<Vec<u64>>,
+    reason_codes: Option<Vec<String>>,
     #[schema(value_type = Option<Vec<Object>>)]
     program_steps: Option<Vec<serde_json::Value>>,
 }

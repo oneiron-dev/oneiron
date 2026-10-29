@@ -78,6 +78,7 @@ impl Leg<'_> {
                 .now_ms
                 .div_ceil(1_000)
                 .saturating_add(self.policy.rung_retry_secs),
+            step_hashes: charges.step_hashes.clone(),
         }
     }
 
@@ -191,6 +192,7 @@ impl ConsolidationExecutor<'_> {
             if !policy.follower_enabled {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
             let leg = Leg {
@@ -218,6 +220,7 @@ impl ConsolidationExecutor<'_> {
                 Next::Idle => {
                     return Ok(DreamerAttemptExecution::Completed {
                         completed_units: charges.units,
+                        step_hashes: charges.step_hashes.clone(),
                     });
                 }
                 Next::Fold(work) => self.fold(&leg, &work, &mut charges).await?,
@@ -282,17 +285,24 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
+                {
+                    return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
+                }
                 if failure_policy.is_some() {
-                    return charges
-                        .park_on_fallback(
-                            vault,
-                            attempt_id,
-                            step_hash,
-                            FOLLOWER_FALLBACK,
-                            &response,
-                        )
-                        .map(Some);
+                    return match charges.park_on_fallback(
+                        vault,
+                        attempt_id,
+                        step_hash,
+                        FOLLOWER_FALLBACK,
+                        &response,
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => {
+                            super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some)
+                        }
+                    };
                 }
                 (response, memoized)
             }
@@ -451,17 +461,24 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
+                {
+                    return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
+                }
                 if failure_policy.is_some() {
-                    return charges
-                        .park_on_fallback(
-                            vault,
-                            attempt_id,
-                            step_hash,
-                            FOLLOWER_FALLBACK,
-                            &response,
-                        )
-                        .map(Some);
+                    return match charges.park_on_fallback(
+                        vault,
+                        attempt_id,
+                        step_hash,
+                        FOLLOWER_FALLBACK,
+                        &response,
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => {
+                            super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some)
+                        }
+                    };
                 }
                 run.calls
                     .push(output::evidence(&response, step_hash, memoized));
@@ -532,6 +549,7 @@ fn hand_back_owed(
             vault.store.notify_attempt_observers();
             Ok(Some(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }))
         }
         Err(error) => engine(charges, error).map(Some),
