@@ -1,6 +1,7 @@
 //! Per-entity text documents. A NOTE's text is its NOTE storage; any other
-//! record's text is its canonical entity document (FIX 8871), read durable
-//! by each reader and writer, never from a resident copy.
+//! record's text is its canonical entity document (FIX 8871), or, for a kind
+//! with no document birth that holds none, the sequence rows of its own
+//! slot. Each reader and writer reads it durable, never from a resident copy.
 //!
 //! The serialized commit path performs Observer A's duty (durable append,
 //! stale VV, then wire notice). Reads and socket imports use short-lived

@@ -1,9 +1,9 @@
 //! The sync text plane's canonical adapter (FIX 8871, 8872, 8873). A
-//! non-NOTE record's text on the sync plane is its entity document: the
-//! head, its slot rows and their generation keys, read durable inside each
-//! writer and written through [`storage::persist_scanned`], so a peer's text
-//! and a local edit keep the head's counters, revisions, index and tagging
-//! duties as every other write does.
+//! non-NOTE record's text on the sync plane is its entity document where one
+//! stands: the head, its slot rows and their generation keys, read durable
+//! inside each writer and written through [`storage::persist_scanned`], so a
+//! peer's text and a local edit keep the head's counters, revisions, index
+//! and tagging duties as every other write does.
 //!
 //! A MESSAGE with no document yet is born lazily by the writer that needs
 //! one, through the MESSAGE birth's own semantics: its canonical text, at its
@@ -14,6 +14,10 @@
 //! is carried here instead; one of another birth than the document held here
 //! stands apart, as a carried MESSAGE document of another incarnation does.
 //!
+//! A record of any other kind with no document has no birth here: its text
+//! stays in the sequence rows of its own slot (a snapshot and updates keyed
+//! by sequence), where the sync plane has always kept it, and is read there.
+//!
 //! A sync write is admitted whatever its text holds (FIX 8872, KEEP TODAY):
 //! the owner's scan runs as configured, a key the lift places goes to custody
 //! and is marked, and a hit no rule places stays, recorded. No hit refuses.
@@ -22,7 +26,7 @@ use heed::{RoTxn, RwTxn};
 use loro::{CommitOptions, ExportMode, LoroDoc};
 
 use super::doc_actor::DocActor;
-use super::document::{BIRTH, BODY, Birth, META, map_insert_bytes};
+use super::document::{BIRTH, BODY, Birth, META, map_insert_bytes, stamp_with};
 use super::prose_admission::{LandedProse, admit_landed};
 use super::storage::{self, Head};
 use super::verbs::{Admitted, admitted_text_in_txn};
@@ -34,6 +38,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{Error, GateError, Result};
 use crate::ports::{DocumentRowStore, DocumentSlot, EntityStoreMaintenance, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_MESSAGE;
+use crate::sync::documents::storage as sequence_rows;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -53,7 +58,7 @@ const NO_TEXT: &str = "this record kind does not carry editable text";
 
 /// A record's text as the sync plane reads it.
 pub(crate) struct SyncText {
-    /// The durable document.
+    /// The durable text: its entity document's, or its sequence rows'.
     pub(crate) doc: LoroDoc,
     /// The slot its rows sit in.
     pub(crate) slot: DocumentSlot,
@@ -74,8 +79,9 @@ pub(crate) struct SyncEdit<'a> {
 pub(crate) struct SyncEdited {
     /// The edit's own operations, for its peers; never its document's birth.
     pub(crate) update: Vec<u8>,
-    /// The head generation the edit left.
-    pub(crate) generation: u64,
+    /// The edit's journal sequence: the head generation it left, or the
+    /// sequence its update took in the record's sequence rows.
+    pub(crate) sequence: u64,
     landed: Vec<LandedProse>,
 }
 
@@ -87,26 +93,31 @@ impl SyncEdited {
     }
 }
 
-/// `entity`'s durable document in `txn`; `None` while it has none.
+/// `entity`'s durable text in `txn`: its document, or the sequence rows of a
+/// record of a kind with no birth here; `None` for a MESSAGE not yet born.
 pub(crate) fn sync_text_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
     entity: &EntityId,
 ) -> Result<Option<SyncText>> {
-    let Some(head) = head_in(vault, txn, entity)? else {
-        return Ok(None);
-    };
-    let doc = storage::load(&vault.store, txn, &head)?;
-    Ok(Some(SyncText {
-        doc: doc.doc,
-        slot: DocumentSlot::from_hex(&head.document)?,
-    }))
+    Ok(match plane_in(vault, txn, entity)? {
+        Plane::Document(head) => Some(SyncText {
+            doc: storage::load(&vault.store, txn, &head)?.doc,
+            slot: DocumentSlot::from_hex(&head.document)?,
+        }),
+        Plane::SequenceRows => Some(SyncText {
+            doc: sequence_rows::load(vault, txn, *entity)?,
+            slot: DocumentSlot::of(*entity),
+        }),
+        Plane::Unborn => None,
+    })
 }
 
 /// Applies `edit` to `entity`'s document in the caller's writer (FIX 8873):
 /// the actor is checked as it stands here, the document takes a fresh peer
 /// bound to it, the inserted prose is admitted before any operation holds it
 /// (FIX 2371), and the commit carries the actor's stamp and made_by receipt.
+/// A record's sequence rows take the edit as their next update.
 pub(crate) fn edit_sync_text_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -117,9 +128,10 @@ pub(crate) fn edit_sync_text_in_txn(
     super::forks::validate_actor(vault, txn, actor)?;
     // A shared vault's role and record scope (FIX 9846).
     vault.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
-    let mut h = match head_in(vault, txn, entity)? {
-        Some(h) => h,
-        None => birth_in_txn(vault, txn, entity)?,
+    let mut h = match plane_in(vault, txn, entity)? {
+        Plane::Document(h) => h,
+        Plane::Unborn => birth_in_txn(vault, txn, entity)?,
+        Plane::SequenceRows => return edit_sequence_rows_in_txn(vault, txn, entity, edit),
     };
     let mut doc = storage::load(&vault.store, txn, &h)?;
     let before = doc.doc.oplog_vv();
@@ -158,18 +170,19 @@ pub(crate) fn edit_sync_text_in_txn(
         .then(|| LandedProse::anchored(actor, slot, &doc, start, &text, &lifted));
     Ok(SyncEdited {
         update,
-        generation: h.generation,
+        sequence: h.generation,
         landed: landed.into_iter().collect(),
     })
 }
 
 /// Joins a peer's operations `update` to `entity`'s document in the caller's
 /// writer. Each operation keeps its own peer and stamp; this vault is never
-/// named its author. Where no document stands, a whole document is carried
-/// here as a state is, and operations that build on a birth take this
-/// vault's own birth of the same row first. `masked` is the re-masked copy
-/// text a copy edit landed from: the scan reads it in place of the
-/// document's text. Whether the document moved.
+/// named its author. Where no MESSAGE document stands, a whole document is
+/// carried here as a state is, and operations that build on a birth take
+/// this vault's own birth of the same row first; a record's sequence rows
+/// take the update as their next one. `masked` is the re-masked copy text a
+/// copy edit landed from: the scan reads it in place of the document's
+/// text. Whether the text moved.
 pub(crate) fn join_sync_update_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -177,16 +190,18 @@ pub(crate) fn join_sync_update_in_txn(
     update: &[u8],
     masked: Option<&str>,
 ) -> Result<bool> {
-    let mut whole = whole_document(update);
-    let mut h = match head_in(vault, txn, entity)? {
-        Some(h) => h,
-        None => match whole.take() {
+    let (mut h, whole) = match plane_in(vault, txn, entity)? {
+        Plane::Document(h) => (h, whole_document(update)),
+        Plane::Unborn => match whole_document(update) {
             Some(carried) => {
                 replace_sync_text_in_txn(vault, txn, entity, carried)?;
                 return Ok(true);
             }
-            None => birth_in_txn(vault, txn, entity)?,
+            None => (birth_in_txn(vault, txn, entity)?, None),
         },
+        Plane::SequenceRows => {
+            return join_sequence_rows_in_txn(vault, txn, entity, update, masked);
+        }
     };
     let doc = storage::load(&vault.store, txn, &h)?;
     let before = doc.doc.oplog_vv();
@@ -214,8 +229,9 @@ pub(crate) fn join_sync_update_in_txn(
 /// Replaces `entity`'s document with `staged`, a peer's state with this
 /// vault's pending updates replayed on it, in the caller's writer. The caller
 /// checked that it covers the durable text. A state with no operations is no
-/// document and installs nothing. A record with no head takes it under a new
-/// one, carried, not born here.
+/// document and installs nothing. A MESSAGE with no head takes it under a
+/// new one, carried, not born here; a record's sequence rows take it as
+/// their snapshot.
 pub(crate) fn replace_sync_text_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -225,11 +241,18 @@ pub(crate) fn replace_sync_text_in_txn(
     if staged.oplog_vv().is_empty() {
         return Ok(());
     }
+    let head = match plane_in(vault, txn, entity)? {
+        Plane::Document(h) => Some(h),
+        Plane::Unborn => None,
+        Plane::SequenceRows => {
+            return replace_sequence_rows_in_txn(vault, txn, entity, &staged);
+        }
+    };
     let doc = EntityDoc::from_loro(staged)?;
     if doc.birth().entity != entity.to_hex() {
         return Err(invalid("sync text state of another document"));
     }
-    let mut h = match head_in(vault, txn, entity)? {
+    let mut h = match head {
         Some(h) => h,
         None => carried_head_in_txn(vault, txn, entity)?,
     };
@@ -249,6 +272,122 @@ fn head_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<H
         return Ok(None);
     }
     storage::head(&vault.store, txn, entity).map(Some)
+}
+
+/// Where a record's text on the sync plane is read and written.
+enum Plane {
+    /// Its entity document, under this head.
+    Document(Head),
+    /// A MESSAGE with no document yet: the writer that needs one births it.
+    Unborn,
+    /// The sequence rows of its own slot: a record of a kind with no birth
+    /// here that holds no document.
+    SequenceRows,
+}
+
+/// The one routing rule of every sync reader and writer: a head means the
+/// document; no head means the MESSAGE birth for a MESSAGE, and the
+/// sequence rows for every other kind.
+fn plane_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Plane> {
+    if let Some(head) = head_in(vault, txn, entity)? {
+        return Ok(Plane::Document(head));
+    }
+    Ok(
+        if vault.get_entity_type_in_txn(txn, entity)? == Some(ENTITY_TYPE_MESSAGE) {
+            Plane::Unborn
+        } else {
+            Plane::SequenceRows
+        },
+    )
+}
+
+/// [`edit_sync_text_in_txn`] on `entity`'s sequence rows: the prose is
+/// admitted as a document edit's is, the edit takes a fresh peer bound to
+/// the actor, and its commit carries the actor's stamp and made_by receipt,
+/// all in the operations the rows store and the peers receive.
+fn edit_sequence_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    edit: &SyncEdit<'_>,
+) -> Result<SyncEdited> {
+    let doc = sequence_rows::load(vault, txn, *entity)?;
+    let before = doc.oplog_vv();
+    let lifted = if LiftedKeys::names_a_handle(edit.insert) {
+        LiftedKeys::of_in_txn(&vault.store, txn, [doc.get_text(BODY).to_string()])?
+    } else {
+        LiftedKeys::default()
+    };
+    let text = admitted_in_txn(vault, txn, entity, edit.insert, &lifted)?;
+    doc.set_peer_id(LoroDoc::new().peer_id())
+        .map_err(|_| invalid("document peer rotation"))?;
+    crate::typed_body::bind_peer(vault, txn, doc.peer_id(), edit.actor, edit.at)?;
+    let body = doc.get_text(BODY);
+    body.delete(edit.start, edit.delete)
+        .map_err(|_| invalid("sync text delete"))?;
+    body.insert(edit.start, &text.stored)
+        .map_err(|_| invalid("sync text insert"))?;
+    stamp_with(&doc, edit.actor, edit.at, "edit", &[])?;
+    let update = doc
+        .export(ExportMode::updates(&before))
+        .map_err(|_| invalid("sync text update export"))?;
+    let sequence = append_sequence_update_in_txn(vault, txn, entity, &doc, &update, None)?;
+    // No document stands to read the insert in its place: its own links are
+    // read on their own.
+    let landed = (!edit.insert.is_empty())
+        .then(|| LandedProse::whole(edit.actor, SYNC_EDIT_SLOT.to_owned(), &text.said));
+    Ok(SyncEdited {
+        update,
+        sequence: u64::from(sequence),
+        landed: landed.into_iter().collect(),
+    })
+}
+
+/// [`join_sync_update_in_txn`] on `entity`'s sequence rows: `update` imports
+/// whole on their text and lands as their next update. Whether it moved.
+fn join_sequence_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    update: &[u8],
+    masked: Option<&str>,
+) -> Result<bool> {
+    let doc = sequence_rows::load(vault, txn, *entity)?;
+    let before = doc.oplog_vv();
+    sequence_rows::import_complete(&doc, update)?;
+    if doc.oplog_vv() == before {
+        return Ok(false);
+    }
+    append_sequence_update_in_txn(vault, txn, entity, &doc, update, masked)?;
+    Ok(true)
+}
+
+/// [`replace_sync_text_in_txn`] on `entity`'s sequence rows: `staged`,
+/// scanned, replaces them as a shallow snapshot.
+fn replace_sequence_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    staged: &LoroDoc,
+) -> Result<()> {
+    scan_sequence_text_in_txn(vault, txn, entity, &staged.get_text(BODY).to_string())?;
+    sequence_rows::snapshot(vault, txn, *entity, staged, true)
+}
+
+/// Appends `update`, whose operations `doc` now holds, as the next update of
+/// `entity`'s sequence rows, once the sync scan has read `masked`, else
+/// `doc`'s text. The sequence the update took.
+fn append_sequence_update_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    doc: &LoroDoc,
+    update: &[u8],
+    masked: Option<&str>,
+) -> Result<u32> {
+    let text = doc.get_text(BODY).to_string();
+    scan_sequence_text_in_txn(vault, txn, entity, masked.unwrap_or(&text))?;
+    sequence_rows::append(vault, txn, *entity, update)
 }
 
 fn content() -> TextField {
@@ -464,15 +603,41 @@ fn synced(
         {
             return Ok(true);
         }
-        if let CarrierText::Unplaceable(reason) =
-            mark_carrier_text_in_txn(vault, txn, *entity, PLACE, read.as_bytes())?
-        {
-            tracing::warn!(
-                entity = %entity.to_hex(),
-                reason,
-                "sync: a document's text keeps a secret hit no rule places; the write stands"
-            );
-        }
+        mark_hits_in_txn(vault, txn, entity, read)?;
         Ok(false)
     }
+}
+
+/// The sync scan of a text bound for a record's sequence rows: [`synced`]'s,
+/// with no document lift to screen it. No hit refuses the write.
+fn scan_sequence_text_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    read: &str,
+) -> Result<()> {
+    if scan_content_in_txn(&vault.store, txn, read.as_bytes()).is_ok() {
+        return Ok(());
+    }
+    mark_hits_in_txn(vault, txn, entity, read)
+}
+
+/// Sends each key of `read`, a sync write's text, to custody and marks it
+/// where the lift's rules place it; a hit they do not place stays, recorded.
+fn mark_hits_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    read: &str,
+) -> Result<()> {
+    if let CarrierText::Unplaceable(reason) =
+        mark_carrier_text_in_txn(vault, txn, *entity, PLACE, read.as_bytes())?
+    {
+        tracing::warn!(
+            entity = %entity.to_hex(),
+            reason,
+            "sync: a document's text keeps a secret hit no rule places; the write stands"
+        );
+    }
+    Ok(())
 }

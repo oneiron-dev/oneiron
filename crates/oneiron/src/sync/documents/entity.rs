@@ -14,8 +14,9 @@ use crate::ports::DocumentSlot;
 use crate::sync::transport::{decode_document, document_sub_tags, encode_document};
 use crate::{EntityId, Vault};
 
-/// `id`'s durable text and the slot its rows sit in; an empty text in its
-/// own slot while no document stands for it.
+/// `id`'s durable text and the slot its rows sit in: its document's, or its
+/// sequence rows' for a kind with no birth here; an empty text in its own
+/// slot for a MESSAGE not yet born.
 pub(super) fn document_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -40,10 +41,10 @@ fn journal_prefix(id: EntityId) -> String {
     format!("{}:", id.to_hex())
 }
 
-/// The journal row of the edit that left `generation`: the sequence a
-/// pending edit's key spells as eight hex digits.
-fn journal_key(id: EntityId, generation: u64) -> Result<Vec<u8>> {
-    let seq = u32::try_from(generation)
+/// The journal row of the edit of `sequence`, which a pending edit's key
+/// spells as eight hex digits.
+fn journal_key(id: EntityId, sequence: u64) -> Result<Vec<u8>> {
+    let seq = u32::try_from(sequence)
         .map_err(|_| Error::InvariantViolation("document journal sequence overflow"))?;
     Ok(format!("{}:{seq:08x}", id.to_hex()).into_bytes())
 }
@@ -64,7 +65,7 @@ impl EntityDocument {
             let frame = encode_document(self.id, document_sub_tags::UPDATE, &edited.update)
                 .into_result()
                 .map_err(|_| Error::InvariantViolation("document edit exceeds wire limit"))?;
-            let key = journal_key(self.id, edited.generation)?;
+            let key = journal_key(self.id, edited.sequence)?;
             QD_E.put(&self.vault.store, txn, &key, &frame)?;
             Ok((frame, edited))
         })?;
