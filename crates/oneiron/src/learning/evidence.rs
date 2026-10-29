@@ -136,6 +136,10 @@ pub enum Observation {
     Magnitude(f64),
     /// One outcome category, such as untouched, amended or rejected.
     Category(String),
+    /// One outcome counted beside a mean with no magnitude: its category
+    /// joins the cell's outcome counts and moves neither the mean nor the
+    /// runs, so it charges nobody.
+    CountOnly(String),
 }
 
 impl Observation {
@@ -144,7 +148,7 @@ impl Observation {
     pub const fn form(&self) -> EstimateForm {
         match self {
             Self::Success(_) => EstimateForm::Beta,
-            Self::Magnitude(_) => EstimateForm::Mean,
+            Self::Magnitude(_) | Self::CountOnly(_) => EstimateForm::Mean,
             Self::Category(_) => EstimateForm::Counts,
         }
     }
@@ -154,7 +158,7 @@ impl Observation {
             Self::Success(_) => Ok(()),
             Self::Magnitude(x) if x.is_finite() => Ok(()),
             Self::Magnitude(_) => Err(Error::InvalidClaimBody("a magnitude is finite")),
-            Self::Category(name)
+            Self::Category(name) | Self::CountOnly(name)
                 if !name.is_empty()
                     && name.len() <= MAX_CATEGORY_BYTES
                     && name
@@ -163,7 +167,7 @@ impl Observation {
             {
                 Ok(())
             }
-            Self::Category(_) => Err(Error::InvalidClaimBody(
+            Self::Category(_) | Self::CountOnly(_) => Err(Error::InvalidClaimBody(
                 "an outcome category is 1..=64 bytes of [a-z0-9_]",
             )),
         }
@@ -195,6 +199,9 @@ pub struct LearningEvidence {
     /// frozen at measurement. Metadata, not a cell key qualifier: a goal-axis
     /// settlement accepts the row only when it equals the question's revision.
     pub goal_revision: Option<String>,
+    /// The engine version a magnitude was measured under. A mean folds one
+    /// measurement version: the newest measured row's (FIX 7822).
+    pub measurement_version: Option<String>,
 }
 
 impl LearningEvidence {
@@ -217,6 +224,7 @@ impl LearningEvidence {
             outcome_label: None,
             pack_attribution: None,
             goal_revision: None,
+            measurement_version: None,
         }
     }
 }
@@ -238,6 +246,26 @@ pub struct EvidenceRow {
     pub pack_attribution: Option<crate::receipt::PackLearningContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_version: Option<String>,
+}
+
+impl EvidenceRow {
+    /// The row `evidence` stores under `anchor`.
+    fn of(evidence: &LearningEvidence, anchor: Anchor) -> Self {
+        Self {
+            at: evidence.at,
+            anchor,
+            observation: evidence.observation.clone(),
+            weight: evidence.weight,
+            judge: evidence.judge.clone(),
+            on_judge_model: evidence.on_judge_model,
+            outcome_label: evidence.outcome_label.clone(),
+            pack_attribution: evidence.pack_attribution.clone(),
+            goal_revision: evidence.goal_revision.clone(),
+            measurement_version: evidence.measurement_version.clone(),
+        }
+    }
 }
 
 fn bounded_ref(text: &str, what: &'static str) -> Result<()> {
@@ -296,6 +324,12 @@ pub(crate) fn record_evidence_in_txn(
     if let Some(revision) = &evidence.goal_revision {
         bounded_ref(revision, "a goal revision is 1..=256 bytes without NUL")?;
     }
+    if let Some(version) = &evidence.measurement_version {
+        bounded_ref(
+            version,
+            "a measurement version is 1..=256 bytes without NUL",
+        )?;
+    }
     evidence.observation.validate()?;
     if let Some(label) = &evidence.outcome_label {
         Observation::Category(label.clone()).validate()?;
@@ -306,17 +340,7 @@ pub(crate) fn record_evidence_in_txn(
         ));
     }
     let digest = ensure_cell_in_txn(vault, wtxn, cell, evidence.observation.form())?;
-    let row = EvidenceRow {
-        at: evidence.at,
-        anchor,
-        observation: evidence.observation.clone(),
-        weight: evidence.weight,
-        judge: evidence.judge.clone(),
-        on_judge_model: evidence.on_judge_model,
-        outcome_label: evidence.outcome_label.clone(),
-        pack_attribution: evidence.pack_attribution.clone(),
-        goal_revision: evidence.goal_revision.clone(),
-    };
+    let row = EvidenceRow::of(evidence, anchor);
     EVIDENCE.put(
         &vault.store,
         wtxn,
@@ -324,6 +348,30 @@ pub(crate) fn record_evidence_in_txn(
         &row,
     )?;
     project_cell_in_txn(vault, wtxn, &digest, now)
+}
+
+/// Whether `cell` holds exactly the row [`record_evidence_in_txn`] would store
+/// for `evidence`, read in `txn`; nothing is written. Evidence the door would
+/// refuse never stands.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn evidence_stands_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+    evidence: &LearningEvidence,
+) -> Result<bool> {
+    let Ok(anchor) = evidence.source.admit() else {
+        return Ok(false);
+    };
+    let stored = EVIDENCE.get(
+        &vault.store,
+        txn,
+        &(cell.digest(), evidence.receipt.clone()),
+    )?;
+    Ok(stored == Some(EvidenceRow::of(evidence, anchor)))
 }
 
 /// Withdraws the evidence `receipt` gave `cell` (a displaced judgment, an

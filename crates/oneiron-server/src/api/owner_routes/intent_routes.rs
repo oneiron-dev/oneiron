@@ -26,7 +26,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 /// The owner's intent: his exact words, and the MESSAGE (32 hex) they came
 /// from, when there is one.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct StateIntent {
     text: String,
@@ -35,9 +35,19 @@ struct StateIntent {
 }
 
 /// The intent's claim, as 32 hex.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct IntentStated {
     claim: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/intents`'s body (FIX 11103): [`StateIntent`].
+pub(crate) fn state_intent_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<StateIntent>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/intents`'s answer (FIX 11103): [`IntentStated`].
+pub(crate) fn intent_stated_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<IntentStated>()
 }
 
 /// `POST /v1/owner/intents`: one intent, in the owner's words.

@@ -25,7 +25,7 @@ use super::estimate::{
     ESTIMATOR_VERSION, Estimate, EstimateForm, EstimateLabels, EstimateValue, OwnTally, Window,
     fold_value,
 };
-use super::evidence::{Anchor, CELL, CellRow, Observation, evidence_in_txn};
+use super::evidence::{Anchor, CELL, CellRow, EvidenceRow, Observation, evidence_in_txn};
 use super::judge::{JudgeConversion, conversions_in_txn};
 use super::prior::cell_prior_in_txn;
 
@@ -193,6 +193,7 @@ fn fold_evidence_in_txn(
     let mut evidence = evidence_in_txn(vault, txn, digest)?;
     // Newest first, so the citations run newest to oldest.
     evidence.sort_by(|a, b| b.1.at.cmp(&a.1.at).then_with(|| a.0.cmp(&b.0)));
+    let version = measurement_version(&evidence);
 
     let mut tally = OwnTally::empty(row.form);
     let mut labels = EstimateLabels::default();
@@ -203,6 +204,11 @@ fn fold_evidence_in_txn(
     let mut seen = BTreeSet::new();
     for (receipt, ev) in &evidence {
         if ev.observation.form() != row.form {
+            continue;
+        }
+        // One measurement version per fold (FIX 7822): a row measured under
+        // another stays out of the mean, the counts and the citations.
+        if ev.measurement_version.is_some() && ev.measurement_version != version {
             continue;
         }
         let mut w = ev.weight * window.decay(now.saturating_sub(ev.at));
@@ -252,6 +258,15 @@ fn fold_evidence_in_txn(
             (OwnTally::Counts { counts }, Observation::Category(name)) => {
                 *counts.entry(name.clone()).or_insert(0.0) += w;
             }
+            // A count-only outcome joins the counts beside the mean, cited,
+            // and adds no mass, no run and no judge label.
+            (OwnTally::Mean { .. }, Observation::CountOnly(name)) => {
+                *outcome_counts.entry(name.clone()).or_insert(0.0) += w;
+                if seen.insert(receipt.as_str()) {
+                    cited.push(receipt.clone());
+                }
+                continue;
+            }
             _ => continue,
         }
         runs += w;
@@ -290,6 +305,22 @@ fn fold_evidence_in_txn(
     })
 }
 
+/// The measurement version a cell's evidence folds under: the newest
+/// measured magnitude's, the latest in time and then in receipt. `None` when
+/// no magnitude names one; a row with no version folds under any.
+fn measurement_version(evidence: &[(String, EvidenceRow)]) -> Option<String> {
+    evidence
+        .iter()
+        .filter_map(
+            |(receipt, row)| match (&row.observation, &row.measurement_version) {
+                (Observation::Magnitude(_), Some(version)) => Some(((row.at, receipt), version)),
+                _ => None,
+            },
+        )
+        .max_by(|left, right| left.0.cmp(&right.0))
+        .map(|(_, version)| version.clone())
+}
+
 /// Follows a score through the judge-swap maps. Converted binary scores
 /// become fractional Beta mass while retaining their original run weight.
 fn convert<'a>(
@@ -309,7 +340,9 @@ fn convert<'a>(
                 0.0
             }
         }
-        Observation::Category(_) => return (observation.clone(), false),
+        Observation::Category(_) | Observation::CountOnly(_) => {
+            return (observation.clone(), false);
+        }
     };
     let mut converted = false;
     for _ in 0..MAX_CONVERSION_HOPS {

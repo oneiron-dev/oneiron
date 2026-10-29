@@ -561,7 +561,7 @@ impl Vault {
 }
 
 /// One diary entry a read returned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct DiaryEntry {
     pub id: EntityId,
     pub learned_at: u64,
@@ -569,7 +569,7 @@ pub struct DiaryEntry {
 }
 
 /// What one direct diary read returned.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum DiaryReadOutcome {
     /// The entries the reader's Grants cover; `read` names the log row (none

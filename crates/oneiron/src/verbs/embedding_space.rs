@@ -26,7 +26,7 @@ use crate::{EntityId, Vault};
 
 /// Every declared space, where each kind slot reads, and every move: what
 /// `GET /v1/owner/embedding-spaces` and each space change answer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpacesView {
     pub spaces: Vec<EmbeddingSpace>,
     /// The vault's own text vector index, which an unbound text slot reads.
@@ -95,7 +95,7 @@ pub struct EmbeddingSpaceCandidateRequest {
 }
 
 /// What a move's check did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingSpaceMoveOutcome {
     /// The candidate still lacks a vector of some moving document; no probe
@@ -112,7 +112,7 @@ pub enum EmbeddingSpaceMoveOutcome {
 
 /// `vault.embedding_spaces.move_check`'s answer, as
 /// `POST /v1/owner/embedding-spaces/move/check` gives it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceMoveChecked {
     pub outcome: EmbeddingSpaceMoveOutcome,
     /// The paired probe run, unless the candidate is still filling.
@@ -137,7 +137,7 @@ impl From<SpaceMoveOutcome> for EmbeddingSpaceMoveChecked {
 }
 
 /// One stored probe with its id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbe {
     /// 32 hex.
     pub id: String,
@@ -146,7 +146,7 @@ pub struct EmbeddingSpaceProbe {
 }
 
 /// `vault.embedding_spaces.probes.list`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbes {
     pub probes: Vec<EmbeddingSpaceProbe>,
 }
@@ -187,7 +187,7 @@ pub struct EmbeddingSpaceProbeDeleteRequest {
 }
 
 /// `vault.embedding_spaces.probes.delete`'s answer: whether a probe went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbeDeleted {
     pub ok: bool,
 }
