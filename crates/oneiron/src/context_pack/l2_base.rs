@@ -160,11 +160,12 @@ pub(super) fn produce_l2_base(
         return Ok(None);
     }
     let subjects: BTreeSet<_> = subjects.iter().copied().collect();
-    let rendered = render_l2_rows_with_handles(&pipeline.store_read(), &txn, &admitted)?;
+    let rendered = render_l2_rows_with_handles(pipeline, &txn, &admitted)?;
     let content_hash = evidence_hash(
         subjects.iter().copied(),
         &admitted,
         &rendered.handle_spellings,
+        pipeline,
     )?;
     if cache_enabled {
         let cache = vault
@@ -223,11 +224,12 @@ pub(super) fn revalidate_l2_base(
     reader: Option<&ScopedRead<'_>>,
 ) -> Result<bool> {
     let admitted = admitted_l2_evidence(vault, pipeline, txn, &summary.subjects, clamp, reader)?;
-    let rendered = render_l2_rows_with_handles(&pipeline.store_read(), txn, &admitted)?;
+    let rendered = render_l2_rows_with_handles(pipeline, txn, &admitted)?;
     Ok(evidence_hash(
         summary.subjects.iter().copied(),
         &admitted,
         &rendered.handle_spellings,
+        pipeline,
     )? == summary.content_hash)
 }
 
@@ -247,6 +249,7 @@ fn admitted_l2_evidence(
     let mut bodies = std::collections::HashMap::new();
     let mut admitted = Vec::new();
     for (id, body) in evidence {
+        pipeline.answer_checkpoint(Error::IndexOverflow("L2 evidence claims"))?;
         if let Some(visibility) = &visibility
             && !visibility.ppr_node_visible(txn, &id)?
         {
@@ -284,14 +287,16 @@ struct RenderedL2Rows {
 }
 
 fn render_l2_rows_with_handles(
-    content: &crate::store::StoreRead<'_>,
+    pipeline: &PipelineBuilder<'_>,
     txn: &heed::RoTxn<'_>,
     admitted: &[(EntityId, crate::claim::ClaimBody)],
 ) -> Result<RenderedL2Rows> {
+    let content = &pipeline.store_read();
     let mut rows = Vec::with_capacity(admitted.len());
     let mut handle_spellings = Vec::new();
     let mut unresolved_short_handles = 0usize;
     for (id, body) in admitted {
+        pipeline.answer_checkpoint(Error::IndexOverflow("L2 evidence claims"))?;
         let crate::claim::ClaimSubject::Entity(subject) = body.subject else {
             return Err(Error::InvariantViolation("L2 non-entity subject"));
         };
@@ -354,14 +359,17 @@ fn evidence_hash(
     subjects: impl ExactSizeIterator<Item = EntityId>,
     admitted: &[(EntityId, crate::claim::ClaimBody)],
     handle_spellings: &[String],
+    pipeline: &PipelineBuilder<'_>,
 ) -> Result<[u8; 32]> {
     let mut digest = blake3::Hasher::new();
     digest.update(b"oneiron:l2-base:v1");
     digest.update(&(subjects.len() as u64).to_be_bytes());
     for subject in subjects {
+        pipeline.answer_checkpoint(Error::IndexOverflow("L2 subject adjacency"))?;
         digest.update(subject.as_bytes());
     }
     for (id, body) in admitted {
+        pipeline.answer_checkpoint(Error::IndexOverflow("L2 evidence bytes"))?;
         let raw = crate::claim::encode_claim_body(body)?;
         digest.update(id.as_bytes());
         digest.update(&(raw.len() as u64).to_be_bytes());
@@ -370,6 +378,7 @@ fn evidence_hash(
     digest.update(b"oneiron:l2-handles:v1");
     digest.update(&(handle_spellings.len() as u64).to_be_bytes());
     for handle in handle_spellings {
+        pipeline.answer_checkpoint(Error::IndexOverflow("L2 evidence bytes"))?;
         digest.update(&(handle.len() as u64).to_be_bytes());
         digest.update(handle.as_bytes());
     }

@@ -13,7 +13,7 @@ use heed::RoTxn;
 use crate::disclosure::DisclosureContext;
 use crate::edge::{EdgeConfirmationStatus, EdgeInfo, EdgeKind};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::store::StoreRead;
 
 use super::validation::disclosure_admits_target;
@@ -39,11 +39,12 @@ pub(super) fn load_entity_edges(
     id: &EntityId,
     edge_cache: Option<&HashMap<EntityId, Vec<EdgeInfo>>>,
     clamp: Option<&DisclosureContext>,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<Vec<EdgeInfo>> {
     let edges = if let Some(edges) = edge_cache.and_then(|cache| cache.get(id)) {
         edges.clone()
     } else {
-        scan_edges_for_entity(store, rtxn, id)?
+        scan_edges_for_entity(store, rtxn, id, deadline)?
     };
     // ARCH-0052 P6: no off-record subtraction here. A base edge cannot name a
     // live overlay member — the K4 taint guard rejects that write — and a
@@ -51,6 +52,9 @@ pub(super) fn load_entity_edges(
     // The OF-365 clamp below is the only target filter this list needs.
     let mut kept = Vec::with_capacity(edges.len());
     for edge in edges {
+        if let Some(deadline) = deadline {
+            deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
+        }
         if !crate::note::ordinary_entity_visible(store, rtxn, &edge.target)?
             || !disclosure_admits_target(store, rtxn, clamp, &edge.target)?
         {
@@ -76,6 +80,7 @@ pub(super) fn scan_edges_for_entity(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<Vec<EdgeInfo>> {
     #[cfg(test)]
     EDGE_SCAN_COUNT.with(|count| count.set(count.get().saturating_add(1)));
@@ -89,6 +94,9 @@ pub(super) fn scan_edges_for_entity(
     )?;
     let mut edges = Vec::new();
     for entry in store.port_edges(rtxn, id, crate::ports::EdgeDirection::Out, None, None)? {
+        if let Some(deadline) = deadline {
+            deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
+        }
         count.row();
         edges.push(entry?);
     }
@@ -123,6 +131,8 @@ pub(super) struct EdgeWalkOptions<'a> {
     /// The manifest that names critical predicates, when the pack may hold
     /// critical claims: they take the walk's budget first (FIX 9760).
     pub(super) critical_policy: Option<&'a crate::gate::PolicyManifestResolution>,
+    /// Absolute answer deadline for the full adjacency scan and admitted walk.
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
 }
 
 /// Expands the seed set along its edges under `options`.
@@ -143,6 +153,7 @@ pub(super) fn walk_edges(
         named_types,
         world_scope,
         critical_policy,
+        deadline,
     } = options;
     if hops == 0 || budget == 0 || seed_ids.is_empty() {
         return Ok(EdgeWalkResult::default());
@@ -164,13 +175,16 @@ pub(super) fn walk_edges(
 
         for id in &frontier {
             if !scanned_edges.contains_key(id) {
-                scanned_edges.insert(*id, scan_edges_for_entity(store, rtxn, id)?);
+                scanned_edges.insert(*id, scan_edges_for_entity(store, rtxn, id, deadline)?);
             }
 
             let Some(edges) = scanned_edges.get(id) else {
                 continue;
             };
             for edge in edges {
+                if let Some(deadline) = deadline {
+                    deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
+                }
                 // `child_of` / `assigned_to` / `blocked_by` are STRUCTURAL
                 // plumbing with no retrieval scoring (ARCH-0004 edgeKinds:
                 // lambda null, "Not traversed.") — never neighbor-expanded

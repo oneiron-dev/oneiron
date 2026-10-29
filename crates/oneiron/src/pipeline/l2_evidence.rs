@@ -7,7 +7,7 @@ use super::types::{ClaimStatusGateCache, EntityMetadataCache};
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use heed::RoTxn;
 use std::collections::BTreeSet;
@@ -44,6 +44,7 @@ impl PipelineBuilder<'_> {
         let subjects: BTreeSet<_> = subjects.iter().copied().collect();
         let mut ids = BTreeSet::new();
         for subject in &subjects {
+            self.answer_checkpoint(Error::IndexOverflow("L2 subject adjacency"))?;
             let scope = [
                 &[EdgeDirection::In as u8][..],
                 subject.as_bytes(),
@@ -63,6 +64,7 @@ impl PipelineBuilder<'_> {
                 Some(EdgeKind::ClaimOf),
                 None,
             )? {
+                self.answer_checkpoint(Error::IndexOverflow("L2 subject adjacency"))?;
                 count.row();
                 ids.insert(edge?.target);
             }
@@ -72,6 +74,7 @@ impl PipelineBuilder<'_> {
         let mut gate = ClaimStatusGateCache::default();
         let mut evidence = Vec::new();
         for id in ids {
+            self.answer_checkpoint(Error::IndexOverflow("L2 evidence claims"))?;
             let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(content, txn, &id)?
             else {
                 continue;
