@@ -569,6 +569,13 @@ impl From<Error> for MemoryError {
                 message,
                 &["Ask the vault's owner to record this guest's consent, then ask again."],
             ),
+            // FIX 10917: a lapsed owner proof is a refusal, not a malformed
+            // request: the owner re-authenticates, then acts again.
+            ErrorKind::ConsentOwnerNotAuthenticated => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Re-authenticate as the vault's owner, then retry."],
+            ),
             ErrorKind::FamilyRequiresAutoGrant => Self::new(
                 MEMORY_CODE_FORBIDDEN,
                 message,
