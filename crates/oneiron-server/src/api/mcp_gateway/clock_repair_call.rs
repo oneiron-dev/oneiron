@@ -1,7 +1,8 @@
 //! An MCP `tools/call` of the owner's authority clock repair whose caller
 //! the repair's own writer judges (FIX 11190, FIX 11202): one the binding
-//! door left unjudged over a damaged floor, or a managed vault's held MCP
-//! socket's owner while this handle's authority readings refuse. It runs
+//! door left unjudged over a damaged floor, or a held MCP socket's call
+//! while this handle's authority readings refuse — a managed vault's
+//! owner's, or a slip socket's upgrade-verified slip (FIX 11525). It runs
 //! before any caller is resolved or any invocation claimed, since each of
 //! those reads the clock it repairs, and after the call's params, metadata
 //! and arguments are checked as every tool call's are.
@@ -23,10 +24,12 @@ use crate::mcp::{McpConnectorScope, McpResolvedActor, McpSurfaceMode, McpValidat
 use crate::server::SyncServer;
 
 /// The repair's caller for a `tools/call` naming `params`'s tool, when its
-/// writer judges it: the binding door left it unjudged, or it came with no
-/// credential of its own on a managed owner's held socket, whose verified
-/// session holder is the evidence, while the floor refuses readings. `None`
-/// for every other call, which takes the gateway's own path.
+/// writer judges it: the binding door left it unjudged, or it came on a
+/// held MCP socket while the floor refuses readings — a managed owner's,
+/// with no credential of its own, whose verified session holder is the
+/// evidence, or a slip's, whose upgrade's verified slip rides the request
+/// (FIX 11525). `None` for every other call, which takes the gateway's own
+/// path.
 pub(super) fn deferred_caller(
     server: &SyncServer,
     headers: &HeaderMap,
@@ -41,6 +44,15 @@ pub(super) fn deferred_caller(
     }
     if clock_ingress::repair_marked(connection) {
         return clock_ingress::request_repair_caller(server, headers, connection, true);
+    }
+    // A slip socket's repair call (FIX 11525): the slip its upgrade
+    // verified, carried on the request, while the floor refuses readings.
+    // The repair's writer judges it; nothing here re-verifies on the
+    // damaged clock, which would refuse before it.
+    if let Some(carried) = connection.get::<clock_ingress::McpSocketSlip>() {
+        if server.vault().authority_clock_refuses_readings().unwrap_or(false) {
+            return Some(ClockRepairCaller::verified(carried.slip().clone()));
+        }
     }
     let holder = super::owner_call::session_owner(connection, server)?;
     let credentialed =

@@ -1,10 +1,14 @@
 //! The content reads a bound [`NapiVault`] makes inside the off-record
-//! session it names (FIX 8119): the room's overlay over base while the room
-//! is live and its caller is in it, through the engine's one raw adapter
-//! (`Memory::raw_*`), as its writes go. A vault that names no session reads
-//! base through the bare vault, as before.
+//! session it names (FIX 8119, 10759): the room's overlay over base while
+//! the room is live and its caller is in it, through the engine's one raw
+//! adapter (`Memory::raw_*`), as its writes go: rows, edges and peers, text
+//! and vector search, a scoped query, a context pack, a type's ids and the
+//! ChildOf walks. A vault that names no session reads base through the bare
+//! vault, as before. Codebase snapshots read base alone: no room stages one.
 
-use oneiron::{EdgeInfo, EdgeKind, EntityId, Memory};
+use oneiron::{
+    ContextPackBuilder, EdgeInfo, EdgeKind, EntityId, Memory, PipelineBuilder, ScoredEntity,
+};
 
 use super::{NapiVault, to_napi_err};
 use crate::facade::facade_error;
@@ -67,6 +71,91 @@ impl NapiVault {
             (Some(memory), false) => memory.raw_sources(id, kind, peer).map_err(facade_error),
             (None, true) => self.vault.targets(id, kind, peer).map_err(to_napi_err),
             (None, false) => self.vault.sources(id, kind, peer).map_err(to_napi_err),
+        }
+    }
+
+    /// `query`'s BM25 hits.
+    pub(super) fn text_hits(&self, query: &str, limit: usize) -> napi::Result<Vec<ScoredEntity>> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_search_text(query, limit).map_err(facade_error),
+            None => self.vault.search_text(query, limit).map_err(to_napi_err),
+        }
+    }
+
+    /// `query`'s nearest neighbours.
+    pub(super) fn vector_hits(
+        &self,
+        query: &[f32],
+        limit: usize,
+    ) -> napi::Result<Vec<ScoredEntity>> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_search_vector(query, limit).map_err(facade_error),
+            None => self.vault.search_vector(query, limit).map_err(to_napi_err),
+        }
+    }
+
+    /// The hits of the query `configure` builds.
+    pub(super) fn query_hits(
+        &self,
+        configure: impl for<'b> Fn(PipelineBuilder<'b>) -> PipelineBuilder<'b>,
+    ) -> napi::Result<Vec<ScoredEntity>> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_query(configure).map_err(facade_error),
+            None => configure(self.vault.query()).run().map_err(to_napi_err),
+        }
+    }
+
+    /// The serialized context pack `configure` builds.
+    pub(super) fn pack_bytes(
+        &self,
+        configure: impl for<'b> Fn(ContextPackBuilder<'b>) -> ContextPackBuilder<'b>,
+    ) -> napi::Result<Vec<u8>> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_context_pack(configure).map_err(facade_error),
+            None => configure(self.vault.context_pack())
+                .run_serialized()
+                .map_err(to_napi_err),
+        }
+    }
+
+    /// The ids stored with type byte `entity_type`.
+    pub(super) fn ids_of_type(&self, entity_type: u8) -> napi::Result<Vec<EntityId>> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_entities_by_type(entity_type).map_err(facade_error),
+            None => self.vault.entities_by_type(entity_type).map_err(to_napi_err),
+        }
+    }
+
+    /// `root`'s ChildOf descendants to `max_depth`, with their depths.
+    pub(super) fn subtree_of(
+        &self,
+        root: &EntityId,
+        max_depth: u32,
+    ) -> napi::Result<Vec<(EntityId, u32)>> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_subtree(root, max_depth).map_err(facade_error),
+            None => self.vault.subtree(root, max_depth).map_err(to_napi_err),
+        }
+    }
+
+    /// `node`'s ChildOf ancestors, nearest first.
+    pub(super) fn ancestors_of(&self, node: &EntityId) -> napi::Result<Vec<EntityId>> {
+        match self.session_memory() {
+            Some(memory) => memory.raw_ancestors(node).map_err(facade_error),
+            None => self.vault.ancestors(node).map_err(to_napi_err),
+        }
+    }
+
+    /// Whether making `target` a parent of `node` would close a cycle.
+    pub(super) fn cycle_through(&self, node: &EntityId, target: &EntityId) -> napi::Result<bool> {
+        match self.session_memory() {
+            Some(memory) => memory
+                .raw_would_create_cycle(node, target)
+                .map_err(facade_error),
+            None => self
+                .vault
+                .would_create_cycle(node, target)
+                .map_err(to_napi_err),
         }
     }
 }
