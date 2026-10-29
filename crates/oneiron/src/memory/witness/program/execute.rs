@@ -455,11 +455,8 @@ impl Memory<'_> {
                 && (matches!(admission.turn, AdmittedTurn::Mint { .. })
                     || admission.has_new_messages())
             {
-                let outcome = self.record_turn_program_wakes_in_txn(
-                    wtxn,
-                    plan.conversation_id,
-                    plan.turn_id,
-                );
+                let outcome =
+                    self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
                 if let Landed::Base(receipt) = &mut landed {
                     receipt.wake_outcome = Some(outcome);
                 }

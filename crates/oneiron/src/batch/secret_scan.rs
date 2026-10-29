@@ -214,9 +214,7 @@ fn wiped_lossy<'a>(data: &'a [u8], wiped: &'a mut Option<Zeroizing<String>>) -> 
     match std::str::from_utf8(data) {
         Ok(text) => text,
         Err(_) => wiped
-            .insert(Zeroizing::new(
-                String::from_utf8_lossy(data).into_owned(),
-            ))
+            .insert(Zeroizing::new(String::from_utf8_lossy(data).into_owned()))
             .as_str(),
     }
 }
@@ -533,8 +531,7 @@ fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     // A lossy copy is wiped on drop (FIX 6668).
     let mut wiped = None::<Zeroizing<String>>;
     let haystack = wiped_lossy(data, &mut wiped);
-    let secrets_nulled =
-        ExportSecretsNulledManifest::from_redacted(has_redaction_marker(haystack));
+    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(has_redaction_marker(haystack));
     if let Some(reason) = detect(haystack, Door::Write) {
         return Err(secret_scan_error(reason));
     }
