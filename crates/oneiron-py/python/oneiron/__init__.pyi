@@ -1216,6 +1216,8 @@ class Oneiron:
             """Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration."""
         def disarm(self, spec: Facade.DisarmTurnProgram) -> bool:
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
+        def rebind(self, spec: Facade.TurnProgramRebindRequest) -> Facade.TurnProgramRebindReceipt:
+            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
         def admission(self, spec: Facade.TurnProgramAdmissionRequest) -> Facade.TurnProgramAdmissionView | None:
             """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
     class _VaultWeaveVerbs:
@@ -3592,6 +3594,8 @@ class Oneiron:
     class _SelfGrantsVerbs:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
             """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
+        def asked(self, spec: Facade.GrantAskedRequest) -> Facade.GrantAskedPage:
+            """Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."""
         def answer(self, spec: Facade.GrantAnswerRequest) -> Facade.GrantAnswered:
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
     class _SelfBudgetVerbs:

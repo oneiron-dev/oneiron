@@ -71,6 +71,12 @@ impl Spend {
         }
     }
 
+    /// Hands this spend to the meter before an `Err`, so the driver
+    /// charges what the shared pass line lent (FIX 11558).
+    pub(super) fn note_before_error(&self, ctx: &WakeAttemptContext<'_>) {
+        ctx.note_spend_before_error(self.units, &self.step_hashes);
+    }
+
     /// Books each generation in `spent` that neither this spend nor an
     /// earlier checkpoint of `attempt` charged.
     fn book(
@@ -205,7 +211,13 @@ pub(super) async fn verdict(
         });
     };
     let attempt_id = attempt.status.attempt.id;
-    let actor = ctx.vault.dreamer_actor_for_attempt(attempt_id)?;
+    let actor = ctx
+        .vault
+        .dreamer_actor_for_attempt(attempt_id)
+        .map_err(|error| {
+            spend.note_before_error(ctx);
+            error
+        })?;
     let step = DurableStepContext {
         vault: ctx.vault,
         attempt_id,
@@ -218,13 +230,18 @@ pub(super) async fn verdict(
     // Keyed by the landing's kind and the rubric the judge reads by: a new
     // rubric is a new question with its own bands.
     let rubric = blake3::hash(model.rubric.as_bytes());
-    let question = COMPACTION_SUPPORT.question(
-        &[ask.kind.as_bytes(), rubric.as_bytes().as_slice()],
-        decisions.wording.clone(),
-        AnswerContract::Choice {
-            options: vec![SUPPORTED.to_owned(), MISMATCH.to_owned()],
-        },
-    )?;
+    let question = COMPACTION_SUPPORT
+        .question(
+            &[ask.kind.as_bytes(), rubric.as_bytes().as_slice()],
+            decisions.wording.clone(),
+            AnswerContract::Choice {
+                options: vec![SUPPORTED.to_owned(), MISMATCH.to_owned()],
+            },
+        )
+        .map_err(|error| {
+            spend.note_before_error(ctx);
+            error
+        })?;
     let (vault, role, inference) = (ctx.vault, model.role, &model.inference);
     let seal = move |request: LlmRequest| -> Result<LlmRequest> {
         Ok(vault
@@ -267,11 +284,18 @@ pub(super) async fn verdict(
         )
         .await;
     // Every generation that finished is spent, whatever the pack's outcome.
-    spend.book(ctx.vault, attempt_id, &spent)?;
+    spend.book(ctx.vault, attempt_id, &spent).map_err(|error| {
+        spend.note_before_error(ctx);
+        error
+    })?;
     let decision = match decided {
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions.into_iter().next(),
         Ok(GeneratedDecisions::Trapped) => return Ok(Err(spend.trapped())),
         Ok(GeneratedDecisions::Unread(_)) => None,
+        Err(DurableStepError::Engine(error)) => {
+            spend.note_before_error(ctx);
+            return Err(error);
+        }
         Err(error) => return spend.parked_on(error).map(Err),
     };
     let verdict = decision
@@ -288,8 +312,10 @@ pub(super) async fn verdict(
     let (Some(verdict), Some(decision)) = (verdict, decision) else {
         return Ok(Err(spend.unjudged()));
     };
-    let decision = serde_json::to_value(&decision)
-        .map_err(|_| Error::InvariantViolation("a support decision did not encode"))?;
+    let decision = serde_json::to_value(&decision).map_err(|_| {
+        spend.note_before_error(ctx);
+        Error::InvariantViolation("a support decision did not encode")
+    })?;
     Ok(Ok(Verdict {
         verdict,
         decision: Some(decision),
