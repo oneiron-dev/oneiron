@@ -447,9 +447,6 @@ const REGISTER_INPUT_FRAME: &[u8] = b"oneiron/custody-register-input/v1\0";
 /// protected input.
 pub(super) const EFFECTOR_MAX_BYTES: usize = 256;
 
-/// The most bindings a bind's protected input carries.
-const BIND_INPUT_MAX: usize = 256;
-
 /// A register's protected input: `record`'s body, value in it, framed with
 /// the text of the manifest its door resolved it from when there is one;
 /// the bare body when there is none.
@@ -501,7 +498,7 @@ pub(super) fn encode_bind_input(bindings: &[SecretBinding]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// The bindings a bind's protected input holds: one array of at most 256,
+/// The bindings a bind's protected input holds: one array of any count,
 /// each naming its own effector of 1 to 256 bytes, with nothing after it;
 /// `None` for anything else.
 pub(super) fn decode_bind_input(input: &[u8]) -> Option<Vec<SecretBinding>> {
@@ -509,7 +506,8 @@ pub(super) fn decode_bind_input(input: &[u8]) -> Option<Vec<SecretBinding>> {
     let Value::Array(items) = rmpv::decode::read_value(&mut cursor).ok()? else {
         return None;
     };
-    if cursor.position() != input.len() as u64 || items.len() > BIND_INPUT_MAX {
+    // FIX 7990: any count decodes; large inputs travel as multipart parts.
+    if cursor.position() != input.len() as u64 {
         return None;
     }
     let mut bindings: Vec<SecretBinding> = Vec::with_capacity(items.len());

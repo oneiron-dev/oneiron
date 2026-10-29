@@ -31,6 +31,7 @@ mod projection;
 mod proposals;
 mod record_text;
 mod records;
+mod repo_rows;
 mod retained;
 mod side_rows;
 
@@ -54,10 +55,6 @@ use crate::store::Store;
 
 /// Rows one census page reads before the pass may stop.
 const LIFT_PAGE_ROWS: usize = 64;
-
-/// Failed rows a run keeps to try again once its walk ends; a row past the
-/// bound counts as failed at once.
-const RETRY_BOUND: usize = 256;
 
 /// Proposals [`Vault::secret_lift_status`] lists; the count covers all.
 const STATUS_PROPOSALS: usize = 100;
@@ -422,6 +419,8 @@ pub(crate) fn enqueue_lift_in_txn(
             family: LiftFamily::Records,
             after: Vec::new(),
             known_only: false,
+            // An upgraded known-value pass keeps its follow-up (FIX 8647).
+            known_pending: true,
             ..run
         },
         Some(run) => LiftRun {
@@ -606,8 +605,9 @@ fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> 
 }
 
 /// Retries the rows the walk could not finish and writes the receipt once
-/// the walk is past its last family; `true` when the run ended and no
-/// known-value pass follows it.
+/// the walk is past its last family; `true` when done for now: the run
+/// ended and no known-value pass follows it, or a busy seed waits for a
+/// later pass (FIX 2852).
 fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> {
     let current = {
         // Every result body is pinned before the snapshot opens (FIX 7201).
@@ -636,6 +636,10 @@ fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<boo
     };
     if ended.run_id != current.run_id || ended.epoch != current.epoch {
         return Ok(false);
+    }
+    // A busy seed stays queued; the run waits for a later pass (FIX 2852).
+    if !ended.retry.is_empty() {
+        return Ok(true);
     }
     let finished_at = crate::ports::recorded_at_in_txn(&vault.store, &mut txn)?;
     for family in LiftFamily::ALL {
@@ -722,10 +726,15 @@ fn settle(
                         retried = first,
                         "secret lift: a row could not be rewritten"
                     );
+                    // A busy seed waits for a later pass, still queued (FIX 2852).
+                    if !first && busy(&error) {
+                        progress_in_txn(vault, &mut txn, run, family, key, |_| {})?;
+                        txn.commit()?;
+                        return Ok(true);
+                    }
                     progress_in_txn(vault, &mut txn, run, family, key, |current| {
-                        // A known-value pass keeps every row it could not
-                        // mark to try again (FIX 2781).
-                        if first && (current.known_only || current.retry.len() < RETRY_BOUND) {
+                        // Every first failure gets its retry (FIX 6674).
+                        if first {
                             current.retry.push((family, key.to_vec()));
                             return;
                         }
@@ -930,6 +939,16 @@ fn refused(error: &Error) -> Option<(LiftCause, &'static str)> {
         | ErrorKind::InvariantViolation => None,
         _ => Some((LiftCause::Immutable, "gate.secret_scan.detected")),
     }
+}
+
+/// Whether `error` is a stream seed busy writing (FIX 2852): the seed
+/// door's concurrent-write refusal, waited out, never failed. A changed or
+/// ended stream is no wait: it settles as any other failure.
+fn busy(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::ConcurrentWrite("a message stream is writing its seed")
+    )
 }
 
 /// The first rows of a declared table after `after`, a whole key, up to

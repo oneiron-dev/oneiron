@@ -10,21 +10,26 @@
 //! prints it). The engine rechecks the owner in the transaction that adds or
 //! removes a wrap. An unlock holds the key on this server's handle only.
 
+use std::fmt;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::QueryRejection;
-use axum::extract::{Query, State};
+use axum::body::Body;
+use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::{FromRequest, Query, Request, State};
+use axum::http::header;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::world_keys::{EscrowRetirement, NewVaultKeyWrap, VaultKeyWrapInfo};
+use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::body_spool::OwnerJsonBody;
+use crate::api::body_spool::{OwnerJsonBody, invalid_json};
 use crate::api::query_params;
 use crate::auth::CoreAuth;
+use crate::error::ApiError;
 use crate::owner::vault_key::{self as view, PrfInput, SignerPin, VaultKeyReport, secret32};
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -93,13 +98,105 @@ impl<'de> Deserialize<'de> for SecretText {
 }
 
 /// A secret the vault key unlocks or seals with.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "method")]
 enum KeySecret {
     /// The vault password.
-    Password { password: String },
+    Password { password: SecretText },
     /// A passkey's PRF output at its input: 32 bytes, hex or base64url.
     Passkey { credential: String, prf: SecretText },
+}
+
+// The JSON shape stays as the derived internally tagged enum read it (FIX 6670):
+// tag `method`, variants `password` and `passkey`, fields `password`,
+// `credential` and `prf`, unknown fields refused. The map visitor reads the
+// tag and each secret straight into its guard, with no `Content` buffer.
+impl<'de> Deserialize<'de> for KeySecret {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(KeySecretVisitor)
+    }
+}
+
+struct KeySecretVisitor;
+
+impl<'de> Visitor<'de> for KeySecretVisitor {
+    type Value = KeySecret;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a vault key secret with method password or passkey")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut method: Option<String> = None;
+        let mut password: Option<SecretText> = None;
+        let mut credential: Option<String> = None;
+        let mut prf: Option<SecretText> = None;
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "method" => {
+                    if method.is_some() {
+                        return Err(serde::de::Error::duplicate_field("method"));
+                    }
+                    method = Some(map.next_value::<String>()?);
+                }
+                "password" => {
+                    if password.is_some() {
+                        return Err(serde::de::Error::duplicate_field("password"));
+                    }
+                    password = Some(map.next_value::<SecretText>()?);
+                }
+                "credential" => {
+                    if credential.is_some() {
+                        return Err(serde::de::Error::duplicate_field("credential"));
+                    }
+                    credential = Some(map.next_value::<String>()?);
+                }
+                "prf" => {
+                    if prf.is_some() {
+                        return Err(serde::de::Error::duplicate_field("prf"));
+                    }
+                    prf = Some(map.next_value::<SecretText>()?);
+                }
+                _ => {
+                    return Err(serde::de::Error::unknown_field(
+                        &key,
+                        &["method", "password", "credential", "prf"],
+                    ));
+                }
+            }
+        }
+        let method = method.ok_or_else(|| serde::de::Error::missing_field("method"))?;
+        match method.as_str() {
+            "password" => {
+                if credential.is_some() {
+                    return Err(serde::de::Error::unknown_field(
+                        "credential",
+                        &["method", "password"],
+                    ));
+                }
+                if prf.is_some() {
+                    return Err(serde::de::Error::unknown_field("prf", &["method", "password"]));
+                }
+                let password =
+                    password.ok_or_else(|| serde::de::Error::missing_field("password"))?;
+                Ok(KeySecret::Password { password })
+            }
+            "passkey" => {
+                if password.is_some() {
+                    return Err(serde::de::Error::unknown_field(
+                        "password",
+                        &["method", "credential", "prf"],
+                    ));
+                }
+                let credential =
+                    credential.ok_or_else(|| serde::de::Error::missing_field("credential"))?;
+                let prf = prf.ok_or_else(|| serde::de::Error::missing_field("prf"))?;
+                Ok(KeySecret::Passkey { credential, prf })
+            }
+            _ => Err(serde::de::Error::unknown_variant(
+                &method,
+                &["password", "passkey"],
+            )),
+        }
+    }
 }
 
 /// `POST /v1/owner/vault-key/unlock`: holds the vault key on this server, from
@@ -107,16 +204,16 @@ enum KeySecret {
 async fn unlock(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<KeySecret>,
+    request: Request,
 ) -> OwnerReply<VaultKeyReport> {
     owner(&auth, &server)?;
-    let secret = payload.read(&server).await?;
+    // The body bytes are wiped after parsing (FIX 6670).
+    let secret = read_secret_json::<KeySecret>(request).await?;
     let report = blocking(move || -> OwnerResult<VaultKeyReport> {
         let vault = server.vault();
         match secret {
             KeySecret::Password { password } => {
-                let password = Zeroizing::new(password);
-                vault.unlock_vault_key_with_password(password.as_bytes())?;
+                vault.unlock_vault_key_with_password(password.0.as_bytes())?;
             }
             KeySecret::Passkey { credential, prf } => {
                 let prf = prf_bytes(&prf)?;
@@ -132,7 +229,8 @@ async fn unlock(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PasswordRequest {
-    password: String,
+    // Read straight into its guard, as KeySecret's password is (FIX 6670).
+    password: SecretText,
 }
 
 /// `POST /v1/owner/vault-key/password`: sets the vault password, replacing an
@@ -140,17 +238,17 @@ struct PasswordRequest {
 async fn set_password(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<PasswordRequest>,
+    request: Request,
 ) -> OwnerReply<VaultKeyWrapInfo> {
     let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
+    // The body bytes are wiped after parsing (FIX 6670).
+    let request = read_secret_json::<PasswordRequest>(request).await?;
     let info = blocking(move || -> OwnerResult<VaultKeyWrapInfo> {
-        let password = Zeroizing::new(request.password);
         let vault = held(server.vault())?;
         Ok(vault.add_vault_key_wrap_as(
             &owner,
             NewVaultKeyWrap::Password {
-                password: password.as_bytes(),
+                password: request.password.0.as_bytes(),
                 cost: None,
             },
         )?)
@@ -173,10 +271,11 @@ struct PasskeyRequest {
 async fn add_passkey(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<PasskeyRequest>,
+    request: Request,
 ) -> OwnerReply<VaultKeyWrapInfo> {
     let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
+    // The body bytes are wiped after parsing (FIX 6670).
+    let request = read_secret_json::<PasskeyRequest>(request).await?;
     let info = blocking(move || -> OwnerResult<VaultKeyWrapInfo> {
         let prf = prf_bytes(&request.prf)?;
         let vault = held(server.vault())?;
@@ -280,4 +379,36 @@ fn held(vault: &oneiron::Vault) -> OwnerResult<&oneiron::Vault> {
 fn prf_bytes(prf: &SecretText) -> OwnerResult<Zeroizing<[u8; 32]>> {
     secret32(prf.0.as_bytes(), "a PRF output")
         .map_err(|error| OwnerError::Invalid(error.to_string()))
+}
+
+/// Whether the request names JSON exactly as Axum's `Json` judges it (FIX 6670):
+/// copied from `OwnerJsonBody`, so secret routes judge as before.
+async fn secret_json_content_type(content_type: Option<&header::HeaderValue>) -> bool {
+    let mut probe = Request::new(Body::empty());
+    if let Some(content_type) = content_type {
+        probe
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type.clone());
+    }
+    !matches!(
+        axum::Json::<IgnoredAny>::from_request(probe, &()).await,
+        Err(JsonRejection::MissingJsonContentType(_))
+    )
+}
+
+/// The body as `T`, its bytes wiped after parsing (FIX 6670): the body's own
+/// buffer becomes a `Zeroizing` vector, wiped as it drops after `from_slice`.
+/// Its size never refuses it, as for every owner body (FIX 8195).
+async fn read_secret_json<T: DeserializeOwned>(request: Request) -> Result<T, ApiError> {
+    let (parts, body) = request.into_parts();
+    if !secret_json_content_type(parts.headers.get(header::CONTENT_TYPE)).await {
+        return Err(invalid_json());
+    }
+    let bytes = axum::body::to_bytes(body, usize::MAX)
+        .await
+        .map_err(|_| invalid_json())?;
+    // The collected body is uniquely held, so this takes its allocation
+    // rather than copying it.
+    let wiped = Zeroizing::new(Vec::<u8>::from(bytes));
+    serde_json::from_slice(&wiped).map_err(|_| invalid_json())
 }
