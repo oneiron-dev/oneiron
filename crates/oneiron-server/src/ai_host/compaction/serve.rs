@@ -23,7 +23,8 @@ use oneiron::llm::{
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence,
 };
-use oneiron::{BudgetGuard, LlmResponse};
+use oneiron::skill_optimize::union_source_rows;
+use oneiron::{BudgetGuard, EntityId, LlmResponse};
 
 use super::{
     BACKEND_KEY, COMPACTION_RUN, CompactionMeter, ServedCompactionBackend, output_tokens, refused,
@@ -135,8 +136,12 @@ impl ServedCompactionBackend {
         &self,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
+        sources: Option<Vec<EntityId>>,
         admit: &Admit,
-        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
+        dress: impl FnOnce(
+            &mut LlmRequest,
+            CallRoom,
+        ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
     ) -> Result<Served<D>, CompactionRefusal> {
         let started = Instant::now();
         let mut llm = self.llm_request(request, retry);
@@ -153,13 +158,20 @@ impl ServedCompactionBackend {
             Admit::Role => Dispatch::Walk,
             Admit::Exact { .. } => Dispatch::Exact,
         };
-        self.send(started, call, dispatch, request.summary_token_budget, dress)?
-            .ok_or_else(|| {
-                refused(
-                    CompactionSuppression::TurnScoped { check: None },
-                    "the call was not sent".to_owned(),
-                )
-            })
+        self.send(
+            started,
+            call,
+            dispatch,
+            sources,
+            request.summary_token_budget,
+            dress,
+        )?
+        .ok_or_else(|| {
+            refused(
+                CompactionSuppression::TurnScoped { check: None },
+                "the call was not sent".to_owned(),
+            )
+        })
     }
 
     /// One admitted call, sent as `dispatch` says (one admitted as exactly
@@ -174,16 +186,21 @@ impl ServedCompactionBackend {
         started: Instant,
         mut call: RoleCall,
         dispatch: Dispatch<'_>,
+        sources: Option<Vec<EntityId>>,
         summary_token_budget: u64,
-        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
+        dress: impl FnOnce(
+            &mut LlmRequest,
+            CallRoom,
+        ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
     ) -> Result<Option<Served<D>>, CompactionRefusal> {
-        let (worn, guard, payer) = match self.ready(&mut call, summary_token_budget, dress) {
-            Ok(ready) => ready,
-            // Under `auto` nothing has gone out yet: the flight's cheap
-            // writer runs instead (FIX 6029).
-            Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
-            Err(refusal) => return Err(refusal),
-        };
+        let (worn, home_rows, guard, payer) =
+            match self.ready(&mut call, summary_token_budget, dress) {
+                Ok(ready) => ready,
+                // Under `auto` nothing has gone out yet: the flight's cheap
+                // writer runs instead (FIX 6029).
+                Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
+                Err(refusal) => return Err(refusal),
+            };
         let step_hash = call.request.canonical_hash().ok();
         let sent = if matches!(dispatch, Dispatch::Walk) {
             None
@@ -191,7 +208,10 @@ impl ServedCompactionBackend {
             serde_json::to_vec(&call.request).ok()
         };
         let model = call.request.model.clone();
-        let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
+        let run = self
+            .models
+            .funded_run(COMPACTION_RUN, guard.clone(), payer)
+            .sourced(union_source_rows([sources, home_rows]));
         let reply = match dispatch {
             Dispatch::Walk => self
                 .handle
@@ -244,8 +264,12 @@ impl ServedCompactionBackend {
         &self,
         call: &mut RoleCall,
         summary_token_budget: u64,
-        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
-    ) -> Result<(D, BudgetGuard, Option<PayerPerson>), CompactionRefusal> {
+        dress: impl FnOnce(
+            &mut LlmRequest,
+            CallRoom,
+        ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
+    ) -> Result<(D, Option<Vec<EntityId>>, BudgetGuard, Option<PayerPerson>), CompactionRefusal>
+    {
         // The admitted model, not the configured ladder, must hold the call.
         let Some(&context) = self.allowances.get(&call.request.model) else {
             return Err(refused(
@@ -264,7 +288,7 @@ impl ServedCompactionBackend {
                 ),
             ));
         }
-        let worn = dress(
+        let (worn, home_rows) = dress(
             &mut call.request,
             CallRoom {
                 context,
@@ -308,7 +332,7 @@ impl ServedCompactionBackend {
                 (guard, payer)
             }
         };
-        Ok((worn, guard, payer))
+        Ok((worn, home_rows, guard, payer))
     }
 
     /// What its context holds beside the reply and the prompt on `model`.
@@ -384,7 +408,12 @@ impl CompactionBackend for ServedCompactionBackend {
             model: self.model.clone(),
             locality: self.locality,
         };
-        let served = self.serve(request, retry, &admit, |_, _| Ok(()))?;
+        let sources = request
+            .window_read_from_sources
+            .then_some(request.sources.clone());
+        let served = self.serve(request, retry, sources, &admit, |_, _| {
+            Ok(((), Some(Vec::new())))
+        })?;
         Ok(product_of(&served.response, served.latency))
     }
 }
