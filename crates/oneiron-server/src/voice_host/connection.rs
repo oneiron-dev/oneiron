@@ -11,6 +11,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use oneiron::claim::ScopedReadReceipt;
+use oneiron::error::RecordError;
 use oneiron::policy_model::PolicyEnforcementAction;
 use oneiron::speculative::SpeculativeFireDecision;
 use oneiron::store::GateSystemNoticeRecord;
@@ -449,8 +450,24 @@ impl VoiceHost {
                                     // Refs remain non-authoritative. The existing brain must
                                     // use ordinary disclosure/tool gates when resolving them.
                                     // Submission is synchronous, outside the session lock.
-                                    outputs.brain.start(&request).map_err(|_| io::Error::other("brain submission failed"))?;
-                                    Response::Final { handle, revision, context: request.retrieval }
+                                    // A room held on its live call holds this turn alone:
+                                    // the turn answers with the hold, and the call goes
+                                    // on. Any other start error ends the call.
+                                    match outputs.brain.start(&request) {
+                                        Ok(()) => Response::Final {
+                                            handle,
+                                            revision,
+                                            context: request.retrieval,
+                                        },
+                                        Err(oneiron::Error::Record(
+                                            RecordError::RoomLiveSpeakersIncomplete(_),
+                                        )) => Response::Error {
+                                            code: "room_live_speakers_incomplete",
+                                        },
+                                        Err(_) => {
+                                            return Err(io::Error::other("brain submission failed"));
+                                        }
+                                    }
                                 } else {
                                     Response::Error { code: "stopped" }
                                 }
