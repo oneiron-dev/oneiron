@@ -10,7 +10,9 @@
 //! row reads back with the displacement named, so a label the re-judgment
 //! dropped stops standing as current. A withdrawal deletes no cause row —
 //! labels a judge once settled are history the fence retires, not an
-//! abstention.
+//! abstention. A settled cause row deletes a held all-unclear no-revision
+//! row for the same receipt (FIX 11708); a settled no-revision row is
+//! history and stays.
 
 use std::ops::RangeInclusive;
 
@@ -63,6 +65,10 @@ pub struct AmendmentCauseRecord {
 /// judgments are never rescored under one revision — except a held row
 /// that charged nobody (every share unclear), which takes the settled
 /// answer a later pass in the same slot brings, keeping its source id.
+/// A settled answer under a judge revision also deletes a held all-unclear
+/// no-revision row for the same receipt (FIX 11708): the no-revision slot
+/// never displaces by fence, so the stale hold is retired; a settled
+/// no-revision row stays as history.
 ///
 /// # Errors
 ///
@@ -91,6 +97,21 @@ pub(super) fn put_amendment_cause_in_txn(
         }
         None => source_id(&judgment.receipt_id, slot)?.to_hex(),
     };
+    let settles = judgment
+        .split
+        .iter()
+        .any(|share| share.class != AmendmentClass::Unclear && share.share > 0.0);
+    if !slot.is_empty() && settles {
+        let stale = (receipt_key(&judgment.receipt_id), String::new());
+        if let Some(held) = AMENDMENT_CAUSE.get(&vault.store, wtxn, &stale)?
+            && held
+                .split
+                .iter()
+                .all(|share| share.class == AmendmentClass::Unclear.as_str() || share.share <= 0.0)
+        {
+            AMENDMENT_CAUSE.delete(&vault.store, wtxn, &stale)?;
+        }
+    }
     let stored = judgment_row(judgment);
     let row = StoredAmendmentCause {
         v: ROW_VERSION,
