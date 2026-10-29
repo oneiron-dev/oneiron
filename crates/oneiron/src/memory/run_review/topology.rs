@@ -6,8 +6,8 @@
 use super::*;
 use crate::claim::ClaimApprovalStatus;
 use crate::identity_topology::{
-    IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyOp, ProposalOutcome,
-    StoredIdentityOpAction, StoredIdentityOpEvent, decode_identity_op_amendment,
+    IdentityTopologyAction, IdentityTopologyEvent, IdentityTopologyFold, IdentityTopologyOp,
+    ProposalOutcome, StoredIdentityOpAction, StoredIdentityOpEvent, decode_identity_op_amendment,
     fold_identity_topology_log,
 };
 
@@ -43,7 +43,7 @@ pub(super) fn topology_outcome_in_txn(
         Some(ProposalOutcome::ApprovedUntouched | ProposalOutcome::ApprovedAmended) => {
             TopologyOutcome {
                 verdict: RunChangeVerdict::Landed,
-                applied: applied_by_ruling(vault, txn, &effective, id, event)?,
+                applied: applied_by_ruling(vault, txn, (&effective, &fold), id, event)?,
             }
         }
         Some(ProposalOutcome::Rejected) => TopologyOutcome {
@@ -63,24 +63,27 @@ pub(super) fn topology_outcome_in_txn(
 
 /// The op event the ruling that approved `proposal` applied. The ruling
 /// writes that event and then its resolution in one transaction, so it is
-/// the effective op event of the approved op's kind and participants
-/// nearest before the proposal's first effective resolution, in the fold's
-/// `(seq, event_id)` order. The approved op is the proposal's own, or the
+/// the effective op event the fold applied, of the approved op's kind and
+/// roles, nearest before the proposal's first effective resolution in the
+/// fold's `(seq, event_id)` order. An op event the fold rejected applied
+/// nothing and is never it. The approved op is the proposal's own, or the
 /// amendment its resolution carries.
 fn applied_by_ruling(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
-    effective: &[IdentityTopologyEvent],
+    (effective, fold): (&[IdentityTopologyEvent], &IdentityTopologyFold),
     proposal: EntityId,
     proposed: &StoredIdentityOpEvent,
 ) -> MemoryResult<Option<EntityId>> {
+    let rejected: std::collections::BTreeSet<EntityId> =
+        fold.rejections.iter().map(|(event, _)| *event).collect();
     let mut ordered: Vec<&IdentityTopologyEvent> = effective
         .iter()
         .filter(|event| {
             matches!(
                 event.approval,
                 ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-            )
+            ) && !rejected.contains(&event.event_id)
         })
         .collect();
     ordered.sort_by_key(|event| (event.seq, event.event_id));
@@ -118,12 +121,29 @@ fn applied_by_ruling(
         .map(|event| event.event_id))
 }
 
-/// An op's kind and its participants as a set: what an applied event and
-/// the ruling that applied it both name.
-fn op_shape(
-    op: &IdentityTopologyOp,
-) -> (std::mem::Discriminant<IdentityTopologyOp>, Vec<EntityId>) {
-    let mut participants = op.participants();
-    participants.sort_unstable();
-    (std::mem::discriminant(op), participants)
+/// An op's kind, its lead participant and its other participants as a set.
+type OpShape = (
+    std::mem::Discriminant<IdentityTopologyOp>,
+    Vec<EntityId>,
+    Vec<EntityId>,
+);
+
+/// An op's participants by role: what an applied event and the ruling that
+/// applied it both name. A merge of A into B and one of B into A differ
+/// here.
+fn op_shape(op: &IdentityTopologyOp) -> OpShape {
+    fn sorted(ids: &[EntityId]) -> Vec<EntityId> {
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        ids
+    }
+    let (lead, rest) = match op {
+        IdentityTopologyOp::Merge(merge) => (vec![merge.survivor], sorted(&merge.sources)),
+        IdentityTopologyOp::Split(split) => (vec![split.entity], sorted(&split.heads)),
+        IdentityTopologyOp::Facet(facet) => (vec![facet.entity], Vec::new()),
+        IdentityTopologyOp::AssertDistinct(distinct) => {
+            (sorted(&[distinct.a, distinct.b]), Vec::new())
+        }
+    };
+    (std::mem::discriminant(op), lead, rest)
 }
