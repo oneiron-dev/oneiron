@@ -119,6 +119,40 @@ pub(crate) fn observe_rejection_in_txn(
     });
 }
 
+/// Escalates `skill`'s open reliability floor crossing in `scope` and
+/// `project` (`None`, the vault's), as a packet fired by amendment receipt
+/// `trigger` at `at`: the reliability pass's second join (FIX 11635), for a
+/// crossing that pass itself just minted, which the charge-side check ran
+/// too early to see. In a savepoint of the caller's write, which it never
+/// fails. The escalation dedups on the crossing's proposal, so the next
+/// charge's check writes nothing new.
+pub(super) fn observe_floor_crossing_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    skill: &EntityId,
+    scope: &str,
+    project: Option<EntityId>,
+    trigger: &str,
+    at: u64,
+) {
+    in_savepoint(vault, txn, trigger, |savepoint| {
+        let Some(signal) = floor_crossing_in_txn(vault, savepoint, skill)? else {
+            return Ok(());
+        };
+        let packet = packet_in_txn(
+            vault,
+            savepoint,
+            *skill,
+            TriageSubject::Skill,
+            scope,
+            project,
+            at,
+            signal,
+        )?;
+        escalate_in_txn(vault, savepoint, &packet)
+    });
+}
+
 /// Runs `check` in a savepoint of `txn` that commits only when all of it
 /// lands; an error drops the savepoint alone and logs one WARN.
 fn in_savepoint(
