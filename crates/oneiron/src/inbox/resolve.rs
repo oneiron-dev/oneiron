@@ -111,7 +111,9 @@ impl Vault {
         now: u64,
         learning: Option<(WriteActor, &CompilationTarget)>,
     ) -> Result<InboxBundleResolution> {
-        let group = explicit_inbox_group(self, group_key, now)?.ok_or(Error::EntityNotFound)?;
+        let group = explicit_inbox_group(self, group_key, now)?
+            .1
+            .ok_or(Error::EntityNotFound)?;
 
         let mut targets = Vec::new();
         for member in &group.members {
@@ -358,18 +360,9 @@ impl Vault {
         let group_key = inner.strip_prefix(INBOX_GROUP_DOOR_PREFIX).ok_or_else(|| {
             Error::InvalidConfig("inbox door ref must reference a dreamer run".into())
         })?;
-        let open_group = explicit_inbox_group(self, group_key, now)?;
         // Bundles are receipted under the root key; a literal run id reopens
         // its root's group and that group's receipts (FIX 9871).
-        let canonical = match &open_group {
-            Some(group) => group.group_key.clone(),
-            None => crate::attempt_queue::AttemptQueue::new(self)
-                .dreamer_run_root_id(group_key)?
-                .map_or_else(
-                    || group_key.to_owned(),
-                    |root| crate::entity_id::bytes_to_hex_lower(root.as_bytes()),
-                ),
-        };
+        let (canonical, open_group) = explicit_inbox_group(self, group_key, now)?;
         let bundle_ref = bundle_ref_for_group(&canonical);
 
         let resolution_receipts = self

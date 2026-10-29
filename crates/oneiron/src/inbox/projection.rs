@@ -22,7 +22,7 @@ use super::model::{
     InboxPointerRow, InboxQuery, InboxReviewDial, InboxSubCluster, VERB_CLASS_CONFLICT,
     VERB_CLASS_NEW_CLAIM, VERB_CLASS_UPDATE,
 };
-use super::root_group::{RunGroups, root_group_card};
+use super::root_group::{OpenTray, RunGroups, root_group_card};
 
 impl Vault {
     /// Projects one page of open dreamer-run groups, surfaced under the
@@ -129,8 +129,10 @@ pub(super) fn open_dreamer_members_from_pending(
     for (pending, decision, run_id) in rows {
         let claim_id = EntityId::from_bytes(pending.claim_id)
             .map_err(|_| Error::CorruptedIndex("pending gate consent"))?;
+        // A run-stamped pending ask over no CLAIM (a generic ask) proposes
+        // no claim, so it is in no group; every claim row is.
         let Some(body) = vault.get_claim(&claim_id)? else {
-            return Err(Error::CorruptedIndex("pending gate consent"));
+            continue;
         };
         members.push(OpenMember {
             pending,
@@ -421,40 +423,27 @@ pub(super) fn finish_group_draft(draft: GroupDraft) -> Option<InboxGroup> {
     })
 }
 
-/// Resolves one named group through the RCPT-1 sidecars, complete (FIX
-/// 9871): a canonical root door hydrates every pending row the root-group
-/// index holds for that root, whichever run stamped it. A literal run id
-/// remains a supported alias: it names its run's root group, read the same
-/// way. Cross-run duplicate collapse is reconstructed only for the target
-/// group through the semantic-hash sidecar, never by reopening the full
-/// pending table.
+/// Resolves one named group, complete (FIX 9871): every open proposal of
+/// every run under the root the door names, read with the whole tray in one
+/// pass. A canonical root door names its root; a literal run id remains a
+/// supported alias and names its run's root group, whether or not that run
+/// still waits itself. Answers the group key the door resolved to, which
+/// also keys the group's bundle receipts, beside the group's card.
 pub(super) fn explicit_inbox_group(
     vault: &Vault,
     group_ref: &str,
     now: u64,
-) -> Result<Option<InboxGroup>> {
+) -> Result<(String, Option<InboxGroup>)> {
     let mut runs = RunGroups::new(vault);
-    let mut group_key = group_ref.to_owned();
-    let mut pending = vault.store.pending_gate_consents_for_group_key(group_ref)?;
-    if pending.is_empty() {
-        let raw_run_pending = vault.store.pending_gate_consents_for_run(group_ref)?;
-        if raw_run_pending.is_empty() {
-            return Ok(None);
-        }
-        group_key = runs.identity(group_ref)?.0.clone();
-        pending = vault
-            .store
-            .pending_gate_consents_for_group_key(&group_key)?;
-        if pending.is_empty() {
-            pending = raw_run_pending;
-        }
-    }
-    root_group_card(
+    let tray = OpenTray::read(vault, &mut runs)?;
+    let group_key = tray.group_named(vault, group_ref)?;
+    let group = root_group_card(
         vault,
+        &tray,
         &mut runs,
         &group_key,
-        pending,
         now,
         InboxReviewDial::ReviewEverything,
-    )
+    )?;
+    Ok((group_key, group))
 }

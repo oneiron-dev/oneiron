@@ -1,24 +1,26 @@
-//! One complete root group card (FIX 9871): every pending row the root-group
-//! index holds for a run-tree root, whichever run stamped it, with each
-//! semantic duplicate owned by the earliest open row of its hash across
-//! roots. Browse and the explicit doors (resolve, reopen) build the same card.
-//! `root_group_card` is its call surface.
+//! Complete root group cards (FIX 9871): every open Dreamer proposal in the
+//! tray, read in one pass with its run-tree root and the semantic hash of
+//! its current body, and the card of one root over that pass. Browse and the
+//! explicit doors (resolve, reopen) build the same card from it.
+//! `OpenTray::read` and `root_group_card` are its call surface.
 
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptQueue;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::receipt::{ReceiptView, gate_decision_receipt, hex_lower};
-use crate::store::PendingGateConsentRecord;
 
-use super::model::{InboxGroup, InboxGroupMember, InboxPointerRow, InboxReviewDial};
+use super::model::{
+    InboxGroup, InboxGroupCursor, InboxGroupMember, InboxPointerRow, InboxReviewDial,
+};
 use super::projection::{
     GroupDraft, MemberDraft, OpenMember, classify_member, finish_group_draft, inbox_claim_hash,
     member_surfaces, open_dreamer_members_from_pending, resolve_run_identity, sub_cluster_key,
 };
 
-/// Each stamped run's group identity, resolved once per card or page.
+/// Each stamped run's group identity, resolved once per read.
 pub(super) struct RunGroups<'v> {
     vault: &'v Vault,
     identities: HashMap<String, (String, Option<String>)>,
@@ -43,24 +45,92 @@ impl<'v> RunGroups<'v> {
     }
 }
 
-/// The card of the group keyed `group_key` over `pending`, the group's
-/// complete indexed rows, oldest first, surfaced under `dial`. A member whose
-/// semantic hash an earlier root's row owns is that group's pointer row; the
-/// owning row carries every other root's duplicate and its exception
-/// classes, so the dial can never hide them. Repeats inside one root stay
-/// its members. `None` when no member or pointer row remains.
+/// Every open Dreamer proposal in the tray, in the tray's order (proposal
+/// time, decision id, claim id), each with its group key and the semantic
+/// hash of its current body. Duplicate ownership reads these hashes: a
+/// stored hash sidecar can lag a same-id rewrite, the current body cannot.
+pub(super) struct OpenTray {
+    members: Vec<OpenMember>,
+    keys: Vec<String>,
+    hashes: Vec<[u8; 32]>,
+    by_key: HashMap<String, Vec<usize>>,
+    by_hash: HashMap<[u8; 32], Vec<usize>>,
+    /// Each group once, at its earliest row, in the tray's order.
+    starts: Vec<(InboxGroupCursor, String)>,
+}
+
+impl OpenTray {
+    /// The whole tray in one snapshot, no count cut.
+    pub(super) fn read(vault: &Vault, runs: &mut RunGroups<'_>) -> Result<Self> {
+        let pending = {
+            let txn = vault.store.env.read_txn()?;
+            vault.store.pending_gate_consents_in_txn(&txn, usize::MAX)?
+        };
+        let members = open_dreamer_members_from_pending(vault, pending)?;
+        let mut tray = Self {
+            keys: Vec::with_capacity(members.len()),
+            hashes: Vec::with_capacity(members.len()),
+            by_key: HashMap::new(),
+            by_hash: HashMap::new(),
+            starts: Vec::new(),
+            members: Vec::new(),
+        };
+        for (index, member) in members.iter().enumerate() {
+            let key = runs.identity(&member.run_id)?.0.clone();
+            let hash = inbox_claim_hash(&member.body)?;
+            let rows = tray.by_key.entry(key.clone()).or_default();
+            if rows.is_empty() {
+                tray.starts
+                    .push((InboxGroupCursor::of(&member.pending), key.clone()));
+            }
+            rows.push(index);
+            tray.by_hash.entry(hash).or_default().push(index);
+            tray.keys.push(key);
+            tray.hashes.push(hash);
+        }
+        tray.members = members;
+        Ok(tray)
+    }
+
+    /// Each group once, at its earliest row, in the tray's order.
+    pub(super) fn starts(&self) -> &[(InboxGroupCursor, String)] {
+        &self.starts
+    }
+
+    /// The group a door names: a group key the tray holds, else the root
+    /// group of the literal run id it names, whether or not that run still
+    /// waits itself; a run with no run-tree root is its own group.
+    pub(super) fn group_named(&self, vault: &Vault, group_ref: &str) -> Result<String> {
+        if self.by_key.contains_key(group_ref) {
+            return Ok(group_ref.to_owned());
+        }
+        Ok(AttemptQueue::new(vault)
+            .dreamer_run_root_id(group_ref)?
+            .map_or_else(
+                || group_ref.to_owned(),
+                |root| bytes_to_hex_lower(root.as_bytes()),
+            ))
+    }
+}
+
+/// The card of the group keyed `group_key` over every open row `tray` holds
+/// for it, oldest first, surfaced under `dial`. A member whose current hash
+/// an earlier group's row owns is that group's pointer row; the owning row
+/// carries every other group's duplicate and its exception classes, so the
+/// dial can never hide them. Repeats inside one group stay its members.
+/// `None` when no member or pointer row remains.
 pub(super) fn root_group_card(
     vault: &Vault,
+    tray: &OpenTray,
     runs: &mut RunGroups<'_>,
     group_key: &str,
-    pending: Vec<PendingGateConsentRecord>,
     now: u64,
     dial: InboxReviewDial,
 ) -> Result<Option<InboxGroup>> {
-    let members = open_dreamer_members_from_pending(vault, pending)?;
-    let Some(first) = members.first() else {
+    let Some(rows) = tray.by_key.get(group_key) else {
         return Ok(None);
     };
+    let first = &tray.members[rows[0]];
     let intent = runs.identity(&first.run_id)?.1.clone();
     let mut draft = GroupDraft {
         group_key: group_key.to_owned(),
@@ -70,40 +140,30 @@ pub(super) fn root_group_card(
         members: Vec::new(),
         pointer_rows: Vec::new(),
     };
-    let mut duplicates_by_hash: HashMap<[u8; 32], Vec<OpenMember>> = HashMap::new();
 
-    for member in &members {
-        let claim_hash = inbox_claim_hash(&member.body)?;
-        if let Entry::Vacant(entry) = duplicates_by_hash.entry(claim_hash) {
-            let pending = vault
-                .store
-                .pending_gate_consents_for_semantic_claim_hash(&claim_hash)?;
-            entry.insert(open_dreamer_members_from_pending(vault, pending)?);
-        }
-        let duplicates = &duplicates_by_hash[&claim_hash];
-        // A same-id proposal rewrite can leave its old semantic-hash sidecar
-        // behind. Browse keeps the pending row visible; the card treats this
-        // current member as its own singleton rather than calling the stale
-        // sidecar corruption.
-        let earliest = duplicates.first().unwrap_or(member);
+    for &index in rows {
+        let member = &tray.members[index];
+        // The member itself is among its hash's rows, so the earliest exists.
+        let duplicates = &tray.by_hash[&tray.hashes[index]];
+        let earliest = duplicates[0];
         let claim_id_hex = hex_lower(&member.pending.claim_id);
-        let earliest_key = runs.identity(&earliest.run_id)?.0.clone();
-        if earliest_key != group_key {
+        if tray.keys[earliest] != group_key {
             draft.pointer_rows.push(InboxPointerRow {
                 claim_id: claim_id_hex,
-                duplicate_of_claim_id: hex_lower(&earliest.pending.claim_id),
-                duplicate_of_group_key: earliest_key,
+                duplicate_of_claim_id: hex_lower(&tray.members[earliest].pending.claim_id),
+                duplicate_of_group_key: tray.keys[earliest].clone(),
             });
             continue;
         }
 
         let (mut classes, verb_class) = classify_member(vault, member)?;
         let mut duplicate_claim_ids = Vec::new();
-        if earliest.pending.claim_id == member.pending.claim_id {
-            for duplicate in duplicates {
-                if runs.identity(&duplicate.run_id)?.0 == group_key {
+        if earliest == index {
+            for &duplicate in duplicates {
+                if tray.keys[duplicate] == group_key {
                     continue;
                 }
+                let duplicate = &tray.members[duplicate];
                 let (duplicate_classes, _) = classify_member(vault, duplicate)?;
                 duplicate_claim_ids.push(hex_lower(&duplicate.pending.claim_id));
                 classes.extend(duplicate_classes);
