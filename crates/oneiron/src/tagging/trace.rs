@@ -44,7 +44,6 @@ pub struct TaggingTrace {
     pub call_micros: Option<u64>,
     /// What ran the call, when a worker was dispatched for it: its runtime,
     /// compute and pick, and how long it waited and ran.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<EncoderExecution>,
     pub outcome: TaggingOutcome,
 }
