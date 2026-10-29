@@ -44,7 +44,6 @@ pub struct TaggingTrace {
     pub call_micros: Option<u64>,
     /// What ran the call, when a worker was dispatched for it: its runtime,
     /// compute and pick, and how long it waited and ran.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<EncoderExecution>,
     pub outcome: TaggingOutcome,
 }
@@ -52,7 +51,8 @@ pub struct TaggingTrace {
 impl TaggingTrace {
     /// Makes one tagger call, recording its wall time and the facts of the
     /// worker that ran it on this trace. A panic is caught and returned as
-    /// `Err`, with no facts recorded.
+    /// `Err`, with no facts recorded; a worker panic comes back as `Err`
+    /// with its facts kept.
     pub(super) fn record_call(
         &mut self,
         call: impl FnOnce() -> EncoderAttempt,
@@ -60,10 +60,17 @@ impl TaggingTrace {
         let started = Instant::now();
         let called = std::panic::catch_unwind(AssertUnwindSafe(call));
         self.call_micros = Some(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
-        called.map(|attempt| {
-            self.execution = attempt.execution;
-            attempt.result
-        })
+        match called {
+            Err(panic) => Err(panic),
+            Ok(attempt) => {
+                self.execution = attempt.execution;
+                if attempt.panicked {
+                    Err(Box::new("the worker panicked") as Box<dyn std::any::Any + Send>)
+                } else {
+                    Ok(attempt.result)
+                }
+            }
+        }
     }
 }
 

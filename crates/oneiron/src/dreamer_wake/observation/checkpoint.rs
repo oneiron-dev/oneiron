@@ -12,7 +12,8 @@ use super::{
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::{
-    DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DreamerParkedAttemptRecord, DreamerRunnerStore,
+    DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DreamerParkCause, DreamerParkedAttemptRecord,
+    DreamerRunnerStore,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -75,6 +76,9 @@ fn plan_checkpoint_in_txn(
         None => vault.store.clock.entity_id()?,
     };
     let mut saved_steps = Vec::new();
+    // The latest reset a provider limit that refused one of the try's calls
+    // stated (FIX 11226).
+    let mut stated_reset = None;
     let calls = row_key(
         b'c',
         &[
@@ -94,6 +98,10 @@ fn plan_checkpoint_in_txn(
         {
             saved_steps.push(call.step_hash);
         }
+        if call.attempt_count == admitted.attempt_count {
+            let reset = call.end.as_ref().and_then(|end| end.stated_reset);
+            stated_reset = stated_reset.max(reset);
+        }
     }
     admitted.park = Some(park_ref);
     let row = WakeObservedCheckpoint {
@@ -103,6 +111,7 @@ fn plan_checkpoint_in_txn(
         parked_at: park.parked_at,
         saved_steps,
         resumed: None,
+        not_before: stated_reset.filter(|_| park.cause == DreamerParkCause::Retry),
     };
     Ok(Some(PlannedCut {
         generation,
@@ -116,6 +125,22 @@ fn plan_checkpoint_in_txn(
 pub(crate) struct CheckpointCut {
     park: EntityId,
     row: WakeObservedCheckpoint,
+}
+
+impl CheckpointCut {
+    /// When a later pass may resume `park`, whose cut this is, in Unix
+    /// seconds: as [`DreamerParkedAttemptRecord::later_pass_due_at`] says
+    /// under the vault's Retry pause `retry_secs`, and a Retry park no sooner
+    /// than the reset its try's refusal stated, when one did (FIX 11226).
+    pub(crate) fn due_at(&self, park: &DreamerParkedAttemptRecord, retry_secs: u64) -> Option<u64> {
+        match self.row.not_before {
+            Some(reset) if park.cause == DreamerParkCause::Retry => Some(
+                park.later_pass_due_at(retry_secs)
+                    .map_or(reset, |due| due.max(reset)),
+            ),
+            _ => park.later_pass_due_at(retry_secs),
+        }
+    }
 }
 
 /// The cut a Checkpoint park records, when the pass that cut it has ended
@@ -233,20 +258,21 @@ fn resume_checkpoint_in_txn(
     let Some((status, Some(park))) = store.status_with_park_in_txn(wtxn, attempt)? else {
         return Ok(false);
     };
-    // A Retry park resumes only once its delay passed, on the clock it
-    // parked by, under the vault's pause as this writer reads it: the one
-    // the projection read (FIX 8716).
-    let retry_secs = vault.dreamer_retry_park_secs_in_txn(wtxn)?;
-    if park
-        .later_pass_due_at(retry_secs)
-        .is_none_or(|due| due > later.now)
-    {
-        return Ok(false);
-    }
     let record = &status.attempt;
     let Some(cut) = checkpoint_resumable_in_txn(vault, wtxn, &park, record)? else {
         return Ok(false);
     };
+    // A Retry park resumes only once its delay passed, on the clock it
+    // parked by, under the vault's pause as this writer reads it: the one
+    // the projection read (FIX 8716); or, when a provider limit refused its
+    // try and stated its reset, at that reset (FIX 11226).
+    let retry_secs = vault.dreamer_retry_park_secs_in_txn(wtxn)?;
+    if cut
+        .due_at(&park, retry_secs)
+        .is_none_or(|due| due > later.now)
+    {
+        return Ok(false);
+    }
     if cut.row.wake == later.wake || !record.accepts_worker(later.worker) {
         return Ok(false);
     }

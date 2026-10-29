@@ -349,6 +349,7 @@ fn unrun(jobs: Vec<Job>, why: &str) {
 fn answer(job: Job, error: oneiron::Error) {
     let _ = job.reply.send(EncoderAttempt {
         execution: None,
+        panicked: false,
         result: Err(error),
     });
 }

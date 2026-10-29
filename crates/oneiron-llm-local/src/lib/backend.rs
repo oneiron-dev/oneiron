@@ -119,6 +119,7 @@ where
                         usage,
                         finish_reason,
                         reply_assertions,
+                        token_scores: None,
                     });
                 }
             }

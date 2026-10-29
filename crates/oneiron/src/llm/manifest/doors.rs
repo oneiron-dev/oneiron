@@ -10,6 +10,7 @@ use super::{
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::memory::extraction::{EncoderExecution, EncoderOutput};
+use crate::side_table::{self, Named, SideTable};
 use crate::{LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, Vault};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -32,6 +33,33 @@ pub struct OneironerBind {
     /// The stack the caller expects the loaded Oneironer to serve.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_stack_sha16: Option<String>,
+}
+
+/// The loaded native bundle's receipt at its bind: stack and checkpoint,
+/// label count and per-artifact hashes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OneironerBundleReceipt {
+    pub stack_sha16: String,
+    pub checkpoint_sha16: String,
+    pub label_count: u32,
+    /// Per-artifact sha256 (`file:hash`), in manifest order; None when the
+    /// bind path has no manifest read. The missing field is `artifacts`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<String>>,
+}
+
+/// The bound bundle's receipt. Key: string (slot name).
+const BUNDLE_RECEIPTS: SideTable<String, OneironerBundleReceipt, Named> =
+    SideTable::new(&side_table::LLM_ONEIRONER_BUNDLE_RECEIPT);
+
+fn bundle_slot_key(slot: ModelSlot) -> String {
+    match slot {
+        ModelSlot::Llm => "llm",
+        ModelSlot::Embedder => "embedder",
+        ModelSlot::Oneironer => "oneironer",
+    }
+    .to_owned()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -177,6 +205,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         model: &ModelId,
         tier: &ModelTierRef,
+        receipt: &OneironerBundleReceipt,
     ) -> Result<ModelManifest> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -198,8 +227,23 @@ impl Vault {
             .routes
             .insert(ModelSlot::Oneironer, ModelLocality::OnDevice);
         self.write_model_manifest_in_txn(&mut txn, &manifest, None, None)?;
+        BUNDLE_RECEIPTS.put(
+            &self.store,
+            &mut txn,
+            &bundle_slot_key(ModelSlot::Oneironer),
+            receipt,
+        )?;
         txn.commit()?;
         Ok(manifest)
+    }
+
+    /// The latest bundle receipt bound for `slot`, if one was recorded.
+    pub fn oneironer_bundle_receipt(
+        &self,
+        slot: ModelSlot,
+    ) -> Result<Option<OneironerBundleReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        BUNDLE_RECEIPTS.get(&self.store, &txn, &bundle_slot_key(slot))
     }
 
     pub fn model_route_as_owner(

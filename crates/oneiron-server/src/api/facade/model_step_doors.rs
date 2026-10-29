@@ -77,9 +77,11 @@ async fn submit(
     // This logical-step allowance is bounded by the host's remaining raw
     // allowance. Physical calls still reserve and settle on the shared run
     // meter, so the engine's logical lease does not charge that meter twice.
+    // An uncapped raw meter leaves the step uncapped, its limit the type's
+    // maximum, so every read of it reports no cap (FIX 10593).
     let guard = BudgetGuard::with_reserve_units(
         "model-step",
-        read.remaining_units,
+        read.capped_remaining_units().unwrap_or(u64::MAX),
         meter.reserve_units(),
         read.on_budget_exhausted,
     );

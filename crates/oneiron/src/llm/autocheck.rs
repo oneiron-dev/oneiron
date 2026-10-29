@@ -196,9 +196,12 @@ const HOLD: &str = "hold";
 /// Generation beside a decided hold: the reasons the gate's receipt keeps, from
 /// the host's own model transport. The hold is already decided; reasons cannot
 /// turn it into an allow. A hold with no surviving reason is
-/// [`AutoCheckOutcome::Unavailable`].
+/// [`AutoCheckOutcome::Unavailable`]. `due` is when the gate stops waiting: a
+/// reason written past it would lose the hold, so a host writes none that
+/// late (FIX 654).
 pub trait AutoCheckNotes: Send + Sync {
-    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>) -> Result<Vec<String>>;
+    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>, due: Instant)
+    -> Result<Vec<String>>;
 }
 
 /// The host's auto check as one typed decision through its ladder: allow or
@@ -266,7 +269,7 @@ impl AutoCheckDecisions {
             AutoCheckOutcome::Allow
         } else {
             AutoCheckOutcome::Hold {
-                reasons: self.notes.hold_reasons(candidate)?,
+                reasons: self.notes.hold_reasons(candidate, due)?,
             }
         })
     }

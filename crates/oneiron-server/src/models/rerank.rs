@@ -192,6 +192,7 @@ impl LlmBackend for RerankBackend {
                 finish_reason: oneiron::llm::FinishReason::Stop,
                 // A reranker's scores assert no record (FIX 3416).
                 reply_assertions: Default::default(),
+                token_scores: None,
             })
         })
     }

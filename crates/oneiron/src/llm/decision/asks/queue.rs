@@ -5,7 +5,7 @@
 
 use super::{ASKS, AskPrior, DecisionAsk, SAME_ASK_SCAN};
 use crate::llm::decision::AnswerActor;
-use crate::llm::decision::ladder::HumanDecisionRequest;
+use crate::llm::decision::ladder::{AskConsent, HumanDecisionRequest};
 use crate::llm::decision::types::invalid;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -18,6 +18,19 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         request: &HumanDecisionRequest,
         state: Option<&serde_json::Value>,
+    ) -> Result<u64> {
+        self.queue_decision_ask_with_consent_in_txn(txn, request, state, None)
+    }
+
+    /// [`Self::queue_decision_ask_in_txn`] for an ask about one consent effect (FIX 2975):
+    /// a new ask keeps `consent` and the reason pre-filled beside it. An open ask that is
+    /// the same ask keeps what it was queued with.
+    pub(crate) fn queue_decision_ask_with_consent_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        request: &HumanDecisionRequest,
+        state: Option<&serde_json::Value>,
+        consent: Option<(&AskConsent, Option<String>)>,
     ) -> Result<u64> {
         request.question.validate()?;
         request.to.validate()?;
@@ -51,6 +64,9 @@ impl Vault {
                 .ok_or(Error::IndexOverflow("decision ask sequence"))?,
         };
         let role = self.next_ask_role_in_txn(txn, &request.to, None)?;
+        let (consent, prefilled_reason) = consent.map_or((None, None), |(consent, prefill)| {
+            (Some(consent.clone()), prefill)
+        });
         let ask = DecisionAsk {
             seq,
             id: EntityId::now(),
@@ -67,6 +83,8 @@ impl Vault {
             answer: None,
             withdrawn_at: None,
             pack_state: state.cloned(),
+            consent,
+            prefilled_reason,
         };
         ASKS.put(&self.store, txn, &seq, &ask)?;
         Ok(seq)

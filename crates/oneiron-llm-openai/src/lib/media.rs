@@ -24,12 +24,15 @@ use super::image::{
     OpenAiImageHttpResponse, OpenAiImagePart, decode_response, form_fields, reference_part,
 };
 
+// FIX 866: each provider's own embedding shape.
+mod embed_shape;
 mod prepare;
 
+use embed_shape::EmbedDocument;
+pub use embed_shape::EmbedShape;
 use prepare::{
-    EmbedPlan, PreparedImage, PreparedSpeech, PreparedTranscribe, PreparedVideo,
-    VIDEO_REFERENCE_SLOTS, embed_content, prepare_embed, prepare_image, prepare_speech,
-    prepare_transcribe, prepare_video, with_params,
+    PreparedImage, PreparedSpeech, PreparedTranscribe, PreparedVideo, VIDEO_REFERENCE_SLOTS,
+    prepare_embed, prepare_image, prepare_speech, prepare_transcribe, prepare_video,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +119,8 @@ pub struct OpenAiMediaBackend<T> {
     transport: T,
     wire_models: BTreeMap<ModelId, String>,
     endpoint: String,
+    /// The shape its embedding endpoint speaks (FIX 866).
+    embed_shape: EmbedShape,
 }
 
 impl<T> OpenAiMediaBackend<T> {
@@ -125,7 +130,16 @@ impl<T> OpenAiMediaBackend<T> {
             transport,
             wire_models,
             endpoint,
+            embed_shape: EmbedShape::default(),
         }
+    }
+
+    /// This client with its embedding calls in `shape`, its provider's own
+    /// (FIX 866); vLLM's chat form until one is named.
+    #[must_use]
+    pub fn with_embed_shape(mut self, shape: EmbedShape) -> Self {
+        self.embed_shape = shape;
+        self
     }
 
     fn wire_model(&self, model: &ModelId) -> LlmResult<String> {
@@ -334,53 +348,26 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
         let wire = self.wire_model(&request.model)?;
         // The whole call is checked before its first document is sent.
         let plan = prepare_embed(&request, &wire)?;
-        // Texts go as one batch. A call with an image or audio sends each part
-        // as its own chat-form document (`messages` in place of `input`, as
-        // vLLM serves multimodal embedding models): one vector each, in order.
-        let documents: Vec<(usize, &'static str, Value)> = if plan == EmbedPlan::Texts {
-            let texts: Vec<&str> = request.texts().collect();
-            vec![(texts.len(), "input", json!(texts))]
-        } else {
-            request
-                .parts
-                .iter()
-                .map(|part| -> LlmResult<(usize, &'static str, Value)> {
-                    let content = embed_content(part)?;
-                    Ok((
-                        1,
-                        "messages",
-                        json!([{ "role": "user", "content": [content] }]),
-                    ))
-                })
-                .collect::<LlmResult<_>>()?
-        };
+        // Texts go as one batch; a call with an image or audio part goes in
+        // its provider's own shape (FIX 866), one vector per part, in order.
+        let shape = self.embed_shape;
+        let documents = shape.documents(&request, plan, &wire)?;
         let (mut vectors, mut tokens, mut raws, mut served) =
             (Vec::new(), 0, Vec::new(), Value::Null);
         let mut marks = Vec::new();
-        for (count, field, input) in documents {
-            let mut body = with_params([("model", json!(wire)), (field, input)], &request.params)?;
-            body.entry("encoding_format".into())
-                .or_insert_with(|| json!("float"));
+        for EmbedDocument { count, path, body } in documents {
             let body = OpenAiMediaBody::Json(Value::Object(body.into_iter().collect()));
             let reply = self
-                .send(
-                    OpenAiMediaMethod::Post,
-                    "/v1/embeddings".into(),
-                    body,
-                    lease,
-                )
+                .send(OpenAiMediaMethod::Post, path.into(), body, lease)
                 .await?;
             let mut reply = reply.json();
-            vectors.extend(indexed_vectors(&reply, count).ok_or(FatalLlmError::EmptyResponse)?);
-            let raw = reply
-                .get_mut("usage")
-                .map(Value::take)
-                .unwrap_or(Value::Null);
-            tokens += raw
-                .get("prompt_tokens")
-                .or_else(|| raw.get("total_tokens"))
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
+            vectors.extend(
+                shape
+                    .vectors(&reply, count)
+                    .ok_or(FatalLlmError::EmptyResponse)?,
+            );
+            let raw = shape.take_usage(&mut reply);
+            tokens += shape.tokens(&raw);
             raws.push(raw);
             served = reply
                 .get_mut("model")
@@ -598,7 +585,8 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
                 prepare_transcribe(request, &wire)?;
             }
             AiOperation::Embed => {
-                prepare_embed(request, &wire)?;
+                let plan = prepare_embed(request, &wire)?;
+                self.embed_shape.check(request, plan)?;
             }
             AiOperation::Video => {
                 prepare_video(request, &wire)?;
@@ -634,9 +622,13 @@ impl<T: OpenAiMediaTransport> MediaBackend for OpenAiMediaBackend<T> {
         })
     }
 
+    /// An OpenAI-compatible video job names no idempotency key its
+    /// provider is known to honour (FIX 2248): it goes out without one, and
+    /// the wire says it does not dedupe.
     fn submit<'a>(
         &'a self,
         request: MediaRequest,
+        _key: Option<&'a str>,
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, String> {
         Box::pin(self.submit_job(request, lease))

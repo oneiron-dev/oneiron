@@ -187,6 +187,13 @@ side_tables! {
     /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
     /// unchanged room is not declared again. Key: id16 of the room.
     COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw;
+    /// A quick pick that later proved wrong: a case where a person changed an answer the
+    /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
+    /// (FIX 2437). Key: id16 of the source the host bound the answer to.
+    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named;
+    /// When the Coach's think-threshold run read a source's record, so a replay never counts
+    /// twice. Key: id16.
+    COACH_THINK_MISSED_READ: VaultMeta b"coach:think_missed_read:v1:" Raw;
     /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
     /// rung per reminder window. Key: id16 of the ask's proposal.
     COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;

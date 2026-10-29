@@ -19,13 +19,14 @@ use std::collections::BTreeMap;
 use rmpv::Value;
 
 use super::step_claim::{STEP_INDEX_CLAIM, STEP_INDEX_FORWARD, StepIndexClaimKey};
-use super::types::{DREAMER_STEP_PREDICATE, KEY_RESPONSE};
+use super::step_state::{STEP_STATE, StepStateOwners, StepStateRow};
+use super::types::{DREAMER_STEP_PREDICATE, KEY_RESPONSE, StepProgression};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::claim::{decode_claim_body, encode_claim_body};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{EntityStoreMaintenance, ScrubbedRecord};
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
 use crate::store::{ResponseCarriage, ResponseScan, Store};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -106,6 +107,7 @@ pub(crate) fn retire_step_claim_in_rows(
     };
     if let Some(rows) = databases.get_mut("vault_meta") {
         crate::claim::remove_claim_projection_index_in_rows(rows, claim)?;
+        stamp_erased_before_deindex_in_rows(rows, claim)?;
         deindex_in_rows(rows, claim)?;
     }
     if let Some(rows) = databases.get_mut("sync_state") {
@@ -142,9 +144,87 @@ pub(crate) fn retire_step_claim_in_txn(
     let recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     store.port_entity_scrub(wtxn, &claim, ScrubbedRecord::Shell, recorded_at)?;
     crate::claim::remove_claim_projection_index(store, wtxn, claim)?;
+    stamp_erased_before_deindex_in_txn(store, wtxn, &claim, recorded_at)?;
     super::step_claim::deindex_dreamer_step_claim(store, wtxn, &claim)?;
     SOFT_DELETED.put(store, wtxn, &HexId(claim), &Vec::new())?;
     FENCED.put(store, wtxn, &HexId(claim), &Vec::new())
+}
+
+/// Stamps the step's erased skeleton before deindex (FIX 6658).
+fn stamp_erased_before_deindex_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    claim: &EntityId,
+    now_ms: u64,
+) -> Result<()> {
+    let Some(forward) = STEP_INDEX_CLAIM.get(store, wtxn, &StepIndexClaimKey(*claim))? else {
+        return Ok(());
+    };
+    let Some(key) = forward
+        .strip_prefix(STEP_INDEX_FORWARD.decl().prefix)
+        .and_then(super::step_claim::StepIndexKey::decode_key)
+    else {
+        return Ok(());
+    };
+    if STEP_INDEX_FORWARD.get(store, wtxn, &key)?.as_ref() != Some(claim) {
+        return Ok(());
+    }
+    let state = (key.attempt_id, key.step_hash);
+    STEP_STATE.put(
+        store,
+        wtxn,
+        &state,
+        &StepStateRow {
+            progression: StepProgression::Logged,
+            started_at: now_ms,
+            updated_at: now_ms,
+            response_payload: None,
+            owners: StepStateOwners {
+                actor: None,
+                subject: None,
+                claim: Some(*claim),
+            },
+            erased: true,
+        },
+    )
+}
+
+/// Stamps the same skeleton into raw image rows before they deindex.
+fn stamp_erased_before_deindex_in_rows(rows: &mut Rows, claim: EntityId) -> Result<()> {
+    let reverse = STEP_INDEX_CLAIM.key_bytes(&StepIndexClaimKey(claim));
+    let Ok(at) = rows.binary_search_by(|(row, _)| row.as_slice().cmp(&reverse)) else {
+        return Ok(());
+    };
+    let forward = rows[at].1.clone();
+    let Some(key) = forward
+        .strip_prefix(STEP_INDEX_FORWARD.decl().prefix)
+        .and_then(super::step_claim::StepIndexKey::decode_key)
+    else {
+        return Ok(());
+    };
+    if let Ok(at) = rows.binary_search_by(|(row, _)| row.as_slice().cmp(&forward))
+        && STEP_INDEX_FORWARD.decode_value(&rows[at].1)? == claim
+    {
+        let state = (key.attempt_id, key.step_hash);
+        let full = STEP_STATE.key_bytes(&state);
+        let bytes = STEP_STATE.encode_value(&StepStateRow {
+            progression: StepProgression::Logged,
+            started_at: 0,
+            updated_at: 0,
+            response_payload: None,
+            owners: StepStateOwners {
+                actor: None,
+                subject: None,
+                claim: Some(claim),
+            },
+            erased: true,
+        })?;
+        match rows.binary_search_by(|(row, _)| row.as_slice().cmp(&full)) {
+            Ok(at) => rows[at].1 = bytes,
+            Err(at) => rows.insert(at, (full, bytes)),
+        }
+    }
+    Ok(())
 }
 
 /// Takes the step-index rows of `claim` out of raw `vault_meta` rows: its

@@ -61,7 +61,7 @@ impl StepStateOwners {
     }
 }
 
-const STEP_STATE: SideTable<(AttemptId, [u8; 32]), StepStateRow, Raw> =
+pub(super) const STEP_STATE: SideTable<(AttemptId, [u8; 32]), StepStateRow, Raw> =
     SideTable::new(&side_table::DREAMER_STEP_STATE);
 
 fn id_value(id: EntityId) -> Value {

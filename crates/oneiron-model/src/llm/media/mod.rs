@@ -27,6 +27,8 @@ use super::{
 
 mod backend;
 mod caps;
+// FIX 465, FIX 2962: what a repeat of one media call is known by.
+mod replay;
 mod request;
 mod response;
 pub mod wav;
@@ -35,6 +37,7 @@ pub use backend::{
     AiMediaDoor, ImageMedia, MediaBackend, MediaProgressFuture, ReferenceCompatibility,
 };
 pub use caps::{AiOperation, MediaCaps, Modality, NativeUnit};
+pub use replay::MediaReplayKey;
 pub use request::{MediaPart, MediaRequest, MediaVoice};
 // FIX 9517: what a call stopped part way completed, and the stop itself.
 pub use super::error::InterruptedMediaCall;

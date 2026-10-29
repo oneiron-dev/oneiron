@@ -213,8 +213,10 @@ impl Vault {
     /// The silence rule is the enforcement path's: only an `Allow` from an
     /// owner plane that was off for the pass examined nothing and writes
     /// nothing. A clean `Allow` the plane gave is one hash-only row (FIX
-    /// 7805): its content and frontier hashes and its reason codes, no
-    /// notice. Anything else — a warn, a block, a route, or an allow with an
+    /// 7805): its content and frontier hashes and its reason codes, and no
+    /// notice but the audit-channel receipt of each typed decision that
+    /// decided it (FIX 1203), which holds answers, ids and hashes, never the
+    /// candidate or the policy text. Anything else — a warn, a block, a route, or an allow with an
     /// audit a pattern or the model contributed to — is a row as it always
     /// was.
     ///

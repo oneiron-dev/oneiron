@@ -5,16 +5,17 @@ pub use answer_actor::AnswerActor;
 pub(crate) use answer_actor::{erase_ask_actor_in_txn, erase_rule_actor_in_txn};
 mod asks;
 pub(crate) use asks::WORLD_PRIVACY_ASK_QUEUE;
-pub use asks::{AskAnswer, AskPrior, DecisionAsk, DecisionAsks};
+pub use asks::{AskAnswer, AskGrantDraft, AskPrior, DecisionAsk, DecisionAsks};
 pub mod catalogue;
 mod codec;
 mod generated;
 pub use generated::{
-    DecisionWireLabels, GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep,
+    DecisionWireLabels, GENERATED_SETTLEMENT_INVARIANT, GeneratedDecisions, GeneratedMiss,
+    GeneratedRung, GeneratedStep,
 };
 mod held;
 pub use held::HeldLadder;
-pub use held::{cut_text, fit_state};
+pub use held::{cut_text, fit_reserve_state, fit_state};
 mod ladder;
 mod local;
 mod locate;

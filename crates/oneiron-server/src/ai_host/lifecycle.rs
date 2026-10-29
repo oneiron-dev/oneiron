@@ -205,6 +205,15 @@ impl AiHost {
         }
         runtime.take_up_kept_media_jobs();
         let runtime = Arc::new(runtime);
+        // Its reads outside a ladder serve this vault too: the decision reader's
+        // catalog price and tokenizer replies, and the token ratios' counts (FIX
+        // 11408, FIX 11412).
+        if let Some(door) = runtime.decision_read() {
+            door.bind_host(&vault, &budgets);
+        }
+        if let Some(ratios) = runtime.token_ratios() {
+            ratios.read_on(&budgets);
+        }
         // Launch statements price in dollars at the generative seat's model;
         // a unit other than tokens reads the runtime's offers, held weakly.
         if let Some(seat) = runtime.seat(CHAT_ROLE) {

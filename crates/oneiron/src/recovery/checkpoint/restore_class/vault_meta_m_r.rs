@@ -129,6 +129,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_PACK_SOURCE_ALIAS, CONTENT),
     (&t::PACK_BYTE_MAP_LOCAL_HEAD, CONTENT),
     (&t::PEOPLE_ABOUT, CONTENT),
+    // A restore never revives a withdrawn filing: the PERSON's live one stands.
+    (&t::PERSON_BILLING_ACCOUNT, LIVE),
     (&t::PERSONA_SNAPSHOT_COPY, CONTENT),
     (&t::POLICY_HOLD_QUEUE, CONTENT),
     (&t::PORTS_CHANGE, CONTENT),

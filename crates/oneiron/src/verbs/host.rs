@@ -463,6 +463,13 @@ pub struct AiCallRequest {
     /// other call that names one is refused.
     #[serde(default)]
     pub voice: Option<AiVoice>,
+    /// The caller's own idempotency key for the call (FIX 2962): a repeat
+    /// of the same call under the same key answers the first's answer, or
+    /// a video's first ticket, and is not paid for or rendered again. A
+    /// call in a banked voice is never replayed. With none, every call
+    /// goes out.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
 }
 
 /// The voice an `ai.speech` call names (OF-410): a provider's stock voice

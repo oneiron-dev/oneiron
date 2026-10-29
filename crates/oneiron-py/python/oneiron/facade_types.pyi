@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1183 facade rows, 4281 declarations.
-Inputs: 1114 of 1183 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1033 of 1183 fully typed, 150 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 116; unread shapes: 0.
+Census: 1187 facade rows, 4299 declarations.
+Inputs: 1116 of 1187 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1032 of 1187 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 118; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1001,6 +1001,10 @@ class ShapeTargetFacet(TypedDict):
     kind: Literal["facet"]
     person: str
     name: str
+class ShapeTargetWorldFacet(TypedDict):
+    kind: Literal["world_facet"]
+    world: str
+    name: str
 class ShapeTargetPack(TypedDict):
     kind: Literal["pack"]
     name: str
@@ -1023,7 +1027,7 @@ class ShapeTargetManifest(TypedDict):
 class ShapeTargetSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
-ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetFacet | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetManifest | ShapeTargetSync
+ShapeTarget = ShapeTargetShared | ShapeTargetMember | ShapeTargetWorld | ShapeTargetFacet | ShapeTargetWorldFacet | ShapeTargetPack | ShapeTargetActor | ShapeTargetSkill | ShapeTargetChannel | ShapeTargetGrant | ShapeTargetManifest | ShapeTargetSync
 class ShapeRowShared(TypedDict):
     kind: Literal["shared"]
     vault_id: str
@@ -1032,12 +1036,17 @@ class ShapeRowMember(TypedDict):
     kind: Literal["member"]
     member: str
     role: ShapeMemberRole
+    pending_invitation: NotRequired[str | None]
 class ShapeRowWorld(TypedDict):
     kind: Literal["world"]
     name: str
 class ShapeRowFacet(TypedDict):
     kind: Literal["facet"]
     person: str
+    name: str
+class ShapeRowWorldFacet(TypedDict):
+    kind: Literal["world_facet"]
+    world: str
     name: str
 class ShapeRowPack(TypedDict):
     kind: Literal["pack"]
@@ -1065,7 +1074,8 @@ class ShapeRowGrant(TypedDict):
 class ShapeRowManifest(TypedDict):
     kind: Literal["manifest"]
     manifest_ref: str
-    body: str
+    body: NotRequired[str]
+    json: NotRequired[Any | None]
 class ShapeRowSync(TypedDict):
     kind: Literal["sync"]
     entity_kind: str
@@ -1073,7 +1083,7 @@ class ShapeRowSync(TypedDict):
 class ShapeRowRetire(TypedDict):
     kind: Literal["retire"]
     target: ShapeTarget
-ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowFacet | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowManifest | ShapeRowSync | ShapeRowRetire
+ShapeRow = ShapeRowShared | ShapeRowMember | ShapeRowWorld | ShapeRowFacet | ShapeRowWorldFacet | ShapeRowPack | ShapeRowActor | ShapeRowSkill | ShapeRowChannel | ShapeRowGrant | ShapeRowManifest | ShapeRowSync | ShapeRowRetire
 class ShapeSeed(TypedDict):
     rows: list[ShapeRow]
 class StoredShapeSeed(TypedDict):
@@ -1098,6 +1108,21 @@ class ShapeItemStateFiled(TypedDict):
     state: Literal["filed"]
     proposal_ref: str
     expires_at: int
+class ShapeItemStateFileRefused(TypedDict):
+    state: Literal["file_refused"]
+    reason: str
+class ShapeItemStateHeld(TypedDict):
+    state: Literal["held"]
+    request_ref: str
+    approval_digest: str
+    quarantine_until: int
+    requested_at: int
+class ShapeItemStateHeldProvision(TypedDict):
+    state: Literal["held_provision"]
+    request_ref: str
+    approval_digest: str
+    identity_ref: str
+    requested_at: int
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -1105,13 +1130,14 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateFileRefused | ShapeItemStateHeld | ShapeItemStateHeldProvision | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApprovalDependencies(TypedDict):
     digest: str
 class ShapeApplyItem(TypedDict):
     item: ShapePlanItem
     state: ShapeItemState
     approval: NotRequired[ShapeApprovalDependencies | None]
+    slips_kept: NotRequired[bool]
 class ShapeApplyRun(TypedDict):
     run_id: str
     root: str
@@ -2243,6 +2269,11 @@ class BudgetLandRequest(TypedDict):
     marker: str
     artifact_ref: NotRequired[str | None]
     reason: str
+class BillingAccountFiling(TypedDict):
+    account: str
+class FiledBillingAccount(TypedDict):
+    account: str
+    filed_at: int
 class OpenSpendLeaseRequest(TypedDict):
     launch: str
     cap_units: int
@@ -8847,10 +8878,88 @@ class Of360Ar3MetricTier(TypedDict):
     interface_version: int
     metric_definitions: Of360MetricDefinitionSet
     report: Of360EvalReport
+class EvidenceVersion(TypedDict):
+    id: str
+    body_hash: list[int]
+class PairedReading(TypedDict):
+    provider: ProviderPin
+    question: str
+    question_version: int
+    probability: float
+StopCause = Literal["done", "deadline", "provider_failure"]
+ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
+class ReasoningNotNeeded(TypedDict):
+    state: Literal["not_needed"]
+class ReasoningRan(TypedDict):
+    state: Literal["ran"]
+    cause: ReasoningCause
+class ReasoningSkipped(TypedDict):
+    state: Literal["skipped"]
+    cause: ReasoningCause
+class ReasoningCut(TypedDict):
+    state: Literal["cut"]
+    cause: ReasoningCause
+Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
+class DecisionTime(TypedDict):
+    budget_ms: int
+    used_ms: int
+    stop: StopCause
+    answered: NotRequired[DecisionRung | None]
+    reasoning: Reasoning
+class ImagePin(TypedDict):
+    provider: ProviderPin
+    name: str
+    evidence: EvidenceVersion
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+    edge: NotRequired[int | None]
+    sent_width: int
+    sent_height: int
+class HostRuleRef(TypedDict):
+    id: str
+    revision: int
+RoleRank = Literal["responsible", "board", "owner"]
+AskAct = Literal["judgment", "e_signature", "payment"]
+HolderKind = Literal["person", "agent"]
+class ReceiptAnswerer(TypedDict):
+    role: RoleRank
+    project: NotRequired[str | None]
+    kind: HolderKind
+class ReceiptAsk(TypedDict):
+    seq: NotRequired[int | None]
+    role: RoleRank
+    project: NotRequired[str | None]
+    ceiling: RoleRank
+    act: AskAct
+    answered: NotRequired[ReceiptAnswerer | None]
+class StateCut(TypedDict):
+    kept: int
+    of: int
+    text_cut_at_bytes: NotRequired[int | None]
+class DecisionReceipt(TypedDict):
+    question: str
+    question_version: int
+    principal: str
+    providers: list[ProviderPin]
+    band: DecisionBand
+    band_version: NotRequired[int]
+    evidence_versions: NotRequired[list[EvidenceVersion]]
+    cost_per_thousand: NotRequired[float | None]
+    paired: NotRequired[list[PairedReading]]
+    person: NotRequired[list[PairedReading]]
+    time: NotRequired[DecisionTime | None]
+    images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
+    rule: NotRequired[HostRuleRef | None]
+    asked: NotRequired[ReceiptAsk | None]
+    state_cut: NotRequired[StateCut | None]
 class CampaignTaste(TypedDict):
     score: float
     useful: NotRequired[bool | None]
     external_anchor_digest: str
+    receipts: list[DecisionReceipt]
 class CampaignSplitReport(TypedDict):
     authoring_strategy: AuthoringStrategyPin
     arm: CampaignExecutableArm
@@ -9472,6 +9581,10 @@ class QuestionExportCheck(TypedDict):
     finite: bool
     tokens_match: bool
     passed: bool
+class CandleParityCheck(TypedDict):
+    tokens_match: bool
+    token_mismatches: NotRequired[list[str]]
+    logits_match: NotRequired[bool | None]
 class ExportCheck(TypedDict):
     hash_mismatches: list[str]
     probe_coverage_matches: bool
@@ -9482,6 +9595,7 @@ class ExportCheck(TypedDict):
     max_logit_difference: float
     tolerance: float
     question_check: NotRequired[QuestionExportCheck | None]
+    candle_parity: NotRequired[CandleParityCheck | None]
 class SwapChoiceEvaluated(TypedDict):
     kind: Literal["evaluated"]
 class SwapChoiceExplicitOverride(TypedDict):
@@ -9742,78 +9856,6 @@ class DecisionAnswerPoint(TypedDict):
 class DecisionAnswerAbstain(TypedDict):
     kind: Literal["abstain"]
 DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
-class EvidenceVersion(TypedDict):
-    id: str
-    body_hash: list[int]
-class PairedReading(TypedDict):
-    provider: ProviderPin
-    question: str
-    question_version: int
-    probability: float
-StopCause = Literal["done", "deadline", "provider_failure"]
-ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
-class ReasoningNotNeeded(TypedDict):
-    state: Literal["not_needed"]
-class ReasoningRan(TypedDict):
-    state: Literal["ran"]
-    cause: ReasoningCause
-class ReasoningSkipped(TypedDict):
-    state: Literal["skipped"]
-    cause: ReasoningCause
-class ReasoningCut(TypedDict):
-    state: Literal["cut"]
-    cause: ReasoningCause
-Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
-class DecisionTime(TypedDict):
-    budget_ms: int
-    used_ms: int
-    stop: StopCause
-    answered: NotRequired[DecisionRung | None]
-    reasoning: Reasoning
-class ImagePin(TypedDict):
-    provider: ProviderPin
-    name: str
-    evidence: EvidenceVersion
-    width: int
-    height: int
-    frame: NotRequired[PixelRegion | None]
-    edge: NotRequired[int | None]
-    sent_width: int
-    sent_height: int
-class HostRuleRef(TypedDict):
-    id: str
-    revision: int
-RoleRank = Literal["responsible", "board", "owner"]
-AskAct = Literal["judgment", "e_signature", "payment"]
-HolderKind = Literal["person", "agent"]
-class ReceiptAnswerer(TypedDict):
-    role: RoleRank
-    project: NotRequired[str | None]
-    kind: HolderKind
-class ReceiptAsk(TypedDict):
-    seq: NotRequired[int | None]
-    role: RoleRank
-    project: NotRequired[str | None]
-    ceiling: RoleRank
-    act: AskAct
-    answered: NotRequired[ReceiptAnswerer | None]
-class DecisionReceipt(TypedDict):
-    question: str
-    question_version: int
-    principal: str
-    providers: list[ProviderPin]
-    band: DecisionBand
-    band_version: NotRequired[int]
-    evidence_versions: NotRequired[list[EvidenceVersion]]
-    cost_per_thousand: NotRequired[float | None]
-    paired: NotRequired[list[PairedReading]]
-    person: NotRequired[list[PairedReading]]
-    time: NotRequired[DecisionTime | None]
-    images: NotRequired[list[ImagePin]]
-    think_row: NotRequired[int | None]
-    person_row: NotRequired[int | None]
-    rule: NotRequired[HostRuleRef | None]
-    asked: NotRequired[ReceiptAsk | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
@@ -9822,6 +9864,7 @@ class TypedDecision(TypedDict):
     in_band: bool
     receipt: DecisionReceipt
     human_ask: NotRequired[HumanAskReason | None]
+PolicyReadError = Literal["settlement_invariant"]
 class PolicyPassAudit(TypedDict):
     matched_pattern_ids: NotRequired[list[str]]
     acting_pattern_role: NotRequired[PolicyPatternRole | None]
@@ -9829,7 +9872,9 @@ class PolicyPassAudit(TypedDict):
     model_rule_ids_dropped: NotRequired[int]
     model_confidence: NotRequired[str | None]
     model_rationale: NotRequired[str | None]
+    model_notes_cut: NotRequired[bool]
     typed_decisions: NotRequired[list[TypedDecision]]
+    read_error: NotRequired[PolicyReadError | None]
 PolicyPlane = Literal["owner_policy", "hosted_legal"]
 HostedOutagePolicy = Literal["halt", "proceed_receipted"]
 class HostedPlaneAttestation(TypedDict):
@@ -15292,7 +15337,9 @@ class RoomSharingClampContactClearance(TypedDict):
 class RoomSharingClampUnknown(TypedDict):
     clamp: Literal["unknown"]
     members: int
-RoomSharingClamp = RoomSharingClampWorlds | RoomSharingClampFacets | RoomSharingClampContactClearance | RoomSharingClampUnknown
+class RoomSharingClampLiveCall(TypedDict):
+    clamp: Literal["live_call"]
+RoomSharingClamp = RoomSharingClampWorlds | RoomSharingClampFacets | RoomSharingClampContactClearance | RoomSharingClampUnknown | RoomSharingClampLiveCall
 class RoomSharingView(TypedDict):
     room: EntityId
     effective: Scope
@@ -15511,6 +15558,7 @@ class LlmResponse(TypedDict):
     usage: LlmUsage
     finish_reason: FinishReason
     reply_assertions: NotRequired[ReplyAssertions]
+    token_scores: NotRequired[Any | None]
 class NerSpan(TypedDict):
     message: int
     start: int
@@ -15744,18 +15792,27 @@ class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input", "reasoning_content_history"]
+LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input", "reasoning_content_history", "token_logprobs"]
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
     model: NotRequired[ModelId | None]
     reason: NotRequired[str | None]
 LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
+class FatalLlmErrorInvalidRequestDetailBody(TypedDict):
+    message: str
+class FatalLlmErrorInvalidRequestDetail(TypedDict):
+    InvalidRequestDetail: FatalLlmErrorInvalidRequestDetailBody
 class FatalLlmErrorUnsupported(TypedDict):
     Unsupported: UnsupportedCapability
 class FatalLlmErrorLabelRead(TypedDict):
     LabelRead: LabelReadFailure
-FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased"] | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
+FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse", "ResponseErased"] | FatalLlmErrorInvalidRequestDetail | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
 ModelStepFailureClass = Literal["retryable", "fatal", "budget_denied", "schema_validation", "fallback", "finalize_refused", "deadline_hard_cut", "engine"]
+TransportFaultKind = Literal["not_sent", "io_after_send", "refused", "unexpected_frame", "ended_with_error"]
+class TransportFault(TypedDict):
+    kind: TransportFaultKind
+    stage: NotRequired[str | None]
+    detail: str
 class RetryableLlmErrorRateLimitedBody(TypedDict):
     retry_after: NotRequired[int | None]
     resets_at: NotRequired[list[int]]
@@ -15773,7 +15830,9 @@ class RetryableLlmErrorKeptOnDeviceBody(TypedDict):
     reason: NotRequired[str | None]
 class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
-RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
+class RetryableLlmErrorTransportFault(TypedDict):
+    TransportFault: TransportFault
+RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice | RetryableLlmErrorTransportFault
 BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError
@@ -16333,6 +16392,10 @@ class FrozenTrialCase(TypedDict):
     derived_from: list[EntityId]
 TrialAdmission = Literal["ready", "ask_exploration"]
 ModelTrialExecutionState = Literal["not_started", "running", "interrupted", "measured"]
+TrialArm = Literal["incumbent", "candidate"]
+class TrialArmKey(TypedDict):
+    answer: EntityId
+    arm: TrialArm
 class ModelTrialEvidence(TypedDict):
     measurements_hash: list[int]
     incumbent_loss: NotRequired[float | None]
@@ -16342,6 +16405,7 @@ class ModelTrialEvidence(TypedDict):
     candidate_cost_per_thousand: float
     trial_cost: float
     unknown_arms: int
+    resent_unknown_arms: int
 class PairedQualityInterval(TypedDict):
     low: float
     high: float
@@ -16381,12 +16445,19 @@ class ModelTrialView(TypedDict):
     execution: ModelTrialExecutionState
     arms_completed: int
     arms_unknown: int
+    unknown_arms: list[TrialArmKey]
+    arms_resent: int
     arms_total: int
     evidence: NotRequired[ModelTrialEvidence | None]
     receipt: NotRequired[ModelTrialReceipt | None]
 class ModelTrialRef(TypedDict):
     question: EntityId
     trial: EntityId
+class ModelTrialArmRef(TypedDict):
+    question: EntityId
+    trial: EntityId
+    answer: EntityId
+    arm: TrialArm
 class ModelTrialComplete(TypedDict):
     question: EntityId
     trial: EntityId
@@ -16455,6 +16526,7 @@ class AiCallRequest(TypedDict):
     references: NotRequired[list[AiPart]]
     params: NotRequired[dict[str, Any]]
     voice: NotRequired[AiVoice | None]
+    idempotency_key: NotRequired[str | None]
 class MediaUsage(TypedDict):
     input_tokens: NotRequired[int]
     output_tokens: NotRequired[int]
@@ -16594,6 +16666,7 @@ class VoiceTargetCloneView(TypedDict):
     ref_digest: str
     cloned_at: int
     revision: str
+    awaiting_verification: bool
 class VoiceReferenceFenceView(TypedDict):
     source_packs: list[str]
     ref_digest: str
@@ -16810,6 +16883,17 @@ class ScheduledBackfill(TypedDict):
 class QuestionReadRequest(TypedDict):
     id: EntityId
     version: NotRequired[int | None]
+class QuestionOutcomeWindowsRequest(TypedDict):
+    id: EntityId
+class WindowOutcomeSilence(TypedDict):
+    silence: bool
+WindowOutcome = Literal["observed", "unknown"] | WindowOutcomeSilence
+class OutcomeWindowClose(TypedDict):
+    answer: str
+    question_version: int
+    ends_at: int
+    closed_at: int
+    outcome: WindowOutcome
 class QuestionAnswersRequest(TypedDict):
     id: EntityId
     cursor: NotRequired[str | None]
@@ -16925,6 +17009,15 @@ class RoleHolder(TypedDict):
 class ResolvedRole(TypedDict):
     role: AskRole
     holders: list[RoleHolder]
+class AskGrantDraftProposed(TypedDict):
+    state: Literal["proposed"]
+    grant_ref: str
+class AskGrantDraftConfirmed(TypedDict):
+    state: Literal["confirmed"]
+    grant_ref: str
+    receipt: str
+    rule: str
+AskGrantDraft = AskGrantDraftProposed | AskGrantDraftConfirmed
 class AskAnswer(TypedDict):
     answer: DecisionAnswer
     answered_at: int
@@ -16934,6 +17027,24 @@ class AskAnswer(TypedDict):
     changed: bool
     reason: NotRequired[str | None]
     rule: NotRequired[HostRuleRef | None]
+    grant: NotRequired[AskGrantDraft | None]
+AskUndoFidelity = Literal["full", "partial", "none", "unknown"]
+class AskEffect(TypedDict):
+    operation_kind: str
+    fires_hooks: bool
+    triggers_publish: bool
+    external_observers: bool
+    undo_fidelity: AskUndoFidelity
+    blast_radius: int
+    catastrophe: NotRequired[CatastropheClass | None]
+    project: NotRequired[str | None]
+    thread: NotRequired[str | None]
+    erase: bool
+    action: NotRequired[ShapeGrantBound | None]
+    disclosure: NotRequired[ShapeGrantBound | None]
+class AskConsent(TypedDict):
+    effect: AskEffect
+    bound: ShapeGrantBound
 class DecisionAsk(TypedDict):
     seq: int
     id: str
@@ -16950,8 +17061,13 @@ class DecisionAsk(TypedDict):
     answer: NotRequired[AskAnswer | None]
     withdrawn_at: NotRequired[int | None]
     pack_state: NotRequired[Any | None]
+    consent: NotRequired[AskConsent | None]
+    prefilled_reason: NotRequired[str | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
+class DecisionAskConfirmGrantRequest(TypedDict):
+    seq: int
+    notice: str
 class ConnectorListRequest(TypedDict):
     query: NotRequired[str | None]
 class ConnectorEntry(TypedDict):

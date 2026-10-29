@@ -164,8 +164,11 @@ pub(crate) async fn ai_anonymous_chat(
             &responder,
             &policy_backend,
             &policy_budget,
-            // The host's owner-plane wording and dial (FIX 5043).
-            &server.policy_doors.owner,
+            // The host's owner-plane wording and dial (FIX 5043), its
+            // decision ladder's paired question lent (FIX 1201).
+            &server
+                .decision_host()
+                .policy_model_config(&server.policy_doors.owner),
         )
         .await;
     let closed = session.close();

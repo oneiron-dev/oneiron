@@ -111,6 +111,13 @@ pub struct LlmResponse {
     /// (OF-063, FIX 3416); empty from every provider.
     #[serde(default, skip_serializing_if = "ReplyAssertions::is_empty")]
     pub reply_assertions: ReplyAssertions,
+    /// The output tokens' log-probabilities as the provider reported them, in the
+    /// OpenAI-compatible `logprobs` shape (`content[].{token, logprob, top_logprobs[]}`),
+    /// when the request asked for them and its row declares
+    /// [`LlmCapability::TokenLogprobs`](crate::llm::LlmCapability::TokenLogprobs) (FIX
+    /// 1557); none otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_scores: Option<JsonValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

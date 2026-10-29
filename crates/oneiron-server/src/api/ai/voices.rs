@@ -2,7 +2,9 @@
 //! `POST /v1/ai/voices/{voice_id}/packs` banks a reference pack,
 //! `POST /v1/ai/voices/{voice_id}/render_consent` records the subject's
 //! render decision, and `POST`/`DELETE /v1/ai/voices/{voice_id}/targets/{target}`
-//! provisions a hosted target's clone or drops it. A clone is made only from
+//! provisions a hosted target's clone or drops it, and
+//! `GET /v1/ai/voices/{voice_id}` shows the voice's packs, render decision
+//! and each clone target's clone (FIX 1567). A clone is made only from
 //! refs the voice's render consent lets reach the target's locality, and it
 //! is recorded only while those refs and that consent are still current; a
 //! clone the bank no longer holds is deleted at the vendor (ARCH-0061 §5,
@@ -17,7 +19,7 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use base64::Engine as _;
@@ -28,15 +30,15 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::voice_identity::ref_bank::{
     VoiceBankActor, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip,
-    VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord,
+    VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord, VoiceTargetRender,
 };
 use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{EntityId, ModelLocality};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::refusal;
 use crate::auth::CoreAuth;
-use crate::models::MediaRuntime;
+use crate::models::{HostedCloner, MediaRuntime};
 use crate::server::SyncServer;
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -79,6 +81,59 @@ pub(crate) struct ProvisionBody {
     /// The language the clip is spoken in, for a target that asks.
     #[serde(default)]
     language: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ViewQuery {
+    /// Whether the selection each clone is checked against counts
+    /// generated packs.
+    #[serde(default)]
+    include_generated: bool,
+}
+
+/// A provisioning's answer on the route: the clone's receipt, and whether
+/// its vendor holds it until the voice is verified there (FIX 1567).
+#[derive(Serialize)]
+struct ProvisionAnswer {
+    #[serde(flatten)]
+    receipt: VoiceTargetReceipt,
+    awaiting_verification: bool,
+}
+
+/// The voice as the bank holds it, for the owner (FIX 1567): its identity,
+/// each pack's metadata, its current render decision, and each configured
+/// clone target's current clone, read from one snapshot with no provider
+/// call.
+pub(super) async fn view(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    Path(voice_id): Path<String>,
+    Query(query): Query<ViewQuery>,
+) -> Response {
+    if let Err(refused) = owner_only(&server, &auth) {
+        return refused;
+    }
+    let targets: Vec<_> = server
+        .ai
+        .model_runtime()
+        .media()
+        .clone_targets()
+        .into_iter()
+        .map(|(target, locality)| (target, VoiceTargetRender::HostedClone { locality }))
+        .collect();
+    match server
+        .vault
+        .voice_bank_view(&voice_id, &targets, query.include_generated)
+    {
+        Ok(Some(view)) => Json(view).into_response(),
+        Ok(None) => refusal(
+            StatusCode::NOT_FOUND,
+            "unknown_voice",
+            "the bank holds nothing of that voice",
+        ),
+        Err(error) => bank_refusal(error),
+    }
 }
 
 /// Banks one immutable reference pack. A captured pack cites the subject's
@@ -209,17 +264,18 @@ pub(super) async fn provision(
     if let Err(refused) = owner_only(&server, &auth) {
         return refused;
     }
-    let provisioned = provision_clone(
-        &server,
-        None,
-        &voice_id,
-        &target,
-        body.include_generated,
-        body.language.as_deref(),
-    )
-    .await;
-    match provisioned {
-        Ok(receipt) => Json(receipt).into_response(),
+    let request = CloneRequest {
+        voice_id: &voice_id,
+        target: &target,
+        include_generated: body.include_generated,
+        language: body.language.as_deref(),
+    };
+    match provision_record(&server, None, None, request).await {
+        Ok(record) => Json(ProvisionAnswer {
+            receipt: target_receipt(&record),
+            awaiting_verification: record.awaiting_verification,
+        })
+        .into_response(),
         Err(refused) => refused.response(),
     }
 }
@@ -305,6 +361,20 @@ pub(crate) async fn provision_clone_funded(
     payer: Option<oneiron::llm::run_admission::PayerPerson>,
     request: CloneRequest<'_>,
 ) -> Result<VoiceTargetReceipt, VoiceBankRefusal> {
+    provision_record(server, actor, payer, request)
+        .await
+        .map(|record| target_receipt(&record))
+}
+
+/// [`provision_clone_funded`]'s record of the clone, as the bank holds it.
+/// A current clone its vendor holds for verification is asked about again
+/// first, and recorded verified once the vendor says so (FIX 1567).
+async fn provision_record(
+    server: &SyncServer,
+    actor: Option<&VoiceBankActor>,
+    payer: Option<oneiron::llm::run_admission::PayerPerson>,
+    request: CloneRequest<'_>,
+) -> Result<VoiceTargetRecord, VoiceBankRefusal> {
     let CloneRequest {
         voice_id,
         target,
@@ -331,7 +401,10 @@ pub(crate) async fn provision_clone_funded(
         .voice_target_clone(voice_id, target, include_generated, locality)
         .map_err(VoiceBankRefusal::Bank)?
     {
-        return Ok(target_receipt(&record));
+        if record.awaiting_verification {
+            return Ok(refresh_verification(server, media, &cloner, record).await);
+        }
+        return Ok(record);
     }
     let clone = server
         .vault
@@ -360,20 +433,26 @@ pub(crate) async fn provision_clone_funded(
             .map(|id| (run, id)),
         Err(error) => Err(error),
     };
-    let (run, vendor_voice_id) = created.map_err(|error| {
+    let (run, vendor) = created.map_err(|error| {
         tracing::warn!(%target, %error, "vendor voice clone failed");
         VoiceBankRefusal::VendorCloneFailed(error.to_string())
     })?;
+    let vendor_voice_id = vendor.id;
     let cloned_at = now_secs();
+    let awaiting = vendor.awaiting_verification;
     let recorded = match actor {
-        Some(actor) => {
+        Some(actor) => server.vault.record_voice_target_clone_as(
+            actor,
+            &clone,
+            &vendor_voice_id,
+            cloned_at,
+            awaiting,
+        ),
+        None => {
             server
                 .vault
-                .record_voice_target_clone_as(actor, &clone, &vendor_voice_id, cloned_at)
+                .record_voice_target_clone(&clone, &vendor_voice_id, cloned_at, awaiting)
         }
-        None => server
-            .vault
-            .record_voice_target_clone(&clone, &vendor_voice_id, cloned_at),
     };
     match recorded {
         Ok(record) => {
@@ -383,7 +462,7 @@ pub(crate) async fn provision_clone_funded(
             {
                 tracing::warn!(%target, %error, "spare vendor clone not deleted");
             }
-            Ok(target_receipt(&record))
+            Ok(record)
         }
         Err(error) => {
             // The refs or the render consent changed while they uploaded:
@@ -392,6 +471,42 @@ pub(crate) async fn provision_clone_funded(
                 tracing::warn!(%target, %error, "stale vendor clone not deleted");
             }
             Err(VoiceBankRefusal::Bank(error))
+        }
+    }
+}
+
+/// `record`, a clone its vendor holds for verification, as it stands once
+/// the vendor was asked about it on a paid permit of a run of its own: the
+/// bank records it verified when the vendor says so. A vendor or bank that
+/// could not answer leaves it awaiting.
+async fn refresh_verification(
+    server: &SyncServer,
+    media: &MediaRuntime,
+    cloner: &HostedCloner,
+    record: VoiceTargetRecord,
+) -> VoiceTargetRecord {
+    // The question sends the vendor's voice id alone: it reads no row.
+    let verified = match media.clone_run(Some(Vec::new())) {
+        Ok(run) => cloner.verified(&run, &record.vendor_voice_id).await,
+        Err(error) => Err(error),
+    };
+    match verified {
+        Ok(true) => match server.vault.record_voice_target_verified(
+            &record.voice_id,
+            &record.target,
+            record.revision,
+        ) {
+            Ok(Some(current)) => current,
+            Ok(None) => record,
+            Err(error) => {
+                tracing::warn!(target = %record.target, %error, "verified clone not recorded");
+                record
+            }
+        },
+        Ok(false) => record,
+        Err(error) => {
+            tracing::warn!(target = %record.target, %error, "clone verification not read");
+            record
         }
     }
 }

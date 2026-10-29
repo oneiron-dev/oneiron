@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use oneiron::llm::media::{AiOperation, MediaRequest};
+use oneiron::llm::media::{AiOperation, MediaReplayKey, MediaRequest};
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::memory::foreign_code::ForeignCodeFailure;
 use oneiron::memory::{
@@ -59,7 +59,9 @@ pub(super) fn artifact_asker(
 /// `sources`, the rows the call is read from (FIX 11311). A banked voice
 /// withdrawn or re-recorded while it rendered, on the rung that answered, is
 /// not handed back; nor is a call that found the voice withdrawn everywhere
-/// while it waited (FIX 1746).
+/// while it waited (FIX 1746). An owner's call known by `replay` answers a
+/// repeat from its first answer, unpaid (FIX 2962); a run's call, on its
+/// own line, is never replayed.
 pub(super) async fn rendered(
     server: &SyncServer,
     operation: AiOperation,
@@ -67,13 +69,17 @@ pub(super) async fn rendered(
     voices: Option<RungVoices>,
     run: Option<&RunAdmission>,
     sources: Option<Vec<EntityId>>,
+    replay: Option<MediaReplayKey>,
 ) -> MemoryResult<AiAnswer> {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
-    let answer = match (run, &voices) {
-        (Some(run), voices) => media.run_admitted(run, request, voices.as_ref()).await,
-        (None, Some(voices)) => media.run_voiced(request, voices, None, sources).await,
-        (None, None) => media.run(request, None, sources).await,
+    let answer = match run {
+        Some(run) => media.run_admitted(run, request, voices.as_ref()).await,
+        None => {
+            media
+                .run_replayed(request, voices.as_ref(), None, sources, None, replay)
+                .await
+        }
     };
     let withdrawn = || {
         MemoryError::new(

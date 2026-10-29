@@ -267,6 +267,26 @@ fn extraction_failed() -> oneiron::Error {
     }
 }
 
+/// Why a native call failed, by class alone: what a failed qualify case
+/// reports beside the production class. Never content.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InferDiagnostic {
+    /// The call's window could not be built: a turn longer than the cap,
+    /// or tokenization.
+    Window,
+    /// The window built; the failure came after: weights, decode or assembly.
+    Tensor,
+}
+
+impl InferDiagnostic {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Window => "window",
+            Self::Tensor => "tensor",
+        }
+    }
+}
+
 pub(crate) struct LocalTagger {
     model: ModelId,
     card: ModelCard,
@@ -432,6 +452,17 @@ impl LocalTagger {
         self.extract(input).map_err(|_| extraction_failed())
     }
 
+    /// One input as [`Self::infer`], with the diagnostic class a failed
+    /// qualify case reports beside the production error. Only `oneironer
+    /// qualify` asks.
+    pub(crate) fn infer_with_diagnostic(
+        &self,
+        input: &EncoderInput,
+    ) -> Result<EncoderOutput, (oneiron::Error, InferDiagnostic)> {
+        self.extract_classified(input)
+            .map_err(|(_, diagnostic)| (extraction_failed(), diagnostic))
+    }
+
     /// The counter of this tagger's live windows: its own tokenizer, cap
     /// and live budget, so a count is the window [`Self::infer`] tags in.
     pub(crate) fn window_counter(&self) -> WindowCounter {
@@ -475,10 +506,27 @@ impl LocalTagger {
     }
 
     fn extract(&self, input: &EncoderInput) -> anyhow::Result<EncoderOutput> {
+        self.extract_classified(input).map_err(|(error, _)| error)
+    }
+
+    fn extract_classified(
+        &self,
+        input: &EncoderInput,
+    ) -> Result<EncoderOutput, (anyhow::Error, InferDiagnostic)> {
         let window = match &self.window {
-            WindowMode::Live => Window::new(input, &self.tokenizer, self.cap, self.live)?,
-            WindowMode::Conversation(tokenizer) => Window::conversation(input, tokenizer)?,
-        };
+            WindowMode::Live => Window::new(input, &self.tokenizer, self.cap, self.live),
+            WindowMode::Conversation(tokenizer) => Window::conversation(input, tokenizer),
+        }
+        .map_err(|error| (error, InferDiagnostic::Window))?;
+        self.extract_from_window(input, &window)
+            .map_err(|error| (error, InferDiagnostic::Tensor))
+    }
+
+    fn extract_from_window(
+        &self,
+        input: &EncoderInput,
+        window: &Window<'_>,
+    ) -> anyhow::Result<EncoderOutput> {
         // The live window returns its current turn; the conversation window
         // returns every turn.
         let conversation = matches!(self.window, WindowMode::Conversation(_));
@@ -491,11 +539,11 @@ impl LocalTagger {
         let ner = network.ner.forward(&hidden)?.to_vec2::<f32>()?;
         let named: Vec<Named> = match &network.characters {
             Some(head) => {
-                let characters = Characters::new(&window);
+                let characters = Characters::new(window);
                 let features = CharacterFeatures::new(&characters, &self.char_vocab);
                 let probabilities = head.probabilities(&hidden, &features)?;
                 decode_ner(
-                    &window,
+                    window,
                     &characters,
                     &ner,
                     &self.manifest.ner_labels,
@@ -505,13 +553,13 @@ impl LocalTagger {
                 )?
             }
             None => {
-                let spans = decode(&window, &ner, &self.manifest.ner_labels, 0.0)?;
+                let spans = decode(window, &ner, &self.manifest.ner_labels, 0.0)?;
                 spans.into_iter().map(Named::from).collect()
             }
         };
         let mut mentioned = match (&network.mentions, &self.manifest.mentions) {
             (Some(classifier), Some(head)) => decode(
-                &window,
+                window,
                 &classifier.forward(&hidden)?.to_vec2::<f32>()?,
                 &head.labels,
                 head.o_bias,
@@ -522,7 +570,7 @@ impl LocalTagger {
             mentioned.retain(|span| !head.ignored_labels.contains(&span.label));
         }
         let (spans, moved) = returned_spans(&named, &mentioned, returned);
-        let (spans, mut coordinates) = message_spans(&window, spans, conversation);
+        let (spans, mut coordinates) = message_spans(window, spans, conversation);
         let mut output = EncoderOutput {
             spans,
             links: Vec::new(),
@@ -538,10 +586,10 @@ impl LocalTagger {
             }
         }
         if let Some(coref) = &network.coref {
-            coref.infer(&hidden, &window, &mentioned, &coordinates, &mut output)?;
+            coref.infer(&hidden, window, &mentioned, &coordinates, &mut output)?;
         }
         if let Some(vad) = &network.vad {
-            output.vad = vad.infer(&hidden, &window)?;
+            output.vad = vad.infer(&hidden, window)?;
         }
         Ok(output)
     }

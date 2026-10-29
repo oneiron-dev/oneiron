@@ -95,6 +95,7 @@ vaultFanoutSlots(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 selfBudget(input: unknown): unknown
 selfBudgetLand(input: unknown): unknown
+selfBillingAccountFile(input: unknown): unknown
 vaultBudgetsLeaseOpen(input: unknown): unknown
 vaultBudgetsLease(input: unknown): unknown
 vaultBudgetsLeaseTopUp(input: unknown): unknown
@@ -915,6 +916,7 @@ vaultModelsTrialsNominate(input: unknown): unknown
 vaultModelsTrialsGet(input: unknown): unknown
 vaultModelsTrialsApprove(input: unknown): unknown
 vaultModelsTrialsRun(input: unknown): unknown
+vaultModelsTrialsResendArm(input: unknown): unknown
 vaultModelsTrialsComplete(input: unknown): unknown
 vaultModelsBindingsPropose(input: unknown): unknown
 vaultModelsBindingsGet(input: unknown): unknown
@@ -944,6 +946,7 @@ vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
+vaultQuestionsOutcomeWindows(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
 vaultQuestionsOutcomes(input: unknown): unknown
@@ -954,6 +957,7 @@ vaultDecisionsBandsLearn(input: unknown): unknown
 vaultDecisionsBandsEnforce(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
 vaultDecisionsAsksClimb(input: unknown): unknown
+vaultDecisionsAsksConfirmGrant(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown

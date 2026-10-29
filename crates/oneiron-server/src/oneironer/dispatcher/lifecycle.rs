@@ -38,9 +38,12 @@ pub(crate) enum Fault {
     /// It crashed: Failed, and restarted after its backoff. The reason is a
     /// fixed name (`worker_exited`, `call_timeout`, ...).
     Crash(&'static str),
-    /// It is not the pinned worker (`identity_mismatch:<field>`), or its
-    /// answers do not clear here (`parity_failed`): Unavailable until a new
-    /// process.
+    /// It is not the pinned worker (`identity_mismatch:<field>`), its answers
+    /// do not clear here (`parity_failed`), its Core ML row is not one this
+    /// build runs (`coreml_unsupported_port`, `coreml_unsupported_heads`),
+    /// its model did not load (`coreml_load_failed:<part>`,
+    /// `coreml_io_mismatch:<tensor>`), or its in-process calibration failed
+    /// (`calibration_failed:<detail>`): Unavailable until a new process.
     Down(String),
     /// The dispatcher closed.
     Stopped,
@@ -149,6 +152,16 @@ impl DispatcherHandle {
     pub(crate) fn publish_rank(&self, worker: WorkerId, rank: usize) {
         if let Some(shared) = self.shared.upgrade() {
             shared.publish_rank(worker.0, rank);
+        }
+    }
+
+    /// Takes `worker` out of service for good, while the dispatcher lives,
+    /// for `why` (FIX 7108): it takes no more work, its routed calls go back
+    /// to routing, and its thread ends, dropping its model, once the unit it
+    /// runs is done.
+    pub(crate) fn retire(&self, worker: WorkerId, why: &str) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.settle(worker.0, WorkerState::Unavailable, Some(why));
         }
     }
 }

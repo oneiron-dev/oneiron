@@ -112,13 +112,16 @@ def word_spans(emissions, tokens, owners, words, blank, samples, error):
     return result
 
 
-def emissions_of(audio, processor, model, torch):
-    """Log-softmax CTC emissions for `audio`, one row per encoder frame."""
+def emissions_of(audio, processor, model, torch, units):
+    """Log-softmax CTC emissions for `audio`, one row per encoder frame.
+    Each window's pass through the model is one admitted unit (FIX 3765)."""
     def forward(samples):
-        inputs = processor(samples, sampling_rate=16000, return_tensors="pt")
-        with torch.inference_mode():
-            logits = model(**inputs).logits[0]
-            return torch.log_softmax(logits, dim=-1).cpu().tolist()
+        def run():
+            inputs = processor(samples, sampling_rate=16000, return_tensors="pt")
+            with torch.inference_mode():
+                logits = model(**inputs).logits[0]
+                return torch.log_softmax(logits, dim=-1).cpu().tolist()
+        return units.run("alignment_window", (len(samples) + 15) // 16, run)
     if len(audio) <= WINDOW_SAMPLES:
         return forward(audio)
     frames = (len(audio) - FRAME_SAMPLES) // STRIDE_SAMPLES + 1
@@ -138,7 +141,7 @@ def emissions_of(audio, processor, model, torch):
     return emissions
 
 
-def align(audio, text, snapshot, error):
+def align(audio, text, snapshot, error, units):
     if len(audio) < FRAME_SAMPLES:
         raise error("InvalidCtcAudio")
     import torch
@@ -147,5 +150,5 @@ def align(audio, text, snapshot, error):
     model = Wav2Vec2ForCTC.from_pretrained(snapshot, local_files_only=True,
         use_safetensors=True, torch_dtype=torch.float32).to("cpu").eval()
     words, tokens, owners = transcript_tokens(text, processor.tokenizer.get_vocab(), model.config.pad_token_id, error)
-    emissions = emissions_of(audio, processor, model, torch)
+    emissions = emissions_of(audio, processor, model, torch, units)
     return word_spans(emissions, tokens, owners, words, model.config.pad_token_id, len(audio), error)

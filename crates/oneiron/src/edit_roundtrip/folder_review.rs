@@ -10,6 +10,7 @@ use super::artifact_question::{
 use super::judgment::{SheetAnswerBundle, SheetCellAnswer};
 use super::judgment_cells::named_sheet_cells;
 use super::{CellRef, CellValue, OfficeFormat, RangeRef};
+use crate::llm::decision::questions::keep_artifact_unit_ask;
 use crate::llm::decision::{DecisionImage, EvidenceVersion, MAX_DECISION_IMAGE_BYTES};
 use crate::llm::image::ImageBytes;
 use crate::office_body::document_resources;
@@ -160,6 +161,8 @@ impl Vault {
             };
             let value = answer_cell(&decision.answer)?;
             if value.is_none() {
+                // A unit asked of its role holder keeps its ask (FIX 11231).
+                keep_artifact_unit_ask(self, &pin, &unit, &decision);
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision.clone()),

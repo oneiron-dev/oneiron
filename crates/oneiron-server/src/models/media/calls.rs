@@ -5,7 +5,7 @@
 use super::{
     Arc, FatalLlmError, Held, JobLine, JobRow, JobStore, LlmResult, MediaAnswer, MediaJobState,
     MediaRequest, MediaResponse, MediaRuntime, MediaTicket, PayerPerson, RetryHint, RunAdmission,
-    RungVoices, Vault, job_ticket, submit_stamps,
+    RungVoices, Vault, submit_stamps,
 };
 
 /// A runtime that keeps its jobs hands each running job's permit off as it
@@ -119,46 +119,8 @@ impl MediaRuntime {
         actor: Option<oneiron::EntityId>,
         sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaTicket> {
-        if !request.operation.is_job() {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        let operation = request.operation;
-        let stamps = submit_stamps(actor, &request);
-        let sent = self
-            .store
-            .as_ref()
-            .map(|_| (request.clone(), payer.clone()));
-        let MediaAnswer::Job(job) = self.walk(request, None, payer, sources)?.await? else {
-            return Err(FatalLlmError::EmptyResponse.into());
-        };
-        let id = job_ticket(&job.provider_job);
-        let ticket = MediaTicket {
-            job: id.clone(),
-            model: job.model.to_string(),
-            operation,
-        };
-        if let (Some(store), Some((request, payer))) = (&self.store, sent)
-            && let Err(error) = store.put(
-                &id,
-                JobRow {
-                    model: job.model.clone(),
-                    operation,
-                    provider_job: job.provider_job.clone(),
-                    request,
-                    ended: None,
-                    receipt: job.receipt.clone(),
-                    payer,
-                    stamps,
-                    erased: false,
-                    line: None,
-                },
-            )
-        {
-            tracing::error!(%error, ticket = %id, "a media job was not kept: it runs held here");
-        }
-        self.lock_jobs()
-            .insert(id, Held::Running(Arc::new(tokio::sync::Mutex::new(job))));
-        Ok(ticket)
+        self.submit_replayed(request, payer, actor, sources, None)
+            .await
     }
 
     /// [`Self::submit`] on `run`, the line its caller admitted it on (FIX
@@ -186,7 +148,7 @@ impl MediaRuntime {
         let MediaAnswer::Job(job) = walked.await? else {
             return Err(FatalLlmError::EmptyResponse.into());
         };
-        let id = job_ticket(&job.provider_job);
+        let id = super::replay::fresh_ticket();
         let line = JobLine {
             run: run.run().to_owned(),
         };
@@ -202,13 +164,15 @@ impl MediaRuntime {
                 JobRow {
                     model: job.model.clone(),
                     operation,
-                    provider_job: job.provider_job.clone(),
+                    provider_job: Some(job.provider_job.clone()),
                     request,
                     ended: None,
                     receipt: job.receipt.clone(),
                     payer: run.payer().cloned(),
                     stamps,
                     erased: false,
+                    replay_until_s: None,
+                    paid: false,
                     line: Some(line.clone()),
                 },
             )
@@ -236,6 +200,9 @@ impl MediaRuntime {
     pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
+            // Its submit is still out (FIX 2248).
+            Held::Submitting(_) => return Ok(MediaJobState::Queued),
+            Held::Unsent(row) => return self.resubmit_kept(id, *row).await,
             Held::Unkept(state) => return self.complete_kept_job(id, &state),
             Held::Ended(state) => return Ok(state),
         };

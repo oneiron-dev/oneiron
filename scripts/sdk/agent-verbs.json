@@ -1023,6 +1023,19 @@
       "openapi": true
     },
     {
+      "name": "self.billing.account.file",
+      "description": "Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only.",
+      "input": "crate::llm::run_admission::BillingAccountFiling",
+      "output": "Option<crate::llm::run_admission::FiledBillingAccount>",
+      "call": "crate::llm::run_admission::file_self_billing_account(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.budgets.lease.open",
       "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit.",
       "input": "crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest",
@@ -13860,6 +13873,21 @@
       "openapi": true
     },
     {
+      "name": "vault.models.trials.resend_arm",
+      "description": "Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown.",
+      "input": "crate::llm::catalog_doors::ModelTrialArmRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().resend_model_trial_arm_as_owner(&memory.embedded_owner(\"vault.models.trials.resend_arm\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.models.trials.complete",
       "description": "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer.",
       "input": "crate::llm::catalog_doors::ModelTrialComplete",
@@ -13965,7 +13993,7 @@
     },
     {
       "name": "ai.image",
-      "description": "One image out of the host's image model; reference images make it an edit.",
+      "description": "One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
@@ -13979,7 +14007,7 @@
     },
     {
       "name": "ai.speech",
-      "description": "Speech audio out of text, from the host's speech model.",
+      "description": "Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
@@ -14084,7 +14112,7 @@
     },
     {
       "name": "ai.transcribe",
-      "description": "Text out of speech audio, from the host's transcription model.",
+      "description": "Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
@@ -14098,7 +14126,7 @@
     },
     {
       "name": "ai.embed",
-      "description": "One embedding vector per input text, from the host's embedding model.",
+      "description": "One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
@@ -14112,7 +14140,7 @@
     },
     {
       "name": "ai.video",
-      "description": "Starts a video render as a provider job and answers with its ticket.",
+      "description": "Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job.",
       "input": "AiCallRequest",
       "output": "crate::task_verb::sdk::AiVideoTicket",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
@@ -14278,6 +14306,20 @@
       "section": false
     },
     {
+      "name": "vault.questions.outcome_windows",
+      "description": "Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed.",
+      "input": "crate::receipt::QuestionOutcomeWindowsRequest",
+      "output": "Vec<crate::llm::decision::questions::OutcomeWindowClose>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcome_windows\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.questions.answers",
       "description": "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each.",
       "input": "crate::receipt::QuestionAnswersRequest",
@@ -14415,6 +14457,19 @@
       "input": "crate::receipt::DecisionAskClimbRequest",
       "output": "Option<crate::llm::decision::ResolvedRole>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.climb\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.decisions.asks.confirm_grant",
+      "input": "crate::receipt::DecisionAskConfirmGrantRequest",
+      "output": "crate::llm::decision::DecisionAsk",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.confirm_grant\", &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",

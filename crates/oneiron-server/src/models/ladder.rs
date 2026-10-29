@@ -23,6 +23,8 @@ mod live_fork;
 mod shadow_capture;
 mod step_attempt;
 mod step_quota;
+// FIX 1743: a stream's probation slot, and its end to its offer's health.
+mod stream_health;
 mod worker_lease;
 
 use futures_util::StreamExt;
@@ -679,7 +681,9 @@ impl OfferLadder {
     /// each one parked on a spent window or spent credit (OF-305: asked only
     /// when no rung is left to serve the call). The models it lists for
     /// `use_fallback` are only those that can take this call from this seat.
-    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>) {
+    /// The call's `principal`, when its run names one, is who each question
+    /// is asked for (FIX 562).
+    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>, principal: Option<oneiron::EntityId>) {
         let Some(parked) = walk.parked(self.rungs.len()) else {
             return;
         };
@@ -696,7 +700,7 @@ impl OfferLadder {
                 wire_model: &rung.wire_model,
             };
             self.rests
-                .ask(&rung.offer.binding, rest, asked, &own, &fits);
+                .ask(&rung.offer.binding, rest, asked, &own, &fits, principal);
         }
     }
 
@@ -922,7 +926,7 @@ impl OfferLadder {
     /// ends with its provider's own failure, never a rate refusal.
     /// Every rung parked, the owner is asked about the spent ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
-        self.ask_parked(&walk, call.needs);
+        self.ask_parked(&walk, call.needs, call.run.principal());
         if walk.outage() && !walk.kept() {
             return walk
                 .last
@@ -1179,7 +1183,7 @@ impl OfferLadder {
                         )
                         .await;
                     if fell.is_err() {
-                        self.ask_parked(&walk, call.needs);
+                        self.ask_parked(&walk, call.needs, call.run.principal());
                     }
                     return fell;
                 }
@@ -1369,7 +1373,7 @@ impl OfferLadder {
                             )
                             .await;
                         if fell.is_err() {
-                            self.ask_parked(&walk, call.needs);
+                            self.ask_parked(&walk, call.needs, call.run.principal());
                         }
                         return fell;
                     }
@@ -1448,6 +1452,7 @@ impl OfferLadder {
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
         let operation = request.operation;
         if operation.is_job() {
+            let requested_video_ms = super::media::requested_video_ms(&bound);
             // The caller's deadline ends the send too (FIX 8134).
             let Some(submitted) = call
                 .deadline
@@ -1467,6 +1472,8 @@ impl OfferLadder {
                     model: rung.model.clone(),
                     operation,
                     caps: media.caps.clone(),
+                    paid: false,
+                    requested_video_ms,
                 }))),
                 Err(error) => {
                     let sent = settle_failed(permit);
@@ -1566,7 +1573,7 @@ impl OfferLadder {
                     let selector = Some(selector.unwrap_or(self.name.as_str()));
                     let fell = fallback.stream_from(run, fell_request, selector, false, deadline);
                     if fell.is_err() {
-                        self.ask_parked(&walk, call.needs);
+                        self.ask_parked(&walk, call.needs, call.run.principal());
                     }
                     return fell;
                 }
@@ -1719,7 +1726,7 @@ impl OfferLadder {
                 }
             }
             Err(error) => {
-                self.ask_parked(&walk, call.needs);
+                self.ask_parked(&walk, call.needs, call.run.principal());
                 let _ = events.send(Err(error)).await;
             }
         }
@@ -1937,7 +1944,9 @@ impl OfferLadder {
     /// partials) on the first rung that serves it: one permit for the whole
     /// stream, reserving `bound_ms` of audio at the rung's rate, started at
     /// its media gate before any audio leaves. An open stream never moves to
-    /// another rung; a voice route pins its one rung.
+    /// another rung; a voice route pins its one rung. It holds its offer's
+    /// probation slot to its end, which reports to its offer's health (FIX
+    /// 1743).
     pub(super) fn open_media_stream(
         &self,
         run: &RunAdmission,
@@ -1964,6 +1973,10 @@ impl OfferLadder {
             if !media.takes(&bound) || self.passes_over(call, index, &mut walk) {
                 continue;
             }
+            // A stream takes its offer's probation slot as a request does.
+            let Some(probe) = self.probe_unless_managed(index, &mut walk) else {
+                continue;
+            };
             let reserve = oneiron::llm::run_admission::MediaStreamLease::reserve_units(
                 bound.operation,
                 &media.caps,
@@ -1976,7 +1989,8 @@ impl OfferLadder {
                 reserve,
             )?;
             let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
-            return gate.open_stream(&bound, permit, media.caps.clone(), bound_ms);
+            let lease = gate.open_stream(&bound, permit, media.caps.clone(), bound_ms)?;
+            return Ok(stream_health::reported(lease, probe));
         }
         Err(self.unanswered(call, walk))
     }

@@ -51,8 +51,9 @@ pub enum ModelRole {
     AudioVad,
     TtsDeferred,
     /// The Local-vision slot's small vision model: reads an image's full
-    /// pixels and answers a question about them in text (`ask_image`,
-    /// OF-329), through the LLM slot. No model is chosen for it.
+    /// pixels and answers a question about them in text or a Box as the
+    /// Local rung (`ask_image`, OF-329), through the LLM slot. No model is
+    /// chosen for it.
     LocalVision,
     /// The Coach's own seat (agent-mind AGM-5): its agent-health asks,
     /// code-fix drafts and session-end distill. Optional: with no seat of its

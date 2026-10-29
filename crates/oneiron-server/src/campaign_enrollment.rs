@@ -8,8 +8,9 @@
 //!
 //! Queued attempts are pumped by their own worker ([`spawn`]) under the
 //! campaign's home-node designation, not the sweep's: the campaign home node
-//! claims an attempt, runs its membership leg (`campaign.member`), and settles
-//! it. The outward leg is not run here.
+//! claims an attempt, runs its membership leg (`campaign.member`), then, when
+//! the program step owes a send, its outward leg through the chokepoint
+//! (FIX 2636), and settles it.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,8 +18,9 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimOutcome, CompleteAttempt, FailAttempt, RetryAttempt,
 };
 use oneiron::campaign::enrollment::{
-    CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, audience_programs,
-    campaign_enrollment_event, campaign_home_node_designation, decode_enrollment_attempt_payload,
+    CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, EnrollmentLegDrive,
+    audience_programs, campaign_enrollment_event, campaign_home_node_designation,
+    decode_enrollment_attempt_payload, drive_enrollment_outbound_leg,
     elect_campaign_home_node_designation, enroll_audience_wake, local_campaign_home_node_candidate,
 };
 use oneiron::saved_query::{
@@ -27,6 +29,7 @@ use oneiron::saved_query::{
 };
 use oneiron::{EntityId, Vault};
 
+use crate::connector_call_host::ServedConnectorCallHost;
 use crate::ladder_poll::block_on;
 use crate::server::SyncServer;
 
@@ -76,14 +79,17 @@ pub(crate) async fn wake(
 }
 
 /// Starts the pump. Each pass runs on a blocking thread, held by `admit` (a
-/// managed vault frozen for reap skips it), every [`PUMP`], or at once after
-/// a pass that claimed its full [`PUMP_ATTEMPTS`].
+/// managed vault frozen for reap skips it), at once after a pass that
+/// claimed its full [`PUMP_ATTEMPTS`], on the vault's post-commit attempt
+/// signal (an enqueue), or every [`PUMP`] as a backstop.
 pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
+    let signals = AttemptQueue::new(server.vault()).subscribe();
     tokio::spawn(async move {
+        let mut signals = signals;
         loop {
             let more = {
                 let Some(server) = weak.upgrade() else {
@@ -94,7 +100,7 @@ pub(crate) fn spawn(
                     Some(pass) => {
                         let ran = tokio::task::spawn_blocking(move || {
                             let _pass = pass;
-                            pump(server.vault())
+                            pump(&server)
                         })
                         .await;
                         match ran {
@@ -112,16 +118,28 @@ pub(crate) fn spawn(
                 }
             };
             if !more {
-                tokio::time::sleep(PUMP).await;
+                tokio::select! {
+                    result = signals.recv() => {
+                        if matches!(
+                            result,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed)
+                        ) {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(PUMP) => {}
+                }
             }
         }
     })
 }
 
 /// One pass: on the campaign home node, claims up to [`PUMP_ATTEMPTS`]
-/// attempts, runs each one's membership leg, and settles it. Returns whether
-/// the bound stopped the pass with attempts possibly left.
-fn pump(vault: &Vault) -> oneiron::Result<bool> {
+/// attempts, runs each one's membership leg and, when it applied with a send
+/// owed, its outward leg, and settles it. Returns whether the bound stopped
+/// the pass with attempts possibly left.
+fn pump(server: &SyncServer) -> oneiron::Result<bool> {
+    let vault = server.vault();
     let now = vault.now_recorded_at();
     let Some(node) = campaign_home_node(vault, now)? else {
         return Ok(false);
@@ -135,9 +153,25 @@ fn pump(vault: &Vault) -> oneiron::Result<bool> {
             return Ok(false);
         };
         let executed = block_on(execute(vault, &runner, node, &attempt, now));
-        if !settle(vault, &attempt, executed) {
+        let settlement = match executed {
+            // The membership leg applied, or a crash left it applied, and the
+            // step owes a send: the outward leg runs before the attempt
+            // completes. Its call is the consequence's own, so a re-drive
+            // takes the stored intent and replays its frozen bytes.
+            Ok(
+                EnrollmentExecution::Applied {
+                    outbound_intent: Some(_),
+                }
+                | EnrollmentExecution::AlreadyApplied {
+                    outbound_intent: Some(_),
+                },
+            ) => outward(server, node, &attempt),
+            executed => membership_settlement(executed),
+        };
+        let Some(settlement) = settlement else {
             return Ok(false);
-        }
+        };
+        settle(vault, &attempt, settlement);
     }
     Ok(true)
 }
@@ -192,6 +226,32 @@ async fn execute(
     runner.execute_claimed(node, attempt, &evaluator, now).await
 }
 
+/// Runs the outward leg of `attempt` on this server's connector call host
+/// (FIX 2636). `None` when the designation moved before the send: the row
+/// stays leased for the new home node. A Gate hold waits on the owner's
+/// press and fails the attempt with its digest, as a review hold does.
+fn outward(server: &SyncServer, node: u64, attempt: &AttemptRecord) -> Option<Settlement> {
+    let vault = server.vault();
+    let mut sender = match ServedConnectorCallHost::new(server) {
+        Ok(sender) => sender,
+        Err(error) => return Some(Settlement::Fail(error.to_string())),
+    };
+    let now_ms = crate::runtime::wall_clock_ms();
+    let drive = drive_enrollment_outbound_leg(vault, node, attempt, &mut sender, now_ms);
+    Some(match drive {
+        Ok(EnrollmentLegDrive::Dispatched | EnrollmentLegDrive::NothingOwed) => {
+            Settlement::Complete
+        }
+        Ok(EnrollmentLegDrive::AwaitingApproval { approval_digest }) => Settlement::Fail(format!(
+            "a campaign send awaits the owner's approval press on {approval_digest}"
+        )),
+        Ok(EnrollmentLegDrive::NotHomeNode(_) | EnrollmentLegDrive::NoHomeNode) => return None,
+        // The reason is recorded on the attempt, not logged: it can quote
+        // the vault.
+        Err(error) => Settlement::Fail(error.to_string()),
+    })
+}
+
 /// How one executed attempt settles.
 enum Settlement {
     Complete,
@@ -200,19 +260,15 @@ enum Settlement {
     Fail(String),
 }
 
-/// Completes, retries or fails one executed attempt. An attempt whose
-/// membership leg concluded (applied, already applied, or stale) completes;
-/// one deferred to a member's saved wake runs again at that instant; one
-/// awaiting the owner's review, or one that errored, fails with its reason.
-/// When the designation moved between claim and write the row is left leased
-/// for the new home node once its lease lapses, and the pass stops: returns
-/// `false`.
-fn settle(
-    vault: &Vault,
-    attempt: &AttemptRecord,
-    executed: oneiron::Result<EnrollmentExecution>,
-) -> bool {
-    let result = match executed {
+/// How an attempt whose membership leg owes no send settles. An attempt
+/// whose membership leg concluded (applied, already applied, or stale)
+/// completes; one deferred to a member's saved wake runs again at that
+/// instant; one awaiting the owner's review, or one that errored, fails with
+/// its reason. `None` when the designation moved between claim and write:
+/// the row is left leased for the new home node once its lease lapses, and
+/// the pass stops.
+fn membership_settlement(executed: oneiron::Result<EnrollmentExecution>) -> Option<Settlement> {
+    Some(match executed {
         Ok(
             EnrollmentExecution::Applied { .. }
             | EnrollmentExecution::AlreadyApplied { .. }
@@ -225,12 +281,16 @@ fn settle(
             cause.as_str()
         )),
         Ok(EnrollmentExecution::NotHomeNode(_) | EnrollmentExecution::NoHomeNode) => {
-            return false;
+            return None;
         }
         // The reason is recorded on the attempt, not logged: it can quote
         // the vault.
         Err(error) => Settlement::Fail(error.to_string()),
-    };
+    })
+}
+
+/// Completes, retries or fails one executed attempt as `settlement` says.
+fn settle(vault: &Vault, attempt: &AttemptRecord, settlement: Settlement) {
     let queue = AttemptQueue::new(vault);
     let now = vault.now_recorded_at();
     let fail = |reason: String| {
@@ -242,7 +302,7 @@ fn settle(
             now,
         })
     };
-    let settled = match result {
+    let settled = match settlement {
         Settlement::Complete => queue
             .complete(CompleteAttempt {
                 id: attempt.id,
@@ -266,5 +326,4 @@ fn settle(
     if let Err(error) = settled {
         tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a campaign enrollment attempt was not settled");
     }
-    true
 }

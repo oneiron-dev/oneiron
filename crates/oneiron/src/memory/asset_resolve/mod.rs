@@ -30,10 +30,10 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, Sc
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::QuestionFamily;
+use crate::llm::decision::catalogue::IMAGE_FULL;
 use crate::llm::decision::{
-    AnswerContract, AudioRef, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionLadder, EvidenceVersion, ImageRef, ResolvedMedia, Reversibility, cut_text, fit_state,
+    AnswerContract, AudioRef, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    EvidenceVersion, ImageRef, ResolvedMedia, Reversibility, cut_text, fit_state,
 };
 use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
 use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
@@ -75,15 +75,6 @@ const THUMBNAIL_QUALITY: u8 = 70;
 const HANDLE_HASH_HEX: usize = 16;
 /// The longest edge, in pixels, a zoom scales a region to.
 const MAX_ZOOM_EDGE: u32 = 4096;
-
-/// The family of the host's per-image pick (OF-329): does the task this
-/// read serves need this image in full? Keyed by the read's purpose; the
-/// wording is the host's.
-pub const IMAGE_FULL: QuestionFamily = QuestionFamily {
-    name: "memory.image_full",
-    version: 1,
-    class: DecisionClass::Triage,
-};
 
 impl AssetConsumer {
     /// A consumer that declared no capability: it is served text.
@@ -411,13 +402,16 @@ impl AssetForms {
 
     /// What [`hydrated_asset`] serves of an asset that holds an image: the
     /// rung its ladder reaches within `admits`, the ask raised on `lane`'s
-    /// vault when nothing fit, and with no form the stored body.
+    /// vault when nothing fit, bounded by what the door's room has `left`
+    /// (the vault's `limits.image_room_bytes` when it names none), and with
+    /// no form the stored body.
     fn hydrated(
         self,
         lane: &ScopedRead<'_>,
         consumer: &AssetConsumer,
         pick: Option<&ImagePick<'_>>,
         admits: &mut dyn FnMut(usize) -> bool,
+        left: &dyn Fn() -> Option<u64>,
     ) -> MemoryResult<HydratedAsset> {
         let Some(image) = &self.image else {
             return Ok(HydratedAsset::Stored);
@@ -433,11 +427,8 @@ impl AssetForms {
             }
             Rung::Ask(needed) => {
                 let watch = lane.vault().limit_watch();
-                watch.crossed(
-                    EngineLimit::ImageRoomBytes,
-                    watch.bound(EngineLimit::ImageRoomBytes),
-                    needed,
-                );
+                let bound = left().unwrap_or_else(|| watch.bound(EngineLimit::ImageRoomBytes));
+                watch.crossed(EngineLimit::ImageRoomBytes, bound, needed);
                 HydratedAsset::Omitted { form }
             }
         })

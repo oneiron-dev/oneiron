@@ -451,6 +451,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_billing_account_file(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.billing.account.file", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_budgets_lease_open(
         &self,
         input: serde_json::Value,
@@ -7803,6 +7812,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_models_trials_resend_arm(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.resend_arm", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_models_trials_complete(
         &self,
         input: serde_json::Value,
@@ -8028,6 +8046,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_questions_outcome_windows(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.outcome_windows", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_questions_answers(
         &self,
         input: serde_json::Value,
@@ -8115,6 +8142,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.decisions.asks.climb", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_decisions_asks_confirm_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.asks.confirm_grant", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

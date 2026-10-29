@@ -91,6 +91,13 @@ impl ExportCheck {
             && self
                 .question_check
                 .is_none_or(|check| check.finite && check.tokens_match && check.passed)
+            // A question head serves only once the host reproduced its
+            // receipt (FIX 7568); a missing check is a failed one.
+            && (self.question_check.is_none()
+                || self
+                    .candle_parity
+                    .as_ref()
+                    .is_some_and(CandleParityCheck::passed))
     }
 }
 

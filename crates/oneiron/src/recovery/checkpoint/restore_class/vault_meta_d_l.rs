@@ -331,6 +331,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::LLM_MANIFEST, LIVE),
     (&t::LLM_MODEL_DESCRIPTION, LIVE),
     (&t::LLM_MODEL_TRIAL, LIVE),
+    (&t::LLM_ONEIRONER_BUNDLE_RECEIPT, LIVE),
     (&t::LLM_PURPOSE_DEFAULT_PROPOSAL, LIVE),
     (&t::LLM_PURPOSE_DEFAULTS, LIVE),
     (&t::LLM_REGISTRY_ROW, LIVE),

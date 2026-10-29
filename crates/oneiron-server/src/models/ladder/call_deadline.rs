@@ -96,7 +96,7 @@ impl OfferLadder {
         if matches!(call.deadline, CallDeadline::Caller(_))
             && (call.deadline.expired() || walk.limited())
         {
-            self.ask_parked(&walk, call.needs);
+            self.ask_parked(&walk, call.needs, call.run.principal());
             return CallDeadline::expiry();
         }
         self.unanswered(call, walk)

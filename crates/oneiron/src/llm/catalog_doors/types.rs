@@ -72,6 +72,17 @@ pub struct ModelTrialRef {
     pub trial: EntityId,
 }
 
+/// One arm of a trial the owner resends (FIX 10464): the case's answer and
+/// which of its two reads.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelTrialArmRef {
+    pub question: EntityId,
+    pub trial: EntityId,
+    pub answer: EntityId,
+    pub arm: crate::llm::model_trials::TrialArm,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelTrialComplete {
@@ -95,6 +106,9 @@ pub struct ModelTrialEvidence {
     /// Arms sent with no reading back: while nonzero the costs above are the
     /// known billed spend only, and the comparison is unknown (FIX 9920).
     pub unknown_arms: usize,
+    /// Earlier attempts of arms the owner resent: while nonzero the costs
+    /// above are the known billed spend only (FIX 10464).
+    pub resent_unknown_arms: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -118,8 +132,12 @@ pub struct ModelTrialView {
     /// Arms whose billed reading is kept, of `arms_total` (two per case).
     pub arms_completed: usize,
     /// Arms sent with no reading back: their spend is unknown, and they are
-    /// never sent again.
+    /// never sent again unless the owner resends one (FIX 10464).
     pub arms_unknown: usize,
+    /// The arms `arms_unknown` counts, which the owner may resend.
+    pub unknown_arms: Vec<crate::llm::model_trials::TrialArmKey>,
+    /// Unknown attempts the owner resent: each one's spend stays unknown.
+    pub arms_resent: usize,
     pub arms_total: usize,
     pub evidence: Option<ModelTrialEvidence>,
     pub receipt: Option<ModelTrialReceipt>,
@@ -128,6 +146,7 @@ pub struct ModelTrialView {
 impl ModelTrialView {
     pub(super) fn of(catalog_revision: String, trial: ModelTrial) -> Self {
         let progress = trial.progress_counts();
+        let unknown_arms = trial.unknown_arms();
         Self {
             catalog_revision,
             id: trial.id,
@@ -144,6 +163,8 @@ impl ModelTrialView {
             execution: progress.state,
             arms_completed: progress.completed,
             arms_unknown: progress.unknown,
+            unknown_arms,
+            arms_resent: progress.resent,
             arms_total: progress.total,
             evidence: trial.evidence.map(|value| ModelTrialEvidence {
                 measurements_hash: value.measurements_hash,
@@ -154,6 +175,7 @@ impl ModelTrialView {
                 candidate_cost_per_thousand: value.candidate_cost_per_thousand,
                 trial_cost: value.trial_cost,
                 unknown_arms: value.unknown_arms,
+                resent_unknown_arms: value.resent_unknown_arms,
             }),
             receipt: trial.receipt,
         }

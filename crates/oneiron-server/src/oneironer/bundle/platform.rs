@@ -235,11 +235,14 @@ impl Platform {
         }
     }
 
-    /// Whether this build targets the row's OS and arch: what a fetch with
-    /// `--platforms host` places. `min_os` is admission, not placement.
+    /// Whether this host runs the row's OS and arch: what a fetch with
+    /// `--platforms host` places. On macOS the arch is the runtime host's,
+    /// so an x86_64 build under Rosetta on Apple silicon selects the arm64
+    /// rows; elsewhere, and when the runtime check is unavailable, the build
+    /// target. `min_os` is admission, not placement.
     pub(crate) fn on_host(&self) -> bool {
         let [_, os, arch, ..] = self.head();
-        os == std::env::consts::OS && arch == std::env::consts::ARCH
+        os == std::env::consts::OS && arch == host_arch()
     }
 
     /// Name, os, arch, min_os, runtime and compute units: both rows' head.
@@ -393,4 +396,36 @@ pub(super) fn validate_rows(rows: &[Platform]) -> anyhow::Result<()> {
         row.validate()?;
     }
     Ok(())
+}
+
+/// The host's arch as rows name it: on macOS the runtime host's, so an
+/// x86_64 build under Rosetta on Apple silicon selects the arm64 rows;
+/// elsewhere, and when the runtime check is unavailable, the build target.
+fn host_arch() -> &'static str {
+    #[cfg(target_os = "macos")]
+    if mac_is_arm64() {
+        return "aarch64";
+    }
+    std::env::consts::ARCH
+}
+
+/// Whether this Mac runs arm64: `hw.optional.arm64` is 1 on Apple silicon,
+/// even under Rosetta, and 0 on Intel. False when the check is unavailable,
+/// so the caller falls back to the build target.
+#[cfg(target_os = "macos")]
+fn mac_is_arm64() -> bool {
+    let name = c"hw.optional.arm64";
+    let mut value: libc::c_int = 0;
+    let mut len = std::mem::size_of::<libc::c_int>() as libc::size_t;
+    // SAFETY: `sysctlbyname` reads one int sysctl into `value`.
+    let ok = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            (&raw mut value).cast::<libc::c_void>(),
+            &raw mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    ok == 0 && value == 1
 }

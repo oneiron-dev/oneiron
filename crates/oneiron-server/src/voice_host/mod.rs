@@ -28,6 +28,8 @@ mod public_events;
 mod public_hold;
 mod public_loop;
 mod serve_bindings;
+// The call's speakers matched into its roster, and one retired (FIX 3344, 1522).
+mod speaker_match;
 mod speech;
 mod wire;
 
@@ -112,11 +114,15 @@ pub struct VoiceHost {
     /// The container the session is bound to, whose attendees' entries
     /// stop the call's output (OF-365 P5); `None` for no room's call.
     container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
+    /// The voice roster the call's hello named, which the speakers it hears
+    /// are matched into (FIX 3344); `None` for a call that named none.
+    roster: Option<speaker_match::CallRoster>,
     /// The call's speculative passes that missed their deadline and run on:
     /// joined before the call's write admission drops (FIX 3814).
     speculative: SpeculativeThreads,
     /// The host's owner-plane policy config, captured when the host is
-    /// built; every sentence's safeguard shares it (FIX 5043).
+    /// built; every sentence's safeguard shares it (FIX 5043), its ladder's
+    /// paired question lent (FIX 1201).
     owner_policy: Arc<PolicyModelConfig>,
 }
 
@@ -179,9 +185,11 @@ impl VoiceHost {
             .container
             .as_ref()
             .map(|bound| (Arc::clone(&vault), bound.container));
+        let roster = speaker_match::CallRoster::of(&vault, &bindings.session);
         Ok(Self {
             call_deadline,
             container,
+            roster,
             speculative: SpeculativeThreads::default(),
             state: Arc::new(Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,

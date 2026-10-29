@@ -14,6 +14,7 @@ use serde_json::Value as JsonValue;
 use super::sse::{EventTooLarge, SseDecoder, SseEvent};
 use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 
+mod never_sent;
 mod reply_line;
 
 pub(super) use reply_line::{ReplyBytes, charge_read, holding_chat_replies, holding_replies};
@@ -141,6 +142,9 @@ pub(super) struct JsonReply {
 #[derive(Clone)]
 pub(super) struct ProviderHttp {
     client: reqwest::Client,
+    /// The same client keeping no idle connection: what a request that never
+    /// reached its upstream goes once more on (FIX 7113).
+    fresh: reqwest::Client,
     /// The same client with no provider header and no key: what a file the
     /// provider redirects to elsewhere is fetched with.
     bare: reqwest::Client,
@@ -247,8 +251,11 @@ impl ProviderHttp {
             headers.insert(name, value);
         }
         // One request per call (`SingleSend`): a redirect is answered, never
-        // followed, and nothing is sent twice. reqwest's default policy would
-        // resend a request an HTTP/2 server refused at the protocol level.
+        // followed, and nothing the upstream may have read is sent twice; a
+        // request that never reached it goes once more on `fresh`, a client
+        // that keeps no idle connection (FIX 7113). reqwest's default policy
+        // would resend a request an HTTP/2 server refused at the protocol
+        // level.
         let builder = || {
             let builder = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -257,10 +264,15 @@ impl ProviderHttp {
                 .timeout(Duration::from_secs(provider.timeout_secs));
             if direct { builder.no_proxy() } else { builder }
         };
-        let client = builder().default_headers(headers).build()?;
+        let client = builder().default_headers(headers.clone()).build()?;
+        let fresh = builder()
+            .default_headers(headers)
+            .pool_max_idle_per_host(0)
+            .build()?;
         let bare = builder().build()?;
         Ok(Self {
             client,
+            fresh,
             bare,
             base_url: provider.base_url.clone(),
             compression: provider.request_compression.map(|compression| {
@@ -286,6 +298,7 @@ impl ProviderHttp {
     pub(super) fn native(&self) -> Self {
         Self {
             client: self.client.clone(),
+            fresh: self.fresh.clone(),
             bare: self.bare.clone(),
             base_url: self
                 .base_url
@@ -322,6 +335,8 @@ impl ProviderHttp {
     /// once more, plain, while `admission`, when there is one, still allows
     /// the upload, and otherwise stands; when the plain answer differs, the
     /// encoding was the cause and compression turns off for this process.
+    /// Each send that never reached the upstream goes once more on a fresh
+    /// connection ([`never_sent::send`]).
     fn send_body(
         &self,
         path: &str,
@@ -333,15 +348,15 @@ impl ProviderHttp {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
-            return Box::pin(request().body(plain).send());
+            return never_sent::send(&self.fresh, request().body(plain));
         };
         let (request, resend) = (request(), request());
+        let fresh = self.fresh.clone();
         Box::pin(async move {
-            let response = request
+            let request = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
-                .body(encoded)
-                .send()
-                .await?;
+                .body(encoded);
+            let response = never_sent::send(&fresh, request).await?;
             if !matches!(response.status().as_u16(), 400 | 415)
                 || admission.is_some_and(|admits| !admits())
             {
@@ -349,7 +364,7 @@ impl ProviderHttp {
             }
             let refused = response.status();
             drop(response);
-            let response = resend.body(plain).send().await?;
+            let response = never_sent::send(&fresh, resend.body(plain)).await?;
             if response.status() != refused {
                 compressor.on.store(false, Ordering::Relaxed);
                 tracing::warn!(

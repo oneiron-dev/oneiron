@@ -9,12 +9,14 @@
 use serde_json::json;
 
 use crate::error::Result;
-use crate::llm::{ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse};
+use crate::llm::{
+    ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse, RetryableLlmError,
+};
 
 use super::classifier_lease::ClassifierLease;
 use super::clock::PolicyCallClock;
 use super::contract::{parse_rationale_notes, rationale_notes_format};
-use super::decide::{CLEAN, SAFEGUARD_READ_BUDGET, SafeguardModel};
+use super::decide::{CLEAN, SafeguardModel};
 use super::prompt::{PolicyClassifyPrompt, response_text, retain_resolvable_rule_ids};
 use super::request::PolicyModelConfig;
 use super::verdict::PolicyPassAudit;
@@ -26,10 +28,14 @@ use super::verdict::PolicyPassAudit;
 /// A refused admission, a failed call or an unreadable reply leaves `audit` as
 /// it was; the verdict stands.
 ///
-/// The notes spend what `clock` has left of the read's one
-/// [`SAFEGUARD_READ_BUDGET`], never an allowance of their own (FIX 10034): a
-/// call the spent budget cannot start never goes out, and the decided verdict
-/// stands without its notes, as it does on a failed call.
+/// The notes spend what `clock` has left of the read's one budget
+/// ([`PolicyModelConfig::safeguard_read_budget`], by default
+/// [`SAFEGUARD_READ_BUDGET`](super::decide::SAFEGUARD_READ_BUDGET)), never an
+/// allowance of their own (FIX 10034): a
+/// call the spent budget cannot start never goes out, and one already running
+/// is cut when the budget is spent and recorded as cut on `audit` (FIX
+/// 10531); either way the decided verdict stands without its notes, as it
+/// does on a failed call.
 pub(super) async fn rationale_notes(
     safeguard: SafeguardModel<'_>,
     prompt: &PolicyClassifyPrompt,
@@ -39,7 +45,7 @@ pub(super) async fn rationale_notes(
     audit: &mut PolicyPassAudit,
     clock: &PolicyCallClock,
 ) -> Result<()> {
-    if !clock.may_start(SAFEGUARD_READ_BUDGET) {
+    if !clock.may_start(config.read_budget()) {
         return Ok(());
     }
     let mut request = prompt.llm_request(config);
@@ -63,7 +69,16 @@ pub(super) async fn rationale_notes(
         (SafeguardModel::Budgeted { backend, .. }, Some(admitted)) => (backend, admitted.lease()),
         (SafeguardModel::Budgeted { .. }, None) => return Ok(()),
     };
-    let response = backend.generate(request, lease).await;
+    // A call already running stops when the budget is spent (FIX 10531): the
+    // cut settles as a failed call does, on its estimate.
+    let left = clock.deadline(config.read_budget()).decision_time_left();
+    let response = match tokio::time::timeout(left, backend.generate(request, lease)).await {
+        Ok(response) => response,
+        Err(_) => {
+            audit.model_notes_cut = true;
+            Err(RetryableLlmError::Timeout.into())
+        }
+    };
     if let Some(admitted) = &admitted {
         admitted.settle(&response)?;
     }

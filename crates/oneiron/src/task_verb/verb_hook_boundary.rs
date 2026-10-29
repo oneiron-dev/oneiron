@@ -274,6 +274,12 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
     Ok(session_post(vault, pre, result, session)?)
 }
 
+/// The receipt a resumed call's stored `result` carries, when it decodes as
+/// one: a turn that resumes a settled ask reads its sources from it (FIX 7042).
+pub fn resumed_witness_receipt(result: &Value) -> Option<crate::memory::WitnessReceipt> {
+    serde_json::from_value(result.clone()).ok()
+}
+
 /// The pre chain of a session-only call ([`hook_session`]) a server door
 /// runs itself: its hooks run as on any call, `check` re-admitting a
 /// rewrite, and their records and ask pauses stay with `session`. Only its

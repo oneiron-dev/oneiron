@@ -2,12 +2,16 @@
 //! Entry: HouseGate.
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
+use oneiron::llm::decision::{AnswerContract, HostRuleRef, RemoteDecisionCapability};
+use oneiron::llm::routing::DescriptionNotes;
+use oneiron::skill_hub::claim_replay_filled_state;
+
 use super::{
     Arc, AutoCheckCandidate, AutoCheckNotes, BudgetLease, CallOutcome, DecisionAnswer,
     DecisionCall, DecisionPack, DecisionProvider, DecisionReadGate, GatedRead, HOUSE_READ_RUN,
     HouseGate, HouseRead, LadderNotes, ModelId, ProviderCapability, ProviderDecision, ProviderPin,
     ReasoningEffort, RemoteDecisionSeat, RetrievalDeadline, SeatCandidate, SeatNotes, SeatPhase,
-    SeatRequest, SeatTask, SystemOneRung,
+    SeatRequest, SeatTask, SystemOneRung, Vault,
 };
 
 impl DecisionReadGate for HouseGate {
@@ -91,11 +95,10 @@ impl DecisionProvider for SystemOneRung {
         self.seat.pin()
     }
 
+    /// A score goes to the seat with the caller's levels (FIX 3269); a score
+    /// with none abstains, so the call steps up.
     fn capability(&self) -> ProviderCapability {
-        ProviderCapability {
-            score: false,
-            ..ProviderCapability::default()
-        }
+        ProviderCapability::default()
     }
 
     /// The seat sends a call's images as named wire assets, when the posture
@@ -115,16 +118,32 @@ impl DecisionProvider for SystemOneRung {
 
     fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
         let failed = |what: &str| oneiron::Error::InvalidConfig(format!("system one: {what}"));
+        let abstain = ProviderDecision {
+            answer: DecisionAnswer::Abstain,
+            probability: None,
+            paired: None,
+            person: None,
+            served: None,
+        };
+        let score_levels = call.score_levels().unwrap_or_default();
+        if matches!(call.question.contract, AnswerContract::Score { .. }) && score_levels.is_empty()
+        {
+            return Ok(abstain);
+        }
         let request = SeatRequest {
             question: call.question.clone(),
             state: call.state.clone(),
             images: call.images.to_vec(),
             audio: call.audio.to_vec(),
-            score_levels: Vec::new(),
+            score_levels,
             posture: self.posture,
             remote_opt_in: self.remote_opt_in,
             phase: SeatPhase::Background,
         };
+        // More levels than the seat reads passes it over (FIX 9909).
+        if !RemoteDecisionCapability::default().takes(&request) {
+            return Ok(abstain);
+        }
         request
             .validate_remote()
             .map_err(|_| failed("the posture or the request keeps this call local"))?;
@@ -177,8 +196,80 @@ impl DecisionProvider for SystemOneRung {
     }
 }
 
+/// A model rung of a claim refinement's held-out replay that reads the
+/// label bodies the replay's state left to evidence ids (FIX 1327). Each
+/// call goes to `inner` with those bodies added, read by id from `vault`,
+/// while the state still fits the ladder's bound; every other answer is
+/// `inner`'s own.
+pub(super) struct ClaimBodyRead<'a> {
+    pub(super) inner: &'a dyn DecisionProvider,
+    pub(super) vault: &'a Vault,
+}
+
+impl DecisionProvider for ClaimBodyRead<'_> {
+    fn pin(&self) -> ProviderPin {
+        self.inner.pin()
+    }
+
+    fn capability(&self) -> ProviderCapability {
+        self.inner.capability()
+    }
+
+    fn reads_images(&self) -> bool {
+        self.inner.reads_images()
+    }
+
+    fn image_edge(&self) -> Option<u32> {
+        self.inner.image_edge()
+    }
+
+    fn reads_audio(&self) -> bool {
+        self.inner.reads_audio()
+    }
+
+    fn leaves_host(&self) -> bool {
+        self.inner.leaves_host()
+    }
+
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.inner.cost_per_thousand()
+    }
+
+    fn decide(&self, call: &DecisionCall<'_>) -> oneiron::Result<ProviderDecision> {
+        match claim_replay_filled_state(self.vault, call.evidence, call.state)? {
+            Some(state) => self.inner.decide(&DecisionCall {
+                state: &state,
+                ..*call
+            }),
+            None => self.inner.decide(call),
+        }
+    }
+
+    fn decide_pack(&self, pack: &DecisionPack<'_>) -> oneiron::Result<Vec<ProviderDecision>> {
+        match claim_replay_filled_state(self.vault, pack.evidence, pack.state)? {
+            Some(state) => self.inner.decide_pack(&DecisionPack {
+                state: &state,
+                ..*pack
+            }),
+            None => self.inner.decide_pack(pack),
+        }
+    }
+
+    fn rule_row(
+        &self,
+        call: &DecisionCall<'_>,
+        decision: &ProviderDecision,
+    ) -> Option<HostRuleRef> {
+        self.inner.rule_row(call, decision)
+    }
+}
+
 impl AutoCheckNotes for LadderNotes {
-    fn hold_reasons(&self, candidate: &AutoCheckCandidate<'_>) -> oneiron::Result<Vec<String>> {
+    fn hold_reasons(
+        &self,
+        candidate: &AutoCheckCandidate<'_>,
+        _due: std::time::Instant,
+    ) -> oneiron::Result<Vec<String>> {
         Ok(vec![format!(
             "the host's decision ladder held this {} write from a {} source",
             candidate.predicate,
@@ -196,10 +287,7 @@ impl SeatNotes for LadderNotes {
         effort: ReasoningEffort,
         _deadline: &RetrievalDeadline,
     ) -> oneiron::Result<String> {
-        let effort = match serde_json::to_value(effort) {
-            Ok(serde_json::Value::String(label)) => label,
-            _ => format!("{effort:?}"),
-        };
+        let effort = effort_label(effort);
         let described = candidates
             .iter()
             .find(|candidate| candidate.model == *model)
@@ -211,5 +299,36 @@ impl SeatNotes for LadderNotes {
             task.facet,
             candidates.len()
         ))
+    }
+}
+
+/// A routed seat's reason (FIX 11307), written from the route itself: the model, its effort,
+/// its fitness and the description line it was graded on. No model is asked.
+impl DescriptionNotes for LadderNotes {
+    fn reason(
+        &self,
+        _task: &str,
+        model: &ModelId,
+        description: &str,
+        effort: ReasoningEffort,
+        fitness: f64,
+    ) -> oneiron::Result<String> {
+        Ok(format!(
+            "The host's description route picked {model} at {} effort, fitness {fitness:.2}, on its line: {description}",
+            effort_label(effort)
+        ))
+    }
+}
+
+/// The notes a routed task seat's receipt keeps (FIX 11307).
+pub(crate) fn description_notes() -> &'static dyn DescriptionNotes {
+    &LadderNotes
+}
+
+/// An effort's wire label, as a receipt names it.
+fn effort_label(effort: ReasoningEffort) -> String {
+    match serde_json::to_value(effort) {
+        Ok(serde_json::Value::String(label)) => label,
+        _ => format!("{effort:?}"),
     }
 }

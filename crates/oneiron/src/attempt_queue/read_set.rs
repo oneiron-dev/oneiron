@@ -186,6 +186,50 @@ impl Vault {
         })
     }
 
+    /// [`Self::declare_attempt_read_producers`] inside a writer's `txn`, best
+    /// effort (FIX 7119): it writes in a savepoint of `txn`, as FIX 6667's
+    /// step masking does, so the carrying write is never failed or rolled
+    /// back by the declaration. An error aborts only the savepoint. A failed
+    /// declare stays safe: a producer that reports without a declaration
+    /// marks the set unknown, as an empty declaration does. It logs one WARN
+    /// and returns `false`; `false` too when no live attempt is `attempt`.
+    pub fn declare_attempt_read_producers_best_effort_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        producers: &[ReadSetProducer],
+    ) -> bool {
+        match self.declare_attempt_read_producers_in_savepoint(txn, attempt, producers) {
+            Ok(declared) => declared,
+            Err(error) => {
+                tracing::warn!(
+                    attempt = ?attempt,
+                    kind = ?error.kind(),
+                    %error,
+                    "an attempt's read producers could not be declared; the set stays unknown"
+                );
+                false
+            }
+        }
+    }
+
+    /// One declare in a savepoint of `txn` that commits only when it lands.
+    fn declare_attempt_read_producers_in_savepoint(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: AttemptId,
+        producers: &[ReadSetProducer],
+    ) -> Result<bool> {
+        let mut savepoint = self.store.env.nested_write_txn(txn)?;
+        let declared = AttemptQueue::new(self).declare_attempt_read_producers_in_txn(
+            &mut savepoint,
+            attempt,
+            producers,
+        )?;
+        savepoint.commit()?;
+        Ok(declared)
+    }
+
     /// Records the rows `producer` read attempt `attempt`'s inputs from
     /// (FIX 6934): the ids of the rows it actually read, never ids a caller
     /// named. Pass `None` when the set read is not known complete; it keeps

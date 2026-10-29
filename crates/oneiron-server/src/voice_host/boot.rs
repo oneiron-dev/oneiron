@@ -28,9 +28,9 @@
 //! person's slip stays refused by the owner door, and a hello mixing an
 //! attestation with a slip, or a slip with a nonce, is refused. A plain host
 //! takes no managed hello and no machine claim.
-//! The hello may name the `room` the call is heard in and the voice
-//! `roster` its speakers are matched under. A room the caller cannot read
-//! closes the socket. A bound call is live in its room until it ends: each
+//! The hello may name the `room` the call is heard in, or one of its
+//! threads by any TURN of it (FIX 3572), and the voice `roster` its speakers
+//! are matched under. A room the caller cannot read closes the socket. A bound call is live in its room until it ends: each
 //! speaker it hears that no member covers enters the room, the room's reads
 //! meet them (FIX 1388/1389), and an attendee's entry stops the call's
 //! output (OF-365 P5).
@@ -54,6 +54,7 @@ use oneiron::voice_cascade::uds::SocketGuard;
 use oneiron::voice_cascade::{
     VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
 };
+use oneiron::workspace_roster::RoomWork;
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault, WriteActor};
 use oneiron_vault_contract::{MANAGED_VOICE_NONCE_BYTES, ManagedOwnerAction};
 use serde::Deserialize;
@@ -69,6 +70,7 @@ use super::{
     VoiceWireBindings,
 };
 use crate::ai_host::payer_funding::{PayerFault, room_launch_funding};
+use crate::api::ai::room_place::call_place;
 use crate::auth::{BindingProof, CoreAuth, CoreScope, MachineClaim};
 use crate::config::models::VoiceSettings;
 use crate::managed::{ManagedShutdown, ShutdownSignal};
@@ -121,7 +123,8 @@ enum Hello {
         nonce: Option<String>,
         sample_rate: u32,
         channels: u16,
-        /// The room the call is heard in, by its id.
+        /// The room the call is heard in, by its id, or one of its threads
+        /// by the id of any TURN of it.
         #[serde(default)]
         room: Option<String>,
         /// The voice roster the call's speakers are matched under.
@@ -488,17 +491,23 @@ pub(super) fn prepare_call(
     }) {
         return Err(refused(Refusal::Roster));
     }
-    let container = room
+    let (container, branch) = match room
         .as_deref()
         .map(|room| bind_room(vault, auth, actor, room))
-        .transpose()?;
+        .transpose()?
+    {
+        Some((binding, branch)) => (Some(binding), branch),
+        None => (None, None),
+    };
     // A call heard in a room bills the payer whose consent on its answering
     // agent's join funds that room (FIX 805), resolved once, before any
     // provider work; a call with no payer to bill is refused, typed. The
-    // host's run, each brain turn and the media door all bill it.
+    // host's run, each brain turn and the media door all bill it. A call
+    // heard in one of the room's threads is funded by the join filed for
+    // that thread first, then the room's (FIX 3572).
     let funding = match &container {
         Some(binding) => crate::server::blocking(|| {
-            room_launch_funding(vault, binding.container, None, agent, actor)
+            room_launch_funding(vault, binding.container, branch, agent, actor)
         })
         .map_err(|fault| {
             tracing::info!(%fault, "voice: the room's funding refused the call");
@@ -566,7 +575,11 @@ pub(super) fn prepare_call(
             extraction_prompt: settings.extraction_prompt.clone().unwrap_or_default(),
             session,
             shutdown: shutdown.clone(),
-            owner_policy: server.policy_doors.owner.clone(),
+            // Each sentence's safeguard runs under the host's policy config,
+            // its ladder's paired question lent (FIX 1201).
+            owner_policy: server
+                .decision_host()
+                .policy_model_config(&server.policy_doors.owner),
         },
     )
     .map_err(failed)?;
@@ -609,14 +622,17 @@ pub(super) fn prepare_call(
 /// The room `room` names, bound as the call's container: one the caller
 /// reads, with its members as the caller reads them. Each speaker the call
 /// must place there enters it as the caller, and one it cannot place is
-/// offered as any of the room's contacts.
+/// offered as any of the room's contacts. A TURN of one of its threads names
+/// that thread's room, and the thread, by its root, is returned beside it
+/// (FIX 3572).
 fn bind_room(
     vault: &Vault,
     auth: &CoreAuth,
     caller: EntityId,
     room: &str,
-) -> io::Result<VoiceContainerBinding> {
-    let room = EntityId::from_hex(room).map_err(|_| refused(Refusal::Room))?;
+) -> io::Result<(VoiceContainerBinding, Option<EntityId>)> {
+    let place = EntityId::from_hex(room).map_err(|_| refused(Refusal::Room))?;
+    let RoomWork { room, branch } = call_place(vault, place).map_err(|_| refused(Refusal::Room))?;
     let read =
         crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| refused(Refusal::Room))?;
     // A room the caller cannot read is one that does not exist.
@@ -632,13 +648,16 @@ fn bind_room(
             candidates.push(contact);
         }
     }
-    Ok(VoiceContainerBinding {
-        container: room,
-        writer: caller,
-        writer_class: EdgeActorClass::Human,
-        candidates,
-        ask_seconds: VOICE_IDENTITY_ASK_SECONDS,
-    })
+    Ok((
+        VoiceContainerBinding {
+            container: room,
+            writer: caller,
+            writer_class: EdgeActorClass::Human,
+            candidates,
+            ask_seconds: VOICE_IDENTITY_ASK_SECONDS,
+        },
+        branch,
+    ))
 }
 
 /// Resolves once a call's caller no longer stands as it did when admitted:

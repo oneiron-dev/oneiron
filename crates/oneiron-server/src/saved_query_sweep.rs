@@ -7,9 +7,9 @@
 //! has not moved costs nothing. A committed write also wakes a reactive pass:
 //! each Reactive query is re-checked at once for the people the vault's
 //! change log says a claim write moved, and its paged wake stays the backstop
-//! for what that log cannot show. The reactive re-checks take the queries
-//! round-robin, each pass starting one query on from the last, so no busy
-//! query keeps the rest waiting behind it pass after pass; every wake
+//! for what that log cannot show. Each pass takes its queries round-robin,
+//! starting one query on from the last, so no busy query keeps the rest
+//! waiting behind it pass after pass; every wake
 //! records its query's health, which its owner reads (FIX 11250).
 //!
 //! Only the home node sweeps, so a judge is paid once per vault.
@@ -68,6 +68,8 @@ pub(crate) fn spawn(
         let mut after = head;
         // The query the last reactive re-check took first.
         let mut first = None;
+        // The query the last paged pass took first.
+        let mut paged_first = None;
         let mut next_wake = tokio::time::Instant::now();
         loop {
             let Some(server) = weak.upgrade() else {
@@ -93,29 +95,32 @@ pub(crate) fn spawn(
                 let now = oneiron_vault_contract::now_ts();
                 let mut read = after;
                 let mut turn = first;
+                let mut paged_turn = paged_first;
                 let result = (|| {
                     let home = crate::decision_graph::at_home(&server, now)?;
                     let more = reactive_pass(&server, &mut read, &mut turn, home, now)?;
                     if wake && home {
-                        sweep_pass(&server, &mut cursors, now)?;
+                        sweep_pass(&server, &mut cursors, &mut paged_turn, now)?;
                     }
                     Ok::<_, oneiron::Error>(more)
                 })();
-                (cursors, read, turn, result)
+                (cursors, read, turn, paged_turn, result)
             })
             .await;
             let mut more = false;
             match ran {
-                Ok((kept, read, turn, Ok(remaining))) => {
+                Ok((kept, read, turn, paged_turn, Ok(remaining))) => {
                     cursors = kept;
                     after = read;
                     first = turn;
+                    paged_first = paged_turn;
                     more = remaining;
                 }
-                Ok((_, read, turn, Err(error))) => {
+                Ok((_, read, turn, paged_turn, Err(error))) => {
                     cursors = BTreeMap::new();
                     after = read;
                     first = turn;
+                    paged_first = paged_turn;
                     tracing::warn!(kind = ?error.kind(), "the saved-query sweep failed; it runs again next pass");
                 }
                 Err(error) => {
@@ -205,15 +210,27 @@ fn reactive_pass(
     Ok(changes.more)
 }
 
-/// One wake of each query the sweep evaluates.
+/// One wake of each query the sweep evaluates, in turn: the pass starts at
+/// the first query after `first`, the one the last pass started at, and goes
+/// round, and `first` becomes its own start.
 fn sweep_pass(
     server: &SyncServer,
     cursors: &mut BTreeMap<EntityId, EntityId>,
+    first: &mut Option<EntityId>,
     now: u64,
 ) -> oneiron::Result<()> {
     let vault = server.vault();
-    let queries = sweep_saved_queries(vault)?;
+    let mut queries = sweep_saved_queries(vault)?;
     cursors.retain(|query, _| queries.iter().any(|record| record.query_ref == *query));
+    // The type index lists the queries in id order.
+    let start = first.map_or(0, |last| {
+        queries
+            .iter()
+            .position(|record| record.query_ref > last)
+            .unwrap_or(0)
+    });
+    queries.rotate_left(start);
+    *first = queries.first().map(|record| record.query_ref);
     for record in &queries {
         let Some(read) = owner_read(vault, record) else {
             continue;

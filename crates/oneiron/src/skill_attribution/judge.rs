@@ -53,6 +53,10 @@ pub(crate) struct JudgeTrace {
     pub(crate) source: AuditAnswerSource,
     pub(crate) answers: Vec<RawAnswer>,
     pub(crate) revision: Option<String>,
+    /// The receipt of each decision that gave `answers`, in order; empty when
+    /// no ladder was asked (FIX 447).
+    #[allow(dead_code, reason = "the amendment judgment row keeps them (FIX 447)")]
+    pub(crate) receipts: Vec<crate::llm::decision::DecisionReceipt>,
 }
 
 /// Generation beside a decided attribution: a short note for each answer that
@@ -169,6 +173,10 @@ impl AttributionDecisions<'_> {
                 })
                 .collect(),
             revision: revision.clone(),
+            receipts: decisions
+                .iter()
+                .map(|decision| decision.receipt.clone())
+                .collect(),
         };
         let mut answers = Vec::with_capacity(decisions.len());
         for decision in &decisions {
@@ -381,6 +389,7 @@ impl AttributionRules {
                 request.regions()
             ],
             revision: revision.clone(),
+            receipts: Vec::new(),
         };
         let attributed = verdict.map(|verdict| Attributed {
             answers: vec![HunkVerdict::certain(verdict); request.regions()],

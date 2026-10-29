@@ -14,7 +14,8 @@ pub const MAX_CRITERION_BYTES: usize = 512;
 /// A question's criteria (ARCH-0076 §3): every line a yes needs, any line
 /// that makes a no, and the lines that are never a reason to say no. A
 /// changed line is a new definition, so the question's version versions the
-/// triple. Each provider maps it for its rung; it reads as `criteria` in the
+/// triple. Each provider maps it for its rung, in the rung's form for the
+/// question's contract ([`Self::rubric_in`]); it reads as `criteria` in the
 /// call's state. A list holds every line its author wrote: their count is no
 /// refusal (FIX 9915).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -126,15 +127,52 @@ impl QuestionCriteria {
         parts.join(" ")
     }
 
+    /// The criteria `state` carries, as the rubric a question of `contract`
+    /// is judged by in its own form (FIX 2181): a yes/no question's is
+    /// [`Self::rubric`]. `None` when the state carries no triple.
+    #[must_use]
+    pub fn rubric_in(state: &serde_json::Value, contract: &AnswerContract) -> Option<String> {
+        Self::from_state(state).map(|criteria| criteria.rubric_for(contract))
+    }
+
     /// The triple as a rubric for a rung that reads prose, every line in
     /// order.
     #[must_use]
     pub fn rubric(&self) -> String {
+        self.rubric_for(&AnswerContract::Noul)
+    }
+
+    /// [`Self::rubric`] worded for `contract`: what each list means for a
+    /// choice, a score, or a box or point.
+    #[must_use]
+    pub fn rubric_for(&self, contract: &AnswerContract) -> String {
+        let [needs, vetoes, never] = match contract {
+            AnswerContract::Noul => [
+                "Yes only if all of these hold:",
+                "No if any of these holds:",
+                "Not a reason to say no:",
+            ],
+            AnswerContract::Choice { .. } => [
+                "Choose an option only if all of these hold for it:",
+                "Never choose an option for which any of these holds:",
+                "Not a reason to pass over an option:",
+            ],
+            AnswerContract::Score { .. } => [
+                "Score high only if all of these hold:",
+                "Score low if any of these holds:",
+                "Not a reason to score lower:",
+            ],
+            AnswerContract::Box | AnswerContract::Point => [
+                "The target is only where all of these hold:",
+                "It is not the target where any of these holds:",
+                "Not a reason to call the target absent:",
+            ],
+        };
         let mut rubric = String::from("Criteria:");
         for (head, lines) in [
-            ("Yes only if all of these hold:", &self.yes_if_all),
-            ("No if any of these holds:", &self.no_if_any),
-            ("Not a reason to say no:", &self.not_a_reason_to_say_no),
+            (needs, &self.yes_if_all),
+            (vetoes, &self.no_if_any),
+            (never, &self.not_a_reason_to_say_no),
         ] {
             if lines.is_empty() {
                 continue;

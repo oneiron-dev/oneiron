@@ -14,6 +14,8 @@ mod codec;
 // their run's captured route (an `ExecutorStorage` method, no export).
 mod compaction_step;
 mod execute;
+// FIX 465, FIX 2245: a durable step's media call, by its attempt.
+mod media_step;
 pub mod public;
 mod schema;
 mod schema_guard;
