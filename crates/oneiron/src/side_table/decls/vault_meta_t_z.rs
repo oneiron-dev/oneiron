@@ -197,6 +197,10 @@ side_tables! {
     TYPED_QUESTION_ROOT_SOURCES: VaultMeta b"typed_question:root_sources:v1:" Named;
     /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
     TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
+    /// FIX 11231: one graph unit's person ask, kept while it waits and once its holder's
+    /// answer landed on the unit: the question, principal and unit it decides, the declined
+    /// decision it went up from, and the answer claim that landed. Key: u64be(ask sequence).
+    TYPED_QUESTION_UNIT_ASK: VaultMeta b"typed_question:unit_ask:v1:" Named;
     TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
     /// Reverse watch index from an outcome predicate to the questions learning from it. Key:
     /// string(predicate) "\x00" id16(question).

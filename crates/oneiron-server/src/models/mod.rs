@@ -246,12 +246,23 @@ fn build_provider(
                 .transpose()?;
             // Only an own server reads the host's solo marker (INF 1).
             let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
+            let engine_models: BTreeMap<String, ModelId> = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             let config = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
             let transport = openai::OpenAiHttp {
                 http,
                 cap: output_cap(provider),
                 response_format: provider.response_format,
                 identities: Arc::clone(identities),
+                engine_models,
             };
             // A provider a managed EXL3 worker of this process is bound to
             // calls that worker over its native socket (DESIGN-V2 §8); every

@@ -474,6 +474,15 @@ fn answer_unit(
             validate_decision(question, principal, &decision)?;
             let decision = decided(&context, &images, &audio, *decision);
             if decision.answer == DecisionAnswer::Abstain {
+                // The person ask it went up as is kept on the unit (FIX 11231).
+                let source = &context.sources[0];
+                super::role_asks::keep_question_unit_ask(
+                    vault,
+                    unit,
+                    source.hash,
+                    source.entity_type,
+                    &decision,
+                );
                 return Ok(UnitOutcome::Declined(Box::new(decision)));
             }
             decision
@@ -865,7 +874,8 @@ pub(super) fn unit_audio(
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
 /// well formed. An abstention that asked the next authorised role (OF-506)
-/// ends on the person queue's pin: the ask is pending, never an answer.
+/// ends on the person queue's pin: the ask is pending, never an answer; its
+/// holder's answer lands on the unit once settled (`role_asks`, FIX 11231).
 pub fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,

@@ -7,7 +7,10 @@
 //! has not moved costs nothing. A committed write also wakes a reactive pass:
 //! each Reactive query is re-checked at once for the people the vault's
 //! change log says a claim write moved, and its paged wake stays the backstop
-//! for what that log cannot show.
+//! for what that log cannot show. The reactive re-checks take the queries
+//! round-robin, each pass starting one query on from the last, so no busy
+//! query keeps the rest waiting behind it pass after pass; every wake
+//! records its query's health, which its owner reads (FIX 11250).
 //!
 //! Only the home node sweeps, so a judge is paid once per vault.
 use std::collections::BTreeMap;
@@ -18,8 +21,9 @@ use oneiron::claim::ScopedReadActorKey;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::saved_query::{
     EvaluationRequest, MatcherSpec, MembershipCause, QueryScope, SWEEP_CANDIDATE_TYPE,
-    SavedQueryEvaluation, SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryRecord,
-    WakeEvaluationReport, reactive_saved_queries, saved_query_change_head,
+    SavedQueryEvaluation, SavedQueryEvaluator, SavedQueryJudgeBinding, SavedQueryPass,
+    SavedQueryRecord, SavedQueryWake, SavedQueryWakeOutcome, WakeEvaluationReport,
+    reactive_saved_queries, record_saved_query_wake, saved_query_change_head,
     saved_query_changes_after, sweep_owner_read, sweep_saved_queries,
 };
 use oneiron::{
@@ -62,6 +66,8 @@ pub(crate) fn spawn(
         let mut cursors = BTreeMap::<EntityId, EntityId>::new();
         // The last change-log row a reactive pass read.
         let mut after = head;
+        // The query the last reactive re-check took first.
+        let mut first = None;
         let mut next_wake = tokio::time::Instant::now();
         loop {
             let Some(server) = weak.upgrade() else {
@@ -86,27 +92,30 @@ pub(crate) fn spawn(
                 let _pass = pass;
                 let now = oneiron_vault_contract::now_ts();
                 let mut read = after;
+                let mut turn = first;
                 let result = (|| {
                     let home = crate::decision_graph::at_home(&server, now)?;
-                    let more = reactive_pass(&server, &mut read, home, now)?;
+                    let more = reactive_pass(&server, &mut read, &mut turn, home, now)?;
                     if wake && home {
                         sweep_pass(&server, &mut cursors, now)?;
                     }
                     Ok::<_, oneiron::Error>(more)
                 })();
-                (cursors, read, result)
+                (cursors, read, turn, result)
             })
             .await;
             let mut more = false;
             match ran {
-                Ok((kept, read, Ok(remaining))) => {
+                Ok((kept, read, turn, Ok(remaining))) => {
                     cursors = kept;
                     after = read;
+                    first = turn;
                     more = remaining;
                 }
-                Ok((_, read, Err(error))) => {
+                Ok((_, read, turn, Err(error))) => {
                     cursors = BTreeMap::new();
                     after = read;
+                    first = turn;
                     tracing::warn!(kind = ?error.kind(), "the saved-query sweep failed; it runs again next pass");
                 }
                 Err(error) => {
@@ -134,17 +143,20 @@ pub(crate) fn spawn(
 
 /// One read of the change log after `after`, then each Reactive query
 /// re-checked for the people it moved, in one bounded wake each: a person
-/// past the query's wake bounds waits for its paged pass. Off home, or with
-/// no Reactive query, it skips to the log's head. Returns whether changes
-/// remain to read.
+/// past the query's wake bounds waits for its paged pass. The queries go in
+/// turn: the pass starts at the first query after `first`, the one the last
+/// pass started at, and goes round, and `first` becomes its own start. Off
+/// home, or with no Reactive query, it skips to the log's head. Returns
+/// whether changes remain to read.
 fn reactive_pass(
     server: &SyncServer,
     after: &mut Option<[u8; 16]>,
+    first: &mut Option<EntityId>,
     home: bool,
     now: u64,
 ) -> oneiron::Result<bool> {
     let vault = server.vault();
-    let queries = if home {
+    let mut queries = if home {
         reactive_saved_queries(vault)?
     } else {
         Vec::new()
@@ -161,11 +173,21 @@ fn reactive_pass(
         return Ok(changes.more);
     }
     let page: Vec<EntityId> = changes.persons.into_iter().collect();
+    // The type index lists the queries in id order.
+    let start = first.map_or(0, |last| {
+        queries
+            .iter()
+            .position(|record| record.query_ref > last)
+            .unwrap_or(0)
+    });
+    queries.rotate_left(start);
+    *first = queries.first().map(|record| record.query_ref);
+    let wake = (SavedQueryPass::Reactive, changes.first_recorded_at);
     for record in &queries {
         let Some(read) = owner_read(vault, record) else {
             continue;
         };
-        match evaluate(server, record, &read, &page, now) {
+        match evaluate(server, record, &read, &page, wake, now) {
             Ok(report) => tracing::debug!(
                 query = %record.query_ref.to_hex(),
                 evaluated = report.evaluated,
@@ -201,7 +223,8 @@ fn sweep_pass(
             .max(1);
         let after = cursors.get(&record.query_ref).copied();
         let page = vault.entities_by_type_page(SWEEP_CANDIDATE_TYPE, after.as_ref(), wake)?;
-        let report = match evaluate(server, record, &read, &page, now) {
+        let paged = (SavedQueryPass::Paged, None);
+        let report = match evaluate(server, record, &read, &page, paged, now) {
             Ok(report) => report,
             Err(error) => {
                 tracing::warn!(
@@ -260,22 +283,44 @@ fn owner_read(vault: &Vault, record: &SavedQueryRecord) -> Option<ScopedReadActo
     }
 }
 
-/// One bounded wake of `record` over `page`, read under `read`. An LLM
-/// judge's first read goes on the query's named model under a run on the
-/// owner's line; a query whose model this server does not serve is not
-/// evaluated.
+/// One bounded wake of `record` over `page`, read under `read`, by `pass`
+/// and answering the change made at `triggered_at`. An LLM judge's
+/// first read goes on the query's named model under a run on the owner's
+/// line; a query whose model this server does not serve is not evaluated.
+/// Whatever it comes to is recorded as the query's health (FIX 11250).
 fn evaluate(
     server: &SyncServer,
     record: &SavedQueryRecord,
     read: &ScopedReadActorKey,
     page: &[EntityId],
+    (pass, triggered_at): (SavedQueryPass, Option<u64>),
     now: u64,
 ) -> oneiron::Result<WakeEvaluationReport> {
-    with_evaluator(server, record, read, now, |evaluator| {
+    let woke = with_evaluator(server, record, read, now, |evaluator| {
         block_on(crate::campaign_enrollment::wake(
             evaluator, record, page, now,
         ))
-    })
+    });
+    let outcome = match &woke {
+        Ok(report) => SavedQueryWakeOutcome::evaluated(report),
+        Err(error) => SavedQueryWakeOutcome::Failed {
+            kind: format!("{:?}", error.kind()),
+        },
+    };
+    let wake = SavedQueryWake {
+        pass,
+        triggered_at,
+        outcome,
+    };
+    let ended = oneiron_vault_contract::now_ts();
+    if let Err(error) = record_saved_query_wake(server.vault(), record.query_ref, wake, ended) {
+        tracing::warn!(
+            query = %record.query_ref.to_hex(),
+            kind = ?error.kind(),
+            "a saved query's health was not recorded; its next wake records it"
+        );
+    }
+    woke
 }
 
 /// One bounded manual evaluation of `record`, using the sweep's own judge

@@ -9,6 +9,7 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SAVED_QUERY_WATERMARK, CONTENT),
     (&t::SAVED_QUERY_MEMBERSHIP_EVENT, CONTENT),
+    (&t::SAVED_QUERY_HEALTH, CONTENT),
     (&t::SAVED_QUERY_MEMO, CONTENT),
     (&t::SAVED_QUERY_PACK_MIGRATION_MAP, CONTENT),
     (&t::SAVED_QUERY_REPAIR, CONTENT),
@@ -303,6 +304,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TYPED_QUESTION_RESTS_ON, CONTENT),
     (&t::TYPED_QUESTION_ROOT_SOURCES, CONTENT),
     (&t::TYPED_QUESTION_UNIT_WATCH, CONTENT),
+    (&t::TYPED_QUESTION_UNIT_ASK, CONTENT),
     (&t::TYPED_QUESTION, CONTENT),
     (&t::TYPED_QUESTION_WATCH, CONTENT),
     (&t::AFFECT_VAD_ANNOTATION_META, CONTENT),

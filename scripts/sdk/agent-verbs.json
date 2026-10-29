@@ -1218,6 +1218,36 @@
       "openapi": true
     },
     {
+      "name": "vault.budgets.resident_shares",
+      "description": "The owner reads every resident's share of the host-paid allocation, soft or pinned or the default split, and its depletion on the allocation it last drew on.",
+      "input": "crate::llm::run_admission::resident_doors::ResidentSharesRequest",
+      "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
+      "call": "crate::llm::run_admission::resident_doors::resident_shares_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.resident_shares.set",
+      "description": "The owner sets one resident's share of the host-paid allocation: its units or the default split, soft or pinned. Its depletion stays as it stands.",
+      "input": "crate::llm::run_admission::resident_doors::SetResidentShareRequest",
+      "output": "crate::llm::run_admission::resident_doors::ResidentSharesView",
+      "call": "crate::llm::run_admission::resident_doors::set_resident_share_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.resident_shares.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.runners.seats.quotas",
       "description": "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from.",
       "input": "crate::dispatch_byoa::RunnerSeatQuotasRequest",

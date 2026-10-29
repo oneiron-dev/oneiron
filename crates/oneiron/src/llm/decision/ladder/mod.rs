@@ -113,6 +113,16 @@ pub(super) fn take(
     Ok(reads)
 }
 
+/// Each answered read's receipt carries `cost`, what the provider that answered it costs
+/// per thousand units as its host knows it; none when it knows none.
+pub(super) fn price_answers(reads: &[Read], readings: &mut [Readings], cost: Option<f64>) {
+    for (read, readings) in reads.iter().zip(readings.iter_mut()) {
+        if matches!(read, Read::Answer(_)) {
+            readings.cost = cost;
+        }
+    }
+}
+
 /// A cut read's rung on each question's receipt: the model a late reply names as served,
 /// when that name is valid, else the pin the read went out to. The late reply's answer and
 /// readings stay off the receipt; an unfinished reply is not an answer.

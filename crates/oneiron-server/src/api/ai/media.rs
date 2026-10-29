@@ -522,9 +522,11 @@ async fn answered(
 ) -> Response {
     let media = server.ai.model_runtime().media();
     let hint = media.retry_hint(&request, voices.as_ref());
+    // Its parts come inline, so a call in no banked voice reads no row
+    // (FIX 11311); a banked voice's person is not read here.
     let answer = match &voices {
-        Some(voices) => media.run_voiced(request, voices, None).await,
-        None => media.run(request, None).await,
+        Some(voices) => media.run_voiced(request, voices, None, None).await,
+        None => media.run(request, None, Some(Vec::new())).await,
     };
     let withdrawn = || {
         refusal(
@@ -601,7 +603,7 @@ pub(super) async fn video(
         .ai
         .model_runtime()
         .media()
-        .submit(request, None, auth.principal_entity())
+        .submit(request, None, auth.principal_entity(), Some(Vec::new()))
         .await
     {
         Ok(ticket) => (StatusCode::ACCEPTED, Json(ticket)).into_response(),

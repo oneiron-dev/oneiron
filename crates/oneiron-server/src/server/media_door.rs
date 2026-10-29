@@ -130,7 +130,11 @@ impl AiMediaDoor for MediaDoor {
     fn call<'a>(&'a self, request: MediaRequest) -> MediaFuture<'a, MediaResponse> {
         Box::pin(async move {
             let request = self.admit(request)?;
-            self.runtime.media().run(request, self.payer.clone()).await
+            // The engine's door names no rows its request was read from.
+            self.runtime
+                .media()
+                .run(request, self.payer.clone(), None)
+                .await
         })
     }
 }
@@ -145,7 +149,7 @@ impl VoiceStreamDoor for MediaDoor {
             let request = self.admit(request)?;
             self.runtime
                 .media()
-                .open_stream(request, bound_ms, self.payer.clone())
+                .open_stream(request, bound_ms, self.payer.clone(), None)
         })
     }
 }

@@ -16,14 +16,18 @@ use super::definition::{
     SavedQueryLifecycle, SavedQueryRecord,
 };
 use super::filter::{FilterAst, MatcherSpec};
+use super::health::{SavedQueryHealth, health_in_txn};
 use super::lifecycle::next_version;
 use super::storage::{load_record_in_txn, saved_query_type_byte, store_record_in_txn};
 
-/// An active durable watch, addressed by its SAVED_QUERY identity.
+/// An active durable watch, addressed by its SAVED_QUERY identity, with
+/// its health as the evaluator's last wake of it left it (FIX 11250): `None`
+/// before its first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryWatch {
     pub query_ref: EntityId,
     pub anchor: EntityId,
+    pub health: Option<SavedQueryHealth>,
 }
 
 fn kind_is_installed(vault: &Vault) -> bool {
@@ -122,7 +126,7 @@ pub fn set_memory_watch(
                     .into());
                 }
                 if record.definition.lifecycle.is_evaluable() == enabled {
-                    return Ok(enabled.then_some(MemoryWatch { query_ref, anchor }));
+                    return Ok(watch_in_txn(vault, txn, enabled, query_ref, anchor)?);
                 }
                 record.definition.definition_version =
                     next_version(record.definition.definition_version)?;
@@ -170,8 +174,27 @@ pub fn set_memory_watch(
             }
             None => return Ok(None),
         }
-        Ok(enabled.then_some(MemoryWatch { query_ref, anchor }))
+        Ok(watch_in_txn(vault, txn, enabled, query_ref, anchor)?)
     })
+}
+
+/// The watch `query_ref` names over `anchor` when `enabled`, with its health
+/// as `txn` reads it.
+fn watch_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    enabled: bool,
+    query_ref: EntityId,
+    anchor: EntityId,
+) -> Result<Option<MemoryWatch>> {
+    if !enabled {
+        return Ok(None);
+    }
+    Ok(Some(MemoryWatch {
+        query_ref,
+        anchor,
+        health: health_in_txn(vault, txn, query_ref)?,
+    }))
 }
 
 /// Reads one owner's watch, without revealing another owner's query.
@@ -186,11 +209,10 @@ pub fn memory_watch(
     let kind = saved_query_type_byte(vault)?;
     let txn = vault.store.env.read_txn()?;
     let query_ref = watch_id(owner, anchor)?;
-    Ok(load_record_in_txn(vault, &txn, query_ref, kind)?
-        .filter(|record| {
-            is_watch(record, owner, anchor) && record.definition.lifecycle.is_evaluable()
-        })
-        .map(|_| MemoryWatch { query_ref, anchor }))
+    let watched = load_record_in_txn(vault, &txn, query_ref, kind)?.is_some_and(|record| {
+        is_watch(&record, owner, anchor) && record.definition.lifecycle.is_evaluable()
+    });
+    watch_in_txn(vault, &txn, watched, query_ref, anchor)
 }
 
 /// Lists only active watches bound to this owner. Other SAVED_QUERY definitions
@@ -214,6 +236,7 @@ pub fn memory_watches(vault: &Vault, owner: EntityId) -> Result<Vec<MemoryWatch>
             watches.push(MemoryWatch {
                 query_ref: id,
                 anchor,
+                health: health_in_txn(vault, &txn, id)?,
             });
         }
     }

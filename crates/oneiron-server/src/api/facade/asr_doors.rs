@@ -8,6 +8,7 @@ use std::time::Duration;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::speculative::{
     SpeculativeFinal, SpeculativeFireDecision, SpeculativeSession, SpeculativeSessionConfig,
+    SpeculativeThreads,
 };
 use oneiron::task_verb::sdk::*;
 use oneiron::{EdgeActorClass, EntityId};
@@ -30,6 +31,10 @@ struct Entry {
 struct Utterance {
     opened: AsrSession,
     core: Option<SpeculativeSession>,
+    /// The utterance's passes that missed their deadline and run on: joined
+    /// when it is finalized or closed, so none outlives the utterance whose
+    /// requests fired it (FIX 11316).
+    threads: SpeculativeThreads,
     revision: Option<u64>,
     last_fire_receipt: Option<String>,
 }
@@ -105,6 +110,7 @@ pub(crate) async fn ai_voice_asr_open(
             .deadline_ms
             .map(Duration::from_millis)
             .unwrap_or_else(|| server.vault().call_mode_deadline());
+        let threads = SpeculativeThreads::default();
         let core = memory.speculative_session(
             Arc::clone(&server.vault),
             SpeculativeSessionConfig {
@@ -112,7 +118,7 @@ pub(crate) async fn ai_voice_asr_open(
                 fire_limit,
                 final_limit,
                 deadline: Some(deadline),
-                threads: None,
+                threads: Some(threads.clone()),
             },
             &input.scope,
         )?;
@@ -139,6 +145,7 @@ pub(crate) async fn ai_voice_asr_open(
                     state: Mutex::new(Utterance {
                         opened: opened.clone(),
                         core: Some(core),
+                        threads,
                         revision: None,
                         last_fire_receipt: None,
                     }),
@@ -241,7 +248,10 @@ pub(crate) async fn ai_voice_asr_finalize(
             let fires_used = core.fires_used();
             // OF-108 consumes the session even if its final retrieval fails.
             server.asr_sessions.remove(&input.handle)?;
-            let (finished, narrowing) = core.finalize_scoped(input.partial())?;
+            let finished = core.finalize_scoped(input.partial());
+            // Its late passes, the finalize pass's too, end before it answers.
+            state.threads.join();
+            let (finished, narrowing) = finished?;
             let (decision, scores, run_id, warm_appended, partial, reused_fire_receipt) =
                 match finished {
                     SpeculativeFinal::Promoted {
@@ -309,6 +319,7 @@ pub(crate) async fn ai_voice_asr_close(
         let mut state = entry.state.lock().map_err(|_| internal(verb))?;
         state.core.take().ok_or_else(missing)?;
         server.asr_sessions.remove(&input.handle)?;
+        state.threads.join();
         Ok(AsrClosed {
             handle: input.handle,
         })

@@ -201,8 +201,13 @@ pub(crate) async fn ai_media_as_owner(
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
+    // Its parts come inline; a banked voice is read from its person.
+    let sources = match &input.voice {
+        Some(AiVoice::Bank { voice_id, .. }) => voice_owner(server, voice_id),
+        Some(AiVoice::Stock { .. }) | None => Some(Vec::new()),
+    };
     let (request, voices) = prepare(server, operation, input)?;
-    rendered(server, operation, request, voices, None).await
+    rendered(server, operation, request, voices, None, sources).await
 }
 
 /// One media call of a program's run (FIX 3194, FIX 780, FIX 6083):
@@ -216,7 +221,7 @@ pub(crate) async fn ai_media_for_run(
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
     let (request, voices) = prepare(server, operation, input)?;
-    rendered(server, operation, request, voices, Some(run)).await
+    rendered(server, operation, request, voices, Some(run), None).await
 }
 
 /// `ai.speech` for a pumped agent run (FIX 3194): [`ai_media_for_run`]'s.
@@ -367,7 +372,8 @@ pub(crate) async fn ai_video_as_owner(
         .ai
         .model_runtime()
         .media()
-        .submit(request, None, actor)
+        // Its parts come inline: it reads no row.
+        .submit(request, None, actor, Some(Vec::new()))
         .await
         .map_err(|error| failure(AiOperation::Video, &error))?;
     Ok(AiVideoTicket {

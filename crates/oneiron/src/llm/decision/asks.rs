@@ -13,6 +13,7 @@
 //! The ask carries what the ladder hands the queue and nothing more; the host renders its
 //! own text from the question's.
 
+mod queue;
 mod signal;
 
 use std::collections::{BTreeSet, VecDeque};
@@ -188,59 +189,7 @@ impl Vault {
         request: &HumanDecisionRequest,
         state: Option<&serde_json::Value>,
     ) -> Result<u64> {
-        request.question.validate()?;
-        request.to.validate()?;
-        let prior = match (&request.prior, &request.prior_provider) {
-            (None, _) => None,
-            (Some(prior), Some(provider)) => Some(AskPrior {
-                answer: prior.answer.clone(),
-                probability: prior.probability,
-                provider: provider.clone(),
-                paired: prior.paired.map(|reading| reading.bind(provider.clone())),
-                person: prior.person.map(|reading| reading.bind(provider.clone())),
-            }),
-            (Some(_), None) => return Err(invalid("a prior without its provider")),
-        };
-        let asked_at = self.store.clock.now_recorded_at();
-        self.with_write_txn_grouped(|txn| {
-            let mut last = None;
-            for row in ASKS
-                .iter_rev_from(&self.store, txn, &[])?
-                .take(SAME_ASK_SCAN)
-            {
-                let (seq, ask) = row?;
-                last.get_or_insert(seq);
-                if ask.is_open_for(request) {
-                    return Ok(seq);
-                }
-            }
-            let seq = match last {
-                None => 1,
-                Some(seq) => seq
-                    .checked_add(1)
-                    .ok_or(Error::IndexOverflow("decision ask sequence"))?,
-            };
-            let role = self.next_ask_role_in_txn(txn, &request.to, None)?;
-            let ask = DecisionAsk {
-                seq,
-                id: EntityId::now(),
-                asked_at,
-                question: request.question.clone(),
-                principal: AnswerActor::Actor(request.principal),
-                evidence: request.evidence.clone(),
-                reason: request.reason,
-                prior,
-                queue_pin: request.queue_pin.clone(),
-                to: request.to.clone(),
-                correlation: request.correlation,
-                role,
-                answer: None,
-                withdrawn_at: None,
-                pack_state: state.cloned(),
-            };
-            ASKS.put(&self.store, txn, &seq, &ask)?;
-            Ok(seq)
-        })
+        self.with_write_txn_grouped(|txn| self.queue_decision_ask_in_txn(txn, request, state))
     }
 
     /// Up to `limit` asks after arrival number `after` (from the first when `None`), oldest
@@ -519,6 +468,8 @@ impl Vault {
         })?;
         // The answer is durable: every waiter on the ask wakes (FIX 4706).
         self.signal_decision_answer(seq);
+        // A graph unit's ask lands its answer on the unit (FIX 11231).
+        self.land_question_unit_answer(seq);
         Ok(answered)
     }
 

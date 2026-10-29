@@ -91,15 +91,18 @@ impl MediaRuntime {
     }
 
     /// A run of its own on the media meter for a voice clone's calls (FIX
-    /// 3009): the clone wire admits and settles each one on it.
-    pub fn clone_run(&self) -> LlmResult<RunAdmission> {
+    /// 3009): the clone wire admits and settles each one on it. Its permits
+    /// carry `sources`, the rows the calls are read from (FIX 11311), `None`
+    /// when not known whole.
+    pub fn clone_run(&self, sources: Option<Vec<oneiron::EntityId>>) -> LlmResult<RunAdmission> {
         let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
         Ok(undeclared_run(
             MEDIA_RUN,
             meter,
             self.host.clone(),
             Arc::clone(&self.receipts),
-        ))
+        )
+        .sourced(sources))
     }
 
     /// [`Self::clone_run`], billed to `payer` when an acting payer's own
@@ -108,10 +111,14 @@ impl MediaRuntime {
     /// `None` is [`Self::clone_run`] itself, the vault's run as before; the
     /// creator stays the run's initiator either way, never its payer by
     /// having made the voice.
-    pub fn clone_run_funded(&self, payer: Option<PayerPerson>) -> LlmResult<RunAdmission> {
+    pub fn clone_run_funded(
+        &self,
+        payer: Option<PayerPerson>,
+        sources: Option<Vec<oneiron::EntityId>>,
+    ) -> LlmResult<RunAdmission> {
         match payer {
-            None => self.clone_run(),
-            Some(payer) => self.media_run(Some(payer)),
+            None => self.clone_run(sources),
+            Some(payer) => self.media_run(Some(payer), sources),
         }
     }
 

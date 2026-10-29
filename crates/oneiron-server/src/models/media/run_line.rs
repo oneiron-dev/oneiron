@@ -42,7 +42,8 @@ impl MediaRuntime {
     /// kept until then.
     pub(super) fn job_run(&self, row: &JobRow) -> LlmResult<RunAdmission> {
         let Some(line) = &row.line else {
-            return self.media_run(row.payer.clone());
+            // A kept job's row names no sources: a restart knows none.
+            return self.media_run(row.payer.clone(), None);
         };
         let meter = self
             .program_line

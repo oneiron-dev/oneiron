@@ -546,6 +546,9 @@ pub(super) fn prepare_call(
         .models()
         .router()
         .ok_or_else(|| failed("no [models] router"))?;
+    // The run names no source rows (FIX 11311): its sentence safeguard
+    // reads what the brain answered from its own reads, which this open
+    // cannot know whole.
     let run = server
         .ai
         .model_runtime()

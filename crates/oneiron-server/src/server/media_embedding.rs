@@ -566,7 +566,8 @@ impl RuntimeMediaEmbedder {
             .ai
             .model_runtime()
             .media()
-            .run(request, self.payer.clone())
+            // An embedding's source rows are not known here (FIX 11311).
+            .run(request, self.payer.clone(), None)
             .await
             .map_err(MediaEmbedRefusal::Call)?;
         let mark = self.answer_mark(&response.usage.raw_provider);

@@ -10,8 +10,9 @@
 //! one. The legal context never blocks an enrollment: an unresolved
 //! jurisdiction is recorded as unresolved, and a third party's voice whose
 //! release is not shown where its law is unresolved or asks one leaves the
-//! owner a question owed, marked on the print until a typed question asks it.
-//! The owner's own voice is recorded only.
+//! owner a question owed, marked on the print, and the write that keeps the
+//! print raises that typed question (`print_ask`, FIX 10789). The owner's own
+//! voice is recorded only.
 
 use rmpv::Value;
 
