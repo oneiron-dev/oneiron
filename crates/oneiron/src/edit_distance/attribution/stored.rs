@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::learning::TypeRef;
 use crate::side_table::{self, CodecError, FixedSideKey, HexId, Raw, RawValue, SideKey, SideTable};
 use crate::skill_attribution::AuditBatch;
 
@@ -26,11 +27,12 @@ pub(super) const JUDGMENT: SideTable<String, StoredJudgment, Raw> =
 pub(super) const PREFERENCE: SideTable<String, StoredPreference, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_PREFERENCE_PROPOSAL);
 
-/// The `(predicate, subject, scope)` tuples this projector holds a live head
-/// for — the retraction ledger. A cost head's scope is its cost scope; an
-/// `actor.lesson` head's is the amendment receipt it was learned from. Without
-/// it a re-judged receipt's OLD tuple is unreachable: no judgment names it any
-/// more, and nothing else knows a row was ever landed there.
+/// The `(predicate, subject, scope)` tuples this projector holds a live row
+/// for — the retraction ledger. Each scope is the receipt the row was learned
+/// from: a `learning.edit_cost` target's is the receipt whose evidence the
+/// subject's cells hold, an `actor.lesson` head's the amendment receipt.
+/// Without it a re-judged receipt's OLD tuple is unreachable: no judgment
+/// names it any more, and nothing else knows a row was ever landed there.
 pub(super) const TARGET: SideTable<TargetKey, StoredTarget, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_EDIT_COST_TARGET);
 
@@ -90,7 +92,7 @@ pub(super) const TARGET_ROW_LABEL: &str = "edit cost target row";
 pub(super) const AUDIT_ROW_LABEL: &str = "amendment judge audit row";
 
 /// Longest accepted amendment scope — the ED lane's scope bound, shared with
-/// `edit_distance::escalation` and the `actor.edit_cost` row it feeds.
+/// `edit_distance::escalation` and the `learning.edit_cost` cells it feeds.
 pub(super) const MAX_AMENDMENT_SCOPE_LEN: usize = crate::consent::MAX_CONSENT_REF_LEN;
 
 pub(super) const fn invalid(reason: &'static str) -> Error {
@@ -109,6 +111,15 @@ pub(super) struct StoredEvidence {
     /// The joined attempt's pack receipt. Rows written before the join read back without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) attempt: Option<String>,
+    /// The drafting executor at revision; absent when unknown (FIX 9812).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) executor: Option<String>,
+    /// The drafting run's task type; absent when no task placed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) type_ref: Option<TypeRef>,
+    /// The drafting run's project (hex); absent, the vault's (FIX 6038).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
     pub(super) scope: String,
     pub(super) cause: Option<String>,
     pub(super) followed_skill: Option<bool>,
@@ -146,6 +157,32 @@ pub(super) struct StoredJudgment {
     /// Each changed hunk's label and substitution identities, in text order; empty for an
     /// amendment judged as one region (FIX 9808).
     pub(super) hunks: Vec<StoredHunk>,
+    /// The drafting executor at revision the evidence carried when judged; absent when unknown.
+    /// Routing folds and rebuilds read this stamp alone (FIX 9812).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) executor: Option<String>,
+    /// The drafting run's task type the evidence carried when judged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) type_ref: Option<TypeRef>,
+    /// The project (hex) whose edit-cost cells the judgment lands in; absent,
+    /// the vault's (FIX 6038).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) project: Option<String>,
+    /// The judge revision whose answers the judgment stands on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) judge: Option<String>,
+    /// The judge's answering model identity, compared with the executor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) judge_model: Option<String>,
+    /// The actor whose proposal was judged (hex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) actor: Option<String>,
+    /// The skill the proposal rode (hex).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) skill: Option<String>,
+    /// A rejection's judgment, which carries no Δ (FIX 7823).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) rejected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,11 +191,13 @@ pub(super) struct StoredHunk {
     pub(super) substitutions: Vec<String>,
 }
 
-/// The amended attempt's pack receipt and the skill its pack loaded (hex).
+/// The amended attempt's pack receipt, and the skill its pack loaded (hex) when the evidence
+/// named one: only that pair lets a `skill_defect` share replace the attempt's outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredAttempt {
     pub(super) receipt: String,
-    pub(super) skill: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) skill: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

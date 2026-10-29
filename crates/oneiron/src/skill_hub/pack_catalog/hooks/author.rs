@@ -72,4 +72,33 @@ impl Vault {
             hub,
         })
     }
+
+    /// The vault-resident ACTOR `identity` publishes from `hub` as: a
+    /// configured SKILL_HUB's publisher, the one its pack hooks run as, or the
+    /// engine publishing its seeded packs from its own derived hub. `None`
+    /// for any other pair, such as the owner's own and local packs, which
+    /// have no publisher actor. An issue signature about its artifact rides a
+    /// comm channel with this actor as counterparty (ARCH-0056, FIX 7829).
+    pub(crate) fn skill_publisher_actor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hub: EntityId,
+        identity: &str,
+    ) -> Result<Option<EntityId>> {
+        if identity == super::super::builtin::ENGINE_PUBLISHER
+            && hub == super::super::builtin::engine_hub_id()?
+        {
+            return Ok(Some(foreign_publisher_actor(hub, identity)?));
+        }
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &hub)?
+        else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_SKILL_HUB {
+            return Ok(None);
+        }
+        Ok(Some(foreign_publisher_actor(hub, identity)?))
+    }
 }

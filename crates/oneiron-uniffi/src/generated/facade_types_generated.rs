@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1190 facade rows, 4288 generated types.
+// UniFFI census: 1190 facade rows, 4302 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1142.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -4809,6 +4809,725 @@ pub struct AttemptView {
     pub backoff_until: Option<u64>,
 }
 
+/// `oneiron::task_verb::ask_types::TaskAskHoldReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskHoldReason {
+    #[serde(rename = "NoLiveRoute")]
+    NoLiveRoute,
+    #[serde(rename = "ApprovalRequired")]
+    ApprovalRequired,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskEffectAuthorization`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskEffectAuthorization {
+    #[serde(rename = "not_evaluated_by_ask")]
+    NotEvaluatedByAsk,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskCoverage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskCoverage {
+    #[serde(rename = "met")]
+    pub met: bool,
+    #[serde(rename = "required")]
+    pub required: u16,
+    #[serde(rename = "responded")]
+    pub responded: Vec<String>,
+    #[serde(rename = "unknown")]
+    pub unknown: Vec<String>,
+    #[serde(rename = "unmet_people")]
+    pub unmet_people: Vec<String>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskAnswer {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "result_ref")]
+    pub result_ref: String,
+    #[serde(rename = "word_ref")]
+    pub word_ref: String,
+    #[serde(rename = "task_record")]
+    pub task_record: RecordRef,
+    #[serde(rename = "actor_record")]
+    pub actor_record: RecordRef,
+    #[serde(rename = "result_record")]
+    pub result_record: RecordRef,
+    #[serde(rename = "word_record")]
+    pub word_record: RecordRef,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskDecision {
+    #[serde(rename = "collected")]
+    Collected,
+    #[serde(rename = "first")]
+    First(TaskAskAnswer),
+    #[serde(rename = "answer")]
+    Answer(String),
+    #[serde(rename = "no")]
+    No,
+    #[serde(rename = "conflict")]
+    Conflict,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskDefault {
+    #[serde(rename = "proceed")]
+    Proceed,
+    #[serde(rename = "hold")]
+    Hold,
+    #[serde(rename = "ask_me")]
+    AskMe,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskSurface`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskSurface {
+    #[serde(rename = "card")]
+    Card,
+    #[serde(rename = "none")]
+    None,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskFallback`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskFallback {
+    #[serde(rename = "branch")]
+    pub branch: TaskAskDefault,
+    #[serde(rename = "surface")]
+    pub surface: TaskAskSurface,
+}
+
+/// `oneiron::task_verb::ask_soft_confirm_types::TaskAskConfirmationDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskConfirmationDecision {
+    #[serde(rename = "approve")]
+    Approve,
+    #[serde(rename = "reject")]
+    Reject,
+}
+
+/// `oneiron::task_verb::ask_soft_confirm_types::TaskAskConfirmation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskConfirmation {
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "companion_answer_ref")]
+    pub companion_answer_ref: String,
+    #[serde(rename = "decision")]
+    pub decision: TaskAskConfirmationDecision,
+}
+
+/// `oneiron::task_verb::consult_payload::ConsultPayloadRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConsultPayloadRef {
+    #[serde(rename = "claim")]
+    Claim(String),
+    #[serde(rename = "turn")]
+    Turn(String),
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskWord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskWord {
+    #[serde(rename = "result_ref")]
+    pub result_ref: String,
+    #[serde(rename = "option", default, skip_serializing_if = "Option::is_none")]
+    pub option: Option<String>,
+    #[serde(
+        rename = "inform_for",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub inform_for: Option<String>,
+    #[serde(
+        rename = "companion_for",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub companion_for: Option<String>,
+    #[serde(
+        rename = "confirmation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub confirmation: Option<TaskAskConfirmation>,
+    #[serde(
+        rename = "provenance_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provenance_refs: Option<Vec<ConsultPayloadRef>>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskSource {
+    #[serde(rename = "human")]
+    Human,
+    #[serde(rename = "foreign_stated")]
+    ForeignStated,
+    #[serde(rename = "companion")]
+    Companion,
+    #[serde(rename = "inform")]
+    Inform,
+    #[serde(rename = "executor")]
+    Executor,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskEvidenceReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskEvidenceReason {
+    #[serde(rename = "counted")]
+    Counted,
+    #[serde(rename = "companion_hint")]
+    CompanionHint,
+    #[serde(rename = "inform")]
+    Inform,
+    #[serde(rename = "human_dominates")]
+    HumanDominates,
+    #[serde(rename = "executor")]
+    Executor,
+    #[serde(rename = "superseded")]
+    Superseded,
+    #[serde(rename = "outside_electorate")]
+    OutsideElectorate,
+    #[serde(rename = "missing_source")]
+    MissingSource,
+    #[serde(rename = "late")]
+    Late,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskEvidence {
+    #[serde(rename = "answer")]
+    pub answer: TaskAskAnswer,
+    #[serde(rename = "word")]
+    pub word: TaskAskWord,
+    #[serde(rename = "source")]
+    pub source: TaskAskSource,
+    #[serde(rename = "person_ref")]
+    pub person_ref: String,
+    #[serde(rename = "order")]
+    pub order: u64,
+    #[serde(rename = "reason")]
+    pub reason: TaskAskEvidenceReason,
+    #[serde(
+        rename = "ladder_changed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ladder_changed: Option<bool>,
+    #[serde(
+        rename = "soft_confirm",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub soft_confirm: Option<bool>,
+    #[serde(
+        rename = "delegation_grant_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delegation_grant_ref: Option<String>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskSettlementReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskSettlementReason {
+    #[serde(rename = "first_word")]
+    FirstWord,
+    #[serde(rename = "all_responded")]
+    AllResponded,
+    #[serde(rename = "deadline")]
+    Deadline,
+    #[serde(rename = "stale")]
+    Stale,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskElectorate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskElectorate {
+    #[serde(rename = "any")]
+    Any,
+    #[serde(rename = "people")]
+    People(Vec<String>),
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskDecide`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(deny_unknown_fields)]
+pub enum TaskAskDecide {
+    #[serde(rename = "first")]
+    First,
+    #[serde(rename = "all")]
+    All {
+        #[serde(rename = "of")]
+        of: TaskAskElectorate,
+        #[serde(rename = "answer")]
+        answer: String,
+    },
+    #[serde(rename = "at_least")]
+    AtLeast {
+        #[serde(rename = "count")]
+        count: u16,
+        #[serde(rename = "of")]
+        of: TaskAskElectorate,
+        #[serde(rename = "answer")]
+        answer: String,
+    },
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskClass {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "version")]
+    pub version: u64,
+    #[serde(rename = "governance")]
+    pub governance: bool,
+    #[serde(rename = "deadline_seconds")]
+    pub deadline_seconds: u64,
+    #[serde(rename = "allowed_recipients")]
+    pub allowed_recipients: Vec<String>,
+    #[serde(rename = "required_people")]
+    pub required_people: Vec<String>,
+    #[serde(rename = "minimum_responses")]
+    pub minimum_responses: u16,
+    #[serde(rename = "required_sources")]
+    pub required_sources: Vec<ConsultPayloadRef>,
+    #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<TaskAskDecide>,
+    #[serde(rename = "disclosure")]
+    pub disclosure: std::collections::HashMap<String, Vec<ConsultPayloadRef>>,
+    #[serde(rename = "fallback")]
+    pub fallback: Vec<TaskAskDefault>,
+    #[serde(
+        rename = "guest_fact_limit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub guest_fact_limit: Option<u16>,
+    #[serde(
+        rename = "soft_confirm_surface",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub soft_confirm_surface: Option<TaskAskSurface>,
+    #[serde(rename = "remind")]
+    pub remind: Vec<u64>,
+}
+
+/// `oneiron::task_verb::ask_types::AskAuthorityScopeWire`.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AskAuthorityScopeWire {
+    #[serde(rename = "class")]
+    pub class: String,
+    #[serde(rename = "selectors")]
+    pub selectors: Vec<String>,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<u64>,
+    #[serde(rename = "receipt_required")]
+    pub receipt_required: bool,
+}
+impl std::fmt::Debug for AskAuthorityScopeWire {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AskAuthorityScopeWire")
+            .finish_non_exhaustive()
+    }
+}
+
+/// `oneiron::task_verb::verb_kind::TaskAssignee`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(deny_unknown_fields)]
+pub enum TaskAssignee {
+    #[serde(rename = "dreamer")]
+    Dreamer,
+    #[serde(rename = "agent_def")]
+    AgentDef {
+        #[serde(rename = "agent_def_ref")]
+        agent_def_ref: String,
+    },
+    #[serde(rename = "peer")]
+    Peer {
+        #[serde(rename = "actor_ref")]
+        actor_ref: String,
+    },
+    #[serde(rename = "child")]
+    Child {
+        #[serde(rename = "actor_ref")]
+        actor_ref: String,
+    },
+    #[serde(rename = "human")]
+    Human {
+        #[serde(rename = "actor_ref")]
+        actor_ref: String,
+    },
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskGuest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskGuest {
+    #[serde(rename = "companion_ref")]
+    pub companion_ref: String,
+    #[serde(rename = "disclosure_grant_ref")]
+    pub disclosure_grant_ref: String,
+    #[serde(
+        rename = "holder_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub holder_key: Option<String>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskTarget {
+    #[serde(rename = "authority")]
+    Authority(AskAuthorityScopeWire),
+    #[serde(rename = "responder")]
+    Responder(TaskAssignee),
+    #[serde(rename = "people")]
+    People(Vec<String>),
+    #[serde(rename = "guests")]
+    Guests(std::collections::HashMap<String, TaskAskGuest>),
+}
+
+/// `oneiron::llm::decision::questions::records::OutcomeSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum OutcomeSource {
+    #[serde(rename = "claim")]
+    Claim {
+        #[serde(rename = "predicate")]
+        predicate: String,
+    },
+    #[serde(rename = "edge")]
+    Edge {
+        #[serde(rename = "relation")]
+        relation: String,
+    },
+    #[serde(rename = "stage")]
+    Stage {
+        #[serde(rename = "campaign")]
+        campaign: String,
+    },
+    #[serde(rename = "event")]
+    Event {
+        #[serde(rename = "predicate")]
+        predicate: String,
+    },
+}
+
+/// `oneiron::llm::decision::questions::records::OutcomeBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OutcomeBinding {
+    #[serde(rename = "source")]
+    pub source: OutcomeSource,
+    #[serde(rename = "horizon")]
+    pub horizon: u64,
+    #[serde(rename = "mapping")]
+    pub mapping: std::collections::HashMap<String, bool>,
+    #[serde(rename = "noise_weight")]
+    pub noise_weight: f64,
+    #[serde(rename = "linked_by", default, skip_serializing_if = "Option::is_none")]
+    pub linked_by: Option<String>,
+}
+
+/// `oneiron::llm::decision::types::DecisionRung`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DecisionRung {
+    #[serde(rename = "rule")]
+    Rule,
+    #[serde(rename = "local")]
+    Local,
+    #[serde(rename = "system_one")]
+    SystemOne,
+    #[serde(rename = "escalation")]
+    Escalation,
+    #[serde(rename = "big")]
+    Big,
+    #[serde(rename = "human")]
+    Human,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskLadderPrediction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskLadderPrediction {
+    #[serde(rename = "option")]
+    pub option: String,
+    #[serde(rename = "rung")]
+    pub rung: DecisionRung,
+    #[serde(
+        rename = "probability",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub probability: Option<f64>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskQuestion {
+    #[serde(rename = "reference")]
+    pub reference: ConsultPayloadRef,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "options")]
+    pub options: std::collections::HashMap<String, String>,
+    #[serde(rename = "context_refs")]
+    pub context_refs: Vec<ConsultPayloadRef>,
+    #[serde(rename = "label", default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(
+        rename = "outcome_binding",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub outcome_binding: Option<OutcomeBinding>,
+    #[serde(
+        rename = "ladder_answer",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ladder_answer: Option<TaskAskLadderPrediction>,
+    #[serde(rename = "class_key", default, skip_serializing_if = "Option::is_none")]
+    pub class_key: Option<String>,
+    #[serde(
+        rename = "commitment",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub commitment: Option<bool>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskNeed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskNeed {
+    #[serde(rename = "count")]
+    pub count: u16,
+    #[serde(rename = "of", default, skip_serializing_if = "Option::is_none")]
+    pub of: Option<TaskAskElectorate>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskProvisional`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskProvisional {
+    #[serde(rename = "inform")]
+    Inform,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskBranch`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskBranch {
+    #[serde(rename = "hold")]
+    Hold,
+    #[serde(rename = "proceed")]
+    Proceed,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskDisagree`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskDisagree {
+    #[serde(rename = "branch")]
+    pub branch: TaskAskBranch,
+    #[serde(rename = "surface")]
+    pub surface: TaskAskSurface,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskSpec {
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
+    #[serde(rename = "class", default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<TaskAskClass>,
+    #[serde(rename = "who", default, skip_serializing_if = "Option::is_none")]
+    pub who: Option<TaskAskTarget>,
+    #[serde(rename = "what")]
+    pub what: TaskAskQuestion,
+    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<u64>,
+    #[serde(rename = "default", default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<TaskAskDefault>,
+    #[serde(rename = "need", default, skip_serializing_if = "Option::is_none")]
+    pub need: Option<TaskAskNeed>,
+    #[serde(rename = "decide", default, skip_serializing_if = "Option::is_none")]
+    pub decide: Option<TaskAskDecide>,
+    #[serde(
+        rename = "provisional",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provisional: Option<TaskAskProvisional>,
+    #[serde(
+        rename = "on_disagree",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub on_disagree: Option<TaskAskDisagree>,
+    #[serde(rename = "remind", default, skip_serializing_if = "Option::is_none")]
+    pub remind: Option<Vec<u64>>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskSettlement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskSettlement {
+    #[serde(rename = "group_ref")]
+    pub group_ref: String,
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "cutoff_order")]
+    pub cutoff_order: u64,
+    #[serde(rename = "reason")]
+    pub reason: TaskAskSettlementReason,
+    #[serde(rename = "requested")]
+    pub requested: TaskAskSpec,
+    #[serde(rename = "effective")]
+    pub effective: TaskAskSpec,
+    #[serde(rename = "base_policy_version")]
+    pub base_policy_version: u16,
+    #[serde(rename = "electorate")]
+    pub electorate: Vec<String>,
+    #[serde(rename = "question_digest")]
+    pub question_digest: Vec<u8>,
+    #[serde(rename = "unmet_sources")]
+    pub unmet_sources: Vec<ConsultPayloadRef>,
+    #[serde(
+        rename = "outcome_answer_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub outcome_answer_ref: Option<String>,
+    #[serde(rename = "policy_surface")]
+    pub policy_surface: TaskAskSurface,
+    #[serde(
+        rename = "link_result_proof",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub link_result_proof: Option<Vec<u8>>,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAskResult {
+    #[serde(rename = "effect_authorization")]
+    pub effect_authorization: TaskAskEffectAuthorization,
+    #[serde(rename = "coverage")]
+    pub coverage: TaskAskCoverage,
+    #[serde(rename = "decision")]
+    pub decision: TaskAskDecision,
+    #[serde(rename = "fallback", default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<TaskAskFallback>,
+    #[serde(rename = "evidence")]
+    pub evidence: Vec<TaskAskEvidence>,
+    #[serde(rename = "settlement")]
+    pub settlement: TaskAskSettlement,
+}
+
+/// `oneiron::task_verb::world_privacy_wait::WorldPrivacyWaitStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum WorldPrivacyWaitStatus {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "applied")]
+    Applied {
+        #[serde(rename = "receipt_id")]
+        receipt_id: String,
+    },
+    #[serde(rename = "declined")]
+    Declined,
+}
+
+/// `oneiron::task_verb::world_privacy_wait::WorldPrivacyWaitResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorldPrivacyWaitResult {
+    #[serde(rename = "request_id")]
+    pub request_id: String,
+    #[serde(rename = "world")]
+    pub world: String,
+    #[serde(rename = "status")]
+    pub status: WorldPrivacyWaitStatus,
+}
+
+/// `oneiron::task_verb::ask_types::TaskAskStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TaskAskStatus {
+    #[serde(rename = "Pending")]
+    Pending {
+        #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+        hold: Option<TaskAskHoldReason>,
+    },
+    #[serde(rename = "Changed")]
+    Changed {
+        #[serde(rename = "voided")]
+        voided: Vec<String>,
+        #[serde(rename = "generation")]
+        generation: u64,
+    },
+    #[serde(rename = "Settled")]
+    Settled(TaskAskResult),
+    #[serde(rename = "WorldPrivacy")]
+    WorldPrivacy(WorldPrivacyWaitResult),
+}
+
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleTaskAskHandleTaskAskStatus {
+    pub item0: TaskAskHandle,
+    pub item1: TaskAskStatus,
+}
+impl serde::Serialize for TupleTaskAskHandleTaskAskStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleTaskAskHandleTaskAskStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron_browser::stop::StrictDenial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum StrictDenial {
@@ -5042,7 +5761,7 @@ pub struct TaskStatusView {
     #[serde(rename = "pending")]
     pub pending: bool,
     #[serde(rename = "asks")]
-    pub asks: Vec<crate::WireJson>,
+    pub asks: Vec<TupleTaskAskHandleTaskAskStatus>,
     #[serde(
         rename = "last_receipt",
         default,
@@ -5189,34 +5908,6 @@ pub enum TaskDescription {
     Status {
         #[serde(rename = "receipt")]
         receipt: TaskCallReceipt,
-    },
-}
-
-/// `oneiron::task_verb::verb_kind::TaskAssignee`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(deny_unknown_fields)]
-pub enum TaskAssignee {
-    #[serde(rename = "dreamer")]
-    Dreamer,
-    #[serde(rename = "agent_def")]
-    AgentDef {
-        #[serde(rename = "agent_def_ref")]
-        agent_def_ref: String,
-    },
-    #[serde(rename = "peer")]
-    Peer {
-        #[serde(rename = "actor_ref")]
-        actor_ref: String,
-    },
-    #[serde(rename = "child")]
-    Child {
-        #[serde(rename = "actor_ref")]
-        actor_ref: String,
-    },
-    #[serde(rename = "human")]
-    Human {
-        #[serde(rename = "actor_ref")]
-        actor_ref: String,
     },
 }
 
@@ -5377,49 +6068,6 @@ pub struct QuestionCriteriaCriterion {
     pub not_a_reason_to_say_no: Option<Vec<Criterion>>,
 }
 
-/// `oneiron::llm::decision::questions::records::OutcomeSource`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-#[serde(deny_unknown_fields)]
-pub enum OutcomeSource {
-    #[serde(rename = "claim")]
-    Claim {
-        #[serde(rename = "predicate")]
-        predicate: String,
-    },
-    #[serde(rename = "edge")]
-    Edge {
-        #[serde(rename = "relation")]
-        relation: String,
-    },
-    #[serde(rename = "stage")]
-    Stage {
-        #[serde(rename = "campaign")]
-        campaign: String,
-    },
-    #[serde(rename = "event")]
-    Event {
-        #[serde(rename = "predicate")]
-        predicate: String,
-    },
-}
-
-/// `oneiron::llm::decision::questions::records::OutcomeBinding`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct OutcomeBinding {
-    #[serde(rename = "source")]
-    pub source: OutcomeSource,
-    #[serde(rename = "horizon")]
-    pub horizon: u64,
-    #[serde(rename = "mapping")]
-    pub mapping: std::collections::HashMap<String, bool>,
-    #[serde(rename = "noise_weight")]
-    pub noise_weight: f64,
-    #[serde(rename = "linked_by", default, skip_serializing_if = "Option::is_none")]
-    pub linked_by: Option<String>,
-}
-
 /// `oneiron_browser::verbs::ExpectInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -5466,57 +6114,6 @@ pub struct DoneMeans {
     pub strict_verified_reuse: Option<bool>,
 }
 
-/// `oneiron::task_verb::ask_types::AskAuthorityScopeWire`.
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct AskAuthorityScopeWire {
-    #[serde(rename = "class")]
-    pub class: String,
-    #[serde(rename = "selectors")]
-    pub selectors: Vec<String>,
-    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-    #[serde(rename = "budget", default, skip_serializing_if = "Option::is_none")]
-    pub budget: Option<u64>,
-    #[serde(rename = "receipt_required")]
-    pub receipt_required: bool,
-}
-impl std::fmt::Debug for AskAuthorityScopeWire {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AskAuthorityScopeWire")
-            .finish_non_exhaustive()
-    }
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskGuest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskGuest {
-    #[serde(rename = "companion_ref")]
-    pub companion_ref: String,
-    #[serde(rename = "disclosure_grant_ref")]
-    pub disclosure_grant_ref: String,
-    #[serde(
-        rename = "holder_key",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub holder_key: Option<String>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskTarget`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskTarget {
-    #[serde(rename = "authority")]
-    Authority(AskAuthorityScopeWire),
-    #[serde(rename = "responder")]
-    Responder(TaskAssignee),
-    #[serde(rename = "people")]
-    People(Vec<String>),
-    #[serde(rename = "guests")]
-    Guests(std::collections::HashMap<String, TaskAskGuest>),
-}
-
 /// `oneiron::task_verb::brief::EscalationTrigger`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum EscalationTrigger {
@@ -5536,17 +6133,6 @@ pub enum EscalationTrigger {
     RetryRequested,
 }
 
-/// `oneiron::task_verb::ask_types::TaskAskDefault`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskDefault {
-    #[serde(rename = "proceed")]
-    Proceed,
-    #[serde(rename = "hold")]
-    Hold,
-    #[serde(rename = "ask_me")]
-    AskMe,
-}
-
 /// `oneiron::llm::decision::policy::Reversibility`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum Reversibility {
@@ -5554,15 +6140,6 @@ pub enum Reversibility {
     ReversibleRead,
     #[serde(rename = "outbound_effect")]
     OutboundEffect,
-}
-
-/// `oneiron::task_verb::consult_payload::ConsultPayloadRef`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ConsultPayloadRef {
-    #[serde(rename = "claim")]
-    Claim(String),
-    #[serde(rename = "turn")]
-    Turn(String),
 }
 
 /// `oneiron::task_verb::brief::EscalationRule`.
@@ -7183,233 +7760,6 @@ pub struct FanoutAckRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub remembered_cap: Option<u64>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskElectorate`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskElectorate {
-    #[serde(rename = "any")]
-    Any,
-    #[serde(rename = "people")]
-    People(Vec<String>),
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskDecide`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(deny_unknown_fields)]
-pub enum TaskAskDecide {
-    #[serde(rename = "first")]
-    First,
-    #[serde(rename = "all")]
-    All {
-        #[serde(rename = "of")]
-        of: TaskAskElectorate,
-        #[serde(rename = "answer")]
-        answer: String,
-    },
-    #[serde(rename = "at_least")]
-    AtLeast {
-        #[serde(rename = "count")]
-        count: u16,
-        #[serde(rename = "of")]
-        of: TaskAskElectorate,
-        #[serde(rename = "answer")]
-        answer: String,
-    },
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskSurface`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskSurface {
-    #[serde(rename = "card")]
-    Card,
-    #[serde(rename = "none")]
-    None,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskClass`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskClass {
-    #[serde(rename = "key")]
-    pub key: String,
-    #[serde(rename = "version")]
-    pub version: u64,
-    #[serde(rename = "governance")]
-    pub governance: bool,
-    #[serde(rename = "deadline_seconds")]
-    pub deadline_seconds: u64,
-    #[serde(rename = "allowed_recipients")]
-    pub allowed_recipients: Vec<String>,
-    #[serde(rename = "required_people")]
-    pub required_people: Vec<String>,
-    #[serde(rename = "minimum_responses")]
-    pub minimum_responses: u16,
-    #[serde(rename = "required_sources")]
-    pub required_sources: Vec<ConsultPayloadRef>,
-    #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
-    pub decision: Option<TaskAskDecide>,
-    #[serde(rename = "disclosure")]
-    pub disclosure: std::collections::HashMap<String, Vec<ConsultPayloadRef>>,
-    #[serde(rename = "fallback")]
-    pub fallback: Vec<TaskAskDefault>,
-    #[serde(
-        rename = "guest_fact_limit",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub guest_fact_limit: Option<u16>,
-    #[serde(
-        rename = "soft_confirm_surface",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub soft_confirm_surface: Option<TaskAskSurface>,
-    #[serde(rename = "remind")]
-    pub remind: Vec<u64>,
-}
-
-/// `oneiron::llm::decision::types::DecisionRung`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum DecisionRung {
-    #[serde(rename = "rule")]
-    Rule,
-    #[serde(rename = "local")]
-    Local,
-    #[serde(rename = "system_one")]
-    SystemOne,
-    #[serde(rename = "escalation")]
-    Escalation,
-    #[serde(rename = "big")]
-    Big,
-    #[serde(rename = "human")]
-    Human,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskLadderPrediction`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskLadderPrediction {
-    #[serde(rename = "option")]
-    pub option: String,
-    #[serde(rename = "rung")]
-    pub rung: DecisionRung,
-    #[serde(
-        rename = "probability",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub probability: Option<f64>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskQuestion`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskQuestion {
-    #[serde(rename = "reference")]
-    pub reference: ConsultPayloadRef,
-    #[serde(rename = "revision")]
-    pub revision: u64,
-    #[serde(rename = "options")]
-    pub options: std::collections::HashMap<String, String>,
-    #[serde(rename = "context_refs")]
-    pub context_refs: Vec<ConsultPayloadRef>,
-    #[serde(rename = "label", default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(
-        rename = "outcome_binding",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub outcome_binding: Option<OutcomeBinding>,
-    #[serde(
-        rename = "ladder_answer",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub ladder_answer: Option<TaskAskLadderPrediction>,
-    #[serde(rename = "class_key", default, skip_serializing_if = "Option::is_none")]
-    pub class_key: Option<String>,
-    #[serde(
-        rename = "commitment",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub commitment: Option<bool>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskNeed`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskNeed {
-    #[serde(rename = "count")]
-    pub count: u16,
-    #[serde(rename = "of", default, skip_serializing_if = "Option::is_none")]
-    pub of: Option<TaskAskElectorate>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskProvisional`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskProvisional {
-    #[serde(rename = "inform")]
-    Inform,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskBranch`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskBranch {
-    #[serde(rename = "hold")]
-    Hold,
-    #[serde(rename = "proceed")]
-    Proceed,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskDisagree`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskDisagree {
-    #[serde(rename = "branch")]
-    pub branch: TaskAskBranch,
-    #[serde(rename = "surface")]
-    pub surface: TaskAskSurface,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskSpec`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskSpec {
-    #[serde(rename = "intent_key")]
-    pub intent_key: String,
-    #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
-    pub task_ref: Option<String>,
-    #[serde(rename = "class", default, skip_serializing_if = "Option::is_none")]
-    pub class: Option<TaskAskClass>,
-    #[serde(rename = "who", default, skip_serializing_if = "Option::is_none")]
-    pub who: Option<TaskAskTarget>,
-    #[serde(rename = "what")]
-    pub what: TaskAskQuestion,
-    #[serde(rename = "until", default, skip_serializing_if = "Option::is_none")]
-    pub until: Option<u64>,
-    #[serde(rename = "default", default, skip_serializing_if = "Option::is_none")]
-    pub default: Option<TaskAskDefault>,
-    #[serde(rename = "need", default, skip_serializing_if = "Option::is_none")]
-    pub need: Option<TaskAskNeed>,
-    #[serde(rename = "decide", default, skip_serializing_if = "Option::is_none")]
-    pub decide: Option<TaskAskDecide>,
-    #[serde(
-        rename = "provisional",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub provisional: Option<TaskAskProvisional>,
-    #[serde(
-        rename = "on_disagree",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub on_disagree: Option<TaskAskDisagree>,
-    #[serde(rename = "remind", default, skip_serializing_if = "Option::is_none")]
-    pub remind: Option<Vec<u64>>,
 }
 
 /// `oneiron::task_verb::highway_types::TaskReportBody`.
@@ -16199,6 +16549,23 @@ pub struct AxisScores {
     pub after: f64,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleStringAxisScores {
+    pub item0: String,
+    pub item1: AxisScores,
+}
+impl serde::Serialize for TupleStringAxisScores {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleStringAxisScores {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::skill_optimize::gate::preflight::SkillEditPreflight`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillEditPreflight {
@@ -16207,7 +16574,7 @@ pub struct SkillEditPreflight {
     #[serde(rename = "goal_revision")]
     pub goal_revision: String,
     #[serde(rename = "offline")]
-    pub offline: Vec<crate::WireJson>,
+    pub offline: Vec<TupleStringAxisScores>,
     #[serde(rename = "honesty")]
     pub honesty: AxisScores,
 }
@@ -16261,7 +16628,7 @@ pub struct GoalAxisReport {
     #[serde(rename = "held_out_receipts")]
     pub held_out_receipts: Vec<String>,
     #[serde(rename = "offline")]
-    pub offline: Vec<crate::WireJson>,
+    pub offline: Vec<TupleStringAxisScores>,
     #[serde(rename = "online")]
     pub online: Vec<OnlineAxisMeasurement>,
     #[serde(
@@ -24186,6 +24553,23 @@ pub enum ResearchTarget {
     },
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleEntityIdEntityId {
+    pub item0: String,
+    pub item1: String,
+}
+impl serde::Serialize for TupleEntityIdEntityId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleEntityIdEntityId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::autoreason_campaign::research::ResearchGoalPin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -24195,7 +24579,7 @@ pub struct ResearchGoalPin {
     #[serde(rename = "revision")]
     pub revision: String,
     #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<crate::WireJson>,
+    pub project: Option<TupleEntityIdEntityId>,
 }
 
 /// `oneiron::skill_optimize::eval_set::EvalSeat`.
@@ -24654,6 +25038,23 @@ pub struct ConfirmationReceipt {
     pub exposure: Option<String>,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleFloatFloat {
+    pub item0: f64,
+    pub item1: f64,
+}
+impl serde::Serialize for TupleFloatFloat {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleFloatFloat {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::skill_optimize::eval_set::sufficiency::SufficiencyInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -24681,7 +25082,7 @@ pub struct SufficiencyInput {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub paired_interval: Option<crate::WireJson>,
+    pub paired_interval: Option<TupleFloatFloat>,
     #[serde(
         rename = "detectable_effect",
         default,
@@ -25929,6 +26330,23 @@ pub struct OfferListRequest {
     pub pending_only: Option<bool>,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleEntityIdString {
+    pub item0: String,
+    pub item1: String,
+}
+impl serde::Serialize for TupleEntityIdString {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleEntityIdString {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::skill_optimize::offer::snapshot::OfferModelPin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -26094,7 +26512,7 @@ pub struct TrainingOffer {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub offer_skill: Option<crate::WireJson>,
+    pub offer_skill: Option<TupleEntityIdString>,
     #[serde(
         rename = "drafted_on",
         default,
@@ -29019,18 +29437,13 @@ pub struct CourtesyDeleteAnswerRequest {
     pub reply_to: Option<String>,
 }
 
-/// `oneiron::embed::space::Row`.
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct EvidenceFloors {
+/// `oneiron::config::VectorEvidenceFloors`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct VectorEvidenceFloors {
     #[serde(rename = "floor")]
     pub floor: f64,
     #[serde(rename = "strong")]
     pub strong: f64,
-}
-impl std::fmt::Debug for EvidenceFloors {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EvidenceFloors").finish_non_exhaustive()
-    }
 }
 
 /// `oneiron::embed::space::EmbeddingSpace`.
@@ -29045,7 +29458,7 @@ pub struct EmbeddingSpace {
     #[serde(rename = "query_towers")]
     pub query_towers: Vec<InputKind>,
     #[serde(rename = "evidence", default, skip_serializing_if = "Option::is_none")]
-    pub evidence: Option<EvidenceFloors>,
+    pub evidence: Option<VectorEvidenceFloors>,
 }
 
 /// `oneiron::embed::space_move::SpaceRef`.
@@ -31775,6 +32188,8 @@ pub enum Observation {
     Magnitude(f64),
     #[serde(rename = "category")]
     Category(String),
+    #[serde(rename = "count_only")]
+    CountOnly(String),
 }
 
 /// `oneiron::receipt::pack_attribution::ContributionCheck`.
@@ -31892,6 +32307,12 @@ pub struct EvidenceRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub goal_revision: Option<String>,
+    #[serde(
+        rename = "measurement_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub measurement_version: Option<String>,
 }
 
 /// `oneiron::learning::doors::LearningEvidenceView`.
@@ -37738,6 +38159,23 @@ pub struct CodeForkGetRequest {
     pub fork_session: String,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleU64I32 {
+    pub item0: u64,
+    pub item1: i32,
+}
+impl serde::Serialize for TupleU64I32 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleU64I32 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::code_document::types::CodeDocumentFrontier`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -37749,7 +38187,7 @@ pub struct CodeDocumentFrontier {
     #[serde(rename = "path")]
     pub path: String,
     #[serde(rename = "version")]
-    pub version: Vec<crate::WireJson>,
+    pub version: Vec<TupleU64I32>,
     #[serde(rename = "op_fold")]
     pub op_fold: Vec<u8>,
     #[serde(rename = "text_hash")]
@@ -44438,6 +44876,23 @@ pub enum DeckFallback {
     Ask,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleU64U64 {
+    pub item0: u64,
+    pub item1: u64,
+}
+impl serde::Serialize for TupleU64U64 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleU64U64 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::blob_artifact::deck_creation::plan::DeckPlannedContent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeckPlannedContent {
@@ -44548,7 +45003,7 @@ pub struct DeckPlannedSlide {
     #[serde(rename = "fallback", default, skip_serializing_if = "Option::is_none")]
     pub fallback: Option<DeckFallback>,
     #[serde(rename = "split", default, skip_serializing_if = "Option::is_none")]
-    pub split: Option<crate::WireJson>,
+    pub split: Option<TupleU64U64>,
     #[serde(rename = "placements")]
     pub placements: Vec<DeckPlacement>,
     #[serde(rename = "fit")]
@@ -44612,7 +45067,7 @@ pub struct DeckPackagePlan {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeckTraceOutcome {
     #[serde(rename = "placed")]
-    Placed(Vec<crate::WireJson>),
+    Placed(Vec<TupleU64U64>),
     #[serde(rename = "omitted")]
     Omitted,
 }
@@ -44765,6 +45220,28 @@ pub struct CreatedSlide {
     pub layout: String,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleStringStringU32 {
+    pub item0: String,
+    pub item1: String,
+    pub item2: u32,
+}
+impl serde::Serialize for TupleStringStringU32 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple3(&self.item0, &self.item1, &self.item2, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleStringStringU32 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple3(deserializer, |item0, item1, item2| Self {
+            item0,
+            item1,
+            item2,
+        })
+    }
+}
+
 /// `oneiron::edit_roundtrip::deck_create::DeckCreationRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DeckCreationRecord {
@@ -44795,7 +45272,7 @@ pub struct DeckCreationRecord {
     #[serde(rename = "omitted")]
     pub omitted: Vec<String>,
     #[serde(rename = "fit_unverified")]
-    pub fit_unverified: Vec<crate::WireJson>,
+    pub fit_unverified: Vec<TupleStringStringU32>,
     #[serde(rename = "estimates")]
     pub estimates: Vec<CreatedEstimate>,
     #[serde(rename = "created_at")]
@@ -44933,6 +45410,23 @@ pub enum DeckIdentityAmbiguity {
     },
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleI64I64 {
+    pub item0: i64,
+    pub item1: i64,
+}
+impl serde::Serialize for TupleI64I64 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleI64I64 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron_docedit::pptx_comments::model::PptxShapeIdentity`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PptxShapeIdentity {
@@ -44947,7 +45441,7 @@ pub struct PptxShapeIdentity {
     #[serde(rename = "fingerprint")]
     pub fingerprint: Vec<u8>,
     #[serde(rename = "position", default, skip_serializing_if = "Option::is_none")]
-    pub position: Option<crate::WireJson>,
+    pub position: Option<TupleI64I64>,
 }
 
 /// `oneiron_docedit::pptx_comments::model::PptxSlideIdentity`.
@@ -45723,61 +46217,6 @@ pub struct TaskAskPreflight {
     pub recipients: Vec<TaskAskPreflightRecipient>,
 }
 
-/// `oneiron::task_verb::ask_soft_confirm_types::TaskAskConfirmationDecision`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskConfirmationDecision {
-    #[serde(rename = "approve")]
-    Approve,
-    #[serde(rename = "reject")]
-    Reject,
-}
-
-/// `oneiron::task_verb::ask_soft_confirm_types::TaskAskConfirmation`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskConfirmation {
-    #[serde(rename = "revision")]
-    pub revision: u64,
-    #[serde(rename = "companion_answer_ref")]
-    pub companion_answer_ref: String,
-    #[serde(rename = "decision")]
-    pub decision: TaskAskConfirmationDecision,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskWord`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskWord {
-    #[serde(rename = "result_ref")]
-    pub result_ref: String,
-    #[serde(rename = "option", default, skip_serializing_if = "Option::is_none")]
-    pub option: Option<String>,
-    #[serde(
-        rename = "inform_for",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub inform_for: Option<String>,
-    #[serde(
-        rename = "companion_for",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub companion_for: Option<String>,
-    #[serde(
-        rename = "confirmation",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub confirmation: Option<TaskAskConfirmation>,
-    #[serde(
-        rename = "provenance_refs",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub provenance_refs: Option<Vec<ConsultPayloadRef>>,
-}
-
 /// `oneiron::task_verb::ask_types::TaskAskPersonKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum TaskAskPersonKind {
@@ -45829,15 +46268,6 @@ pub enum TaskAskRequest {
     Short(TaskAskShort),
 }
 
-/// `oneiron::task_verb::ask_types::TaskAskHoldReason`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskHoldReason {
-    #[serde(rename = "NoLiveRoute")]
-    NoLiveRoute,
-    #[serde(rename = "ApprovalRequired")]
-    ApprovalRequired,
-}
-
 /// `oneiron::task_verb::ask_types::TaskAskLaunchHold`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TaskAskLaunchHold {
@@ -45878,227 +46308,6 @@ pub struct TaskWaitRequest {
     pub handle: TaskAskHandle,
     #[serde(rename = "step_key")]
     pub step_key: String,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskEffectAuthorization`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskEffectAuthorization {
-    #[serde(rename = "not_evaluated_by_ask")]
-    NotEvaluatedByAsk,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskCoverage`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskCoverage {
-    #[serde(rename = "met")]
-    pub met: bool,
-    #[serde(rename = "required")]
-    pub required: u16,
-    #[serde(rename = "responded")]
-    pub responded: Vec<String>,
-    #[serde(rename = "unknown")]
-    pub unknown: Vec<String>,
-    #[serde(rename = "unmet_people")]
-    pub unmet_people: Vec<String>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskAnswer`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskAnswer {
-    #[serde(rename = "task_ref")]
-    pub task_ref: String,
-    #[serde(rename = "actor_ref")]
-    pub actor_ref: String,
-    #[serde(rename = "result_ref")]
-    pub result_ref: String,
-    #[serde(rename = "word_ref")]
-    pub word_ref: String,
-    #[serde(rename = "task_record")]
-    pub task_record: RecordRef,
-    #[serde(rename = "actor_record")]
-    pub actor_record: RecordRef,
-    #[serde(rename = "result_record")]
-    pub result_record: RecordRef,
-    #[serde(rename = "word_record")]
-    pub word_record: RecordRef,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskDecision`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskDecision {
-    #[serde(rename = "collected")]
-    Collected,
-    #[serde(rename = "first")]
-    First(TaskAskAnswer),
-    #[serde(rename = "answer")]
-    Answer(String),
-    #[serde(rename = "no")]
-    No,
-    #[serde(rename = "conflict")]
-    Conflict,
-    #[serde(rename = "unknown")]
-    Unknown,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskFallback`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskFallback {
-    #[serde(rename = "branch")]
-    pub branch: TaskAskDefault,
-    #[serde(rename = "surface")]
-    pub surface: TaskAskSurface,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskSource`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskSource {
-    #[serde(rename = "human")]
-    Human,
-    #[serde(rename = "foreign_stated")]
-    ForeignStated,
-    #[serde(rename = "companion")]
-    Companion,
-    #[serde(rename = "inform")]
-    Inform,
-    #[serde(rename = "executor")]
-    Executor,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskEvidenceReason`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskEvidenceReason {
-    #[serde(rename = "counted")]
-    Counted,
-    #[serde(rename = "companion_hint")]
-    CompanionHint,
-    #[serde(rename = "inform")]
-    Inform,
-    #[serde(rename = "human_dominates")]
-    HumanDominates,
-    #[serde(rename = "executor")]
-    Executor,
-    #[serde(rename = "superseded")]
-    Superseded,
-    #[serde(rename = "outside_electorate")]
-    OutsideElectorate,
-    #[serde(rename = "missing_source")]
-    MissingSource,
-    #[serde(rename = "late")]
-    Late,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskEvidence`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskEvidence {
-    #[serde(rename = "answer")]
-    pub answer: TaskAskAnswer,
-    #[serde(rename = "word")]
-    pub word: TaskAskWord,
-    #[serde(rename = "source")]
-    pub source: TaskAskSource,
-    #[serde(rename = "person_ref")]
-    pub person_ref: String,
-    #[serde(rename = "order")]
-    pub order: u64,
-    #[serde(rename = "reason")]
-    pub reason: TaskAskEvidenceReason,
-    #[serde(
-        rename = "ladder_changed",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub ladder_changed: Option<bool>,
-    #[serde(
-        rename = "soft_confirm",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub soft_confirm: Option<bool>,
-    #[serde(
-        rename = "delegation_grant_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub delegation_grant_ref: Option<String>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskSettlementReason`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum TaskAskSettlementReason {
-    #[serde(rename = "first_word")]
-    FirstWord,
-    #[serde(rename = "all_responded")]
-    AllResponded,
-    #[serde(rename = "deadline")]
-    Deadline,
-    #[serde(rename = "stale")]
-    Stale,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskSettlement`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskSettlement {
-    #[serde(rename = "group_ref")]
-    pub group_ref: String,
-    #[serde(rename = "reference")]
-    pub reference: String,
-    #[serde(rename = "revision")]
-    pub revision: u64,
-    #[serde(rename = "at")]
-    pub at: u64,
-    #[serde(rename = "cutoff_order")]
-    pub cutoff_order: u64,
-    #[serde(rename = "reason")]
-    pub reason: TaskAskSettlementReason,
-    #[serde(rename = "requested")]
-    pub requested: TaskAskSpec,
-    #[serde(rename = "effective")]
-    pub effective: TaskAskSpec,
-    #[serde(rename = "base_policy_version")]
-    pub base_policy_version: u16,
-    #[serde(rename = "electorate")]
-    pub electorate: Vec<String>,
-    #[serde(rename = "question_digest")]
-    pub question_digest: Vec<u8>,
-    #[serde(rename = "unmet_sources")]
-    pub unmet_sources: Vec<ConsultPayloadRef>,
-    #[serde(
-        rename = "outcome_answer_ref",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub outcome_answer_ref: Option<String>,
-    #[serde(rename = "policy_surface")]
-    pub policy_surface: TaskAskSurface,
-    #[serde(
-        rename = "link_result_proof",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub link_result_proof: Option<Vec<u8>>,
-}
-
-/// `oneiron::task_verb::ask_types::TaskAskResult`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TaskAskResult {
-    #[serde(rename = "effect_authorization")]
-    pub effect_authorization: TaskAskEffectAuthorization,
-    #[serde(rename = "coverage")]
-    pub coverage: TaskAskCoverage,
-    #[serde(rename = "decision")]
-    pub decision: TaskAskDecision,
-    #[serde(rename = "fallback", default, skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<TaskAskFallback>,
-    #[serde(rename = "evidence")]
-    pub evidence: Vec<TaskAskEvidence>,
-    #[serde(rename = "settlement")]
-    pub settlement: TaskAskSettlement,
 }
 
 /// `oneiron::code_run::types::effect::SelfEffect`.
@@ -46232,33 +46441,6 @@ pub struct SelfDurableWait {
     pub reason: SelfDurableWaitReason,
     #[serde(rename = "prompt", default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
-}
-
-/// `oneiron::task_verb::world_privacy_wait::WorldPrivacyWaitStatus`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "state")]
-pub enum WorldPrivacyWaitStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "applied")]
-    Applied {
-        #[serde(rename = "receipt_id")]
-        receipt_id: String,
-    },
-    #[serde(rename = "declined")]
-    Declined,
-}
-
-/// `oneiron::task_verb::world_privacy_wait::WorldPrivacyWaitResult`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WorldPrivacyWaitResult {
-    #[serde(rename = "request_id")]
-    pub request_id: String,
-    #[serde(rename = "world")]
-    pub world: String,
-    #[serde(rename = "status")]
-    pub status: WorldPrivacyWaitStatus,
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskWait`.
@@ -50418,6 +50600,23 @@ pub enum ManifestKind {
     ActorClaim,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleEntityIdRevisionRef {
+    pub item0: String,
+    pub item1: Vec<u8>,
+}
+impl serde::Serialize for TupleEntityIdRevisionRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleEntityIdRevisionRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron::attempt_queue::types::ManifestEntry`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ManifestEntry {
@@ -50430,7 +50629,7 @@ pub struct ManifestEntry {
     #[serde(rename = "at")]
     pub at: u64,
     #[serde(rename = "revision", default, skip_serializing_if = "Option::is_none")]
-    pub revision: Option<crate::WireJson>,
+    pub revision: Option<TupleEntityIdRevisionRef>,
 }
 
 /// `oneiron::verbs::asr::AsrOpenRequest`.
@@ -50995,6 +51194,14 @@ pub struct LiveVoiceToolReply {
     pub processed: LiveVoiceProcessed,
     #[serde(rename = "reply")]
     pub reply: ConnectorCallReply,
+}
+
+/// `oneiron::verbs::act_answer::ActAnswer` with `T` = `LiveVoiceToolReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ActAnswerLiveVoiceToolReply {
+    DetailsOnDevice(DetailsOnDevice),
+    Done(LiveVoiceToolReply),
 }
 
 /// `oneiron::verbs::live_voice::LiveVoiceSessionRequest`.
@@ -57392,13 +57599,30 @@ pub struct BodyCell {
     pub locked: Option<XlsxLock>,
 }
 
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleU32U32 {
+    pub item0: u32,
+    pub item1: u32,
+}
+impl serde::Serialize for TupleU32U32 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleU32U32 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
+}
+
 /// `oneiron_docedit::xlsx_body::model::XlsxArea`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxArea {
     #[serde(rename = "first")]
-    pub first: crate::WireJson,
+    pub first: TupleU32U32,
     #[serde(rename = "last")]
-    pub last: crate::WireJson,
+    pub last: TupleU32U32,
     #[serde(rename = "lock")]
     pub lock: XlsxLock,
 }
@@ -57409,9 +57633,9 @@ pub struct XlsxTable {
     #[serde(rename = "name")]
     pub name: String,
     #[serde(rename = "first")]
-    pub first: crate::WireJson,
+    pub first: TupleU32U32,
     #[serde(rename = "last")]
-    pub last: crate::WireJson,
+    pub last: TupleU32U32,
     #[serde(rename = "header_rows")]
     pub header_rows: u32,
     #[serde(rename = "totals_rows")]
@@ -57712,15 +57936,32 @@ pub enum NodeKind {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct GeometryProps {
     #[serde(rename = "offset", default, skip_serializing_if = "Option::is_none")]
-    pub offset: Option<crate::WireJson>,
+    pub offset: Option<TupleI64I64>,
     #[serde(rename = "extent", default, skip_serializing_if = "Option::is_none")]
-    pub extent: Option<crate::WireJson>,
+    pub extent: Option<TupleI64I64>,
     #[serde(rename = "rotation", default, skip_serializing_if = "Option::is_none")]
     pub rotation: Option<i64>,
     #[serde(rename = "flip_h", default, skip_serializing_if = "Option::is_none")]
     pub flip_h: Option<bool>,
     #[serde(rename = "flip_v", default, skip_serializing_if = "Option::is_none")]
     pub flip_v: Option<bool>,
+}
+
+/// A tuple as UniFFI carries it: positional fields crossing as one JSON array.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct TupleStringU32 {
+    pub item0: String,
+    pub item1: u32,
+}
+impl serde::Serialize for TupleStringU32 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        crate::codec::ser_tuple2(&self.item0, &self.item1, serializer)
+    }
+}
+impl<'de> serde::Deserialize<'de> for TupleStringU32 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        crate::codec::de_tuple2(deserializer, |item0, item1| Self { item0, item1 })
+    }
 }
 
 /// `oneiron_docedit::edit::structure::Preset`.
@@ -58342,7 +58583,7 @@ pub struct DeckNodeView {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub placeholder: Option<crate::WireJson>,
+    pub placeholder: Option<TupleStringU32>,
     #[serde(rename = "preset", default, skip_serializing_if = "Option::is_none")]
     pub preset: Option<Preset>,
     #[serde(rename = "payload", default, skip_serializing_if = "Option::is_none")]
@@ -61300,7 +61541,7 @@ pub struct ConsolidationEvidenceLocator {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub byte_range: Option<crate::WireJson>,
+    pub byte_range: Option<TupleU64U64>,
     #[serde(rename = "content_hash")]
     pub content_hash: Vec<u8>,
     #[serde(rename = "messages")]
@@ -61418,7 +61659,7 @@ pub struct ConsolidationReference {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub byte_range: Option<crate::WireJson>,
+    pub byte_range: Option<TupleU64U64>,
 }
 
 /// `oneiron::memory::consolidation_frontier::ConsolidationRootInput`.
@@ -62612,7 +62853,7 @@ pub struct SignalExtractionMessage {
     #[serde(rename = "message_ref")]
     pub message_ref: String,
     #[serde(rename = "byte_range")]
-    pub byte_range: crate::WireJson,
+    pub byte_range: TupleU64U64,
     #[serde(rename = "revision")]
     pub revision: String,
 }
@@ -62629,7 +62870,7 @@ pub struct SignalExtractionSource {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub byte_range: Option<crate::WireJson>,
+    pub byte_range: Option<TupleU64U64>,
     #[serde(rename = "content_hash")]
     pub content_hash: String,
     #[serde(rename = "messages")]
@@ -69639,6 +69880,8 @@ pub struct LensFrameEventRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub selected_context: Option<Vec<String>>,
+    #[serde(rename = "stream", default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<GeneratedUiStreamProfile>,
 }
 
 /// `oneiron_remote::lens_frames::LensFrameEventReply`.
@@ -69648,6 +69891,12 @@ pub enum LensFrameEventReply {
     Local {
         #[serde(rename = "$state")]
         state: std::collections::HashMap<String, SelfUiStateValue>,
+        #[serde(
+            rename = "refinement",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        refinement: Option<crate::WireJson>,
     },
     Tool {
         #[serde(rename = "outcome")]
