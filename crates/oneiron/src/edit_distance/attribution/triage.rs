@@ -402,7 +402,9 @@ pub(super) fn escalation_held_in_txn(
             LiveEntityRow::DeletedShell => continue,
             LiveEntityRow::Live { entity_type, body } => {
                 if entity_type != ENTITY_TYPE_NOTIFICATION {
-                    continue;
+                    // Occupied by another kind: escalate's record step errors
+                    // there, so fail open and let it (never a silent skip).
+                    return Ok(false);
                 }
                 let body = decode_notification_body(&body)?;
                 let held = body
