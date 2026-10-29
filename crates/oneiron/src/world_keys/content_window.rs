@@ -30,7 +30,7 @@ use crate::sync::loro_support::{
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
 use crate::sync::window::{
-    apply_pending_window_updates, apply_tombstone_to_window_doc, forward_rematerialize,
+    apply_pending_window_updates, apply_tombstone_to_window_doc, forward_rematerialize_mirror,
     load_window_from_state, reverse_rematerialize_for_sealing,
 };
 
@@ -90,7 +90,8 @@ impl WindowManager {
         if landed_already(vault, window, before.as_ref(), mirror, gained)? {
             return Ok(());
         }
-        forward_rematerialize(vault, mirror, self.materializer(), window)?;
+        // The live window's replay markers stay as its untouched doc owes them (FIX 538).
+        forward_rematerialize_mirror(vault, mirror, self.materializer(), window)?;
         let snapshot = gained.then(|| export_snapshot(mirror)).transpose()?;
         let settled = !repair_pending(vault, window)?;
         vault.with_write_txn_grouped(|wtxn| {
