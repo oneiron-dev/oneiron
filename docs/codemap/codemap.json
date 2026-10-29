@@ -19485,13 +19485,14 @@
      "kind": "src",
      "notable": [
       "ConnectorManifestQualifier",
+      "OwnerAttestedManifestQualifier",
       "ProbeManifestQualifier"
      ],
      "path": "src/connector_key/lifecycle/manifest_ops.rs",
      "purpose": "Manifest updates: qualify immutable resolved input, retain the approved snapshot, and bind an owner stamp to…",
      "surface": {
       "fn": 3,
-      "struct": 1,
+      "struct": 2,
       "trait": 1
      }
     },
@@ -19528,7 +19529,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -19607,7 +19608,7 @@
      "path": "src/connector_key/measure.rs",
      "purpose": "Advisory measurements of a connector key's shape against its `[limits]` rows (FIX 8680, 8685, 8687)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -19748,8 +19749,8 @@
      "path": "src/connector_key/qualification/receipt.rs",
      "purpose": "Durable evidence for the suite that actually ran, retained on activation",
      "surface": {
-      "const": 3,
-      "crate-vis": 11,
+      "const": 4,
+      "crate-vis": 12,
       "struct": 1
      }
     },
@@ -19911,7 +19912,7 @@
      "purpose": "ARCH-0072 typed per-capability grant slates",
      "surface": {
       "const": 2,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 37,
       "struct": 10
@@ -104229,7 +104230,7 @@
      "path": "src/api/owner_routes/connector_admission_routes.rs",
      "purpose": "`/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -104239,7 +104240,7 @@
      "path": "src/api/owner_routes/connector_admission_routes/schema.rs",
      "purpose": "The OpenAPI schemas of the connector admission writes (FIX 11611): `POST /v1/owner/connectors/register`…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -108051,7 +108052,7 @@
      "path": "src/connector_admission_host.rs",
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
