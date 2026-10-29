@@ -286,6 +286,7 @@ pub enum ErrorKind {
     SecretTierDenied,
     SecretDoorPolicyRefused,
     SealedFileWithheld,
+    MaskedCopyWithheld,
     SecretRefNotFound,
     SecretWiderThanManifest,
     SecretManifestNotFound,

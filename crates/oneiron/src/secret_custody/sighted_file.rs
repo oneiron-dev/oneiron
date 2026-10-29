@@ -8,16 +8,18 @@
 //! the stored bytes' length and BLAKE3 as they pass. The owner and a granted
 //! agent read the stored bytes. Any other reader reads each marked span
 //! overwritten as the bytes pass, never the stored bytes held whole beside
-//! the copy, and the release scan reads that copy before any of it is
-//! handed on, as it reads every masked copy. A mark that places keys inside
-//! members, and an unmarked body, are judged as the whole-body door judges
-//! them. The stored bytes never change.
+//! the copy, and the write door's scan reads that copy before any of it is
+//! handed on, as it reads every masked copy (FIX 2480). A mark that places
+//! keys inside members, and an unmarked body, are judged as the whole-body
+//! door judges them. The stored bytes never change.
 
 use std::io::Read;
 
 use heed::RoTxn;
 
-use super::masked_files::{FILLER, SecretSight, masked_file_in_txn, sighted_bytes_in_txn};
+use super::masked_files::{
+    FILLER, SecretSight, masked_copy_withheld, masked_file_in_txn, sighted_bytes_in_txn,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead as _;
@@ -64,8 +66,9 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::CorruptedIndex`] for a file the door does not name or a span
-    /// past its end; a masked copy the release scan still reads as secret,
-    /// and [`sighted_bytes_in_txn`]'s refusals; the checked reader's errors.
+    /// past its end; a masked copy the write door's scan still reads as
+    /// secret (`SecretError::MaskedCopyWithheld`), and
+    /// [`sighted_bytes_in_txn`]'s refusals; the checked reader's errors.
     pub(crate) fn sighted_body_file_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -123,10 +126,8 @@ impl Vault {
             return Ok(None);
         };
         if spans.is_some() {
-            if crate::batch::secret_scan::scan_file_content("", &copy).is_some() {
-                return Err(Error::InvariantViolation(
-                    "a masked file still reads as secret",
-                ));
+            if let Some(reason) = crate::batch::secret_scan::write_tree_hit(&copy) {
+                return Err(masked_copy_withheld(reason));
             }
             return Ok(Some(copy));
         }

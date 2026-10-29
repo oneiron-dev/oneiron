@@ -7,18 +7,24 @@
 //! A serving door reads that record by the bytes' hash: the owner reads the
 //! stored bytes; every other reader a copy with each key's span overwritten
 //! by filler of the same length. The stored bytes never change, and a copy
-//! the release door's scan still reads as secret is refused, never served.
+//! the write door's scan still reads as secret is refused, never served
+//! (FIX 2480): the door that accepted the file reads its copy.
 //!
 //! A key inside a container's member (a ZIP entry, a gzip payload, a PDF
-//! stream) is marked at its span in the decoded member (OF-067 C). Its copy
-//! is rebuilt: the member decoded, its keys overwritten, the container
-//! encoded around it again (`batch::secret_scan::container`). A container
-//! the write door kept no keys in is still read whole before a masked reader
-//! gets it: one that holds a key no mark places is refused. A sealed one,
-//! which no reader here reads whole (encrypted, malformed, past a bound), is
-//! stored as it is (owner ruling C2): the owner and a granted agent read its
-//! bytes (`reveal::file`), and a masked reader gets
-//! [`SecretError::SealedFileWithheld`], never the raw bytes.
+//! stream or an object's text strings) is marked at its span in the decoded
+//! member (OF-067 C). Its copy is rebuilt: the member decoded, its keys
+//! overwritten, the container encoded around it again
+//! (`batch::secret_scan::container`); in a text member a key reads as its
+//! custody handle, `[secret sc12]` (FIX 7944). A container the write door
+//! kept no keys in is still read whole before a masked reader gets it, the
+//! bytes no reader shows included (FIX 2470): one that holds a key no mark
+//! places is refused. A sealed one, which no reader here reads whole
+//! (encrypted, malformed, past the byte floor), is stored as it is (owner
+//! ruling C2): the owner and a granted agent read its bytes
+//! (`reveal::file`), and a masked reader gets
+//! [`SecretError::SealedFileWithheld`], never the raw bytes. A file a masked
+//! reader cannot be served is [`SecretError::MaskedCopyWithheld`] with the
+//! scan's reason (FIX 2475).
 
 use heed::{RoTxn, RwTxn};
 
@@ -26,8 +32,10 @@ use crate::blob_artifact::ArtifactExport;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::federation::Sensitivity;
+use crate::ports::ShortIdStoreRead;
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::store::Store;
 use crate::vault::Vault;
 
 /// The band a file with keys in it carries.
@@ -75,11 +83,19 @@ pub(crate) enum MemberStep {
     Gzip,
     /// A PDF stream, by its object's id.
     PdfStream { object: u32, generation: u16 },
+    /// A PDF object's text strings, each decoded, in the object's order
+    /// (FIX 2469), by the object's id.
+    PdfStrings { object: u32, generation: u16 },
 }
 
 /// Where a file's keys sit, without their records: one entry per place, the
 /// stored bytes' own (an empty path) and each member's, with its spans.
 pub(crate) type KeyPlaces = Vec<(Vec<MemberStep>, Vec<(u64, u64)>)>;
+
+/// The handle text each key in [`KeyPlaces`] stands as in a text member of a
+/// masked copy (FIX 7944), place for place and span for span; `None` where
+/// custody names no handle, and the filler stands in.
+pub(crate) type PlaceHandles = Vec<Vec<Option<String>>>;
 
 impl MaskedFile {
     /// Each place this row marks keys at.
@@ -97,6 +113,28 @@ impl MaskedFile {
                 .map(|member| (member.path.clone(), spans(&member.keys))),
         );
         places
+    }
+
+    /// Each place's handle texts, in [`Self::places`]' order (FIX 7944): a
+    /// key's custody record's handle, `[secret sc12]`.
+    fn place_handles(&self, store: &Store, txn: &RoTxn<'_>) -> Result<PlaceHandles> {
+        let texts = |keys: &[KeySpan]| -> Result<Vec<Option<String>>> {
+            keys.iter()
+                .map(|key| {
+                    Ok(store
+                        .port_short_id_reference(txn, &key.custody)?
+                        .map(|(handle, _)| super::known_values::handle_text(&handle)))
+                })
+                .collect()
+        };
+        let mut handles = Vec::with_capacity(self.members.len() + 1);
+        if !self.keys.is_empty() {
+            handles.push(texts(&self.keys)?);
+        }
+        for member in &self.members {
+            handles.push(texts(&member.keys)?);
+        }
+        Ok(handles)
     }
 
     /// Adds `key` at `path` (the stored bytes' own place for an empty path)
@@ -208,11 +246,51 @@ pub(crate) fn filled(bytes: &[u8], spans: impl IntoIterator<Item = (u64, u64)>) 
     Ok(copy)
 }
 
+/// `bytes` with each span in `spans` replaced by its handle text, or by the
+/// filler at the span's length where it has none (FIX 7944): a key in a text
+/// member reads as the handle custody holds it under. `spans` in byte
+/// order; one that overlaps the span before it replaces what is left of it.
+pub(crate) fn filled_with(
+    bytes: &[u8],
+    spans: impl IntoIterator<Item = ((u64, u64), Option<&str>)>,
+) -> Result<Vec<u8>> {
+    let mut copy = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    for ((start, end), handle) in spans {
+        let (start, end) = usize::try_from(start)
+            .ok()
+            .zip(usize::try_from(end).ok())
+            .filter(|&(start, end)| start <= end && end <= bytes.len())
+            .ok_or(Error::CorruptedIndex("masked file key span"))?;
+        let start = start.max(at);
+        if end <= start {
+            continue;
+        }
+        copy.extend_from_slice(&bytes[at..start]);
+        match handle {
+            Some(text) => copy.extend_from_slice(text.as_bytes()),
+            None => copy.resize(copy.len() + (end - start), FILLER),
+        }
+        at = end;
+    }
+    copy.extend_from_slice(&bytes[at..]);
+    Ok(copy)
+}
+
+/// A serving door's refusal of a file it cannot serve masked (FIX 2475):
+/// `reason` is the scan's code (a hit, or why the walk read no further).
+pub(crate) fn masked_copy_withheld(reason: &'static str) -> Error {
+    Error::Secret(SecretError::MaskedCopyWithheld { reason })
+}
+
 /// `bytes`, read from the store, as `sight` reads them. A file the write
-/// door kept no keys in is served as it is, once a container's members read
-/// clean to the write door.
+/// door kept no keys in is served as it is, once a container's members and
+/// the bytes no reader shows read clean to the write door. A masked copy is
+/// read by the write door's rules before it is served (FIX 2480); a file
+/// this reader cannot be served masked is
+/// [`SecretError::MaskedCopyWithheld`] (FIX 2475).
 pub(crate) fn sighted_bytes_in_txn(
-    store: &impl SideTableDbs,
+    store: &Store,
     txn: &RoTxn<'_>,
     bytes: Vec<u8>,
     sight: SecretSight,
@@ -228,21 +306,19 @@ pub(crate) fn sighted_bytes_in_txn(
             return Err(Error::Secret(SecretError::SealedFileWithheld));
         }
         // A container stored with the scan off, or one no mark covers, may
-        // hold keys in its members: it is read before it is served.
-        if secret_scan::is_container(&bytes) && secret_scan::scan_container_members(&bytes).is_err()
+        // hold keys in its members or in bytes no reader shows (FIX 2470):
+        // it is read whole before it is served.
+        if secret_scan::is_container(&bytes)
+            && let Some(reason) = secret_scan::write_tree_hit(&bytes)
         {
-            return Err(Error::InvariantViolation(
-                "an unmarked file's members hold keys or cannot be read",
-            ));
+            return Err(masked_copy_withheld(reason));
         }
         return Ok(bytes);
     };
-    let copy = secret_scan::masked_copy(&bytes, &file.places())
-        .map_err(|_| Error::InvariantViolation("a masked file's copy could not be rebuilt"))?;
-    if secret_scan::scan_file_content("", &copy).is_some() {
-        return Err(Error::InvariantViolation(
-            "a masked file still reads as secret",
-        ));
+    let handles = file.place_handles(store, txn)?;
+    let copy = secret_scan::served_masked_copy(&bytes, &file.places(), &handles)?;
+    if let Some(reason) = secret_scan::write_tree_hit(&copy) {
+        return Err(masked_copy_withheld(reason));
     }
     Ok(copy)
 }

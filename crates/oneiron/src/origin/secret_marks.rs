@@ -469,6 +469,11 @@ fn steps_value(member: &[MemberStep]) -> Value {
                     Value::from(object),
                     Value::from(generation),
                 ]),
+                MemberStep::PdfStrings { object, generation } => Value::Array(vec![
+                    Value::from("pdf_strings"),
+                    Value::from(object),
+                    Value::from(generation),
+                ]),
             })
             .collect(),
     )
