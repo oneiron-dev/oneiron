@@ -172,6 +172,8 @@ impl BrowserSession {
         }
         let mut output = output?;
         if let Some(replay) = output.replay.as_mut() {
+            // The replay's last open's site skills, read on its own guest.
+            fresh.deliver_batch_site_skills(replay);
             self.page_replay(replay);
         }
         Ok(output)

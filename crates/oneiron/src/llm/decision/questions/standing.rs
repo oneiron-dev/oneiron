@@ -647,6 +647,7 @@ fn backfill_answer(
                     think_row: None,
                     person_row: None,
                     rule: None,
+                    asked: None,
                 },
                 human_ask: None,
             },
