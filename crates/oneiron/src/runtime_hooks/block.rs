@@ -199,6 +199,15 @@ pub(super) fn expire_for_predicate(vault: &Vault, predicate: &str, at: u64) -> R
     })
 }
 
+/// Clears one source-dependent block, preserving its id and expired status.
+pub(in crate::runtime_hooks) fn scrub_block_payload(block: &mut HookBlock, at: u64) {
+    block.refs.clear();
+    block.session = None;
+    block.branch = None;
+    block.lifetime = HookBlockLifetime::Deliveries(1);
+    block.expired_at = Some(at);
+}
+
 /// Expires and clears source-dependent blocks left by affected runs. Their
 /// identity and expired status stay; refs, routing text and predicate globs do
 /// not survive the source's erasure.
@@ -221,11 +230,7 @@ pub(in crate::runtime_hooks) fn scrub_blocks_in_txn(
         }
     }
     for (block_id, mut block) in matched {
-        block.refs.clear();
-        block.session = None;
-        block.branch = None;
-        block.lifetime = HookBlockLifetime::Deliveries(1);
-        block.expired_at = Some(at);
+        scrub_block_payload(&mut block, at);
         BLOCKS.put(vault, txn, &block_id, &block)?;
     }
     Ok(())
