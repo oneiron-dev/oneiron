@@ -68,6 +68,12 @@ pub use self::compaction_home::{
     bind_compaction_caller, compaction_home_budget, load_compaction_home,
     resolve_compaction_identity,
 };
+pub use self::consent_wait::{
+    AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
+    CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
+    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
+    CodeConsentWaitView,
+};
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,
     CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
@@ -78,12 +84,6 @@ pub(crate) use self::consent_wait::{
     refuse_code_consent_wait_in_txn, seal_parked_code_consent_in_txn,
     settle_code_consent_wait_listing_in_txn, verify_code_consent_consumed,
     verify_parked_code_consent,
-};
-pub use self::consent_wait::{
-    AdmittedBrowserAct, CodeConsentAnswerInput, CodeConsentBrowserAction,
-    CodeConsentBrowserOutcome, CodeConsentChoice, CodeConsentEffectHost,
-    CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState,
-    CodeConsentWaitView,
 };
 pub(crate) use self::contribution::matched_contribution_facts_in_txn;
 pub use self::contribution::{

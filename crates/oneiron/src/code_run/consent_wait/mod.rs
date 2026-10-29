@@ -32,14 +32,13 @@ mod replay;
 mod settle;
 mod types;
 
-pub use self::browser::{AdmittedBrowserAct, CodeConsentBrowserOutcome};
 pub(crate) use self::binding::{
     CodeConsentDraft, attach_code_consent_ask_in_txn, code_consent_binds,
     code_consent_binds_held_browser, code_consent_binds_held_call, code_consent_wait_id,
-    code_consent_waits_bound_to_in_txn,
-    mint_code_consent_wait_in_txn, read_code_consent_wait_in_txn,
-    record_code_consent_admission_in_txn,
+    code_consent_waits_bound_to_in_txn, mint_code_consent_wait_in_txn,
+    read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
 };
+pub use self::browser::{AdmittedBrowserAct, CodeConsentBrowserOutcome};
 pub use self::host::CodeConsentEffectHost;
 pub(crate) use self::replay::{
     CodeConsentResume, ParkedWait, code_consent_resume_evidence, consume_code_consent_wait_in_txn,

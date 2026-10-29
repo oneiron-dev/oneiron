@@ -189,7 +189,8 @@ impl Vault {
         wait_id: EntityId,
     ) -> Result<Option<CodeConsentBrowserAction>> {
         let txn = self.store.env.read_txn()?;
-        let row = read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
+        let row =
+            read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
         Ok(row.binding.pending.browser_action().cloned())
     }
 
@@ -214,14 +215,14 @@ impl Vault {
         self.with_write_txn(|txn| {
             let row =
                 read_code_consent_wait_in_txn(self, txn, wait_id)?.ok_or(Error::EntityNotFound)?;
-            let action = row
-                .binding
-                .pending
-                .browser_action()
-                .cloned()
-                .ok_or(Error::InvalidConfig(
-                    "this code consent wait binds no browser act".to_owned(),
-                ))?;
+            let action =
+                row.binding
+                    .pending
+                    .browser_action()
+                    .cloned()
+                    .ok_or(Error::InvalidConfig(
+                        "this code consent wait binds no browser act".to_owned(),
+                    ))?;
             if !row.approved_unsettled() {
                 return Ok(None);
             }
@@ -234,22 +235,24 @@ impl Vault {
                 return Ok(None);
             }
             if !original_authority_holds_in_txn(self, txn, &row.binding) {
-                refuse_browser_wait_in_txn(self, txn, row, &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED])?;
+                refuse_browser_wait_in_txn(
+                    self,
+                    txn,
+                    row,
+                    &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
+                )?;
                 return Ok(None);
             }
             let digest = EffectDigest::from_bytes(row.binding.effect_digest);
-            let approval = crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?
-                .ok_or(Error::InvariantViolation(
-                    "an approved browser code consent wait holds no approve-once marker",
-                ))?;
+            let approval =
+                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?
+                    .ok_or(Error::InvariantViolation(
+                        "an approved browser code consent wait holds no approve-once marker",
+                    ))?;
             crate::consent::spend_approve_once_in_txn(&self.store, txn, &approval)?;
-            let decision = row
-                .answer
-                .as_ref()
-                .map(|answer| answer.decision)
-                .ok_or(Error::InvariantViolation(
-                    "an approved browser code consent wait has no answer",
-                ))?;
+            let decision = row.answer.as_ref().map(|answer| answer.decision).ok_or(
+                Error::InvariantViolation("an approved browser code consent wait has no answer"),
+            )?;
             let mut intent = blake3::Hasher::new();
             intent.update(BROWSER_ADMISSION_DOMAIN);
             intent.update(&row.binding.binding_digest);
@@ -293,7 +296,8 @@ impl Vault {
     /// deadline: silence never approves.
     fn browser_question_text(&self, wait_id: EntityId) -> Result<String> {
         let txn = self.store.env.read_txn()?;
-        let row = read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
+        let row =
+            read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
         let action = row
             .binding
             .pending
@@ -315,7 +319,10 @@ impl Vault {
              until you answer.",
             role = clip(&action.role),
             name = clip(&action.name),
-            page = action.page.as_deref().map_or_else(|| "the open page".to_owned(), clip),
+            page = action
+                .page
+                .as_deref()
+                .map_or_else(|| "the open page".to_owned(), clip),
             wait = wait_id.to_hex(),
             class = action.class,
         ))
@@ -354,9 +361,11 @@ fn settle_browser_in_txn(
             "a browser outcome settles only a held browser act",
         ))?;
     let (settled, answer, reasons) = match outcome {
-        CodeConsentBrowserOutcome::Delivered(answer) => {
-            (CodeConsentSettleOutcome::Delivered, Some(answer), Vec::new())
-        }
+        CodeConsentBrowserOutcome::Delivered(answer) => (
+            CodeConsentSettleOutcome::Delivered,
+            Some(answer),
+            Vec::new(),
+        ),
         CodeConsentBrowserOutcome::Refused(reasons) => {
             (CodeConsentSettleOutcome::Refused, None, reasons)
         }
