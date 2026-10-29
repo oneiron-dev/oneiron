@@ -25324,6 +25324,28 @@ async fn vault_conversations_turn_retry(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_conversations_turn_rebind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.conversations.turn.rebind",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_messages_react(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38047,6 +38069,9 @@ pub(crate) async fn call_verb(
         }
         "vault.conversations.turn.retry" => {
             vault_conversations_turn_retry(server, call, input).await
+        }
+        "vault.conversations.turn.rebind" => {
+            vault_conversations_turn_rebind(server, call, input).await
         }
         "vault.messages.react" => vault_messages_react(server, call, input).await,
         "vault.rooms.host" => vault_rooms_host(server, call, input).await,

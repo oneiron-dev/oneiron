@@ -806,6 +806,7 @@ both bindings and their export-census tests in one change.
 - `vault.projects.route_tradeoff`
 - `vault.conversations.turn.continue`
 - `vault.conversations.turn.retry`
+- `vault.conversations.turn.rebind`
 - `vault.messages.react`
 - `vault.rooms.host`
 - `vault.rooms.host.pin`

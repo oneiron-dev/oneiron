@@ -804,6 +804,7 @@ pub enum AgentVerb {
     VaultProjectsRouteTradeoff,
     VaultConversationsTurnContinue,
     VaultConversationsTurnRetry,
+    VaultConversationsTurnRebind,
     VaultMessagesReact,
     VaultRoomsHost,
     VaultRoomsHostPin,
@@ -1991,6 +1992,7 @@ impl AgentVerb {
         Self::VaultProjectsRouteTradeoff,
         Self::VaultConversationsTurnContinue,
         Self::VaultConversationsTurnRetry,
+        Self::VaultConversationsTurnRebind,
         Self::VaultMessagesReact,
         Self::VaultRoomsHost,
         Self::VaultRoomsHostPin,
@@ -3201,6 +3203,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => "vault.projects.route_tradeoff",
             Self::VaultConversationsTurnContinue => "vault.conversations.turn.continue",
             Self::VaultConversationsTurnRetry => "vault.conversations.turn.retry",
+            Self::VaultConversationsTurnRebind => "vault.conversations.turn.rebind",
             Self::VaultMessagesReact => "vault.messages.react",
             Self::VaultRoomsHost => "vault.rooms.host",
             Self::VaultRoomsHostPin => "vault.rooms.host.pin",
@@ -4398,6 +4401,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultConversationsTurnRebind
                 | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
@@ -5614,6 +5618,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultConversationsTurnRebind
                 | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
@@ -6924,6 +6929,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultConversationsTurnRebind
                 | Self::VaultMessagesReact
                 | Self::VaultRoomsHost
                 | Self::VaultRoomsHostPin
@@ -7764,6 +7770,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRouteTradeoff
                 | Self::VaultConversationsTurnContinue
                 | Self::VaultConversationsTurnRetry
+                | Self::VaultConversationsTurnRebind
                 | Self::VaultMessagesReact
                 | Self::VaultRoomsHostPin
                 | Self::VaultRoomsHostHand
@@ -8827,6 +8834,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
+            Self::VaultConversationsTurnRebind => &["spec"],
             Self::VaultMessagesReact => &["spec"],
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
@@ -10015,6 +10023,7 @@ impl AgentVerb {
             Self::VaultProjectsRouteTradeoff => &["spec"],
             Self::VaultConversationsTurnContinue => &["spec"],
             Self::VaultConversationsTurnRetry => &["spec"],
+            Self::VaultConversationsTurnRebind => &["spec"],
             Self::VaultMessagesReact => &["spec"],
             Self::VaultRoomsHost => &["spec"],
             Self::VaultRoomsHostPin => &["spec"],
@@ -12753,6 +12762,9 @@ impl AgentVerb {
             }
             Self::VaultConversationsTurnRetry => {
                 "Queues a new answer to the user turn an assistant turn answered; the old reply stays."
+            }
+            Self::VaultConversationsTurnRebind => {
+                "Rebinds the caller's queued turn action whose credential no longer stands to the live credential this request was admitted on; the action keeps its scope."
             }
             Self::VaultMessagesReact => {
                 "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."
