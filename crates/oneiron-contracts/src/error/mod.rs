@@ -29,7 +29,10 @@ pub use self::legal_hold::{
 };
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
-pub use self::record::{RecordError, RoomLiveSpeakersHold, SEAL_STANDING_RECONCILE_TEXT};
+pub use self::record::{
+    ErasedHoldTarget, HOLD_TARGET_ERASED_SUGGESTION, RecordError, RoomLiveSpeakersHold,
+    SEAL_STANDING_RECONCILE_TEXT,
+};
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
 pub use self::secret::{KitRecord, SecretError};
@@ -274,6 +277,9 @@ pub enum ErrorKind {
     AuthorityClockCorrupt,
     /// The decision seals' standing could not be verified (FIX 5248).
     SealStandingUnverifiable,
+    /// A hold named a claim's gate-decision partition an erase took, or
+    /// whose key is retired (FIX 2923).
+    HoldTargetErased,
     InvalidSecretCustodyBody,
     SecretNameInUse,
     SecretCustodyNotActive,
