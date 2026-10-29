@@ -59,7 +59,10 @@ fn invalid(reason: &str) -> Error {
 }
 
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
-    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    })
 }
 
 /// One generate step of a period render.
@@ -352,6 +355,7 @@ pub async fn run_weave_lens(
                 )?;
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
             // The refused answer and why go back to the model; the repair
@@ -389,5 +393,6 @@ pub async fn run_weave_lens(
     )?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }

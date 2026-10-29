@@ -49,9 +49,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/dreamer/run_log.rs` | src | s | 1 crate-vis | — | The outcome line of an attempt the server's Dreamer executor ended without completing it (FIX 7271): who it… |
 | `src/ai_host/dreamer/urgent_digest.rs` | src | s | 2 crate-vis | — | The host's half of the digest's urgent breakthrough (OF-194 L3; ARCH-0026: "urgent breakthrough only when… |
 | `src/ai_host/dreamer_thing.rs` | src | s | 3 crate-vis | — | The served thing-child host (FIX 7508): what this server lends a thing branch's scoped code-mode agent |
-| `src/ai_host/dreamer_thing/generation.rs` | src | s | 5 crate-vis | — | The served agent's generation count (FIX 7508, 9015): what its calls spent on its parent's guard, handed to… |
+| `src/ai_host/dreamer_thing/generation.rs` | src | s | 6 crate-vis | — | The served agent's generation count (FIX 7508, 9015, 11449): what its calls spent on its parent's guard… |
 | `src/ai_host/dreamer_thing/ports.rs` | src | s | 2 crate-vis | — | A thing agent's two lent ports (FIX 7508, FIX 7733): the adapter its host registers for exactly… |
-| `src/ai_host/dreamer_thing/profile.rs` | src | s | 5 crate-vis | — | The served agent's own generation and the session its parent waits on (FIX 7508) |
+| `src/ai_host/dreamer_thing/profile.rs` | src | s | 5 crate-vis | — | The served agent's own generation and the session its parent waits on (FIX 7508, 11449) |
 | `src/ai_host/eval_authoring.rs` | src | s | 1 crate-vis | — | The Coach's eval authoring (ARCH-0053 "Eval authoring", OF-578): each night it keeps each seat's test set… |
 | `src/ai_host/eval_measurement.rs` | src | s | 2 crate-vis | — | The Coach's paired eval measurement (FIX 574, OF-578) |
 | `src/ai_host/eval_measurement/legs.rs` | src | s | 7 crate-vis | — | The legs' exact-model calls: each arm on its own one-model ladder, as a call of the seat's role, under one… |
@@ -84,7 +84,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/skill_author.rs` | src | m | 2 crate-vis | — | The Coach's skill-edit author (OF-214) |
 | `src/ai_host/skill_discovery.rs` | src | m | 2 crate-vis | — | The Coach's skill discovery (ARCH-0056 §5, ARCH-0066 #coach, OF-420): the standing attribution classifier… |
 | `src/ai_host/status.rs` | src | s | 5 struct · 4 enum · 9 crate-vis | AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, UnservedNote, UnservedReason, WorkState +1 | Live state of the server's background AI work, shared between the workers that change it and the routes that… |
-| `src/ai_host/step.rs` | src | m | 9 crate-vis | — | One saved-workflow step on a model seat |
+| `src/ai_host/step.rs` | src | m | 10 crate-vis | — | One saved-workflow step on a model seat |
 | `src/ai_host/step/live_lease.rs` | src | s | 4 crate-vis | — | A step try's spend lease, read live (FIX 1819) |
 | `src/ai_host/step/secret_use.rs` | src | s | 4 crate-vis | — | `self.use` on a saved-workflow text step (FIX 2315) |
 | `src/ai_host/step_failure.rs` | src | s | 3 crate-vis | — | A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or… |
@@ -473,10 +473,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/call_meta.rs` | src | s | 4 crate-vis | — | What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and… |
 | `src/api/mcp_gateway/claimed_release.rs` | src | s | 4 crate-vis | — | What a claimed MCP `tools/call` keeps of its answer for the calls waiting on it, and how each waiter's reply… |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | m | 6 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
-| `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 6 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
+| `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 8 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/dispatch.rs` | src | m | 10 crate-vis | — | How a code-mode run's agent verbs reach their doors: admitted, executed and answered |
 | `src/api/mcp_gateway/code_mode_verbs/field_writer.rs` | src | s | 3 crate-vis | — | A run's field writer and text check (CUA E6, DESIGN-2 §4 "Field text = A"): the host side of a browser Fill… |
 | `src/api/mcp_gateway/code_mode_verbs/guests.rs` | src | m | 19 crate-vis | — | A code-mode run's browser and desktop guests: started, driven and planned for one run |
+| `src/api/mcp_gateway/code_mode_verbs/held_press.rs` | src | s | 7 crate-vis | — | A code run's held browser presses (FIX 10423): the act a refused press held, taken from the run's browser… |
 | `src/api/mcp_gateway/code_mode_verbs/library.rs` | src | s | 1 crate-vis | — | The vault's browser workflow library as a code-mode run's guest reads and files it |
 | `src/api/mcp_gateway/code_mode_verbs/program_admission.rs` | src | m | 1 crate-vis | — | A queued browser program admission's run (CUA E8b; DESIGN-2 "The Coach", row E8) |
 | `src/api/mcp_gateway/code_mode_verbs/reader.rs` | src | s | 2 crate-vis | — | The read-only door a reader child run calls its agent verbs through |
@@ -765,6 +766,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cloud_registration/refresh.rs` | src | s | 1 crate-vis | — | The owner's explicit refresh (CALLS G7_REFRESH_TRIGGER): one rotation of the token family, serialized… |
 | `src/cloud_registration/wire.rs` | src | s | 21 crate-vis | — | LC cloud #97's wire, as fixed at cloud 519cfa1e0 (RFC 8628 device grant, refresh rotation, RFC 7009 revoke… |
 | `src/code_consent_host.rs` | src | s | 6 crate-vis | — | The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on… |
+| `src/code_consent_host/browser.rs` | src | s | 1 crate-vis | — | The served host's answered pass over a held browser act (FIX 10423) |
 | `src/commands.rs` | src | L | 1 struct · 12 fn · 1 const · 23 re-export · 10 crate-vis | DictSearchResolution | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
 | `src/commands/account.rs` | src | s | 1 fn | — | `oneiron account`: the owner's cloud registration on a stopped vault (G7) |
 | `src/commands/api.rs` | src | m | 1 fn · 19 crate-vis | — | `oneiron api …` — the bash/curl lane of the packaging ladder |

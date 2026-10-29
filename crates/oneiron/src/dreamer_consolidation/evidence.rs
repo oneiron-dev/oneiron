@@ -91,6 +91,10 @@ pub(super) struct ExtractedCandidate {
     refs: Vec<EvidenceLocator>,
     /// The listed head the extractor named in `corrects`.
     corrects: Option<EntityId>,
+    /// The rows of the extraction call that produced it (FIX 11526): its
+    /// slice's sources, the union when a call sends several slices; `None`
+    /// for a candidate no extraction call of this branch produced.
+    sources: Option<Vec<EntityId>>,
 }
 impl ExtractedCandidate {
     pub(super) fn new(
@@ -108,6 +112,7 @@ impl ExtractedCandidate {
             proposal,
             refs,
             corrects: None,
+            sources: None,
         })
     }
     /// Marks the candidate as the extractor's correction of `head`.
@@ -115,11 +120,20 @@ impl ExtractedCandidate {
         self.corrects = Some(head);
         self
     }
+    /// The candidate with the rows of the extraction call that produced
+    /// it, `None` when they are not known.
+    pub(super) fn with_sources(mut self, sources: Option<Vec<EntityId>>) -> Self {
+        self.sources = crate::skill_optimize::union_source_rows([sources]);
+        self
+    }
     pub(super) fn corrects(&self) -> Option<EntityId> {
         self.corrects
     }
     pub(super) fn proposal(&self) -> &PromotionCandidate {
         &self.proposal
+    }
+    pub(super) fn sources(&self) -> Option<&[EntityId]> {
+        self.sources.as_deref()
     }
     pub(super) fn into_parts(self) -> (PromotionCandidate, Vec<EvidenceLocator>) {
         (self.proposal, self.refs)
@@ -478,6 +492,9 @@ pub(crate) struct VerifiedCandidate {
     /// The open markers an earlier try of this attempt left that this
     /// candidate answers (FIX 7325); empty for every other candidate.
     pub(crate) answers: Vec<ResolvedConflictOutput>,
+    /// The rows of the extraction call that produced it (FIX 11526), kept
+    /// through verification for the verdict reads; `None` when not known.
+    pub(crate) sources: Option<Vec<EntityId>>,
 }
 impl std::ops::Deref for VerifiedCandidate {
     type Target = PromotionCandidate;
@@ -490,6 +507,7 @@ impl VerifiedCandidate {
         resources: &BranchResources<'_>,
         extracted: ExtractedCandidate,
     ) -> Result<Self> {
+        let sources = extracted.sources().map(<[EntityId]>::to_vec);
         let (mut proposal, refs) = extracted.into_parts();
         let evidence = VerifiedEvidenceSet::verify(resources, &refs, proposal.evidence_meet)?;
         proposal.evidence_turn_refs = evidence.refs();
@@ -498,6 +516,7 @@ impl VerifiedCandidate {
             proposal,
             evidence,
             answers: Vec::new(),
+            sources,
         })
     }
 }
