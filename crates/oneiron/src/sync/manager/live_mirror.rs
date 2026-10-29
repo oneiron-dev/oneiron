@@ -171,7 +171,7 @@ impl WindowManager {
         // its room's, parent's and thread root's windows as well as its own.
         let carriers = crate::sync::room_facts::committed_carriers(&self.vault, rows);
         self.flush_cold_windows(rows, edited, &carriers);
-        for key in self.loaded_keys() {
+        for key in self.mirror_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
             };
@@ -212,6 +212,20 @@ impl WindowManager {
                 tracing::warn!(window = %key, %error, "room side rows not mirrored into the live window");
             }
         }
+    }
+
+    /// The keys of every loaded window and of every window in transition. The
+    /// mirror's [`Self::window`] lookup waits for a cold open to register its
+    /// window, so a row committed during that open still reaches the doc, and
+    /// finds a window an unload removed gone.
+    fn mirror_keys(&self) -> Vec<WindowKey> {
+        let mut keys = self.loaded_keys();
+        for key in self.transition.keys() {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys
     }
 
     /// Opens each window no loaded one is that holds side rows `rows`, just
