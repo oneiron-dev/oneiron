@@ -12,7 +12,9 @@
 //! scheduled run rewrites windows only for a due obligation, since dropping
 //! history is an erase, and the owner's run rewrites every window. The lease
 //! sweep also retries a bounded number of files a revoke or an expiry could
-//! not remove then.
+//! not remove then. The found-key drain raises one write's share of due
+//! notices a page, each page its own write, and stops between pages at the
+//! deadline.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SecretLiftWork, SweepWork};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
@@ -136,6 +138,7 @@ pub(super) fn run(
             noticed: count(vault.notify_matured_shared_acts()?),
         },
         HousekeepingSweep::SecretLiftHistory => return secret_lift(vault, deadline),
+        HousekeepingSweep::FoundKeyNotices => return found_key_notices(vault, deadline),
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -293,6 +296,26 @@ fn secret_lift(vault: &Vault, deadline: &Deadline) -> Result<Run> {
         cursor: None,
         covered_until: None,
     })
+}
+
+/// Raises the found-key notices writes left due a page at a time, each page
+/// its own short write, until none is due or the deadline passes (FIX 2648).
+/// The due rows are the queue, so the schedule keeps no cursor. A page that
+/// takes no record while some stay due ends the run unfinished.
+fn found_key_notices(vault: &Vault, deadline: &Deadline) -> Result<Run> {
+    let mut records = 0;
+    loop {
+        let (page, more) = crate::secret_custody::raise_found_key_notices_page(vault)?;
+        records += count(page);
+        if !more || page == 0 || deadline.passed() {
+            return Ok(Run {
+                work: SweepWork::FoundKeyNotices { records },
+                complete: !more,
+                cursor: None,
+                covered_until: None,
+            });
+        }
+    }
 }
 
 /// The envelope the host lapses an overdue instance under: the vault owner's,

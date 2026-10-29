@@ -41,8 +41,8 @@ use crate::error::{ErrorKind, Result};
 
 use self::schedule::SweepState;
 
-/// One sweep the housekeeping pass knows. The engine runs the first twelve; the
-/// rest need a host's authority and are reported, never run.
+/// One sweep the housekeeping pass knows. The engine runs the first thirteen;
+/// the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -76,6 +76,9 @@ pub enum HousekeepingSweep {
     /// no door places files a lift proposal. Idle when no run is queued, and
     /// paused while the owner's switch is off.
     SecretLiftHistory,
+    /// Raises the found-key notices left due past one write's share (OF-560,
+    /// FIX 2648), for a vault no later write comes to.
+    FoundKeyNotices,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -131,7 +134,7 @@ const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -144,6 +147,7 @@ impl HousekeepingSweep {
         Self::PprCacheEviction,
         Self::SharedActMaturity,
         Self::SecretLiftHistory,
+        Self::FoundKeyNotices,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -167,6 +171,7 @@ impl HousekeepingSweep {
             Self::PprCacheEviction => "ppr_cache_eviction",
             Self::SharedActMaturity => "shared_act_maturity",
             Self::SecretLiftHistory => "secret_lift_history",
+            Self::FoundKeyNotices => "found_key_notices",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -186,7 +191,8 @@ impl HousekeepingSweep {
     /// deadline makes the maturity sweep due then (its start notes it), and
     /// it runs hourly besides, for an act an objection withdrawal released.
     /// The lift sweep looks for a queued run every fifteen minutes, and a run
-    /// left unfinished at a pass's deadline is due again at once.
+    /// left unfinished at a pass's deadline is due again at once; the
+    /// found-key drain looks for due notices as often.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -202,7 +208,8 @@ impl HousekeepingSweep {
             Self::EsignExpiry
             | Self::EsignSealBackstop
             | Self::CommitmentLapse
-            | Self::SecretLiftHistory => engine(15 * MINUTE),
+            | Self::SecretLiftHistory
+            | Self::FoundKeyNotices => engine(15 * MINUTE),
             Self::GateDecisionRetention => Runner::Engine {
                 every: HOUR,
                 at_open: true,
@@ -407,6 +414,10 @@ pub enum SweepWork {
         noticed: u64,
     },
     SecretLift(SecretLiftWork),
+    FoundKeyNotices {
+        /// Due records whose notices were raised.
+        records: u64,
+    },
 }
 
 impl SweepWork {
@@ -452,6 +463,7 @@ impl SweepWork {
             } => evicted == 0 && deps_cleaned == 0,
             Self::SharedActs { noticed } => noticed == 0,
             Self::SecretLift(work) => work == SecretLiftWork::default(),
+            Self::FoundKeyNotices { records } => records == 0,
         }
     }
 }
