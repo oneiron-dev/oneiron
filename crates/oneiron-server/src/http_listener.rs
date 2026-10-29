@@ -278,6 +278,7 @@ async fn serve_from_pool(
         strangers,
         pressure,
         reserve,
+        ..
     } = pool;
     let gate = server.map(|server| {
         OwnerGate::new(

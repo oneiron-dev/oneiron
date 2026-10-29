@@ -329,12 +329,13 @@ impl BrowserSession {
     /// A person's span still held is left to the takeover's own end, as
     /// there, so each is given once, here or there, never both.
     pub fn take_closed_demonstrations(&mut self) -> Vec<DemonstrationOutput> {
-        let held = self.demos.takeover.as_ref().map(|span| span.id.as_str());
+        let held: Option<DemonstrationId> =
+            self.demos.takeover.as_ref().map(|span| span.id.clone());
         let runs_held = self
             .demos
             .active
             .as_ref()
-            .is_some_and(|running| Some(running.id.as_str()) == held);
+            .is_some_and(|running| Some(running.id.as_str()) == held.as_deref());
         if !runs_held {
             self.recording_close(DemonstrationStopCause::SessionClosed);
         }
@@ -343,7 +344,7 @@ impl BrowserSession {
             .demos
             .ended
             .iter()
-            .position(|ended| Some(ended.recording.id.as_str()) != held)
+            .position(|ended| Some(ended.recording.id.as_str()) != held.as_deref())
         {
             let ended = self.demos.ended.remove(at);
             if let Ok(output) = self.demonstration_delivery_policy(ended, None) {
