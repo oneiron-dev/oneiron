@@ -5,9 +5,14 @@
 //! lands no membership rows. A never-joined imported conversation therefore has
 //! empty people, and `source_people_in` needs its recorded speakers to decide
 //! whether it is the owner's side alone. This helper reads only this
-//! conversation's body, its own `ChildOf` TURNs and their own `PartOf`
+//! conversation's body, its own `ChildOf` TURNs and its live `BelongsTo`
 //! MESSAGEs; it never consults the import ledger (vault-wide, copy-shared
 //! native ids) and never classes a member.
+//!
+//! Deleted turns do not hide a recorded speaker: the room's live MESSAGEs
+//! `BelongsTo` the room decide `said_by`, whatever TURN they sit under.
+//! Deleted message shells are skipped (a shell holds no words). Read cost: 1
+//! (conversation) + T (turn bodies) + M (live message bodies).
 //!
 //! Premise: the import door is the owner's own-history door
 //! (`AuthenticatedOwner`, ARCH-0027), so an import's no-`said_by` user side is
@@ -17,8 +22,12 @@
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::dreamer_consolidation::decode_turn_body;
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// What an imported conversation's recorded speakers say about who else it
 /// holds (FIX 11353).
@@ -27,14 +36,15 @@ pub(crate) enum ImportedConversationSpeakers {
     /// The conversation carries no `import_source`: not an import, not this
     /// helper's case.
     NotImported,
-    /// Imported, and every speaker is owner-side: user turns whose MESSAGEs
-    /// all lack `said_by`, plus assistant turns. Premise: the import door is
-    /// the owner's own-history door (`AuthenticatedOwner`, ARCH-0027), so an
-    /// import's no-`said_by` user side is the owner.
+    /// Imported, and every speaker is owner-side: live TURNs in
+    /// `{user, assistant}` with the room's live MESSAGEs all lacking `said_by`.
+    /// Premise: the import door is the owner's own-history door
+    /// (`AuthenticatedOwner`, ARCH-0027), so an import's no-`said_by` user side
+    /// is the owner.
     OwnerSide,
-    /// Imported but holds other people: any user-side `said_by`, any
-    /// non-imported or unexpected-speaker TURN, or any unreadable row (fail
-    /// closed).
+    /// Imported but holds other people: any live `said_by`, any live
+    /// non-imported or unexpected-speaker TURN, or any undecodable live body
+    /// (fail closed).
     Others,
 }
 
@@ -43,14 +53,16 @@ pub(crate) enum ImportedConversationSpeakers {
 ///
 /// Premise: the import door is the owner's own-history door
 /// (`AuthenticatedOwner`, ARCH-0027), so an import's no-`said_by` user side is
-/// the owner. A TURN outside `{user, assistant}`, a non-imported TURN, any
-/// present user-side `said_by`, and any missing or undecodable row are
-/// `Others`; only a fully owner-side import is `OwnerSide`.
+/// the owner. A live TURN outside `{user, assistant}`, a live non-imported
+/// TURN, and any present `said_by` on a live MESSAGE `BelongsTo` the room are
+/// `Others`; deleted turns do not hide a recorded speaker, and deleted message
+/// shells are skipped (no words). An undecodable live body fails closed; only
+/// a fully owner-side import is `OwnerSide`.
 ///
 /// # Errors
 ///
-/// Storage or I/O errors reading rows or edges. Every decode or missing-row
-/// surprise is `Others`, never an error.
+/// Storage or I/O errors reading rows or edges. Every undecodable live body
+/// is `Others`, never an error.
 pub(crate) fn imported_speakers_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -66,9 +78,23 @@ pub(crate) fn imported_speakers_in(
     if facts.import_source.is_none() {
         return Ok(ImportedConversationSpeakers::Others);
     }
-    for (_, turn) in vault.childof_turns_in(rtxn, &conversation)? {
-        let Some(body) = body_in(vault, rtxn, &turn)? else {
-            return Ok(ImportedConversationSpeakers::Others);
+    // All ChildOf TURN targets, live or not (childof_turns_in is live-only):
+    // a shelled or absent turn gives no verdict itself; its live MESSAGEs
+    // still decide said_by below.
+    for edge in vault.store.port_edges(
+        rtxn,
+        &conversation,
+        EdgeDirection::In,
+        Some(EdgeKind::ChildOf),
+        None,
+    )? {
+        let turn = edge?.target;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            body,
+        } = live_entity_row_in_txn(&vault.store, rtxn, &turn)?
+        else {
+            continue;
         };
         let facts = decode_turn_body(&body);
         if !facts.imported {
@@ -78,16 +104,26 @@ pub(crate) fn imported_speakers_in(
             Some("user" | "assistant") => {}
             _ => return Ok(ImportedConversationSpeakers::Others),
         }
-        if facts.speaker.as_deref() != Some("user") {
+    }
+    // One scan of the room's live MESSAGEs: deleted turns do not hide a
+    // recorded speaker, and deleted shells hold no words.
+    for edge in vault.store.port_edges(
+        rtxn,
+        &conversation,
+        EdgeDirection::In,
+        Some(EdgeKind::BelongsTo),
+        None,
+    )? {
+        let message = edge?.target;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_MESSAGE,
+            body,
+        } = live_entity_row_in_txn(&vault.store, rtxn, &message)?
+        else {
             continue;
-        }
-        for message in vault.turn_message_ids_in(rtxn, &turn)? {
-            let Some(body) = body_in(vault, rtxn, &message)? else {
-                return Ok(ImportedConversationSpeakers::Others);
-            };
-            if message_has_said_by(&body) {
-                return Ok(ImportedConversationSpeakers::Others);
-            }
+        };
+        if message_has_said_by(&body) {
+            return Ok(ImportedConversationSpeakers::Others);
         }
     }
     Ok(ImportedConversationSpeakers::OwnerSide)
