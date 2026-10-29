@@ -284,7 +284,8 @@ fn origins_of(evidence: &[SolvedRunEvidence]) -> (Vec<String>, Vec<String>) {
 
 /// The conservative routes over the observed `open` URLs: their longest
 /// shared `/`-boundary prefix, or none (the whole site) when they share
-/// only `/`.
+/// only `/`. A route needs at least two distinct paths: one distinct path
+/// never mines a route.
 fn routes_of(evidence: &[SolvedRunEvidence]) -> Vec<String> {
     let mut paths = BTreeSet::new();
     for source in evidence {
@@ -295,6 +296,9 @@ fn routes_of(evidence: &[SolvedRunEvidence]) -> Vec<String> {
                 paths.insert(path);
             }
         }
+    }
+    if paths.len() < 2 {
+        return Vec::new();
     }
     common_route(&paths.into_iter().collect::<Vec<_>>())
 }
@@ -318,7 +322,8 @@ fn open_path(url: &str) -> Option<String> {
 
 /// The longest shared `/`-boundary prefix of every observed path, or none.
 /// Cutting to a trailing `/` keeps every observed path matched: `/spread`
-/// must never match `/spreadsheets`.
+/// must never match `/spreadsheets`. The prefix then cuts before its first
+/// id-like segment, so caller literals never file as routes.
 fn common_route(paths: &[String]) -> Vec<String> {
     if paths.is_empty() {
         return Vec::new();
@@ -343,10 +348,118 @@ fn common_route(paths: &[String]) -> Vec<String> {
         prefix = &prefix[..prefix.rfind('/').map_or(0, |at| at + 1)];
     }
     if prefix.len() <= 1 {
+        return Vec::new();
+    }
+    sanitize_route_prefix(prefix)
+}
+
+/// Floor for a hex-only segment to count as id-like. Mirrors the engine's
+/// own floor for secret-shaped material (`MIN_SECRET_LEN = 8`,
+/// `batch/secret_scan/shapes.rs:629`; private, mirrored by value).
+const ROUTE_LONG_HEX_MIN_LEN: usize = 8;
+
+/// Floor for a mixed letter+digit segment to count as token-like. The mix
+/// rule mirrors `secret_candidate`'s letters+digits
+/// (`batch/secret_scan/shapes.rs:644-663`); the length is raised 8->16
+/// because bare path segments lack the credential-key context that
+/// assignments carry.
+const ROUTE_TOKEN_MIN_LEN: usize = 16;
+
+/// Length at which any segment counts as token-like, whatever its alphabet.
+const ROUTE_TOKEN_ANY_LEN: usize = 32;
+
+/// Cuts a `/`-boundary common prefix before its first id-like segment and
+/// rejoins the kept segments as `/` + kept + `/`. Zero kept segments is
+/// the whole site (`[]`), same as a `/`-only prefix.
+fn sanitize_route_prefix(prefix: &str) -> Vec<String> {
+    let mut kept = Vec::new();
+    for segment in prefix.split('/') {
+        if segment.is_empty() {
+            continue;
+        }
+        if route_segment_hit(segment) {
+            break;
+        }
+        kept.push(segment);
+    }
+    if kept.is_empty() {
         Vec::new()
     } else {
-        vec![prefix.to_owned()]
+        vec![format!("/{}/", kept.join("/"))]
     }
+}
+
+/// Whether one route-prefix segment is id-like: the route cuts before it.
+/// Pure byte predicates over ASCII shapes; total and panic-free on any
+/// UTF-8. No entropy float, no percent-decoding.
+fn route_segment_hit(segment: &str) -> bool {
+    is_all_digits(segment)
+        || is_long_hex(segment)
+        || is_uuid(segment)
+        || is_token_like(segment)
+        || is_opaque(segment)
+}
+
+/// Non-empty, all ASCII digits, any length.
+fn is_all_digits(segment: &str) -> bool {
+    !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Hex-only at or above [`ROUTE_LONG_HEX_MIN_LEN`].
+fn is_long_hex(segment: &str) -> bool {
+    segment.len() >= ROUTE_LONG_HEX_MIN_LEN && segment.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// Canonical UUID shape (8-4-4-4-12, dashes at 8/13/18/23, rest hex).
+fn is_uuid(segment: &str) -> bool {
+    let bytes = segment.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (at, byte) in bytes.iter().enumerate() {
+        if matches!(at, 8 | 13 | 18 | 23) {
+            if *byte != b'-' {
+                return false;
+            }
+        } else if !byte.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Token-like: mixed ASCII letters+digits at or above
+/// [`ROUTE_TOKEN_MIN_LEN`], or anything at or above
+/// [`ROUTE_TOKEN_ANY_LEN`].
+fn is_token_like(segment: &str) -> bool {
+    if segment.len() >= ROUTE_TOKEN_ANY_LEN {
+        return true;
+    }
+    if segment.len() < ROUTE_TOKEN_MIN_LEN {
+        return false;
+    }
+    let mut letter = false;
+    let mut digit = false;
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphabetic() {
+            letter = true;
+        } else if byte.is_ascii_digit() {
+            digit = true;
+        }
+        if letter && digit {
+            return true;
+        }
+    }
+    false
+}
+
+/// Opaque: percent-encoded bytes, unfilled run slots, or dot-segments.
+fn is_opaque(segment: &str) -> bool {
+    segment == "."
+        || segment == ".."
+        || segment.bytes().any(|byte| byte == b'%')
+        || segment.contains("{{")
+        || segment.contains("}}")
 }
 
 /// The live programs named, by workflow id.
