@@ -3,15 +3,14 @@
 //! Definitions: types stay in the parent; this module owns the listed impls.
 
 use super::{
-    AskTo, DecisionLadder, DecisionPack, DecisionProvider, HumanDecisionRequest, OpenPack, Read,
-    Readings, Route, abstained, ask, asks_person, millis, next_rung, step_cause, take, takes,
-    validate_pin, validate_state,
+    AskTo, DecisionLadder, DecisionPack, HumanDecisionRequest, OpenPack, Read, Readings, Route,
+    abstained, ask, asks_person, millis, step_cause, take, takes, validate_pin, validate_state,
 };
 use crate::llm::decision::policy::{DecisionBandPolicy, Reversibility};
 use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion,
-    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, Reasoning, StopCause,
+    DecisionReceipt, DecisionRung, DecisionTime, HumanAskReason, Reasoning, ReceiptAsk, StopCause,
     TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
@@ -396,8 +395,9 @@ impl DecisionLadder<'_> {
         let mut rung = dial.first;
         let mut prior = None;
         // The pin that served `prior`: a later cut rung's pin joins the receipt
-        // (FIX 9907) but never speaks for an answer it did not give.
+        // (FIX 9907) but never speaks for an answer it did not give. Its cost goes with it.
         let mut prior_pin = None;
+        let mut prior_cost = None;
         let mut answered = None;
         let mut in_band = false;
         let mut needs_person = false;
@@ -447,6 +447,7 @@ impl DecisionLadder<'_> {
             };
             prior = Some(answer);
             prior_pin = readings.pins.last().cloned();
+            prior_cost = readings.cost;
             if needs_person {
                 rung = DecisionRung::Human;
                 break;
@@ -501,6 +502,7 @@ impl DecisionLadder<'_> {
             rung = DecisionRung::Human;
         }
         let mut human_ask = None;
+        let mut asked = None;
         let outcome = if rung == DecisionRung::Human {
             validate_pin(&self.human_pin, DecisionRung::Human)?;
             let reason = if needs_person {
@@ -512,18 +514,26 @@ impl DecisionLadder<'_> {
             } else {
                 HumanAskReason::OwnerSelected
             };
-            self.human.queue(HumanDecisionRequest {
-                question: question.clone(),
-                principal,
-                evidence: evidence.to_vec(),
-                reason,
-                // The prior is the last provider read's answer, from the pin that served it.
-                prior_provider: prior.as_ref().and(prior_pin.clone()),
-                prior,
-                queue_pin: self.human_pin.clone(),
-                to: self.ask_to.cloned().unwrap_or_else(AskTo::owner),
-                correlation: self.correlation,
-            })?;
+            let to = self.ask_to.cloned().unwrap_or_else(AskTo::owner);
+            // The ask carries the state the reads weighed (FIX 2424), and its receipt
+            // names the role it went to (ARCH-0076, "Who answered").
+            let seq = self.human.queue_with_state(
+                HumanDecisionRequest {
+                    question: question.clone(),
+                    principal,
+                    evidence: evidence.to_vec(),
+                    reason,
+                    // The prior is the last provider read's answer, from the pin that
+                    // served it.
+                    prior_provider: prior.as_ref().and(prior_pin.clone()),
+                    prior,
+                    queue_pin: self.human_pin.clone(),
+                    to: to.clone(),
+                    correlation: self.correlation,
+                },
+                state,
+            )?;
+            asked = Some(ReceiptAsk::queued(&to, seq));
             readings.pins.push(self.human_pin.clone());
             human_ask = Some(reason);
             abstained()
@@ -558,7 +568,8 @@ impl DecisionLadder<'_> {
                 band: row.band,
                 band_version: row.version,
                 evidence_versions,
-                cost_per_thousand: None,
+                // The cost its answering provider knows, at the rung that answered.
+                cost_per_thousand: prior_cost.filter(|_| answered.is_some()),
                 paired: readings.paired,
                 person: readings.person,
                 time: Some(DecisionTime {
@@ -574,131 +585,9 @@ impl DecisionLadder<'_> {
                 rule: readings
                     .rule
                     .filter(|_| answered == Some(DecisionRung::Rule)),
+                asked,
             },
         })
-    }
-
-    /// The first rung from `first` up to `ceiling` whose provider reads images when
-    /// `images` and audio when `audio`, for a host that starts a media call there. `None`
-    /// when no rung in that span reads every medium the call carries: the host abstains
-    /// rather than drop one.
-    #[must_use]
-    pub fn first_media_reader(
-        &self,
-        first: DecisionRung,
-        ceiling: DecisionRung,
-        images: bool,
-        audio: bool,
-    ) -> Option<DecisionRung> {
-        let mut rung = first;
-        loop {
-            if self.slot(rung).is_some_and(|provider| {
-                (!images || provider.reads_images()) && (!audio || provider.reads_audio())
-            }) {
-                return Some(rung);
-            }
-            if rung >= ceiling || rung == DecisionRung::Human {
-                return None;
-            }
-            rung = next_rung(rung);
-        }
-    }
-
-    /// The ladder with every slot whose provider leaves the host emptied, when `posture`
-    /// keeps unit text local. Text leaves only under MANAGED posture or an explicit
-    /// `remote_opt_in`, and never under RELAY ([`crate::llm::decision::SeatRequest::validate_remote`]'s
-    /// rule; ARCH-0076 #posture). A step up skips an emptied slot as it skips any absent
-    /// one.
-    #[must_use]
-    pub fn under_posture(
-        mut self,
-        posture: crate::HostingPrivacyPosture,
-        remote_opt_in: bool,
-    ) -> Self {
-        use crate::HostingPrivacyPosture::{Hosted, Relay};
-        if (posture == Hosted || remote_opt_in) && posture != Relay {
-            return self;
-        }
-        for slot in [
-            &mut self.rule,
-            &mut self.local,
-            &mut self.system_one,
-            &mut self.escalation,
-            &mut self.big,
-        ] {
-            if slot.is_some_and(|provider| provider.leaves_host()) {
-                *slot = None;
-            }
-        }
-        self
-    }
-
-    fn slot(&self, rung: DecisionRung) -> Option<&dyn DecisionProvider> {
-        match rung {
-            DecisionRung::Rule => self.rule,
-            DecisionRung::Local => self.local,
-            DecisionRung::SystemOne => self.system_one,
-            DecisionRung::Escalation => self.escalation,
-            DecisionRung::Big => self.big,
-            DecisionRung::Human => None,
-        }
-    }
-
-    /// The first rung from `dial.first` to its ceiling, short of the person, whose provider
-    /// takes `question` over `images`. The ladder fails a call whose first rung cannot take
-    /// it, so a caller with images starts there, or asks without them and says so.
-    pub fn first_taking(
-        &self,
-        question: &DecisionQuestion,
-        dial: DecisionDial,
-        images: &[DecisionImage],
-    ) -> Option<DecisionRung> {
-        self.first_taking_media(question, dial, images, &[])
-    }
-
-    /// [`DecisionLadder::first_taking`] over `images` and `audio` both.
-    pub fn first_taking_media(
-        &self,
-        question: &DecisionQuestion,
-        dial: DecisionDial,
-        images: &[DecisionImage],
-        audio: &[DecisionAudio],
-    ) -> Option<DecisionRung> {
-        let mut rung = dial.first;
-        while rung <= dial.ceiling && rung != DecisionRung::Human {
-            if self
-                .slot(rung)
-                .is_some_and(|provider| takes(provider, question, images, audio))
-            {
-                return Some(rung);
-            }
-            rung = next_rung(rung);
-        }
-        None
-    }
-
-    /// The next rung above `rung` that can answer `question`, up to `ceiling`. The person's
-    /// queue is always present (ARCH-0076 #posture: no house model sends the step to the
-    /// big model or the person).
-    fn next_available(
-        &self,
-        mut rung: DecisionRung,
-        ceiling: DecisionRung,
-        question: &DecisionQuestion,
-        images: &[DecisionImage],
-        audio: &[DecisionAudio],
-    ) -> Option<DecisionRung> {
-        while rung < ceiling {
-            rung = next_rung(rung);
-            if rung == DecisionRung::Human
-                || self
-                    .slot(rung)
-                    .is_some_and(|provider| takes(provider, question, images, audio))
-            {
-                return Some(rung);
-            }
-        }
-        None
     }
 
     /// One provider request on the call's clock, one read per pack question. Routing skips
@@ -730,6 +619,12 @@ impl DecisionLadder<'_> {
                 .collect());
         }
         let reads = take(&pin, pack, ask(provider, pack, person), readings)?;
+        // Each answer's receipt carries what its provider knows it costs.
+        for (read, readings) in reads.iter().zip(readings.iter_mut()) {
+            if matches!(read, Read::Answer(_)) {
+                readings.cost = provider.cost_per_thousand();
+            }
+        }
         // A rule row that answered is named on its question's receipt.
         if rung == DecisionRung::Rule {
             for (index, (read, readings)) in reads.iter().zip(readings.iter_mut()).enumerate() {

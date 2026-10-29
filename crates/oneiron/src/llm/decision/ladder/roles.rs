@@ -63,6 +63,18 @@ impl HumanDecisionRequest {
 
 pub trait HumanDecisionQueue: Send + Sync {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()>;
+
+    /// [`Self::queue`] with the state the ladder's reads weighed (FIX 2424): the
+    /// caller-scoped pack snapshot, built from the request's own evidence, so a holder
+    /// answers over the same candidate values the model read. The arrival number when the
+    /// queue numbers its asks. A queue that keeps no state queues the request as it is.
+    fn queue_with_state(
+        &self,
+        request: HumanDecisionRequest,
+        _state: &serde_json::Value,
+    ) -> Result<Option<u64>> {
+        self.queue(request).map(|()| None)
+    }
 }
 
 /// A role an ask can go to (Q3 by role). A role names authority, not a person: the host
@@ -102,7 +114,19 @@ impl AskRole {
 }
 
 /// How far up a chain a role sits: an ask climbs from its role toward the owners.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RoleRank {
     Responsible,
@@ -112,7 +136,9 @@ pub enum RoleRank {
 
 /// What an answer to an ask authorises. An e-signature or a person-authorised payment
 /// resolves only to a natural person, whoever else holds the role.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AskAct {
     #[default]
@@ -162,7 +188,7 @@ impl AskTo {
 }
 
 /// Whether a role holder is a natural person or a bound agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HolderKind {
     Person,

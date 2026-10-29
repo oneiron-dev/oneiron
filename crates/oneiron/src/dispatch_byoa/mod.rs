@@ -118,7 +118,7 @@ pub use self::connector::{
 pub use self::dispatcher::{
     ByoEndpointBackendFactory, ByoaCliExecutor, ByoaDispatcher, ByoaExecutionFence, ByoaMcpExecutor,
 };
-pub use self::error::{ByoaError, ByoaResult};
+pub use self::error::{ByoaError, ByoaResult, SeatProviderTerm};
 pub use self::exhaust::{
     BYOA_DEFAULT_ABANDON_REASON, BYOA_DEFAULT_FAILURE_REASON, ByoaEgressLease, ByoaEgressPort,
     ByoaExhaust, ByoaTerminalDisposition, ByoaTerminalReceipt, CaptureByoaExhaust,

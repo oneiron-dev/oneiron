@@ -84,6 +84,12 @@ pub struct DecisionAsk {
     /// it; `None` while it stands. A withdrawn ask is in no role's queue and takes no
     /// answer.
     pub withdrawn_at: Option<u64>,
+    /// The state the ladder's reads weighed when it asked (FIX 2424): the caller-scoped
+    /// pack snapshot, such as a Dreamer verdict's candidate values beside the prior heads,
+    /// as its caller built it from the ask's own evidence. A holder answers over what the
+    /// model read. `None` when the caller handed the queue none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pack_state: Option<serde_json::Value>,
 }
 
 /// The answer the ladder held when it asked, and the provider that read it.
@@ -171,6 +177,17 @@ impl Vault {
     /// returns its arrival number. An open ask for the same question version, principal,
     /// evidence, route and correlation is that ask, and its number is returned.
     pub fn queue_decision_ask(&self, request: &HumanDecisionRequest) -> Result<u64> {
+        self.queue_decision_ask_with_state(request, None)
+    }
+
+    /// [`Self::queue_decision_ask`] keeping `state`, the pack snapshot the ladder's reads
+    /// weighed, on a new ask (FIX 2424). An open ask that is the same ask keeps the
+    /// snapshot it was queued with.
+    pub fn queue_decision_ask_with_state(
+        &self,
+        request: &HumanDecisionRequest,
+        state: Option<&serde_json::Value>,
+    ) -> Result<u64> {
         request.question.validate()?;
         request.to.validate()?;
         let prior = match (&request.prior, &request.prior_provider) {
@@ -219,6 +236,7 @@ impl Vault {
                 role,
                 answer: None,
                 withdrawn_at: None,
+                pack_state: state.cloned(),
             };
             ASKS.put(&self.store, txn, &seq, &ask)?;
             Ok(seq)
@@ -910,5 +928,15 @@ impl DecisionAsks {
 impl HumanDecisionQueue for DecisionAsks {
     fn queue(&self, request: HumanDecisionRequest) -> Result<()> {
         self.vault.queue_decision_ask(&request).map(drop)
+    }
+
+    fn queue_with_state(
+        &self,
+        request: HumanDecisionRequest,
+        state: &serde_json::Value,
+    ) -> Result<Option<u64>> {
+        self.vault
+            .queue_decision_ask_with_state(&request, Some(state))
+            .map(Some)
     }
 }

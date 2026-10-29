@@ -22,6 +22,7 @@ use super::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::task_type::TaskTypeRef;
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
@@ -155,6 +156,10 @@ pub struct SeatBirth<'a> {
     pub id: &'a str,
     pub role: &'a str,
     pub task: &'a str,
+    /// The type stamp the task was placed under, read as placed and never
+    /// inferred again (ARCH-0079, "placed once, read everywhere"); none for a
+    /// seat born for no typed task.
+    pub type_ref: Option<&'a TaskTypeRef>,
     pub purpose: &'a CallPurpose,
     pub settings: &'a SeatSettings,
     pub tier: &'a super::TierPrecedence,
@@ -204,6 +209,9 @@ impl RoutedSeat {
 /// roles of a generative session's messages, and the state is the read's input.
 pub struct RoutedVerdict<'a> {
     pub question: &'a DecisionQuestion,
+    /// The type stamp of the task the verdict serves, as placed; none for an
+    /// untyped call.
+    pub type_ref: Option<&'a TaskTypeRef>,
     pub evidence: &'a [EntityId],
     pub state: &'a Value,
     pub instructions: Option<&'a str>,
@@ -554,6 +562,7 @@ impl Vault {
             id,
             role,
             task,
+            type_ref,
             purpose,
             settings,
             tier,
@@ -587,6 +596,7 @@ impl Vault {
             settings,
             purpose,
             task,
+            type_ref,
             decisions,
         )?;
         let (chosen, effort) = (routed.chosen, routed.effort);
@@ -604,12 +614,13 @@ impl Vault {
             tier: tier.resolved().clone(),
             inference_overrides: settings.inference_overrides.clone(),
             receipt: format!(
-                "model {} with {} effort: {}",
+                "model {} with {} effort{}: {}",
                 chosen.model,
                 serde_json::to_value(effort)
                     .expect("effort serializes as a string")
                     .as_str()
                     .expect("effort is a string"),
+                type_ref.map_or_else(String::new, |type_ref| format!(" for task type {type_ref}")),
                 reason
             ),
             grading: routed.grading,
@@ -647,6 +658,7 @@ impl Vault {
     pub fn routed_verdict_request(
         &self,
         task: &str,
+        type_ref: Option<&TaskTypeRef>,
         decisions: &DescriptionDecisions<'_>,
         settings: &SeatSettings,
         mut request: LlmRequest,
@@ -663,6 +675,7 @@ impl Vault {
             settings,
             &request.envelope.purpose,
             task,
+            type_ref,
             decisions,
         )?;
         let (chosen, effort) = (routed.chosen, routed.effort);
@@ -724,8 +737,14 @@ impl Vault {
                 grading: None,
             });
         }
-        let (request, grading) =
-            self.routed_verdict_request(task, decisions, settings, request, verdict.instructions)?;
+        let (request, grading) = self.routed_verdict_request(
+            task,
+            verdict.type_ref,
+            decisions,
+            settings,
+            request,
+            verdict.instructions,
+        )?;
         let seal = |request: LlmRequest| -> Result<LlmRequest> { Ok(request) };
         let rung = GeneratedRung {
             pin: ProviderPin {
