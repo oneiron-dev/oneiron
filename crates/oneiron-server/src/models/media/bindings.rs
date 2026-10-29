@@ -115,6 +115,24 @@ impl MediaRuntime {
         .sourced(sources))
     }
 
+    /// A run of its own on the media meter for one realtime voice session
+    /// (FIX 462): a voice loop, not an `ai.*` call, each response of it
+    /// admitted and settled on it. Its permits carry `sources`, the rows the
+    /// session reads, `None` when not known whole.
+    pub fn voice_loop_run(
+        &self,
+        sources: Option<Vec<oneiron::EntityId>>,
+    ) -> LlmResult<RunAdmission> {
+        let meter = self.meter.clone().ok_or(FatalLlmError::InvalidRequest)?;
+        Ok(undeclared_run(
+            crate::models::VOICE_LOOP_RUN,
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+        )
+        .sourced(sources))
+    }
+
     /// [`Self::clone_run`], billed to `payer` when an acting payer's own
     /// account or consent explicitly funds the clone (FIX 9421): each permit
     /// binds that PERSON and account, as a room-funded media call's does.

@@ -63,6 +63,8 @@ mod openai;
 pub(crate) mod outbound_wait;
 mod output_cap;
 mod raw;
+// FIX 462: realtime voice sessions on a voice-loop run.
+mod realtime_voice;
 mod receipts;
 mod rerank;
 mod responses_socket;
@@ -100,6 +102,7 @@ pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
+pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{rerank_request, rerank_scores};
