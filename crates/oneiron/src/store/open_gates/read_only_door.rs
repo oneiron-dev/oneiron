@@ -147,7 +147,7 @@ fn open_read_only(root: &Path) -> Result<(OwnedEnv, RegisteredPath)> {
 
 /// Opens the already-canonical `root` read-only through the bound directory
 /// descriptor, as the existing-only door opens it read-write, with room for
-/// `databases` named databases (the paired custody read opens two).
+/// `databases` named databases (the paired custody read opens four).
 #[cfg(target_os = "linux")]
 pub(super) fn open_read_only_with(
     root: &Path,
