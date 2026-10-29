@@ -105,7 +105,8 @@ impl Step {
             | Self::Refused { reasons, .. }
             | Self::Retryable { reasons, .. }
             | Self::Unsettled { reasons, .. }
-            | Self::NotDelivered { reasons, .. } => reasons,
+            | Self::NotDelivered { reasons, .. }
+            | Self::Paced { reasons, .. } => reasons,
             Self::Delivered { .. } | Self::AwaitingInput { .. } => Vec::new(),
         }
     }
