@@ -3,14 +3,14 @@
 //! route. Each route runs its `vault.free_time.*` row's verb hooks once
 //! around the engine door, as the host doors do. A sheet carries the agent's
 //! short note and the spending records, never its diary. A set records where
-//! the owner spoke from (`machine_routes::act_surface`, FIX 5721): audit only.
+//! the owner spoke from (`machine_routes::act_surface_admitted`, FIX 5721): audit only.
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::get;
 use oneiron::dreamer_runner::{
@@ -20,7 +20,7 @@ use oneiron::dreamer_runner::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::machine_routes::act_surface;
+use super::machine_routes::act_surface_admitted;
 use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
@@ -75,11 +75,12 @@ async fn policy(
 async fn set_policy(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<FreeTimePolicySetRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();

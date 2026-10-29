@@ -4,7 +4,7 @@
 //! operator's root acts as nobody (FIX 2222), and no agent reaches this door
 //! for its own grant: the owner's proof only. His say-so counts from any
 //! surface he is authenticated on; the act records where it reached this
-//! install (`machine_routes::act_surface`). Each route runs its
+//! install (`machine_routes::act_surface_admitted`). Each route runs its
 //! `vault.agents.grants.*` row's verb hooks once around the one engine
 //! operation the SDK and MCP doors also call. The grants are reviewed in
 //! the consent registry, each with its own one-tap revoke. `GET
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{self, AgentGrantMintRequest, AgentGrantRevokeRequest, EmptyRequest};
@@ -41,11 +41,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 async fn mint(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AgentGrantMintRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let response = blocking(move || {
         let vault = server.vault();
@@ -69,11 +71,13 @@ async fn mint(
 async fn revoke(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<AgentGrantRevokeRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
     let response = blocking(move || {
         let vault = server.vault();

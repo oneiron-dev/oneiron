@@ -5336,6 +5336,11 @@ export_facade! {
     let output = client.vault_free_time_policy_set(&input)?;
     crate::codec::lift_record("vault.free_time.policy.set", &output)
 };
+"vault.free_time.policy.set_as" => fn vault_free_time_policy_set_as(&self, input: FreeTimePolicySetRequest) -> FreeTimePolicyView = |client| {
+    let input: oneiron::dreamer_runner::FreeTimePolicySetRequest = crate::codec::lower_record("vault.free_time.policy.set_as", input)?;
+    let output = client.vault_free_time_policy_set_as(&input)?;
+    crate::codec::lift_record("vault.free_time.policy.set_as", &output)
+};
 "vault.free_time.cycles" => fn vault_free_time_cycles(&self, input: FreeTimeCyclesRequest) -> FreeTimeCyclesPage = |client| {
     let input: oneiron::dreamer_runner::FreeTimeCyclesRequest = crate::codec::lower_record("vault.free_time.cycles", input)?;
     let output = client.vault_free_time_cycles(&input)?;

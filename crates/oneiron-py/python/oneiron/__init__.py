@@ -5190,6 +5190,9 @@ class Oneiron:
         def set(self, spec):
             """The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
             return json.loads(_translate(lambda: self._client.vault_free_time_policy_set(json.dumps(spec))))
+        def set_as(self, spec):
+            """An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming."""
+            return json.loads(_translate(lambda: self._client.vault_free_time_policy_set_as(json.dumps(spec))))
     class _VaultMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

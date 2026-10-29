@@ -5993,6 +5993,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.free_time.policy.set_as",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::FreeTimePolicySetRequest,
+                >(),
+            ),
+            (
                 "vault.free_time.cycles",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_runner::FreeTimeCyclesRequest,
@@ -7542,6 +7548,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.sieve.lease.refill",
     "vault.free_time.policy.get",
     "vault.free_time.policy.set",
+    "vault.free_time.policy.set_as",
     "vault.free_time.cycles",
     "vault.free_time.cycle",
     "vault.claims.vet",
@@ -9804,6 +9811,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::dreamer_runner::FreeTimePolicyView,
         >(),
         "vault.free_time.policy.set" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::FreeTimePolicyView,
+        >(),
+        "vault.free_time.policy.set_as" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_runner::FreeTimePolicyView,
         >(),
         "vault.free_time.cycles" => crate::code_run::vault_read::request_schema::<
@@ -17661,6 +17671,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.free_time.policy.set_as" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.free_time.cycles" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -22114,6 +22131,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.free_time.policy.set" => {
             let _input: crate::dreamer_runner::FreeTimePolicySetRequest = decode(value.clone())?;
         }
+        "vault.free_time.policy.set_as" => {
+            let _input: crate::dreamer_runner::FreeTimePolicySetRequest = decode(value.clone())?;
+        }
         "vault.free_time.cycles" => {
             let _input: crate::dreamer_runner::FreeTimeCyclesRequest = decode(value.clone())?;
         }
@@ -24650,6 +24670,9 @@ pub fn invoke(
         "vault.sieve.lease.refill" => encode(vault_sieve_lease_refill(memory, decode(value)?)?),
         "vault.free_time.policy.get" => encode(vault_free_time_policy_get(memory, decode(value)?)?),
         "vault.free_time.policy.set" => encode(vault_free_time_policy_set(memory, decode(value)?)?),
+        "vault.free_time.policy.set_as" => {
+            encode(vault_free_time_policy_set_as(memory, decode(value)?)?)
+        }
         "vault.free_time.cycles" => encode(vault_free_time_cycles(memory, decode(value)?)?),
         "vault.free_time.cycle" => encode(vault_free_time_cycle(memory, decode(value)?)?),
         "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
@@ -34194,6 +34217,12 @@ pub fn vault_free_time_policy_set(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_free_time_policy_set_as(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::FreeTimePolicySetRequest,
+) -> MemoryResult<crate::dreamer_runner::FreeTimePolicyView> {
+    crate::task_verb::sdk::free_time_policy_set_as_agent(memory, input)
 }
 pub fn vault_free_time_cycles(
     memory: &Memory<'_>,

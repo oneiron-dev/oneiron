@@ -396,13 +396,31 @@ impl Memory<'_> {
     }
 
     /// Lists gated writes parked for consent, newest lane state first. A
-    /// caller off this device sees none about a device-local claim, and none
-    /// takes a place in its page.
+    /// caller off this device sees none about a device-local claim, and a
+    /// handle bound to a read credential sees only the parked claims that
+    /// credential reads: each row by its claim id, a withheld row taking no
+    /// page place.
     pub fn pending_writes(&self, limit: usize) -> MemoryResult<Vec<PendingWrite>> {
         let off_device = self.locality == crate::claim::CallerLocality::OffDevice;
+        // A credential cut refills past withheld rows like the off-device one
+        // (FIX 9955): fetch all when either applies, then count the page.
+        let refill = off_device || self.read_proof.is_some();
         let mut records =
             self.vault
-                .pending_gate_consents(if off_device { usize::MAX } else { limit })?;
+                .pending_gate_consents(if refill { usize::MAX } else { limit })?;
+        // A credential-bound reader sees only the rows its read lane admits
+        // (OF-172 D2), judged in one lane read before any count.
+        if self.read_proof.is_some() && !records.is_empty() {
+            let ids: Vec<EntityId> = records
+                .iter()
+                .filter_map(|record| EntityId::from_bytes(record.claim_id).ok())
+                .collect();
+            if let Some(readable) = self.credential_readable_ids(&ids)? {
+                records.retain(|record| {
+                    EntityId::from_bytes(record.claim_id).is_ok_and(|id| readable.contains(&id))
+                });
+            }
+        }
         if off_device {
             let mut admitted = Vec::new();
             for record in records {
@@ -418,6 +436,8 @@ impl Memory<'_> {
                 }
             }
             records = admitted;
+        } else if refill {
+            records.truncate(limit);
         }
         Ok(records
             .into_iter()

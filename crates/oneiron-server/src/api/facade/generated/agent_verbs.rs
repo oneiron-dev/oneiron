@@ -1158,6 +1158,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.sieve.lease.refill", post(facade_route))
         .route("/vault.free_time.policy.get", post(facade_route))
         .route("/vault.free_time.policy.set", post(facade_route))
+        .route("/vault.free_time.policy.set_as", post(facade_route))
         .route("/vault.free_time.cycles", post(facade_route))
         .route("/vault.free_time.cycle", post(facade_route))
         .route("/vault.claims.vet", post(facade_route))
@@ -1298,9 +1299,10 @@ async fn vault_off_record_rooms_export_attachment(
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
+    extensions: axum::http::Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
-    let mut answer = facade_route(caller, State(server), uri, headers, payload).await;
+    let mut answer = facade_route(caller, State(server), uri, headers, extensions, payload).await;
     if answer.extensions().get::<FacadeApiError>().is_none() {
         answer.headers_mut().insert(
             axum::http::header::CONTENT_DISPOSITION,

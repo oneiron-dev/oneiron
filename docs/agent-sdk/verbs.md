@@ -1073,6 +1073,7 @@ both bindings and their export-census tests in one change.
 - `vault.sieve.lease.refill`
 - `vault.free_time.policy.get`
 - `vault.free_time.policy.set`
+- `vault.free_time.policy.set_as`
 - `vault.free_time.cycles`
 - `vault.free_time.cycle`
 - `vault.claims.vet`

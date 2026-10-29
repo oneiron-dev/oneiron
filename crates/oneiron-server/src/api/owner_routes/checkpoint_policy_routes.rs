@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
@@ -41,7 +41,7 @@ use oneiron::authority::{
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
@@ -377,11 +377,12 @@ async fn view(
 async fn select(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<SelectPolicy>,
 ) -> OwnerReply<PolicyViewReply> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<PolicyViewReply> {
         let mut roots = body
@@ -417,11 +418,12 @@ async fn select(
 async fn clear(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<ClearPolicy>,
 ) -> OwnerReply<PolicyViewReply> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<PolicyViewReply> {
         let seen = seen_of(body.seen.as_deref())?;

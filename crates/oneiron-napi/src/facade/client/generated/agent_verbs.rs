@@ -9627,6 +9627,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_free_time_policy_set_as(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.free_time.policy.set_as", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_free_time_cycles(
         &self,
         input: serde_json::Value,

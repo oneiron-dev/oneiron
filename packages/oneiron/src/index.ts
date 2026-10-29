@@ -2917,6 +2917,8 @@ export class Oneiron {
         get: (input: Facade.FreeTimePolicyRequest): Facade.FreeTimePolicyView => this.#call(() => this.#client.vaultFreeTimePolicyGet(input) as Facade.FreeTimePolicyView),
         /** The owner sets one agent's free-time policy at the revision it read, or clears it with no policy; a clear ends the open cycle and the agent goes back to its nightly dreaming. */
         set: (input: Facade.FreeTimePolicySetRequest): Facade.FreeTimePolicyView => this.#call(() => this.#client.vaultFreeTimePolicySet(input) as Facade.FreeTimePolicyView),
+        /** An agent sets one agent's free-time policy at the revision it read, or clears it with no policy, under its own live Grant naming the act; a clear ends the open cycle and the agent goes back to its nightly dreaming. */
+        set_as: (input: Facade.FreeTimePolicySetRequest): Facade.FreeTimePolicyView => this.#call(() => this.#client.vaultFreeTimePolicySetAs(input) as Facade.FreeTimePolicyView),
       },
       /** The owner reads one agent's free-time cycles a page at a time, newest first: each cycle's state, period and floor from its item receipts, with the cursor of the next page. */
       cycles: (input: Facade.FreeTimeCyclesRequest): Facade.FreeTimeCyclesPage => this.#call(() => this.#client.vaultFreeTimeCycles(input) as Facade.FreeTimeCyclesPage),
