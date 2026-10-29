@@ -55,20 +55,23 @@ const SAME_ASK_SCAN: usize = 4_096;
 pub(crate) const WORLD_PRIVACY_ASK_QUEUE: &str = "policy.world_privacy.widen";
 
 /// One ask the ladder queued for a role.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionAsk {
     /// Arrival number, from 1.
     pub seq: u64,
     /// The ask's own id: the source its person-changed record is bound to.
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub id: EntityId,
     /// Vault clock seconds when the ask was queued.
     pub asked_at: u64,
     pub question: DecisionQuestion,
     #[serde(with = "super::codec::answer_actor")]
+    #[schemars(with = "String")]
     pub principal: AnswerActor,
     #[serde(with = "super::codec::entities")]
+    #[schemars(with = "Vec<String>")]
     pub evidence: Vec<EntityId>,
     pub reason: HumanAskReason,
     /// The last provider read's answer, when a rung read one before the ask.
@@ -78,6 +81,7 @@ pub struct DecisionAsk {
     pub to: AskTo,
     /// The work it decides, as its caller named it; none when the caller named none.
     #[serde(with = "super::codec::optional_entity")]
+    #[schemars(with = "Option<String>")]
     pub correlation: Option<EntityId>,
     /// The role it is at and the live holders it was put to, resolved when it was queued
     /// or last climbed; none while no role up to its ceiling has one.
@@ -103,7 +107,7 @@ pub struct DecisionAsk {
 }
 
 /// The answer the ladder held when it asked, and the provider that read it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskPrior {
     pub answer: DecisionAnswer,
@@ -114,7 +118,7 @@ pub struct AskPrior {
 }
 
 /// What a role's holder answered.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskAnswer {
     pub answer: DecisionAnswer,
@@ -123,6 +127,7 @@ pub struct AskAnswer {
     /// The actor that answered, authenticated by its door; erased once that
     /// actor was erased (FIX 3520).
     #[serde(with = "super::codec::answer_actor")]
+    #[schemars(with = "String")]
     pub by: AnswerActor,
     /// The role it answered as, and whether it is a person or a bound agent.
     pub role: AskRole,

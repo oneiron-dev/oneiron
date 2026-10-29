@@ -35,7 +35,7 @@ const OFF_NOTICE: &str = "an owner asks to turn off \"widen needs every owner\";
 const OFF_SETTLED: &str = "this \"widen needs every owner\" turn-off was already settled";
 
 /// The row: the vault's setting, and each world's override of it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WidenUnanimity {
     /// The vault's setting, for every world without an override.
@@ -91,7 +91,7 @@ impl WidenUnanimity {
 }
 
 /// What a change of the row came to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WidenUnanimityOutcome {
     /// The change landed: the row as it now stands.
@@ -107,7 +107,7 @@ pub enum WidenUnanimityOutcome {
 /// frozen when an owner asked for it. It lands once every live Owner said
 /// yes, the asking owner's own yes counted; any one live Owner's no declines
 /// it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WidenUnanimityOffRequest {
     /// Its id, as hex.

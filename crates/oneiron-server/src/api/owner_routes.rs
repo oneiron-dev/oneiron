@@ -42,9 +42,9 @@ use crate::server::SyncServer;
 mod account_routes;
 mod agent_grant_routes;
 mod authority_clock_routes;
-mod backup_setting_routes;
+pub(super) mod backup_setting_routes;
 pub(super) mod browser_takeover_routes;
-mod budget_hold_routes;
+pub(super) mod budget_hold_routes;
 pub(super) mod checkpoint_policy_routes;
 mod cleanup_decide;
 mod commitment_routes;
@@ -57,7 +57,7 @@ pub(super) mod connector_subscription_routes;
 pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
 pub(super) mod craft_candidate_routes;
-mod decision_ask_routes;
+pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
@@ -71,44 +71,44 @@ mod free_time_routes;
 mod guest_routes;
 mod handoff_alarm_routes;
 pub(super) mod history_routes;
-mod house_routes;
+pub(super) mod house_routes;
 mod inbox_routes;
 pub(super) mod intent_routes;
-mod learning_setting_routes;
+pub(super) mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 pub(super) mod model_setting_routes;
-mod owner_key_enrollment_routes;
+pub(super) mod owner_key_enrollment_routes;
 pub(super) mod owner_work_routes;
-mod pack_preview_routes;
-mod pack_routes;
-mod pad_routes;
+pub(super) mod pack_preview_routes;
+pub(super) mod pack_routes;
+pub(super) mod pad_routes;
 pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
-mod recovery_kit_target_routes;
-mod room_thread_setting_routes;
-mod root_routes;
+pub(super) mod recovery_kit_target_routes;
+pub(super) mod room_thread_setting_routes;
+pub(super) mod root_routes;
 pub(super) mod schema;
-mod secret_control_routes;
-mod secret_found_routes;
-mod secret_lift_routes;
-mod secret_reveal_routes;
-mod secret_use_routes;
+pub(super) mod secret_control_routes;
+pub(super) mod secret_found_routes;
+pub(super) mod secret_lift_routes;
+pub(super) mod secret_reveal_routes;
+pub(super) mod secret_use_routes;
 pub(super) mod shared_training_setup_routes;
-mod skill_judge_routes;
-mod space_posting_routes;
-mod steer_routes;
+pub(super) mod skill_judge_routes;
+pub(super) mod space_posting_routes;
+pub(super) mod steer_routes;
 mod support_grant_routes;
 mod support_repair_routes;
 mod training_swap_routes;
 mod usage_repair_routes;
-mod vault_key_routes;
-mod weave_routes;
-mod widen_proposal_routes;
+pub(super) mod vault_key_routes;
+pub(super) mod weave_routes;
+pub(super) mod widen_proposal_routes;
 pub(super) mod wire_health_routes;
-mod world_privacy_routes;
-mod world_privacy_work_routes;
+pub(super) mod world_privacy_routes;
+pub(super) mod world_privacy_work_routes;
 
 type OwnerReply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -423,11 +423,14 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
     }
 }
 
-/// Runs blocking vault work (snapshots, restores) off the runtime.
+/// Runs blocking vault work (snapshots, restores) off the runtime. Inside
+/// an owner's restriction-only act the closure reads that clock on its own
+/// thread (FIX 11523), as a facade door's does; anywhere else it runs as it
+/// is.
 pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OwnerError> + Send + 'static,
 ) -> Result<T, ApiError> {
-    tokio::task::spawn_blocking(work)
+    super::clock_ingress::run_blocking(work)
         .await
         .map_err(|_| ApiError::internal_server_error("owner action task failed"))?
         .map_err(owner_error)
@@ -590,7 +593,7 @@ async fn secret_scan(
     Ok(Json(state))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetSecretScan {
     mode: oneiron::policy_model::SecretScanMode,
@@ -732,7 +735,7 @@ async fn review_run(
     Ok(Json(review))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DecideRun {
     run_id: Option<String>,
@@ -1120,7 +1123,7 @@ async fn model_catalog(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetModelCatalog {
     /// `pinned-commit`, `pinned-ref` or `content-hash-frozen`.
@@ -1150,7 +1153,7 @@ async fn set_model_catalog(
 }
 
 /// What one catalog sync did, and the catalog ref after it.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
 struct ModelCatalogSynced {
     /// `installed`, `candidate` or `blocked`.
     outcome: &'static str,

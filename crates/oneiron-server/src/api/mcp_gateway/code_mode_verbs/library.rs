@@ -75,6 +75,7 @@ impl WorkflowLibrary for VaultLibrary {
             supersedes,
             filed_scope,
             self.admission.as_ref(),
+            self.filing.as_ref(),
         )
         .map_err(library_failed)?;
         Ok(match filing {

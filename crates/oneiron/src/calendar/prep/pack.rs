@@ -195,10 +195,10 @@ pub(crate) fn build_prep_pack_scoped(
     // Every candidate goes to the actor gate, under one authority per
     // snapshot (FIX 11648).
     let gate = read.recall_candidate_gate(&policy, &filter);
-    let admitted =
-        |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, _: &EntityId| -> Result<bool> {
-            Ok(true)
-        };
+    let admitted = |_: &crate::store::StoreRead<'_>,
+                    _: &heed::RoTxn<'_>,
+                    _: &EntityId|
+     -> Result<bool> { Ok(true) };
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
         .authority_filter(filter.clone())
         .filter_candidates(&admitted)

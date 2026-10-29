@@ -607,6 +607,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.secrets.register"
         | "vault.secrets.rotate"
         | "vault.secrets.rewrap"
+        | "vault.secrets.revoke"
         | "vault.secrets.custody.get"
         | "vault.secrets.custody.submit" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
