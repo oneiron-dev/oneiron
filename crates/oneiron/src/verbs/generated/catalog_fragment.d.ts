@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1242 code-mode rows (1202 host rows, 40 run rows), 4363 declarations.
+// Census: 1242 code-mode rows (1202 host rows, 40 run rows), 4364 declarations.
 // Replies: 1065 fully typed, 176 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 115; unread shapes: none.
@@ -1118,7 +1118,8 @@ declare namespace Sdk {
   type PackImportPreview = { pack_name: string; agent: boolean; world_name?: string | null; needs_world: boolean; notices: WorldRecipientNotice[] };
   type SlatePackSource = { source_ref: string; content_hash: string };
   type SlateDataClass = "public" | "personal" | "secret" | "header";
-  type SlateToolManifest = { name: string; data_class: SlateDataClass; header_parameters: string[]; resolved_input_schema?: unknown | null; trigger?: string | null; destroys: boolean; spends: boolean; sends_outward: boolean; legacy_ask: boolean; read_only?: boolean; idempotent?: boolean };
+  type ConnectorSpendEstimate = { unit: string; minor_units: number };
+  type SlateToolManifest = { name: string; data_class: SlateDataClass; header_parameters: string[]; resolved_input_schema?: unknown | null; trigger?: string | null; destroys: boolean; spends: boolean; sends_outward: boolean; legacy_ask: boolean; read_only?: boolean; idempotent?: boolean; price?: ConnectorSpendEstimate | null };
   type SlateElicitationManifest = { legacy_ask_tools: string[] };
   type SlateManifest = { pack_source?: SlatePackSource | null; tools: SlateToolManifest[]; elicitation?: SlateElicitationManifest | null };
   type ConnectorPackPrepareRequest = { connector: string; source: SlatePackSource; summary: string; secret_ref?: string | null; protocol_revision: string; manifest: SlateManifest };
@@ -3229,7 +3230,7 @@ declare namespace Sdk {
   type LiveVoiceToolRequest = { session_ref: string; call: ConnectorCallRequest };
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
-  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] };
+  type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[]; budget_steering?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] };
   type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
   type AnonymousChatRequestTarget = "house_mind" | "plain_model";

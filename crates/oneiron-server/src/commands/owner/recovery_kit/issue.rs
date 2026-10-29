@@ -21,7 +21,7 @@ use super::{INSTEAD, emit, read_passphrase};
 use crate::cli::RecoveryKitIssueArgs;
 use crate::commands::credential_file;
 use crate::config::resolve_serve_config;
-use crate::owner::local_owner;
+use crate::owner::host_owner;
 use crate::owner::recovery_kit::kit_id;
 use crate::owner::vault_key::hex;
 
@@ -56,7 +56,7 @@ pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
     let (homes, passphrase) = issue_inputs(&args)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_with_unlock(&config, &unlock, KeyNeed::Open, INSTEAD)?;
-    let owner = local_owner(&vault)?;
+    let owner = host_owner(&vault)?;
     let vault_id = vault
         .world_kit_status()?
         .vault_id
@@ -125,7 +125,7 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
     let (homes, passphrase) = issue_inputs(&args)?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
-    let owner = local_owner(&vault)?;
+    let owner = host_owner(&vault)?;
     if vault.vault_key_status()? == VaultKeyStatus::NoKey {
         anyhow::bail!("the vault has no data key yet: there is nothing to put in a kit")
     }
