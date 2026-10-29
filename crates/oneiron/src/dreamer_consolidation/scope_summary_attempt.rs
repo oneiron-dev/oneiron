@@ -7,7 +7,7 @@
 
 use super::call_labels::{CallLabelMap, LabelKind};
 use super::note_text::NoteText;
-use super::residency::{residency_deferral, waits_on_residency};
+use super::residency::{residency_deferral, spent_or_deferred, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_SCOPE_SUMMARY_ATTEMPT_TYPE, invalid_consolidation};
@@ -287,7 +287,11 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         .await
         {
             Ok(StepOutcome::Finished { response, .. }) => {
-                charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                {
+                    return spent_or_deferred(error, ctx, &charges);
+                }
                 response
             }
             Ok(StepOutcome::Trapped { .. }) => {
@@ -323,7 +327,13 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 return Ok(charges.park_for(&other.to_string(), DreamerParkCause::Retry));
             }
             // Parks Retry unless only an owner act clears it (FIX 7369).
+            // A failed call's paid usage has no terminal step: it is handed
+            // to the driver's settlement with the park (FIX 11554).
             Err(other) => {
+                if let DurableStepError::SpentLlm { usage, .. } = &other {
+                    charges.record_usage(usage);
+                }
+                ctx.note_spend_before_error(charges.units, &charges.step_hashes);
                 return Ok(DreamerAttemptExecution::Park {
                     reason: other.to_string(),
                     cause: DreamerParkCause::of_step(&other),

@@ -259,6 +259,9 @@ async fn run_program(
             return Err(error);
         }
     };
+    // The driver settles what this line charges if the program fails or
+    // parks before it reports its spend (SCAN C012).
+    ctx.meter_run_line(&meter);
     let entered = vault.enter_turn_program_run(
         attempt,
         &binding.admission,
