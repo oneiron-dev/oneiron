@@ -619,6 +619,27 @@ fn snapshot_sections(snapshot: &[u8]) -> Option<[&[u8]; 3]> {
     rest.is_empty().then_some(sections)
 }
 
+/// The state a fast snapshot encodes at its root, read from that section
+/// itself: loaded as the latest state, with no replay, so neither the
+/// latest-state section nor a checkout can steer a read away from its bytes
+/// (FIX 10165). A full snapshot can keep a root as well as a shallow one.
+/// `None` when the bytes are no fast snapshot whose state sections read one
+/// way, or the root does not load; `Some(None)` when it encodes no root.
+pub(super) fn encoded_root_state(snapshot: &[u8]) -> Option<Option<LoroDoc>> {
+    let sections = snapshot_sections(snapshot)?;
+    let [_, latest, root] = sections;
+    if !(latest == EMPTY_STATE || state_section_is_canonical(latest))
+        || !state_section_is_canonical(root)
+    {
+        return None;
+    }
+    if root.is_empty() {
+        return Some(None);
+    }
+    let root = root_as_latest_state(snapshot, sections)?;
+    LoroDoc::from_snapshot(&root).ok().map(Some)
+}
+
 /// `snapshot` with its root-state section copied over its latest-state
 /// section, so a decode loads the encoded root as the doc's state and
 /// replays nothing. The checksum is xxh32 over everything from byte 20.
