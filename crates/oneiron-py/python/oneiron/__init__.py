@@ -3267,6 +3267,27 @@ class Oneiron:
         def lift_history(self, spec):
             """The owner reads the historical secret lift sweep: the run in progress, the last receipt and the open lift proposals by cause. With close, one proposal closes first with the owner's reason and a receipt; with start, a run is queued."""
             return json.loads(_translate(lambda: self._client.vault_secrets_lift_history(json.dumps(spec))))
+        def register(self, spec):
+            """The owner registers a secret, its value as base64 by his explicit choice; a portable one becomes a custody register request its holder enacts for the installs he permits. No call receipt keeps the call."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_register(json.dumps(spec))))
+        def rotate(self, spec):
+            """The owner rotates a secret to a new value as base64, by his explicit choice; a portable one becomes a custody rotate request its holder enacts for the installs he permits. No call receipt keeps the call."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_rotate(json.dumps(spec))))
+        def rewrap(self, spec):
+            """The owner seals a portable secret again, same generation and status, to the installs he names now, by its holder; the reply carries the custody request's receipt, and its delivery is unknown."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_rewrap(json.dumps(spec))))
+        @property
+        def custody(self) -> "Oneiron._VaultSecretsCustodyVerbs":
+            return Oneiron._VaultSecretsCustodyVerbs(self._client)
+    class _VaultSecretsCustodyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads a secret's custody binding, value-free: its id, generation and revision, its live requests, and each linked install with the key a surface seals an input to."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_custody_get(json.dumps(spec))))
+        def submit(self, spec):
+            """The owner records a register or rotate whose input his surface sealed to the holder under the binding custody.get gave; this install sees only ciphertext, and no call receipt keeps the call."""
+            return json.loads(_translate(lambda: self._client.vault_secrets_custody_submit(json.dumps(spec))))
     class _VaultWidenProposalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

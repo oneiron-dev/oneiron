@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1162 facade rows, 4164 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1114.
+// UniFFI census: 1167 facade rows, 4179 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1119.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -31143,6 +31143,270 @@ pub struct SecretLiftStatus {
     pub closed_proposals: u64,
     #[serde(rename = "proposals")]
     pub proposals: Vec<SecretLiftHistoryProposal>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRegisterBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRegisterBinding {
+    #[serde(rename = "effector")]
+    pub effector: String,
+    #[serde(rename = "scopes", default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<String>>,
+    #[serde(
+        rename = "tier_ceiling",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tier_ceiling: Option<u8>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretManifestSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretManifestSource {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub r#ref: Option<String>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRegisterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRegisterRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "class")]
+    pub class: String,
+    #[serde(rename = "rung")]
+    pub rung: u8,
+    #[serde(
+        rename = "device_only",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub device_only: Option<bool>,
+    #[serde(rename = "bindings", default, skip_serializing_if = "Option::is_none")]
+    pub bindings: Option<Vec<SecretRegisterBinding>>,
+    #[serde(rename = "manifest", default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<SecretManifestSource>,
+    #[serde(rename = "value_base64")]
+    pub value_base64: String,
+    #[serde(rename = "holder", default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    #[serde(
+        rename = "recipients",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recipients: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRegisteredBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRegisteredBinding {
+    #[serde(rename = "effector")]
+    pub effector: String,
+    #[serde(rename = "tier_ceiling")]
+    pub tier_ceiling: u8,
+    #[serde(rename = "scopes")]
+    pub scopes: Vec<String>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretCustodyReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretCustodyReply {
+    #[serde(rename = "work", default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<OwnerWorkReceipt>,
+    #[serde(rename = "kept_here", default, skip_serializing_if = "Option::is_none")]
+    pub kept_here: Option<String>,
+    #[serde(rename = "delivery")]
+    pub delivery: String,
+    #[serde(rename = "said")]
+    pub said: String,
+    #[serde(rename = "manifest", default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<String>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRegisterReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRegisterReply {
+    #[serde(rename = "secret_id")]
+    pub secret_id: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "class")]
+    pub class: String,
+    #[serde(rename = "device_only")]
+    pub device_only: bool,
+    #[serde(rename = "rotation_generation")]
+    pub rotation_generation: u32,
+    #[serde(rename = "registered_at")]
+    pub registered_at: u64,
+    #[serde(rename = "bindings")]
+    pub bindings: Vec<SecretRegisteredBinding>,
+    #[serde(rename = "manifest_ref")]
+    pub manifest_ref: String,
+    #[serde(rename = "declared_paths")]
+    pub declared_paths: Vec<String>,
+    #[serde(rename = "custody")]
+    pub custody: SecretCustodyReply,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRotateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRotateRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "value_base64")]
+    pub value_base64: String,
+    #[serde(rename = "holder", default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    #[serde(
+        rename = "recipients",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recipients: Option<Vec<String>>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRotationReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRotationReceipt {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "from_generation")]
+    pub from_generation: u32,
+    #[serde(rename = "to_generation")]
+    pub to_generation: u32,
+    #[serde(rename = "rotated_at")]
+    pub rotated_at: u64,
+    #[serde(rename = "kind")]
+    pub kind: String,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRotateReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRotateReply {
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<SecretRotationReceipt>,
+    #[serde(rename = "custody")]
+    pub custody: SecretCustodyReply,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRewrapRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRewrapRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "holder", default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+    #[serde(rename = "recipients")]
+    pub recipients: Vec<String>,
+}
+
+/// `oneiron::verbs::secret_custody::SecretCustodyGetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretCustodyGetRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+}
+
+/// `oneiron::verbs::secret_custody::SecretCustodyCandidateReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretCustodyCandidateReply {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "profile")]
+    pub profile: String,
+    #[serde(rename = "encryption_key_digest")]
+    pub encryption_key_digest: String,
+    #[serde(rename = "suite")]
+    pub suite: u16,
+    #[serde(rename = "encryption_key_base64")]
+    pub encryption_key_base64: String,
+    #[serde(rename = "this_install")]
+    pub this_install: bool,
+}
+
+/// `oneiron::verbs::secret_custody::SecretCustodyViewReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretCustodyViewReply {
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "secret_id")]
+    pub secret_id: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "known")]
+    pub known: bool,
+    #[serde(rename = "held_here")]
+    pub held_here: bool,
+    #[serde(rename = "portable")]
+    pub portable: bool,
+    #[serde(rename = "status", default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "seen")]
+    pub seen: String,
+    #[serde(rename = "live")]
+    pub live: Vec<OwnerWorkReceipt>,
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<SecretCustodyCandidateReply>,
+    #[serde(rename = "delivery")]
+    pub delivery: String,
+}
+
+/// `oneiron::verbs::secret_custody::SecretCustodyPermit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretCustodyPermit {
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "profile")]
+    pub profile: String,
+    #[serde(rename = "encryption_key_digest")]
+    pub encryption_key_digest: String,
+}
+
+/// `oneiron::verbs::secret_custody::SecretCustodySubmitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretCustodySubmitRequest {
+    #[serde(rename = "change")]
+    pub change: String,
+    #[serde(rename = "secret_id")]
+    pub secret_id: String,
+    #[serde(rename = "generation")]
+    pub generation: u32,
+    #[serde(rename = "seen")]
+    pub seen: String,
+    #[serde(rename = "holder")]
+    pub holder: String,
+    #[serde(rename = "recipients")]
+    pub recipients: Vec<SecretCustodyPermit>,
+    #[serde(
+        rename = "manifest_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub manifest_ref: Option<String>,
+    #[serde(rename = "input_base64")]
+    pub input_base64: String,
 }
 
 /// `oneiron::agent_dispatch::widen_doors::WidenProposalState`.

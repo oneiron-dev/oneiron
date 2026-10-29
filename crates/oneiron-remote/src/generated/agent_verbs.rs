@@ -1648,6 +1648,21 @@ impl OneironClient {
                 "vault.secrets.lift_history" => remote_agent_verb_output::<
                     oneiron::policy_model::SecretLiftStatus,
                 >(client, verb, &input),
+                "vault.secrets.register" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretRegisterReply,
+                >(client, verb, &input),
+                "vault.secrets.rotate" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretRotateReply,
+                >(client, verb, &input),
+                "vault.secrets.rewrap" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretCustodyReply,
+                >(client, verb, &input),
+                "vault.secrets.custody.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretCustodyViewReply,
+                >(client, verb, &input),
+                "vault.secrets.custody.submit" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SecretCustodyReply,
+                >(client, verb, &input),
                 "vault.widen_proposals" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::widen_doors::WidenProposalsView,
                 >(client, verb, &input),
@@ -10109,6 +10124,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.secrets.lift_history", value)
+    }
+    pub fn vault_secrets_register(
+        &self,
+        input: &oneiron::task_verb::sdk::SecretRegisterRequest,
+    ) -> Result<oneiron::task_verb::sdk::SecretRegisterReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.register", value)
+    }
+    pub fn vault_secrets_rotate(
+        &self,
+        input: &oneiron::task_verb::sdk::SecretRotateRequest,
+    ) -> Result<oneiron::task_verb::sdk::SecretRotateReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.rotate", value)
+    }
+    pub fn vault_secrets_rewrap(
+        &self,
+        input: &oneiron::task_verb::sdk::SecretRewrapRequest,
+    ) -> Result<oneiron::task_verb::sdk::SecretCustodyReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.rewrap", value)
+    }
+    pub fn vault_secrets_custody_get(
+        &self,
+        input: &oneiron::task_verb::sdk::SecretCustodyGetRequest,
+    ) -> Result<oneiron::task_verb::sdk::SecretCustodyViewReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.custody.get", value)
+    }
+    pub fn vault_secrets_custody_submit(
+        &self,
+        input: &oneiron::task_verb::sdk::SecretCustodySubmitRequest,
+    ) -> Result<oneiron::task_verb::sdk::SecretCustodyReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.secrets.custody.submit", value)
     }
     pub fn vault_widen_proposals(
         &self,

@@ -561,6 +561,11 @@ vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
 vaultSecretsLiftHistory(input: unknown): unknown
+vaultSecretsRegister(input: unknown): unknown
+vaultSecretsRotate(input: unknown): unknown
+vaultSecretsRewrap(input: unknown): unknown
+vaultSecretsCustodyGet(input: unknown): unknown
+vaultSecretsCustodySubmit(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown

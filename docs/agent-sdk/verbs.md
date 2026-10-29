@@ -533,6 +533,11 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
 - `vault.secrets.lift_history`
+- `vault.secrets.register`
+- `vault.secrets.rotate`
+- `vault.secrets.rewrap`
+- `vault.secrets.custody.get`
+- `vault.secrets.custody.submit`
 - `vault.widen_proposals`
 - `vault.widen_proposals.approve`
 - `vault.widen_proposals.decline`
