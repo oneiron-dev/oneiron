@@ -13733,7 +13733,7 @@
       "name": "ai.voice.tool",
       "description": "Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards.",
       "input": "crate::task_verb::sdk::LiveVoiceToolRequest",
-      "output": "crate::task_verb::sdk::LiveVoiceToolReply",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.tool\", &input)?",
       "host_door": true,
       "scope": "Write",
