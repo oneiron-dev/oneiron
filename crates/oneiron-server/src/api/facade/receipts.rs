@@ -51,9 +51,16 @@ pub(super) async fn facade_call_receipt(
     // OF-568: what the call reads, captured before it runs. OF-568 L4: the
     // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
-    let (mut response, attempt) =
-        call_receipt::attempt_witnessed(next.run(Request::from_parts(parts, Body::from(bytes))))
-            .await;
+    // FIX 10938: a row an action runs in process runs inside its own hold.
+    let outer = parts
+        .extensions
+        .get::<call_receipt::HeldOuterAttempt>()
+        .map(|held| held.0);
+    let (mut response, attempt) = call_receipt::attempt_witnessed_inside(
+        outer,
+        next.run(Request::from_parts(parts, Body::from(bytes))),
+    )
+    .await;
     let mut refusal = response.extensions_mut().remove::<FacadeApiError>();
     let status = response.status();
     let mut result_digest = None;

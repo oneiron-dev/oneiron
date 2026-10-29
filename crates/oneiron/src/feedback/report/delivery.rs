@@ -14,6 +14,7 @@
 mod counterparty;
 mod metadata;
 mod owner;
+mod packet_signature;
 mod participation;
 mod wire;
 

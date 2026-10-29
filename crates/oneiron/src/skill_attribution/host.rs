@@ -7,6 +7,9 @@
 //!
 //! - the executor is the model the pack loaded under, else the seat the run
 //!   was born on. A run with neither binds nothing and closes unattributed;
+//! - the agent definition is the definition the dispatch named, pinned
+//!   `id@revision` as it stands at bind; a workflow target, or a definition
+//!   no longer stored, pins none (FIX 11637);
 //! - the judge is unknown as the run binds: the model whose answer to the
 //!   run's Done stands is recorded when its report takes that answer
 //!   ([`super::finalize_run_judge_in_txn`], FIX 1877), and a run no model
@@ -29,7 +32,9 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::Vault;
-use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
+use crate::agent_dispatch::{
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, decode_agent_dispatch_input,
+};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
@@ -42,6 +47,8 @@ use crate::learning_setting::{
 use crate::limit_ask::EngineLimit;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The role a run outside any team plays.
 const SOLO_ROLE: &str = "solo";
@@ -100,9 +107,11 @@ pub fn bind_agent_run_attribution(
     };
     let type_ref = TypeRef::from(&input.type_ref);
     let credit = credit_options(vault, input.project_ref, &type_ref)?;
+    let agent_definition = agent_definition_pin(vault, &input.target)?;
     let mut fields = PackAttributionFields {
         type_ref,
         executor,
+        agent_definition,
         judge: None,
         pattern,
         team_shape: vec![role.to_owned()],
@@ -121,6 +130,26 @@ pub fn bind_agent_run_attribution(
         &fields,
     )?;
     Ok(true)
+}
+
+/// The agent definition `target` names, pinned `id@revision` as the stored
+/// definition stands now; `None` for a workflow target or a definition no
+/// longer stored (FIX 11637).
+fn agent_definition_pin(vault: &Vault, target: &AgentDispatchTarget) -> Result<Option<String>> {
+    let Ok(definition) = target.agent_definition_ref() else {
+        return Ok(None);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let LiveEntityRow::Live { entity_type, body } =
+        live_entity_row_in_txn(&vault.store, &rtxn, &definition)?
+    else {
+        return Ok(None);
+    };
+    if entity_type != ENTITY_TYPE_AGENT_DEF {
+        return Ok(None);
+    }
+    let decoded = crate::agent_def::decode_agent_definition(&body)?;
+    Ok(Some(format!("{}@{}", decoded.agent_id, decoded.version)))
 }
 
 /// Witnesses the close of the leased agent run `attempt`, before the

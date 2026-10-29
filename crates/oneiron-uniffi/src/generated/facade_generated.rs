@@ -215,6 +215,26 @@ export_facade! {
     let output = client.vault_shape_apply(&input)?;
     crate::codec::lift_record("vault.shape.apply", &output)
 };
+"vault.shape.plan.card" => fn vault_shape_plan_card(&self, input: ShapePlanRequest) -> ShapePlanCardView = |client| {
+    let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::lower_record("vault.shape.plan.card", input)?;
+    let output = client.vault_shape_plan_card(&input)?;
+    crate::codec::lift_record("vault.shape.plan.card", &output)
+};
+"vault.shape.items.receipt" => fn vault_shape_items_receipt(&self, input: ShapeItemReceiptRequest) -> Option<ShapeItemReceipt> = |client| {
+    let input: oneiron::memory::ShapeItemReceiptRequest = crate::codec::lower_record("vault.shape.items.receipt", input)?;
+    let output = client.vault_shape_items_receipt(&input)?;
+    crate::codec::lift_record("vault.shape.items.receipt", &output)
+};
+"vault.shape.groups" => fn vault_shape_groups(&self) -> Vec<ShapeInboxGroup> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shape.groups")?;
+    let output = client.vault_shape_groups(&input)?;
+    crate::codec::lift_record("vault.shape.groups", &output)
+};
+"vault.shape.groups.resolve" => fn vault_shape_groups_resolve(&self, input: ShapeGroupResolveRequest) -> ShapeApplyReceipt = |client| {
+    let input: oneiron::memory::ShapeGroupResolveRequest = crate::codec::lower_record("vault.shape.groups.resolve", input)?;
+    let output = client.vault_shape_groups_resolve(&input)?;
+    crate::codec::lift_record("vault.shape.groups.resolve", &output)
+};
 "self.message" => fn self_message(&self, input: MessagePersonRequest) -> MessagePersonReceipt = |client| {
     let input: oneiron::memory::MessagePersonRequest = crate::codec::lower_record("self.message", input)?;
     let output = client.self_message(&input)?;
@@ -706,6 +726,11 @@ export_facade! {
     let output = client.self_credential_attenuate(&input)?;
     crate::codec::lift_record("self.credential.attenuate", &output)
 };
+"self.actor" => fn self_actor(&self) -> SelfActorRefs = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.actor")?;
+    let output = client.self_actor(&input)?;
+    crate::codec::lift_record("self.actor", &output)
+};
 "vault.scope.position" => fn vault_scope_position(&self, input: RecordPositionRequest) -> ScopedReadResultOptionalRecordPosition = |client| {
     let input: oneiron::memory::RecordPositionRequest = crate::codec::lower_record("vault.scope.position", input)?;
     let output = client.vault_scope_position(&input)?;
@@ -991,10 +1016,15 @@ export_facade! {
     let output = client.vault_inbox_lens(&input)?;
     crate::codec::lift_record("vault.inbox.lens", &output)
 };
-"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> InboxGroupPage = |client| {
+"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> UnifiedInboxGroupPage = |client| {
     let input: oneiron::agent_inbox_lens::InboxRunGroupsRequest = crate::codec::lower_record("vault.inbox.groups", input)?;
     let output = client.vault_inbox_groups(&input)?;
     crate::codec::lift_record("vault.inbox.groups", &output)
+};
+"vault.inbox.groups.resolve" => fn vault_inbox_groups_resolve(&self, input: InboxGroupResolveRequest) -> InboxGroupResolution = |client| {
+    let input: oneiron::inbox::InboxGroupResolveRequest = crate::codec::lower_record("vault.inbox.groups.resolve", input)?;
+    let output = client.vault_inbox_groups_resolve(&input)?;
+    crate::codec::lift_record("vault.inbox.groups.resolve", &output)
 };
 "vault.weave.digest.render" => fn vault_weave_digest_render(&self) -> Option<WeaveDigestRendered> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.digest.render")?;
@@ -2200,6 +2230,11 @@ export_facade! {
     let input: oneiron::skill_optimize::offer_pilot::OfferPilotRef = crate::codec::lower_record("vault.coach.training_offers.pilots.get", input)?;
     let output = client.vault_coach_training_offers_pilots_get(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.pilots.get", &output)
+};
+"vault.coach.training_offers.sources" => fn vault_coach_training_offers_sources(&self, input: ReservoirSourcesRequest) -> ReservoirSourcePreview = |client| {
+    let input: oneiron::task_verb::sdk::ReservoirSourcesRequest = crate::codec::lower_record("vault.coach.training_offers.sources", input)?;
+    let output = client.vault_coach_training_offers_sources(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.sources", &output)
 };
 "vault.research.bind" => fn vault_research_bind(&self, input: ResearchBindWire) -> ResearchBinding = |client| {
     let input: oneiron::task_verb::sdk::ResearchBindWire = crate::codec::lower_record("vault.research.bind", input)?;
@@ -5765,6 +5800,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::IdentityPairRequest = crate::codec::lower_record("vault.identity.proposals.for_pair", input)?;
     let output = client.vault_identity_proposals_for_pair(&input)?;
     crate::codec::lift_record("vault.identity.proposals.for_pair", &output)
+};
+"vault.custody.members.drain.begin" => fn vault_custody_members_drain_begin(&self, input: CustodyMemberRef) -> CustodyDrainTicketView = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberRef = crate::codec::lower_record("vault.custody.members.drain.begin", input)?;
+    let output = client.vault_custody_members_drain_begin(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.begin", &output)
+};
+"vault.custody.members.drain.commit" => fn vault_custody_members_drain_commit(&self, input: CustodyDrainCommitRequest) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyDrainCommitRequest = crate::codec::lower_record("vault.custody.members.drain.commit", input)?;
+    let output = client.vault_custody_members_drain_commit(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.commit", &output)
+};
+"vault.custody.members.drain.folder" => fn vault_custody_members_drain_folder(&self, input: CustodyMemberRef) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberRef = crate::codec::lower_record("vault.custody.members.drain.folder", input)?;
+    let output = client.vault_custody_members_drain_folder(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.folder", &output)
+};
+"vault.custody.members.reenrol" => fn vault_custody_members_reenrol(&self, input: CustodyMemberReenrolRequest) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberReenrolRequest = crate::codec::lower_record("vault.custody.members.reenrol", input)?;
+    let output = client.vault_custody_members_reenrol(&input)?;
+    crate::codec::lift_record("vault.custody.members.reenrol", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;

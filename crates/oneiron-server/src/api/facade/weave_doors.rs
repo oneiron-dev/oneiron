@@ -17,7 +17,7 @@ use oneiron::claim::{
     WeaveDigestFeedback, WeaveDigestRendered, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingUndo, WeaveReaderRef, WeaveScheduleView,
 };
-use oneiron::inbox::InboxGroupPage;
+use oneiron::inbox::UnifiedInboxGroupPage;
 use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard, WeaveLensRequest};
 use oneiron::memory::DreamerAttemptRef;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
@@ -484,14 +484,15 @@ pub(crate) async fn vault_inbox_groups(
     caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: InboxRunGroupsRequest,
-) -> Listed<InboxGroupPage> {
+) -> Listed<UnifiedInboxGroupPage> {
     const VERB: &str = "vault.inbox.groups";
     let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
+    // Both group kinds on one page, newest first (FIX 3026).
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.inbox_run_groups(&owner, &input)
+        memory.inbox_groups_page(&owner, &input)
     })
     .await
 }

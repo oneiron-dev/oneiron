@@ -123,6 +123,21 @@ impl Vault {
         let hash = *blake3::hash(body.as_bytes()).as_bytes();
         self.append_sandbox_gate_receipt(run_id, "browser_takeover", "abandoned", body, hash)
     }
+    /// A run browser's demonstration (CUA E9) its seat's end closed, never
+    /// given to the agent: the demonstration is its receipt, outcome
+    /// `closed` (FIX 9409).
+    pub fn append_browser_demonstration_closed_receipt(
+        &self,
+        run_id: EntityId,
+        record: &serde_json::Value,
+    ) -> Result<String> {
+        let body = serde_json::to_string(
+            &serde_json::json!({"run_id": run_id.to_hex(), "demonstration": record}),
+        )
+        .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;
+        let hash = *blake3::hash(body.as_bytes()).as_bytes();
+        self.append_sandbox_gate_receipt(run_id, "browser_demonstration", "closed", body, hash)
+    }
     pub fn append_egress_receipt(&self, receipt: &EgressReceipt) -> Result<String> {
         let body = serde_json::to_string(receipt)
             .map_err(|e| crate::Error::InvalidConfig(e.to_string()))?;
