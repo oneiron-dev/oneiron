@@ -239,9 +239,7 @@ impl Vault {
     /// it asked for (FIX 10202): the package is fetched once from the pinned
     /// commit, its declared id and the requested version are checked before
     /// any write, and the import commits that same package. A mismatch
-    /// writes nothing. `importing` turns true as the import proper (its
-    /// advisories and its writer) begins: a refusal before then read no
-    /// vault row but the hub's record (FIX 3513).
+    /// writes nothing.
     pub(crate) fn import_default_hub_skill_expecting(
         &self,
         subtree: &str,
@@ -249,7 +247,6 @@ impl Vault {
         version: Option<&str>,
         occurred: TimeRange,
         learned_at: u64,
-        importing: &mut bool,
     ) -> Result<EntityId> {
         let id = default_skill_hub_id()?;
         let row = self.skill_hub_record(&id)?;
@@ -263,7 +260,6 @@ impl Vault {
         let package = adapter.fetch_package(&reference)?;
         super::hub_owner::check_expected_skill(&package.record, skill_id, version)?;
         let inventory = super::osv::dependency_inventory(&package)?;
-        *importing = true;
         Ok(self
             .install_skill_with_advisories(
                 &reference,
