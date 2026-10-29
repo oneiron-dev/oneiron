@@ -57,7 +57,7 @@ pub(crate) use self::envelope::{
 };
 pub(crate) use self::exec_board_verbs::{
     deliver_run_board_hooks, drop_run_board, execute_mcp_execute_code, execute_mcp_read_result,
-    execute_run_board_verb,
+    execute_run_board_verb, execute_run_board_verb_in_session,
 };
 use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
 pub(crate) use self::owner_call::resolve_mcp_caller;

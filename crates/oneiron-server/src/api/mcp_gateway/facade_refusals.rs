@@ -3,7 +3,7 @@
 //! The engine's `MemoryError` (`oneiron::memory`) is the record forwarded here.
 
 use super::McpGatewayError;
-use super::tasks_response::{MCP_HOST_ACTION_REFUSED, mcp_hook_stop};
+use super::tasks_response::{MCP_HOST_ACTION_REFUSED, MCP_OWNER_BINDING_REQUIRED, mcp_hook_stop};
 
 /// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
 pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
@@ -46,6 +46,8 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // FIX 2222: one stable kind for the typed host refusal, whichever
         // door reported it.
         oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
+        // FIX 11434: the owner binding refusal keeps one stable kind too.
+        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => Some(MCP_OWNER_BINDING_REQUIRED),
         // WILL-PLAN L13 row 03: the room's audience gave no consent to this
         // management; an agent reads the name, not the sentence.
         oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
