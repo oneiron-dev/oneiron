@@ -41,7 +41,6 @@ const HOOK_MANIFEST: &str = "HOOK.md";
 const HOOK_INTENT: &str = "intent.md";
 const HOOK_BODY: &str = "body.js";
 const MAX_HOOK_BUDGET_MS: u32 = 60_000;
-const MAX_SELECTOR_ENTRIES: usize = 64;
 
 /// When a hook fires (ARCH-0080 §2).
 #[derive(
@@ -384,7 +383,7 @@ fn selector_entry(entry: &str) -> bool {
         })
 }
 
-/// A JSON string list, bounded and without repeats.
+/// A JSON string list without repeats.
 fn json_list<T: DeserializeOwned + Ord>(
     fields: &BTreeMap<&str, &str>,
     key: &str,
@@ -395,8 +394,8 @@ fn json_list<T: DeserializeOwned + Ord>(
     let entries: Vec<T> =
         serde_json::from_str(value).map_err(|_| invalid("HOOK.md list must be a JSON array"))?;
     let distinct = entries.iter().collect::<BTreeSet<_>>().len();
-    if entries.len() > MAX_SELECTOR_ENTRIES || distinct != entries.len() {
-        return Err(invalid("HOOK.md list is too long or repeats an entry"));
+    if distinct != entries.len() {
+        return Err(invalid("HOOK.md list repeats an entry"));
     }
     Ok(entries)
 }
