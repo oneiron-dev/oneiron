@@ -349,7 +349,7 @@ pub use weave_admin::{
 };
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
-    mark_if_withdrawn_grant_in_txn, mark_withdrawn_grant_in_txn,
+    mark_if_withdrawn_grant_in_txn, withdraw_grant_row_in_txn,
 };
 pub use work_rebind::{
     InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,
@@ -371,6 +371,8 @@ pub(crate) use checkpoint_adopt::{
 pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
+#[cfg(feature = "sync")]
+pub(crate) use current_scope::current_grant_scope;
 pub(crate) use first_seen_clock::*;
 pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;

@@ -337,8 +337,9 @@ impl Vault {
         // minted under the grant and merges later is tombstoned there too
         // (FIX 1978).
         self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipGrantRevoke { grant_ref })?;
-        // The withdrawal stays known here, in this writer (FIX-LIST 5107).
-        super::mark_withdrawn_grant_in_txn(&self.store, txn, grant_ref)?;
+        // The withdrawal stays known here and reaches its peers, in this
+        // writer (FIX-LIST 5107, 10772).
+        super::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
         apply_ops(
             &self.store,
             &self.config,
