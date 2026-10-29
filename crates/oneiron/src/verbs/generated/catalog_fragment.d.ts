@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1255 code-mode rows (1215 host rows, 40 run rows), 4400 declarations.
+// Census: 1255 code-mode rows (1215 host rows, 40 run rows), 4401 declarations.
 // Replies: 1067 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -3258,7 +3258,8 @@ declare namespace Sdk {
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
   type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[]; budget_steering?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] };
-  type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply };
+  type LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply;
+  type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: LiveVoiceToolCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
   type AnonymousChatRequestTarget = "house_mind" | "plain_model";
   type AnonymousChatRequest = { text: string; target?: AnonymousChatRequestTarget; model?: ModelId | null };
