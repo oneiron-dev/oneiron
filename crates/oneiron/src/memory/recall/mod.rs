@@ -767,7 +767,9 @@ impl Memory<'_> {
         // A scope that names TURN but not MESSAGE still finds a turn by its
         // messages' words: each message comes back as its turn or not at all.
         let turn_fold = kinds.turn_fold();
-        // Admission runs in each candidate's retrieval transaction before ranking.
+        // Admission runs in each candidate's retrieval transaction before ranking,
+        // under one relationship authority per transaction (FIX 11648).
+        let gate = lane.recall_candidate_gate();
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 // Reject irrelevant kind/predicate rows before the actor gate.
@@ -787,7 +789,7 @@ impl Memory<'_> {
                         return Ok(false);
                     }
                 }
-                lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
+                gate.admits_in(txn, &plan_policy, &plan_filter, id)
             };
 
         // A door that stops waiting at the deadline answers then with the

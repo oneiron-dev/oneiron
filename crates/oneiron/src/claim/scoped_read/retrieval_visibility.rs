@@ -1,5 +1,6 @@
 //! The retrieval authority floor for graph channels on a scoped read.
 
+use super::access_gate::HeldAuthority;
 use super::*;
 
 pub(crate) struct RetrievalVisibility<'read, 'vault> {
@@ -33,19 +34,41 @@ impl<'vault> ScopedRead<'vault> {
         filter: &ResolvedRetrievalFilter,
         id: &EntityId,
     ) -> Result<bool> {
+        self.is_entity_retrievable_held_in(txn, policy, filter, id, &HeldAuthority::default())
+    }
+
+    /// [`Self::is_entity_retrievable_with_policy_in`] for one row of a read
+    /// that checks many in `txn`, under the relationship authority the read
+    /// holds, so the grants and relationship claims load once for the read,
+    /// not once per row (FIX 11648).
+    pub(super) fn is_entity_retrievable_held_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+        authority: &HeldAuthority<'vault>,
+    ) -> Result<bool> {
         // Audience, NOTE privacy, relationship grants, credential scope and
         // type/scalar ceilings all live in the shared row predicate; graph
         // traversal must not fork it.
         let Some(row) = self.entity_record_in(txn, id)? else {
             return Ok(false);
         };
-        if !self.is_entity_raw_readable_with_filter_in(txn, policy, id, &row.encode(), filter)? {
+        if !self.is_entity_raw_readable_held_in(
+            txn,
+            policy,
+            id,
+            &row.encode(),
+            filter,
+            authority,
+        )? {
             return Ok(false);
         }
         if row.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Ok(true);
         }
-        self.turn_messages_readable_in(txn, policy, id)
+        self.turn_messages_readable_in(txn, policy, id, authority)
     }
 
     /// A TURN's text, and so its vector, is its messages' text
@@ -67,6 +90,7 @@ impl<'vault> ScopedRead<'vault> {
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         turn: &EntityId,
+        authority: &HeldAuthority<'vault>,
     ) -> Result<bool> {
         let floor = self.actor_retrieval_floor(policy)?;
         let parts = match self.session_view {
@@ -86,7 +110,7 @@ impl<'vault> ScopedRead<'vault> {
             if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
             }
-            if !self.is_entity_readable_with_filter_in(txn, policy, &message, &floor)? {
+            if !self.is_entity_readable_held_in(txn, policy, &message, &floor, authority)? {
                 return Ok(false);
             }
         }
