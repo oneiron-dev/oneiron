@@ -38,6 +38,7 @@ mod mcp;
 mod observation;
 #[cfg(feature = "driver")]
 mod outline;
+mod press_answer;
 mod programs;
 mod progress;
 mod receipt_evidence;
@@ -89,6 +90,7 @@ pub use observation::{
 };
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
+pub use press_answer::{PressAnswer, PressOutcome};
 pub use progress::NO_PROGRESS_STEPS;
 use progress::Progress;
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
@@ -102,8 +104,8 @@ pub use secret::{SecretCustody, SecretUse};
 pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
 pub use session::{
-    BrowserGuest, BrowserGuestStarter, BrowserSession, CapturedSolvedSpan, FreshGuest, PressGrants,
-    SOLVED_PAST_PRESS, SolvedSnapshotGap, StartedGuest,
+    BrowserGuest, BrowserGuestStarter, BrowserSession, CapturedSolvedSpan, FreshGuest, HeldPress,
+    PressGrants, PressNeed, SOLVED_PAST_PRESS, SolvedSnapshotGap, StartedGuest,
 };
 pub use site::{
     OriginError, SeedBody, SeedCandidate, SiteOrigin, SiteSkillError, SiteSkillErrorCode,

@@ -55,6 +55,7 @@ impl BrowserSession {
             acted: None,
             stop_pending: None,
             press_refused: None,
+            held: super::held::Holds::default(),
             presses: PressBook::new(config.policy.clone()),
             unread: None,
             decider: None,

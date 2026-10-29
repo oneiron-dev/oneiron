@@ -173,19 +173,68 @@ pub(crate) struct CodeConsentConnectorCall {
     pub(crate) credential_record: Option<EntityId>,
 }
 
+/// The browser act a press held, as its run's session froze it (FIX
+/// 10423): the act and its own input, the row it resolved to, the page, tab,
+/// document and guest it ran in, and why its grant gave no press. It keeps
+/// the call's answer as the held act found it, which the run resumes with
+/// when the act does not run: a batch's answer at its stop, whose completed
+/// steps and receipts stand, or the page a lone act began on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeConsentBrowserAction {
+    /// The verb row of the held act: `self.browser.click` or
+    /// `self.browser.click_at`.
+    pub act: String,
+    /// The act's own input, as JSON text: the settle runs these operands
+    /// only.
+    pub operands: String,
+    /// The effect class the row's name marks on its page.
+    pub class: String,
+    /// The row the act resolved to: its role, name and locator.
+    pub role: String,
+    pub name: String,
+    pub locator: String,
+    /// The page the act began on.
+    pub page: Option<String>,
+    /// The tab in front when the act began.
+    pub tab: String,
+    /// The documents the row's live handle was read from; none for a row no
+    /// handle names.
+    pub document: Option<String>,
+    /// The browser guest the act ran in, by its manifest's generation.
+    pub session: String,
+    /// Why the grant gave no press: `per_send`, or `batch_spent` for a
+    /// reviewed batch whose sends were spent.
+    pub need: String,
+    /// The call's answer as the held act found it, as JSON text: a batch's
+    /// answer at its stop, or the page a lone act began on.
+    pub stopped: Option<String>,
+}
+
 /// The pending effect a wait binds. Each effect kind is its own typed
-/// adapter at its own gate; 1a has one.
+/// adapter at its own gate: a held connector call (1a), or a browser act a
+/// press held (FIX 10423).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CodeConsentPendingEffect {
     ConnectorCall(CodeConsentConnectorCall),
+    BrowserAction(CodeConsentBrowserAction),
 }
 
 impl CodeConsentPendingEffect {
-    /// The held connector call.
-    pub(crate) const fn connector_call(&self) -> &CodeConsentConnectorCall {
-        let Self::ConnectorCall(call) = self;
-        call
+    /// The held connector call, when the effect is one.
+    pub(crate) const fn connector_call(&self) -> Option<&CodeConsentConnectorCall> {
+        match self {
+            Self::ConnectorCall(call) => Some(call),
+            Self::BrowserAction(_) => None,
+        }
+    }
+
+    /// The held browser act, when the effect is one.
+    pub(crate) const fn browser_action(&self) -> Option<&CodeConsentBrowserAction> {
+        match self {
+            Self::BrowserAction(action) => Some(action),
+            Self::ConnectorCall(_) => None,
+        }
     }
 }
 
@@ -385,9 +434,12 @@ pub struct CodeConsentWaitView {
     pub state: CodeConsentWaitState,
     /// The verb row the held effect is.
     pub verb: String,
-    /// The catalog name and tool of the held connector call.
+    /// The catalog name and tool of the held connector call; empty for a
+    /// held browser act, which `browser` names.
     pub connector: String,
     pub tool: String,
+    /// The held browser act (FIX 10423), when the effect is one.
+    pub browser: Option<CodeConsentBrowserAction>,
     /// The code-bound approval digest an answer names.
     pub effect_digest: [u8; 32],
     /// The hold the effect's gate reported.

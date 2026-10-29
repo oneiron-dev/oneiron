@@ -459,13 +459,27 @@ impl HostSelfDispatcher<'_> {
     /// A verb's answer as the run takes it, when a code consent wait may
     /// bind it: a held call its wait was bound to parks the run on that
     /// wait, which only its owner's answer and the effect's own gate settle.
-    /// Every other answer is [`connector_call_answer`]'s.
+    /// A browser call whose press held an act its host bound to the wait at
+    /// this call's own site parks the same way (FIX 10423), whatever its
+    /// answer said. Every other answer is [`connector_call_answer`]'s.
     fn code_consent_answer(
         &self,
         consent_site: Option<&CodeConsentCallSite>,
         verb: AgentVerb,
         outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
+        if let Some(consent_site) = consent_site
+            && verb.is_browser()
+            && let ExecutorStorage::Canonical(vault) = &self.storage
+            && consent_wait::code_consent_binds_held_browser(vault, consent_site.wait_id)?
+        {
+            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                wait_id: consent_site.wait_id,
+                effect: SelfEffect::AgentVerb,
+                reason: SelfDurableWaitReason::OutboundEffect,
+                prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
+            }));
+        }
         if let (Some(consent_site), SelfDispatchOutcome::AgentVerb(answer)) =
             (consent_site, &outcome)
             && let Some(call_ref) = held_call_ref(verb, &answer.output)

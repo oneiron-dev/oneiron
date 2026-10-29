@@ -21,7 +21,7 @@
 //! result, and in its output binding, so a retry answers with it too (FIX
 //! 5334).
 
-use oneiron_authority::authority::CustodyRegisterCheck;
+use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::super::codec::{decode_bind_input, decode_register_input};
@@ -278,10 +278,19 @@ impl Vault {
         match change {
             CustodyChange::Register => {
                 let taken = match material {
-                    Material::Record(record, _) => Taken {
-                        record: Held(record.clone()),
-                        check: None,
-                    },
+                    Material::Record(record, _) => {
+                        // FIX 5333: an unstated manifest_ref registers unchecked, like the sealed path.
+                        let check = record.manifest_ref.is_empty().then(|| {
+                            CustodyRegisterCheck::Unchecked {
+                                reason: CustodyUncheckedReason::NoneNamed,
+                                refs: Vec::new(),
+                            }
+                        });
+                        Taken {
+                            record: Held(record.clone()),
+                            check,
+                        }
+                    }
                     Material::Input(secret) => match self
                         .opened_input_in_txn(txn, &binding, *input, secret)?
                     {
