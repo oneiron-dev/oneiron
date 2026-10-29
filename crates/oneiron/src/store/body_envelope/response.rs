@@ -345,9 +345,7 @@ impl ResponseFamily {
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::saved_query::memo_carriage(value),
             Self::CentroidEvidence => crate::self_heal::centroid_evidence_carriage(value),
-            Self::MessageReplyAssertions => ResponseScan::decoded(
-                crate::memory::reply_assertions_stub(value).map(ResponseCarriage::whole),
-            ),
+            Self::MessageReplyAssertions => crate::memory::reply_assertions_scan(value),
             Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
         }
@@ -396,6 +394,9 @@ impl ResponseFamily {
         }
         if self == Self::VoiceBank {
             return crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value);
+        }
+        if self == Self::MessageReplyAssertions {
+            return Ok(crate::memory::reply_assertions_opaque_owners(key, value));
         }
         let owners = self.owners(store, txn, key, value)?;
         Ok(match self {
