@@ -155,12 +155,9 @@ fn owner_row(
         AgentVerb::AiVideo => {
             let input = decode(input)?;
             let ticket = match line {
-                Some(line) => runtime.block_on(crate::api::ai_video_for_run(
-                    server,
-                    line,
-                    input,
-                    Some(actor),
-                )),
+                Some(line) => {
+                    runtime.block_on(crate::api::ai_video_for_run(server, line, input, Some(actor)))
+                }
                 None => runtime.block_on(crate::api::ai_video_as_owner(server, input, Some(actor))),
             };
             encode(ticket?)
