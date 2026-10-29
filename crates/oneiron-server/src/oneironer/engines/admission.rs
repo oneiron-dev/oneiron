@@ -53,6 +53,10 @@ use crate::config::{EmbedderDevice, OneironerConfig};
 /// The down reason of a worker whose answers do not clear here, or that
 /// holds no reference case.
 const PARITY_FAILED: &str = "parity_failed";
+/// The rank of a platform worker Candle beats: after Candle's highest
+/// rank (3, behind two preferred platform workers), so it is never picked
+/// over Candle.
+const NOT_PREFERRED_RANK: usize = 4;
 
 /// The bundle sessions a slot of this process holds: canonical directory,
 /// stack and platform row. Keys, never a worker.
@@ -401,12 +405,12 @@ impl Calibration {
                 .unwrap_or_else(PoisonError::into_inner);
             tracing::info!(
                 engine = row.engine.as_str(),
-                rank = 2,
+                rank = NOT_PREFERRED_RANK,
                 candle_rank = candle,
                 "oneironer platform worker admitted"
             );
-            self.admitted = Some(2);
-            return Ok(2);
+            self.admitted = Some(NOT_PREFERRED_RANK);
+            return Ok(NOT_PREFERRED_RANK);
         }
         let mut first = self
             .first_preferred
