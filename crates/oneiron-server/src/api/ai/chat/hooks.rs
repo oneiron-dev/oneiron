@@ -108,11 +108,8 @@ pub(in crate::api::ai::chat) fn witness_through_row(
         vault,
         session,
         VerbCall::for_memory(hooked, WITNESS_ROW, VerbDomain::Write)?,
-        args,
-        &|args: &Value| {
-            oneiron::task_verb::sdk::validate_input(WITNESS_ROW, args)
-                .map_err(|error| error.to_string())
-        },
+        args.clone(),
+        &|rewritten: &Value| host_args_kept(&args, rewritten),
         |args| {
             let turn: WitnessTurn = serde_json::from_value(args)
                 .map_err(|_| MemoryError::bad_request("witness turn does not decode"))?;
