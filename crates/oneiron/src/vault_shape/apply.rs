@@ -15,17 +15,13 @@ use super::approval::{
     ShapeApprovalDependencies, check_waiting_shape_approval, moves_reach, repin_waiting,
 };
 use super::live::{ShapeSources, facet_name, world_name};
+use super::member::{lowers_member, pending_invitation};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
 use super::shared_setup::{CreatorAnswer, ShapeLearningOutcome, creator_answer, report_unread};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
 use crate::authority::{ActSurface, HostSlipIssuer, VerifiedSlip};
-use crate::channel_identity::{decode_channel_identity_body, resolve_quarantine_floor_in_txn};
-use crate::channel_identity_lifecycle::{
-    ChannelIdentityLifecycleActor, ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent,
-    ChannelIdentityLifecycleRequest, ReleaseIntent,
-};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
@@ -87,6 +83,33 @@ pub enum ShapeItemState {
         proposal_ref: String,
         expires_at: u64,
     },
+    /// A new grant an actor's apply tried to file, but the widen inbox
+    /// refused, with the reason it gave. It waits as [`Self::Proposed`]
+    /// does, and an owner's apply may land it.
+    FileRefused { reason: String },
+    /// A channel retire the identity's lifecycle gate holds for the owner's
+    /// approve-once press on `approval_digest` (FIX 2577). It waits as
+    /// [`Self::Proposed`] does, and the owner's next apply asks again as
+    /// exactly this request: under `request_ref`, with the quarantine bound
+    /// and the clock it first asked with, so the gate reads the same request
+    /// and asks for no second approval.
+    Held {
+        request_ref: String,
+        approval_digest: String,
+        quarantine_until: u64,
+        requested_at: u64,
+    },
+    /// A channel provision the identity's lifecycle gate holds for the
+    /// owner's approve-once press on `approval_digest` (FIX 2300). It waits
+    /// as [`Self::Proposed`] does, and the owner's next apply asks again as
+    /// exactly this request: under `request_ref`, for the identity
+    /// `identity_ref` it first asked for, on the clock it first asked with.
+    HeldProvision {
+        request_ref: String,
+        approval_digest: String,
+        identity_ref: String,
+        requested_at: u64,
+    },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
@@ -106,6 +129,11 @@ pub struct ShapeApplyItem {
     /// lands only while it still holds. None on a journal from before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ShapeApprovalDependencies>,
+    /// The member this item lowered or removed keeps their capability
+    /// slips (FIX 2574): neither the host nor this install held an issuer
+    /// to revoke them, so the revocation waits for one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub slips_kept: bool,
 }
 
 /// One apply: its journal row, and `vault.shape.apply`'s answer.
@@ -149,7 +177,12 @@ pub enum ShapeApplier<'a> {
 pub(super) const fn open(state: &ShapeItemState) -> bool {
     matches!(
         state,
-        ShapeItemState::Pending | ShapeItemState::Proposed | ShapeItemState::Filed { .. }
+        ShapeItemState::Pending
+            | ShapeItemState::Proposed
+            | ShapeItemState::Filed { .. }
+            | ShapeItemState::FileRefused { .. }
+            | ShapeItemState::Held { .. }
+            | ShapeItemState::HeldProvision { .. }
     )
 }
 
@@ -173,7 +206,7 @@ fn next_version(version: &str) -> String {
     )
 }
 
-type LiveByTarget = BTreeMap<ShapeTarget, (ShapeRow, Option<EntityId>)>;
+pub(super) type LiveByTarget = BTreeMap<ShapeTarget, (ShapeRow, Option<EntityId>)>;
 
 /// Lists the pack source a pack catalog receipt names; a receipt naming no
 /// entity leaves the rows unknown.
@@ -314,6 +347,7 @@ impl Vault {
                             item,
                             state: ShapeItemState::Pending,
                             approval: Some(pin.clone()),
+                            slips_kept: false,
                         })
                         .collect(),
                     done: false,
@@ -424,6 +458,10 @@ impl Vault {
         sources: &mut ShapeSources,
     ) -> Result<()> {
         let author = owner.revalidate(self)?;
+        // With no host issuer, the vault's own ends the slips of a member
+        // the shape lowers or removes (FIX 2574).
+        let own_issuer = self.shape_slip_issuer(slips);
+        let slips = slips.or(own_issuer.as_ref());
         let mut live = self.live_by_target(sources)?;
         let mut pin = self.shape_approval_now()?;
         for index in 0..journal.items.len() {
@@ -431,9 +469,19 @@ impl Vault {
                 continue;
             }
             let item = journal.items[index].item.clone();
+            // A release the lifecycle gate held asks again as its own request
+            // (FIX 2577): the owner's word was given when it was first asked.
+            let held_release = matches!(journal.items[index].state, ShapeItemState::Held { .. });
+            // So does a provision the gate held (FIX 2300).
+            let held_provision = matches!(
+                journal.items[index].state,
+                ShapeItemState::HeldProvision { .. }
+            );
             // The released re-preview (FIX 10200): an approved widening whose
             // previewed reach moved under it lands only once planned again.
-            let approved = item.class == ShapeItemClass::Widening
+            let approved = !held_release
+                && !held_provision
+                && item.class == ShapeItemClass::Widening
                 && item.door.is_some()
                 && approve.contains(&item.seq);
             if approved
@@ -453,12 +501,22 @@ impl Vault {
                 continue;
             }
             let state = match held(&item) {
+                ShapeItemState::Proposed if held_release => {
+                    let resting = &journal.items[index].state;
+                    self.retire_shape_channel(owner, &item, &live, resting, now)
+                }
+                ShapeItemState::Proposed if held_provision => {
+                    let resting = &journal.items[index].state;
+                    self.provision_shape_channel_item(owner, &item, &live, resting, now, sources)
+                }
                 ShapeItemState::Proposed
                     if item.class == ShapeItemClass::Widening && !approve.contains(&item.seq) =>
                 {
                     match &journal.items[index].state {
-                        // A filing keeps its inbox reference while it waits.
-                        filed @ ShapeItemState::Filed { .. } => filed.clone(),
+                        // A filing keeps its inbox reference while it waits,
+                        // as a refused one keeps its reason.
+                        waiting @ (ShapeItemState::Filed { .. }
+                        | ShapeItemState::FileRefused { .. }) => waiting.clone(),
                         _ => ShapeItemState::Proposed,
                     }
                 }
@@ -472,6 +530,24 @@ impl Vault {
                         live = self.live_by_target(sources)?;
                     }
                     shared
+                }
+                // A channel identity retires through its lifecycle gate,
+                // whose hold waits for the owner's press (FIX 2577).
+                ShapeItemState::Proposed
+                    if item.change == ShapeChange::Retire
+                        && matches!(item.target, ShapeTarget::Channel { .. }) =>
+                {
+                    let resting = &journal.items[index].state;
+                    self.retire_shape_channel(owner, &item, &live, resting, now)
+                }
+                // So does a new one provision, and its hold waits the same
+                // way (FIX 2300).
+                ShapeItemState::Proposed
+                    if item.change == ShapeChange::Create
+                        && matches!(item.target, ShapeTarget::Channel { .. }) =>
+                {
+                    let resting = &journal.items[index].state;
+                    self.provision_shape_channel_item(owner, &item, &live, resting, now, sources)
                 }
                 ShapeItemState::Proposed => {
                     match self.land_shape_item(owner, slips, &item, &live, now, sources) {
@@ -501,6 +577,7 @@ impl Vault {
                     let before = std::mem::replace(&mut pin, self.shape_approval_now()?);
                     repin_waiting(&mut journal.items, index, &before, &pin, own);
                 }
+                journal.items[index].slips_kept = !own && slips.is_none() && lowers_member(&item);
             }
             journal.items[index].state = state;
             self.put_shape_apply(journal, now)?;
@@ -511,9 +588,9 @@ impl Vault {
 
     /// Where an actor's apply leaves `item`: a new grant it carries the bound
     /// of is filed to the owner's widen inbox under `credential`, as an
-    /// action or a disclosure widening, for the vault's embedded owner to
-    /// answer. Anything else, or a filing the inbox refuses, rests where any
-    /// actor's item rests, waiting for the owner.
+    /// action or a disclosure widening, for the owner who accepts to answer
+    /// (FIX 2503). Anything else rests where any actor's item rests, waiting for
+    /// the owner; a filing the inbox refuses waits there with its reason.
     fn file_shape_grant(
         &self,
         credential: Option<&VerifiedSlip>,
@@ -532,7 +609,7 @@ impl Vault {
             return held(item);
         };
         let filed = bound.bound().and_then(|grant| {
-            let owner_ref = crate::vault::embedded_owner_actor_id()?.to_hex();
+            let owner_ref = self.shape_filing_owner_ref()?;
             let expires_at = self.store.clock.peek_recorded_at() + SHAPE_GRANT_PROPOSAL_SECS;
             if bound.is_action() {
                 self.propose_action_widen(credential, grant, &owner_ref, expires_at)
@@ -545,7 +622,9 @@ impl Vault {
                 proposal_ref: proposal.proposal_ref,
                 expires_at: proposal.expires_at,
             },
-            Err(_) => resting,
+            Err(error) => ShapeItemState::FileRefused {
+                reason: error.to_string(),
+            },
         }
     }
 
@@ -611,6 +690,13 @@ impl Vault {
             ) => Ok(self
                 .add_shared_member(owner, shared()?, person(member)?, Some((*role).into()))?
                 .id),
+            (ShapeChange::Update, ShapeTarget::Member { .. }, Some(ShapeRow::Member { .. }))
+                if pending_invitation(current).is_some() =>
+            {
+                Err(invalid(
+                    "their invitation at another role is still pending; withdraw it, or wait for their answer",
+                ))
+            }
             (
                 ShapeChange::Update,
                 ShapeTarget::Member { member },
@@ -624,9 +710,18 @@ impl Vault {
                     slips,
                 )?
                 .id),
-            (ShapeChange::Retire, ShapeTarget::Member { member }, _) => Ok(self
-                .remove_shared_member(owner, shared()?, person(member)?, slips)?
-                .id),
+            // Retiring a person still invited withdraws the invitation
+            // (FIX 2573), the owner's own act.
+            (ShapeChange::Retire, ShapeTarget::Member { member }, _) => {
+                match pending_invitation(current) {
+                    Some(invitation) => Ok(self
+                        .withdraw_shared_invitation(owner, shared()?, person(member)?, invitation)?
+                        .id),
+                    None => Ok(self
+                        .remove_shared_member(owner, shared()?, person(member)?, slips)?
+                        .id),
+                }
+            }
             (ShapeChange::Create, ShapeTarget::World { name }, _) => {
                 let world = self.create_world(owner, name, now)?;
                 sources.list(world);
@@ -644,9 +739,18 @@ impl Vault {
                 sources.list(facet);
                 Ok(facet.to_hex())
             }
-            (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }, _) => {
-                self.delete_shape_entity(owner, entity.ok_or_else(stale)?)
+            (ShapeChange::Create, ShapeTarget::WorldFacet { world, name }, _) => {
+                let facet = self.create_world_facet(owner, world, name, now)?;
+                sources.list(facet);
+                Ok(facet.to_hex())
             }
+            (
+                ShapeChange::Retire,
+                ShapeTarget::World { .. }
+                | ShapeTarget::Facet { .. }
+                | ShapeTarget::WorldFacet { .. },
+                _,
+            ) => self.delete_shape_entity(owner, entity.ok_or_else(stale)?),
             (
                 ShapeChange::Create,
                 ShapeTarget::Actor { agent_id },
@@ -763,74 +867,6 @@ impl Vault {
                 self.update_skill_record(&id, &record, occurred, now)?;
                 Ok(id.to_hex())
             }
-            (
-                ShapeChange::Create,
-                ShapeTarget::Channel { channel, address },
-                Some(ShapeRow::Channel {
-                    provision: Some(provision),
-                    ..
-                }),
-            ) => {
-                let binding = provision.binding.resolve(|agent_id| {
-                    live.get(&ShapeTarget::Actor {
-                        agent_id: agent_id.to_owned(),
-                    })
-                    .and_then(|(_, entity)| *entity)
-                })?;
-                self.provision_shape_channel(
-                    owner, channel, address, provision, binding, now, sources,
-                )
-            }
-            (ShapeChange::Retire, ShapeTarget::Channel { .. }, _) => {
-                // Retiring a channel identity releases it through its
-                // lifecycle gate: outbound closes, and a self-held address
-                // goes into its never-recycle quarantine for the policy's
-                // shortest hold.
-                let id = entity.ok_or_else(stale)?;
-                let actor = owner.revalidate(self)?;
-                let quarantine_until = {
-                    let txn = self.store.env.read_txn()?;
-                    let LiveEntityRow::Live { body, .. } =
-                        live_entity_row_in_txn(&self.store, &txn, &id)?
-                    else {
-                        return Err(stale());
-                    };
-                    let identity = decode_channel_identity_body(&body)?;
-                    if identity.is_delegated() {
-                        now
-                    } else {
-                        now.saturating_add(resolve_quarantine_floor_in_txn(
-                            &self.store,
-                            &txn,
-                            &identity,
-                        )?)
-                    }
-                };
-                let released = self.apply_channel_identity_lifecycle_intent(
-                    ChannelIdentityLifecycleRequest {
-                        actor: ChannelIdentityLifecycleActor {
-                            actor_class: "human".to_owned(),
-                            actor_ref: Some(actor.to_hex()),
-                            actor_entity_ref: Some(actor),
-                        },
-                        gate: ChannelIdentityLifecycleGate::allow_when_policy_grants(),
-                        requested_at: now,
-                        intent: ChannelIdentityLifecycleIntent::Release(ReleaseIntent {
-                            identity_id: id,
-                            quarantine_until,
-                        }),
-                    },
-                )?;
-                if !released.identity_retiring {
-                    // FIX 6424 part 3: a hold names its approve-once press.
-                    return Err(invalid(format!(
-                        "the release did not take: {}{}",
-                        released.owner_visible_state,
-                        released.held_approval_note()
-                    )));
-                }
-                Ok(released.receipt_id)
-            }
             (ShapeChange::Retire, ShapeTarget::Pack { name }, _) => {
                 let removed = self.remove_pack(owner, name)?;
                 list_pack_source(sources, &removed.source_id);
@@ -869,6 +905,15 @@ impl Vault {
                     sources.list(id);
                 }
                 Ok(installed)
+            }
+            // A kind's wire is declared, never effected (FIX 2300).
+            (
+                ShapeChange::Create | ShapeChange::Update,
+                ShapeTarget::Sync { entity_kind },
+                Some(ShapeRow::Sync { on_wire, .. }),
+            ) => self.declare_shape_wire(owner, entity_kind, *on_wire, now),
+            (ShapeChange::Retire, ShapeTarget::Sync { entity_kind }, _) => {
+                self.withdraw_shape_wire(owner, entity_kind)
             }
             (ShapeChange::Retire, ShapeTarget::Manifest { .. }, _) => {
                 // A manifest is never deleted. Retiring one quarantines its

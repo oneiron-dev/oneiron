@@ -367,6 +367,14 @@ pub struct QuestionReadRequest {
     pub version: Option<u32>,
 }
 
+/// `vault.questions.outcome_windows`'s input: the caller's standing question
+/// whose closed outcome windows to read, across its versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomeWindowsRequest {
+    pub id: EntityId,
+}
+
 /// `vault.questions.answers`'s input: the caller's standing question whose
 /// answer receipts to read, across every version. Without a `cursor` the
 /// answer is every one of them, as one bare list; a `cursor` opts into pages

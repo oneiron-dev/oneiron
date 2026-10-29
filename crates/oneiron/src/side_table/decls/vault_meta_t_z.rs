@@ -266,6 +266,9 @@ side_tables! {
     /// One vault shape apply's journal (ARCH-0070): its plan items and how each landed, so a torn
     /// apply resumes. Key: string (the plan's frontier, hex).
     VAULT_SHAPE_APPLY: VaultMeta b"vault_shape:apply:v1:" Named;
+    /// One entity kind's wire declaration as a vault shape apply landed it (ARCH-0070, FIX 2300):
+    /// whether the kind is declared on the wire, by whom and when. Key: string (the kind's name).
+    VAULT_SHAPE_WIRE: VaultMeta b"vault_shape:wire:v1:" Named;
     /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named;
     /// Per-owner index over voice reference bank rows. Key: id16 (owner) + the indexed row's full
@@ -317,6 +320,12 @@ side_tables! {
     /// One immutable wrong-link label filed from a live weave report. Key: edge ref (33 bytes) +
     /// id16 (label receipt id).
     WEAVE_WRONG_LINK_LABEL: VaultMeta b"weave:wrong-link:v1:" Named;
+    /// The owner's web connector switch (FIX 11598): which provider serves `connector.web.*`, on
+    /// whose key. Absent means Tavily on the deploy's backend key. Key: ().
+    WEB_CONNECTOR_SETTING: VaultMeta b"web_connector:setting:v1" Named;
+    /// One usage row per web connector call: provider, tool, key source, latency, cost and the
+    /// provider's request id; never the query, URL or results. Key: u64 BE (ms) + id16.
+    WEB_CONNECTOR_USAGE: VaultMeta b"web_connector:usage:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
     WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw

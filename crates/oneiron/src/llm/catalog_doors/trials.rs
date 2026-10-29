@@ -8,7 +8,7 @@ use crate::llm::decision::questions::{
     GraphUnitContext, QuestionRecord, answer_records, answer_records_in_txn, trial_unit_context,
     trial_unit_context_in_txn,
 };
-use crate::llm::model_trials::{ModelTrial, TrialAdmission, TrialReading};
+use crate::llm::model_trials::{ModelTrial, TrialAdmission, TrialArmKey, TrialReading};
 use crate::llm::registry::PricedModelBackend;
 
 fn trial_revision(vault: &Vault, txn: &heed::RoTxn<'_>, trial: EntityId) -> Result<String> {
@@ -117,6 +117,35 @@ impl Vault {
             input.question,
             input.trial,
             locality,
+        )?;
+        txn.commit()?;
+        Ok(ModelTrialView::of(revision, trial))
+    }
+
+    /// The owner's resend of one arm of unknown outcome (FIX 10464): the
+    /// next run sends it, and its earlier attempt's spend stays unknown.
+    pub fn resend_model_trial_arm_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: ModelTrialArmRef,
+        locality: CallerLocality,
+    ) -> Result<ModelTrialView> {
+        let mut txn = self.store.env.write_txn()?;
+        let reference = ModelTrialRef {
+            question: input.question,
+            trial: input.trial,
+        };
+        let (revision, previous) = owned_trial(self, &txn, owner, &reference, locality)?;
+        let trial = self.resend_model_trial_arm_in_txn(
+            &mut txn,
+            previous.request.principal,
+            input.question,
+            input.trial,
+            locality,
+            TrialArmKey {
+                answer: input.answer,
+                arm: input.arm,
+            },
         )?;
         txn.commit()?;
         Ok(ModelTrialView::of(revision, trial))

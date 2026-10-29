@@ -11,7 +11,7 @@ use crate::EntityId;
 use crate::llm::decision::catalogue::CAMPAIGN_TASTE;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    DecisionRung, Reversibility,
+    DecisionReceipt, DecisionRung, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
@@ -54,6 +54,9 @@ pub struct CampaignTaste {
     pub useful: Option<bool>,
     /// Digest of the external gold anchor the score was asked against.
     pub external_anchor_digest: String,
+    /// The receipts of the score and usefulness decisions, in that order:
+    /// the providers, rung, band and clock that answered each (FIX 447).
+    pub receipts: Vec<DecisionReceipt>,
 }
 
 /// The dial a taste pack runs under unless the host picks another. It ends
@@ -135,6 +138,10 @@ impl CampaignTasteDecisions<'_> {
             score,
             useful,
             external_anchor_digest: input.held_out_gold.gold_digest.clone(),
+            receipts: decisions
+                .into_iter()
+                .map(|decision| decision.receipt)
+                .collect(),
         })
     }
 }

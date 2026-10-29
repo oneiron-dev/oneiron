@@ -1245,6 +1245,10 @@ export class Oneiron {
         /** The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing. */
         revoke: (input: Facade.ConnectorWitnessReadGrantRevokeRequest): Facade.ConnectorWitnessReadGrantRevoked => this.#call(() => this.#client.vaultConnectorsReadGrantsRevoke(input) as Facade.ConnectorWitnessReadGrantRevoked),
       },
+      web: {
+        /** Reads the web connector's usage rows, newest first: provider, tool, key source, latency, cost and its basis, provider request id and outcome per call, with the summed cost. No query, URL or result text. */
+        usage: (input: Facade.WebConnectorUsageRead): Facade.WebConnectorUsagePage => this.#call(() => this.#client.vaultConnectorsWebUsage(input) as Facade.WebConnectorUsagePage),
+      },
     },
     authority: {
       /** One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind. */
@@ -1863,6 +1867,11 @@ export class Oneiron {
       inference_defaults: Object.assign((input: Facade.EmptyRequest = {}): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaults(input) as Facade.PolicyActionOutcome), {
         /** Replaces the whole per-purpose inference default table: the app's inference.defaults.replace action, which needs the caller's Auto ceiling. */
         replace: (input: Facade.InferenceDefaultsReplaceRequest): Facade.PolicyActionOutcome => this.#call(() => this.#client.vaultSettingsInferenceDefaultsReplace(input) as Facade.PolicyActionOutcome),
+      }),
+      /** Reads the owner's web connector switch: which provider serves connector.web.search and fetch, on the backend key, the owner's own secret or a hub connector. Unset reads as Tavily on the backend key. */
+      web_connector: Object.assign((input: Facade.EmptyRequest): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnector(input) as Facade.WebConnectorSetting), {
+        /** Replaces the owner's web connector switch under the owner proof. Only Tavily runs on the backend key; other providers run on the owner's own secret (effector connector:web) or a hub connector. */
+        replace: (input: Facade.WebConnectorSetting): Facade.WebConnectorSetting => this.#call(() => this.#client.vaultSettingsWebConnectorReplace(input) as Facade.WebConnectorSetting),
       }),
     },
     secrets: {
@@ -2624,6 +2633,8 @@ export class Oneiron {
         approve: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsApprove(input) as Facade.ModelTrialView),
         /** Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome. */
         run: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsRun(input) as Facade.ModelTrialView),
+        /** Resends one held-out trial arm of unknown outcome at the owner's choice: the next run sends it, and its earlier attempt's spend stays recorded as unknown. */
+        resend_arm: (input: Facade.ModelTrialArmRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsResendArm(input) as Facade.ModelTrialView),
         /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
         complete: (input: Facade.ModelTrialComplete): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsComplete(input) as Facade.ModelTrialView),
       },
@@ -2669,6 +2680,8 @@ export class Oneiron {
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
+      /** Reads the caller's standing question closed outcome windows, across its versions, each naming its answer with how it closed. */
+      outcome_windows: (input: Facade.QuestionOutcomeWindowsRequest): Facade.OutcomeWindowClose[] => this.#call(() => this.#client.vaultQuestionsOutcomeWindows(input) as Facade.OutcomeWindowClose[]),
       /** Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each. */
       answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswersReply => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswersReply),
       /** Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it. */
@@ -2693,6 +2706,7 @@ export class Oneiron {
       asks: {
         answer: (input: Facade.DecisionAskAnswerRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksAnswer(input) as Facade.DecisionAsk),
         climb: (input: Facade.DecisionAskClimbRequest): Facade.ResolvedRole | null => this.#call(() => this.#client.vaultDecisionsAsksClimb(input) as Facade.ResolvedRole | null),
+        confirm_grant: (input: Facade.DecisionAskConfirmGrantRequest): Facade.DecisionAsk => this.#call(() => this.#client.vaultDecisionsAsksConfirmGrant(input) as Facade.DecisionAsk),
       },
     },
     /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
@@ -3139,6 +3153,12 @@ export class Oneiron {
       /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
       land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
     }),
+    billing: {
+      account: {
+        /** Files the caller's own billing account, the one its room-paid calls bill instead of an ask to the owners; an empty account withdraws the filing. It binds the caller's own principal only. */
+        file: (input: Facade.BillingAccountFiling): Facade.FiledBillingAccount | null => this.#call(() => this.#client.selfBillingAccountFile(input) as Facade.FiledBillingAccount | null),
+      },
+    },
     credential: {
       /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
       attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
@@ -3375,15 +3395,15 @@ export class Oneiron {
     anonymous_chat: (input: Facade.AnonymousChatRequest): Facade.AnonymousChatResponse => this.#call(() => this.#client.aiAnonymousChat(input) as Facade.AnonymousChatResponse),
     /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
-    /** One image out of the host's image model; reference images make it an edit. */
+    /** One image out of the host's image model; reference images make it an edit. A repeat under the same idempotency_key answers the first image, unpaid. */
     image: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiImage(input) as Facade.AiAnswer),
-    /** Speech audio out of text, from the host's speech model. */
+    /** Speech audio out of text, from the host's speech model. A repeat under the same idempotency_key answers the first audio, unpaid, unless it names a banked voice. */
     speech: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiSpeech(input) as Facade.AiAnswer),
-    /** Text out of speech audio, from the host's transcription model. */
+    /** Text out of speech audio, from the host's transcription model. A repeat under the same idempotency_key answers the first text, unpaid. */
     transcribe: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiTranscribe(input) as Facade.AiAnswer),
-    /** One embedding vector per input text, from the host's embedding model. */
+    /** One embedding vector per input text, from the host's embedding model. A repeat under the same idempotency_key answers the first vectors, unpaid. */
     embed: (input: Facade.AiCallRequest): Facade.AiAnswer => this.#call(() => this.#client.aiEmbed(input) as Facade.AiAnswer),
-    /** Starts a video render as a provider job and answers with its ticket. */
+    /** Starts a video render as a provider job and answers with its ticket. A repeat under the same idempotency_key answers the first ticket and starts no job. */
     video: Object.assign((input: Facade.AiCallRequest): Facade.AiVideoTicket => this.#call(() => this.#client.aiVideo(input) as Facade.AiVideoTicket), {
       /** Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it. */
       poll: (input: Facade.AiVideoJobRequest): Facade.AiVideoJob => this.#call(() => this.#client.aiVideoPoll(input) as Facade.AiVideoJob),

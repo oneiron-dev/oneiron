@@ -9,9 +9,9 @@ use crate::EntityId;
 use crate::edit_roundtrip::CellValue;
 use crate::llm::decision::questions::{question_unit_correlation, standing_ask_route};
 use crate::llm::decision::{
-    AskTo, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionLadder,
-    DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion, LocatedDecision,
-    MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
+    AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
+    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion,
+    LocatedDecision, MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result};
@@ -26,6 +26,9 @@ pub struct UnitCall<'a> {
     pub evidence: &'a [EntityId],
     /// Named images filling state fields of their names; empty for text.
     pub images: &'a [DecisionImage],
+    /// Named audio clips filling state fields of their names; empty when the
+    /// unit carries none or no rung hears them.
+    pub audio: &'a [DecisionAudio],
     pub state: &'a Value,
     pub dial: DecisionDial,
     pub policy: &'a DecisionBandPolicy,
@@ -57,6 +60,28 @@ pub trait UnitDecider {
         _images: &[DecisionImage],
     ) -> Option<DecisionRung> {
         self.reads_images().then_some(dial.first)
+    }
+    /// Whether a rung this decider climbs hears audio. A unit's clips are
+    /// sent only when it does; otherwise they are listed as not served. The
+    /// default hears none.
+    fn reads_audio(&self) -> bool {
+        false
+    }
+    /// [`Self::first_taking`] over `images` and `audio` both: the rung a call
+    /// carrying both starts at ([`crate::llm::decision::MediaCall::of`]). The
+    /// default is [`Self::first_taking`] for images alone, and the dial's
+    /// first for audio when this decider hears it and reads any images too.
+    fn first_taking_media(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+    ) -> Option<DecisionRung> {
+        if audio.is_empty() {
+            return self.first_taking(question, dial, images);
+        }
+        (self.reads_audio() && (images.is_empty() || self.reads_images())).then_some(dial.first)
     }
     /// The full decision for one call, with the ladder's receipt.
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision>;
@@ -96,12 +121,36 @@ impl UnitDecider for DecisionLadder<'_> {
         DecisionLadder::first_taking(self, question, dial, images)
     }
 
+    fn reads_audio(&self) -> bool {
+        [
+            self.rule,
+            self.local,
+            self.system_one,
+            self.escalation,
+            self.big,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|provider| provider.reads_audio())
+    }
+
+    fn first_taking_media(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+    ) -> Option<DecisionRung> {
+        DecisionLadder::first_taking_media(self, question, dial, images, audio)
+    }
+
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
-        self.for_unit(call).run_images(
+        self.for_unit(call).run_media(
             call.question,
             call.principal,
             call.evidence,
             call.images,
+            call.audio,
             call.state,
             call.dial,
             call.policy,
@@ -221,6 +270,7 @@ impl ArtifactAsk<'_> {
             principal: self.principal,
             evidence: &evidence,
             images,
+            audio: &[],
             state,
             dial: self.dial,
             policy: self.policy,

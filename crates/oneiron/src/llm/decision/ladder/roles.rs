@@ -75,6 +75,21 @@ pub trait HumanDecisionQueue: Send + Sync {
     ) -> Result<Option<u64>> {
         self.queue(request).map(|()| None)
     }
+
+    /// [`Self::queue_with_state`] for an ask about one consent effect (FIX 2975): the
+    /// queue keeps `consent` on the ask, with the owner's nearest reason on record
+    /// pre-filled. A queue that keeps no consent queues the request as it is.
+    fn queue_with_consent(
+        &self,
+        request: HumanDecisionRequest,
+        state: Option<&serde_json::Value>,
+        _consent: &super::AskConsent,
+    ) -> Result<Option<u64>> {
+        match state {
+            Some(state) => self.queue_with_state(request, state),
+            None => self.queue(request).map(|()| None),
+        }
+    }
 }
 
 /// A role an ask can go to (Q3 by role). A role names authority, not a person: the host

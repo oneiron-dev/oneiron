@@ -175,9 +175,9 @@ pub fn review_slides(
                 }
                 SlideReviewImage::Stored(medium) => (medium.clone(), None),
             };
-            // The host's decider says which rung its pixels ride to, if any.
-            let call = MediaCall::of(dial, vec![medium], |images| {
-                decider.first_taking(question, dial, images)
+            // The host's decider says which rung its pixels or audio ride to, if any.
+            let call = MediaCall::of(dial, vec![medium], |images, audio| {
+                decider.first_taking_media(question, dial, images, audio)
             })
             .map_err(|_| invalid("invalid slide review image"))?;
             let render_hash = call
@@ -224,6 +224,7 @@ pub fn review_slides(
                 principal,
                 evidence: &evidence,
                 images: &call.images,
+                audio: &call.audio,
                 state: &state,
                 dial: call.dial,
                 policy,
@@ -251,14 +252,16 @@ pub fn review_slides(
                     let answered = decision.answer != DecisionAnswer::Abstain;
                     (decision, None, answered, question.contract.clone())
                 };
-            // The deck at its frontier, then each other version an image the
-            // ladder was shown is of (a rendered image is of the deck itself).
+            // The deck at its frontier, then each other version an image or a
+            // clip the ladder was shown is of (a rendered image is of the deck
+            // itself).
             let pin_versions = |decision: &mut TypedDecision| {
                 decision.receipt.evidence_versions = std::iter::once(deck.clone())
                     .chain(
                         call.images
                             .iter()
                             .map(|image| image.evidence.clone())
+                            .chain(call.audio.iter().map(|clip| clip.evidence.clone()))
                             .filter(|version| *version != deck),
                     )
                     .collect();

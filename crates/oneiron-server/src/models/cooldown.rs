@@ -32,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use super::ladder::OfferLadder;
 use super::status::{HealthState, LimitHold, RungHealth};
 
+mod account_park;
+mod quota_queue;
 mod reply_budgets;
 mod world_hold;
 
@@ -210,6 +212,10 @@ pub struct QuotaQuestion {
     /// that a `use_fallback` answer names one of.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallbacks: Vec<QuotaFallback>,
+    /// The account parked with the offer, when its spent credit parks every
+    /// offer billed to it (FIX 564): a top-up answer puts them all back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 /// A model on another provider with usage left: what a quota question's
@@ -392,6 +398,7 @@ impl OfferCooldowns {
         let vault = self.vault.as_ref()?;
         let key = key(offer, wire_model);
         self.limit_rest(vault, &key)
+            .or_else(|| self.limit_rest(vault, &account_park::row(&account_park::id(offer))))
             .or_else(|| self.health_rest(&key, vault.now_recorded_at()))
     }
 
@@ -484,11 +491,15 @@ impl OfferCooldowns {
             return status;
         };
         let key = key(offer, wire_model);
-        status.limit = self.limit_rest(vault, &key).map(|rest| LimitHold {
-            until: rest.until,
-            reset: rest.source.as_str(),
-            spent: rest.spent,
-        });
+        let account = account_park::row(&account_park::id(offer));
+        status.limit = self
+            .limit_rest(vault, &key)
+            .or_else(|| self.limit_rest(vault, &account))
+            .map(|rest| LimitHold {
+                until: rest.until,
+                reset: rest.source.as_str(),
+                spent: rest.spent,
+            });
         let now = vault.now_recorded_at();
         let health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(held) = health.get(&key) {
@@ -555,6 +566,10 @@ impl OfferCooldowns {
                 strikes,
                 &key,
             );
+            // Spent credit parks every offer of its account (FIX 564).
+            if account_park::parks_account(&rest) {
+                account_park::park_in_txn(vault, txn, offer, rest)?;
+            }
             if let Some(running) = running.filter(|running| running.until >= rest.until) {
                 return Ok(running);
             }
@@ -677,8 +692,9 @@ impl OfferCooldowns {
     /// when it must stay there, and accepts the request. A question still
     /// open stays as it was asked; one whose window has reset answered
     /// itself, so a later spent window of the same offer asks again (FIX
-    /// 9512), read and replaced in one write. Nothing when the rest spent
-    /// nothing or no vault keeps rests.
+    /// 9512), read and replaced in one write. With the call's `principal`
+    /// it is asked as a person-only decision (FIX 562). Nothing when the
+    /// rest spent nothing or no vault keeps rests.
     pub(super) fn ask(
         &self,
         offer: &OfferBinding,
@@ -686,6 +702,7 @@ impl OfferCooldowns {
         asked: Asked<'_>,
         own: &[&str],
         fits: &dyn Fn(&OfferLadder) -> bool,
+        principal: Option<oneiron::EntityId>,
     ) {
         let (Some(vault), Some(spent)) = (self.vault.as_ref(), rest.spent) else {
             return;
@@ -725,17 +742,15 @@ impl OfferCooldowns {
             resets_at: (rest.source != ResetSource::Parked).then_some(rest.until),
             choices,
             fallbacks,
+            account: account_park::parks_account(&rest).then(|| account_park::id(offer)),
         };
-        let kept = rmp_serde::to_vec_named(&question).ok().map(|bytes| {
-            vault.try_with_write_txn_grouped(|txn| {
-                // A question another call opened meanwhile stays.
-                if !open(vault.sync_state_get_in_write_txn(txn, &row)?) {
-                    vault.sync_state_put_in_write_txn(txn, &row, &bytes)?;
-                }
-                Ok::<_, oneiron::Error>(())
-            })
-        });
-        if !matches!(kept, Some(Ok(()))) {
+        // With the call's principal known, the question is a person-only
+        // decision whose queue keeps the same row (FIX 562).
+        let kept = match principal {
+            Some(principal) => quota_queue::ask(vault, principal, &question),
+            None => quota_queue::keep(vault, &question),
+        };
+        if kept.is_err() {
             tracing::warn!(
                 reason = "quota_question_unwritable",
                 "a parked offer's quota question could not be kept"
@@ -855,6 +870,9 @@ impl OfferCooldowns {
         }
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
+            if let Some(account) = &question.account {
+                account_park::unpark(vault, account)?;
+            }
         }
         vault.sync_state_delete(&question_key(&question.id))?;
         Ok(true)

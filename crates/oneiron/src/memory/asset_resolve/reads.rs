@@ -2,6 +2,8 @@
 //! Entry: pull_image.
 //! Definitions: this module owns the listed functions; types stay in the parent.
 
+use std::cell::Cell;
+
 use base64::Engine as _;
 
 use super::{
@@ -132,17 +134,36 @@ pub fn resolve_audio_ref(
 /// before it decodes or serves, so a door that bounds the bodies it decodes
 /// bounds these too: an image past the bound steps down to its thumbnail,
 /// then its text, and with nothing left that fits is omitted, and the vault
-/// asks. The host's `pick` runs before the full image is charged.
+/// asks. The ask's bound is `room_left`, what the door's own budget held
+/// before this serving, less what it charged (FIX 680); with `None`, the
+/// vault's `limits.image_room_bytes`. The host's `pick` runs before the full
+/// image is charged.
 pub fn hydrated_asset(
     lane: &ScopedRead<'_>,
     asset: EntityId,
     consumer: &AssetConsumer,
     pick: Option<&ImagePick<'_>>,
     admits: &mut dyn FnMut(usize) -> bool,
+    room_left: Option<u64>,
 ) -> MemoryResult<ScopedReadResult<HydratedAsset>> {
-    let ScopedReadResult { value, receipt } = asset_forms_in_lane(lane, asset, true, admits)?;
+    let charged = Cell::new(0_u64);
+    let mut counted = |len: usize| {
+        let admitted = admits(len);
+        if admitted {
+            charged.set(
+                charged
+                    .get()
+                    .saturating_add(u64::try_from(len).unwrap_or(u64::MAX)),
+            );
+        }
+        admitted
+    };
+    let left = || room_left.map(|left| left.saturating_sub(charged.get()));
+    let ScopedReadResult { value, receipt } = asset_forms_in_lane(lane, asset, true, &mut counted)?;
     let value = match value {
-        Some(forms) if forms.image.is_some() => forms.hydrated(lane, consumer, pick, admits)?,
+        Some(forms) if forms.image.is_some() => {
+            forms.hydrated(lane, consumer, pick, &mut counted, &left)?
+        }
         _ => HydratedAsset::Stored,
     };
     Ok(ScopedReadResult { value, receipt })

@@ -22,12 +22,17 @@ pub const SWEEP_CANDIDATE_TYPE: u8 = crate::registry::ENTITY_TYPE_PERSON;
 /// Saved-query ids read per page of the type index.
 const QUERY_PAGE: usize = 256;
 
-/// Every saved query a sweep evaluates: active, and Wake or Reactive. A
-/// Reactive query is swept too, as the backstop for what its change feed
-/// cannot see (a deleted claim's subject, an edge, the passage of time). A
-/// vault without the CRM pack has none.
+/// Every saved query a sweep evaluates: active, and Wake or Reactive, but no
+/// memory watch, which never matches a person. A Reactive query is swept too,
+/// as the backstop for what its change feed cannot see (a deleted claim's
+/// subject, an edge, the passage of time). A vault without the CRM pack has
+/// none.
 pub fn sweep_saved_queries(vault: &Vault) -> Result<Vec<SavedQueryRecord>> {
-    active_saved_queries(vault, |mode| mode != EvalMode::Manual)
+    let queries = active_saved_queries(vault, |mode| mode != EvalMode::Manual)?;
+    Ok(queries
+        .into_iter()
+        .filter(|record| !super::memory_watch::is_memory_watch_record(record))
+        .collect())
 }
 
 /// Every active Reactive saved query: those a claim write re-checks.

@@ -172,6 +172,14 @@ pub const IMAGE_PRESENCE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Retrieval,
 };
 
+/// The host's per-image pick (OF-329): does the task a read serves need this image in full?
+/// Keyed by the read's purpose; the wording is the host's.
+pub const IMAGE_FULL: QuestionFamily = QuestionFamily {
+    name: "memory.image_full",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Does this candidate violate one owner-authored policy row? Keyed by the
 /// document hash, row reference and action; wording comes from the row.
 pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {
@@ -430,6 +438,15 @@ pub const COMPACTION_SUPPORT: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// What the owner does about an offer parked on a spent window or spent credit: wait, top
+/// up, add an account, pay as you go, or use the usage left on another provider (OF-305,
+/// FIX 562). Asked of a person only; keyed by the parked offer's row and what was spent.
+pub const QUOTA_SPENT: QuestionFamily = QuestionFamily {
+    name: "models.quota_spent",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -447,6 +464,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     AI_VERDICT_ROUTINE,
     THINK_MORE,
     ASK_UP,
+    IMAGE_FULL,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
@@ -476,4 +494,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     NIGHTLY_LINK,
     URGENT_DIGEST_HARM,
     COMPACTION_SUPPORT,
+    QUOTA_SPENT,
 ];

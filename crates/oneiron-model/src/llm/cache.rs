@@ -48,6 +48,9 @@ pub struct CacheIdentity {
     /// The loaded weights.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<CacheDigest>,
+    /// The draft model's weights, when a drafter ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft_weights_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tokenizer: Option<CacheDigest>,
     /// The backend's implementation and build.

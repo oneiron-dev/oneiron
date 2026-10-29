@@ -353,6 +353,25 @@ pub struct DecisionReceipt {
     /// or when its caller read the ask back; none when no ask was put.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<ReceiptAsk>,
+    /// How the caller cut the call's state to fit the ladder's bound, and how much (FIX
+    /// 1326): none when the state went whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_cut: Option<StateCut>,
+}
+
+/// How a caller cut a call's state to fit [`super::MAX_DECISION_STATE_BYTES`] (FIX 1326),
+/// under the one cut order [`super::fit_reserve_state`] applies: the reserve sample first, at
+/// whole items, then the long text, on a character boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StateCut {
+    /// The reserve items the state kept: the first ones, in order.
+    pub kept: u64,
+    /// The reserve items the caller had.
+    pub of: u64,
+    /// The bytes the long text was cut to; none when it went whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_cut_at_bytes: Option<u64>,
 }
 
 impl DecisionReceipt {

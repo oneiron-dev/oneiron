@@ -145,6 +145,7 @@ pub fn preserve_review_dissent(
             evidence: Vec::new(),
             providers,
             paired: Vec::new(),
+            rule: None,
             source_frontier: frontier,
         },
         artifact.created_at,
@@ -191,7 +192,7 @@ fn dismissed(vault: &Vault, verdict_id: &EntityId, artifact: &str) -> Result<boo
 /// Fold OF-516's fact labels into each original critic's exact learning cell.
 /// Replaying the projection replaces the same evidence receipt, never adds a vote.
 /// Hosts call this when refreshing a review's outcome view; a missed horizon alone
-/// has no calibration effect.
+/// has no calibration effect unless the binding has a `silence` key, which pairs like a fact.
 pub fn project_review_dissent(vault: &Vault, result: &ReviewResult, at: u64) -> Result<usize> {
     let mut settled = 0;
     for artifact in result

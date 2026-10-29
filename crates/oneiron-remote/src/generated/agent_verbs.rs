@@ -226,6 +226,9 @@ impl OneironClient {
                 "self.budget.land" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::PartialResultHold,
                 >(client, verb, &input),
+                "self.billing.account.file" => remote_agent_verb_output::<
+                    Option<oneiron::llm::run_admission::FiledBillingAccount>,
+                >(client, verb, &input),
                 "vault.budgets.lease.open" => remote_agent_verb_output::<
                     oneiron::agent_dispatch::budget_doors::SpendLeaseView,
                 >(client, verb, &input),
@@ -2597,6 +2600,15 @@ impl OneironClient {
                 "vault.models.manifest.replace" => remote_agent_verb_output::<
                     oneiron::llm::manifest::ModelManifest,
                 >(client, verb, &input),
+                "vault.settings.web_connector" => remote_agent_verb_output::<
+                    oneiron::web_connector::WebConnectorSetting,
+                >(client, verb, &input),
+                "vault.settings.web_connector.replace" => remote_agent_verb_output::<
+                    oneiron::web_connector::WebConnectorSetting,
+                >(client, verb, &input),
+                "vault.connectors.web.usage" => remote_agent_verb_output::<
+                    oneiron::web_connector::WebConnectorUsagePage,
+                >(client, verb, &input),
                 "vault.models.oneironer.bind" => remote_agent_verb_output::<
                     oneiron::llm::manifest::ModelManifest,
                 >(client, verb, &input),
@@ -2730,6 +2742,9 @@ impl OneironClient {
                 "vault.models.trials.run" => remote_agent_verb_output::<
                     oneiron::llm::catalog_doors::ModelTrialView,
                 >(client, verb, &input),
+                "vault.models.trials.resend_arm" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelTrialView,
+                >(client, verb, &input),
                 "vault.models.trials.complete" => remote_agent_verb_output::<
                     oneiron::llm::catalog_doors::ModelTrialView,
                 >(client, verb, &input),
@@ -2821,6 +2836,9 @@ impl OneironClient {
                 "vault.questions.read" => remote_agent_verb_output::<
                     Option<oneiron::llm::decision::questions::QuestionRecord>,
                 >(client, verb, &input),
+                "vault.questions.outcome_windows" => remote_agent_verb_output::<
+                    Vec<oneiron::llm::decision::questions::OutcomeWindowClose>,
+                >(client, verb, &input),
                 "vault.questions.answers" => remote_agent_verb_output::<
                     oneiron::receipt::QuestionAnswersReply,
                 >(client, verb, &input),
@@ -2850,6 +2868,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.decisions.asks.climb" => remote_agent_verb_output::<
                     Option<oneiron::llm::decision::ResolvedRole>,
+                >(client, verb, &input),
+                "vault.decisions.asks.confirm_grant" => remote_agent_verb_output::<
+                    oneiron::llm::decision::DecisionAsk,
                 >(client, verb, &input),
                 "self.decisions.asks" => remote_agent_verb_output::<
                     Vec<oneiron::llm::decision::DecisionAsk>,
@@ -4451,6 +4472,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.budget.land", value)
+    }
+    pub fn self_billing_account_file(
+        &self,
+        input: &oneiron::llm::run_admission::BillingAccountFiling,
+    ) -> Result<Option<oneiron::llm::run_admission::FiledBillingAccount>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.billing.account.file", value)
     }
     pub fn vault_budgets_lease_open(
         &self,
@@ -13973,6 +14006,42 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.models.manifest.replace", value)
     }
+    pub fn vault_settings_web_connector(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::web_connector::WebConnectorSetting, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.web_connector", value)
+    }
+    pub fn vault_settings_web_connector_replace(
+        &self,
+        input: &oneiron::web_connector::WebConnectorSetting,
+    ) -> Result<oneiron::web_connector::WebConnectorSetting, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.settings.web_connector.replace", value)
+    }
+    pub fn vault_connectors_web_usage(
+        &self,
+        input: &oneiron::web_connector::WebConnectorUsageRead,
+    ) -> Result<oneiron::web_connector::WebConnectorUsagePage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.web.usage", value)
+    }
     pub fn vault_models_oneironer_bind(
         &self,
         input: &oneiron::llm::manifest::doors::OneironerBind,
@@ -14491,6 +14560,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.models.trials.run", value)
     }
+    pub fn vault_models_trials_resend_arm(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelTrialArmRef,
+    ) -> Result<oneiron::llm::catalog_doors::ModelTrialView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.trials.resend_arm", value)
+    }
     pub fn vault_models_trials_complete(
         &self,
         input: &oneiron::llm::catalog_doors::ModelTrialComplete,
@@ -14842,6 +14923,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.questions.read", value)
     }
+    pub fn vault_questions_outcome_windows(
+        &self,
+        input: &oneiron::receipt::QuestionOutcomeWindowsRequest,
+    ) -> Result<Vec<oneiron::llm::decision::questions::OutcomeWindowClose>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.questions.outcome_windows", value)
+    }
     pub fn vault_questions_answers(
         &self,
         input: &oneiron::receipt::QuestionAnswersRequest,
@@ -14961,6 +15054,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.decisions.asks.climb", value)
+    }
+    pub fn vault_decisions_asks_confirm_grant(
+        &self,
+        input: &oneiron::receipt::DecisionAskConfirmGrantRequest,
+    ) -> Result<oneiron::llm::decision::DecisionAsk, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.decisions.asks.confirm_grant", value)
     }
     pub fn self_decisions_asks(
         &self,

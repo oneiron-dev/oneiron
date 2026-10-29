@@ -12,12 +12,17 @@
 //! connector key's outward tool is a path too, under the setting its slate
 //! gives the tool. One fact per path, never a cross product of independent
 //! lists. A data class joins a path only through a standing disclosure grant
-//! naming who may hear it, and only on a path that runs without asking.
+//! naming who may hear it, and only on a path that runs without asking. A
+//! standing outbound grant moves its actor's verdicts, and a scoped MCP
+//! grant is a path of its own (see [`super::outbound_reach`]).
+use super::outbound_reach::{
+    ReachOutbound, outbound_after_plan, outbound_covers, scoped_mcp_paths,
+};
 use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget};
 use crate::connector_key::SlateDisposition;
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundSubject, GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, BoundClass, BoundEnvelope, BoundSubject, GrantBound,
 };
 use crate::error::Result;
 use crate::reaction::person_name_in;
@@ -392,6 +397,8 @@ pub(super) struct ReachRows {
     pub(super) grants: Vec<GrantBound>,
     pub(super) senders: Vec<ReachSender>,
     pub(super) connectors: Vec<ReachConnector>,
+    /// Every standing outbound grant that counts now (FIX 2801).
+    pub(super) outbound: Vec<ReachOutbound>,
 }
 
 impl ReachRows {
@@ -436,6 +443,11 @@ impl ReachRows {
             hasher.update(tool.setting.as_str().as_bytes());
             hasher.update(&[u8::from(tool.held)]);
         }
+        hasher.update(b"\0");
+        for grant in &self.outbound {
+            hasher.update(grant.grant.as_bytes());
+            hasher.update(&grant.digest);
+        }
     }
 
     /// These rows with every plan item in place, as though each landed. An
@@ -449,6 +461,7 @@ impl ReachRows {
         unresolved: &mut Vec<String>,
     ) -> Self {
         let mut rows = self.clone();
+        outbound_after_plan(&mut rows.outbound, items);
         for item in items {
             match (&item.target, item.change, item.after.as_ref()) {
                 (
@@ -556,6 +569,31 @@ fn action_requirement(actor_ref: &str, verb: &str, channel: &str) -> Option<Gran
     .ok()
 }
 
+/// Whether `grants` holds a brief-pinned send grant for `actor_ref`: an
+/// action grant on `send` whose envelope names a brief, covering its own
+/// brief's sends.
+fn brief_send_covered(grants: &[GrantBound], actor_ref: &str) -> bool {
+    grants.iter().any(
+        |grant| match (grant.subject(), grant.class(), grant.envelope()) {
+            (
+                BoundSubject::Actor(actor),
+                BoundClass::Action(class),
+                BoundEnvelope::Action(envelope),
+            ) => {
+                actor.actor_ref() == actor_ref
+                    && actor.actor_class().is_none()
+                    && class.as_str() == SEND_VERB
+                    && envelope.target().is_some()
+                    && envelope
+                        .selectors()
+                        .iter()
+                        .any(|selector| selector.starts_with("brief:"))
+            }
+            _ => false,
+        },
+    )
+}
+
 /// `path`, and when it runs without asking, the data classes standing
 /// disclosure grants let reach their audiences along it.
 fn push_path(
@@ -576,9 +614,10 @@ fn push_path(
 }
 
 /// Every path `rows` hold. A disabled actor is not dispatched, so it holds
-/// none; a send the requirement cannot be composed for asks. A connector
-/// tool the slate never allows is no path; one it always asks for, or one
-/// the key's manifest holds, asks; one it always allows runs without asking
+/// none; a send the requirement cannot be composed for asks. A brief-pinned
+/// send grant covers its own brief's sends. A connector tool the slate
+/// never allows is no path; one it always asks for, or one the key's
+/// manifest holds, asks; one it always allows runs without asking
 /// (a covering grant); and on `auto` the standing grants decide, as they do
 /// for a send. A key bound to no actor serves every roster actor that holds
 /// no key of its own on the connector.
@@ -604,7 +643,9 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
         }
         let actor_ref = sender.actor.to_hex();
         let covered = action_requirement(&actor_ref, SEND_VERB, &sender.channel)
-            .is_some_and(|required| rows.grants.iter().any(|grant| grant.contains(&required)));
+            .is_some_and(|required| rows.grants.iter().any(|grant| grant.contains(&required)))
+            || brief_send_covered(&rows.grants, &actor_ref)
+            || outbound_covers(&rows.outbound, &actor_ref, SEND_VERB, &sender.channel);
         let path = ShapeReachFact {
             actor: actor_ref,
             actor_name: actor.map(|actor| actor.agent_id.clone()),
@@ -673,6 +714,9 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
             };
             push_path(&mut facts, &disclosures, path);
         }
+    }
+    for path in scoped_mcp_paths(&rows.outbound, &rows.actors) {
+        push_path(&mut facts, &disclosures, path);
     }
     facts.sort();
     facts.dedup();

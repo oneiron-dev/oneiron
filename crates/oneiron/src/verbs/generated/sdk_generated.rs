@@ -346,6 +346,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.billing.account.file",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::run_admission::BillingAccountFiling,
+                >(),
+            ),
+            (
                 "vault.budgets.lease.open",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
@@ -4646,6 +4652,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.settings.web_connector",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.settings.web_connector.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::web_connector::WebConnectorSetting,
+                >(),
+            ),
+            (
+                "vault.connectors.web.usage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::web_connector::WebConnectorUsageRead,
+                >(),
+            ),
+            (
                 "vault.models.oneironer.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::manifest::doors::OneironerBind,
@@ -4883,6 +4906,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.models.trials.resend_arm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelTrialArmRef,
+                >(),
+            ),
+            (
                 "vault.models.trials.complete",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::catalog_doors::ModelTrialComplete,
@@ -5032,6 +5061,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.questions.outcome_windows",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::QuestionOutcomeWindowsRequest,
+                >(),
+            ),
+            (
                 "vault.questions.answers",
                 crate::code_run::vault_read::request_schema::<crate::receipt::QuestionAnswersRequest>(
                 ),
@@ -5087,6 +5122,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.decisions.asks.climb",
                 crate::code_run::vault_read::request_schema::<
                     crate::receipt::DecisionAskClimbRequest,
+                >(),
+            ),
+            (
+                "vault.decisions.asks.confirm_grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::DecisionAskConfirmGrantRequest,
                 >(),
             ),
             (
@@ -6844,6 +6885,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.fanout.slots",
     "self.budget",
     "self.budget.land",
+    "self.billing.account.file",
     "vault.budgets.lease.open",
     "vault.budgets.lease",
     "vault.budgets.lease.top_up",
@@ -7377,6 +7419,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.propose_deck",
     "vault.models.manifest.read",
     "vault.models.manifest.replace",
+    "vault.settings.web_connector",
+    "vault.settings.web_connector.replace",
+    "vault.connectors.web.usage",
     "vault.models.oneironer.bind",
     "vault.models.routes.read",
     "vault.models.routes.replace",
@@ -7418,6 +7463,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.models.trials.get",
     "vault.models.trials.approve",
     "vault.models.trials.run",
+    "vault.models.trials.resend_arm",
     "vault.models.trials.complete",
     "vault.models.bindings.propose",
     "vault.models.bindings.get",
@@ -7724,6 +7770,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.budget.land" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::PartialResultHold,
+        >(),
+        "self.billing.account.file" => crate::code_run::vault_read::request_schema::<
+            Option<crate::llm::run_admission::FiledBillingAccount>,
         >(),
         "vault.budgets.lease.open" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::SpendLeaseView,
@@ -9338,6 +9387,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.models.manifest.replace" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
+        "vault.settings.web_connector" => crate::code_run::vault_read::request_schema::<
+            crate::web_connector::WebConnectorSetting,
+        >(),
+        "vault.settings.web_connector.replace" => crate::code_run::vault_read::request_schema::<
+            crate::web_connector::WebConnectorSetting,
+        >(),
+        "vault.connectors.web.usage" => crate::code_run::vault_read::request_schema::<
+            crate::web_connector::WebConnectorUsagePage,
+        >(),
         "vault.models.oneironer.bind" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
@@ -9463,6 +9521,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::llm::catalog_doors::ModelTrialView,
         >(),
         "vault.models.trials.run" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelTrialView,
+        >(),
+        "vault.models.trials.resend_arm" => crate::code_run::vault_read::request_schema::<
             crate::llm::catalog_doors::ModelTrialView,
         >(),
         "vault.models.trials.complete" => crate::code_run::vault_read::request_schema::<
@@ -10633,6 +10694,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.budget.land" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.billing.account.file" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -16042,6 +16110,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.settings.web_connector" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.settings.web_connector.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.web.usage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.models.oneironer.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16343,6 +16432,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.models.trials.resend_arm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.models.trials.complete" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16546,6 +16642,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.questions.outcome_windows" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.questions.answers" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16610,6 +16713,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.decisions.asks.climb" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.decisions.asks.confirm_grant" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18670,6 +18780,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.budget.land" => {
             let _input: crate::agent_dispatch::budget_doors::BudgetLandRequest =
                 decode(value.clone())?;
+        }
+        "self.billing.account.file" => {
+            let _input: crate::llm::run_admission::BillingAccountFiling = decode(value.clone())?;
         }
         "vault.budgets.lease.open" => {
             let _input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest =
@@ -21255,6 +21368,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.models.manifest.replace" => {
             let _input: crate::llm::manifest::doors::ModelManifestReplace = decode(value.clone())?;
         }
+        "vault.settings.web_connector" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.settings.web_connector.replace" => {
+            let _input: crate::web_connector::WebConnectorSetting = decode(value.clone())?;
+        }
+        "vault.connectors.web.usage" => {
+            let _input: crate::web_connector::WebConnectorUsageRead = decode(value.clone())?;
+        }
         "vault.models.oneironer.bind" => {
             let _input: crate::llm::manifest::doors::OneironerBind = decode(value.clone())?;
         }
@@ -21387,6 +21509,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.models.trials.run" => {
             let _input: crate::llm::catalog_doors::ModelTrialRef = decode(value.clone())?;
         }
+        "vault.models.trials.resend_arm" => {
+            let _input: crate::llm::catalog_doors::ModelTrialArmRef = decode(value.clone())?;
+        }
         "vault.models.trials.complete" => {
             let _input: crate::llm::catalog_doors::ModelTrialComplete = decode(value.clone())?;
         }
@@ -21477,6 +21602,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.read" => {
             let _input: crate::receipt::QuestionReadRequest = decode(value.clone())?;
         }
+        "vault.questions.outcome_windows" => {
+            let _input: crate::receipt::QuestionOutcomeWindowsRequest = decode(value.clone())?;
+        }
         "vault.questions.answers" => {
             let _input: crate::receipt::QuestionAnswersRequest = decode(value.clone())?;
         }
@@ -21506,6 +21634,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.decisions.asks.climb" => {
             let _input: crate::receipt::DecisionAskClimbRequest = decode(value.clone())?;
+        }
+        "vault.decisions.asks.confirm_grant" => {
+            let _input: crate::receipt::DecisionAskConfirmGrantRequest = decode(value.clone())?;
         }
         "self.decisions.asks" => {
             let _input: EmptyRequest = decode(value.clone())?;
@@ -22720,6 +22851,7 @@ pub fn invoke(
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
         "self.budget" => encode(self_budget(memory, decode(value)?)?),
         "self.budget.land" => encode(self_budget_land(memory, decode(value)?)?),
+        "self.billing.account.file" => encode(self_billing_account_file(memory, decode(value)?)?),
         "vault.budgets.lease.open" => encode(vault_budgets_lease_open(memory, decode(value)?)?),
         "vault.budgets.lease" => encode(vault_budgets_lease(memory, decode(value)?)?),
         "vault.budgets.lease.top_up" => encode(vault_budgets_lease_top_up(memory, decode(value)?)?),
@@ -24211,6 +24343,14 @@ pub fn invoke(
         "vault.models.manifest.replace" => {
             encode(vault_models_manifest_replace(memory, decode(value)?)?)
         }
+        "vault.settings.web_connector" => {
+            encode(vault_settings_web_connector(memory, decode(value)?)?)
+        }
+        "vault.settings.web_connector.replace" => encode(vault_settings_web_connector_replace(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.connectors.web.usage" => encode(vault_connectors_web_usage(memory, decode(value)?)?),
         "vault.models.oneironer.bind" => {
             encode(vault_models_oneironer_bind(memory, decode(value)?)?)
         }
@@ -24280,6 +24420,9 @@ pub fn invoke(
             encode(vault_models_trials_approve(memory, decode(value)?)?)
         }
         "vault.models.trials.run" => encode(vault_models_trials_run(memory, decode(value)?)?),
+        "vault.models.trials.resend_arm" => {
+            encode(vault_models_trials_resend_arm(memory, decode(value)?)?)
+        }
         "vault.models.trials.complete" => {
             encode(vault_models_trials_complete(memory, decode(value)?)?)
         }
@@ -24319,6 +24462,9 @@ pub fn invoke(
         "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
         "vault.questions.backfill" => encode(vault_questions_backfill(memory, decode(value)?)?),
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
+        "vault.questions.outcome_windows" => {
+            encode(vault_questions_outcome_windows(memory, decode(value)?)?)
+        }
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "vault.questions.refresh" => encode(vault_questions_refresh(memory, decode(value)?)?),
         "vault.questions.outcomes" => encode(vault_questions_outcomes(memory, decode(value)?)?),
@@ -24337,6 +24483,9 @@ pub fn invoke(
             encode(vault_decisions_asks_answer(memory, decode(value)?)?)
         }
         "vault.decisions.asks.climb" => encode(vault_decisions_asks_climb(memory, decode(value)?)?),
+        "vault.decisions.asks.confirm_grant" => {
+            encode(vault_decisions_asks_confirm_grant(memory, decode(value)?)?)
+        }
         "self.decisions.asks" => encode(self_decisions_asks(memory, decode(value)?)?),
         "connector.list" => encode(connector_list(memory, decode(value)?)?),
         "connector.status" => encode(connector_status(memory, decode(value)?)?),
@@ -25615,6 +25764,12 @@ pub fn self_budget_land(
     input: crate::agent_dispatch::budget_doors::BudgetLandRequest,
 ) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
     crate::agent_dispatch::budget_doors::land_for_budget(memory, &input)
+}
+pub fn self_billing_account_file(
+    memory: &Memory<'_>,
+    input: crate::llm::run_admission::BillingAccountFiling,
+) -> MemoryResult<Option<crate::llm::run_admission::FiledBillingAccount>> {
+    crate::llm::run_admission::file_self_billing_account(memory, &input)
 }
 pub fn vault_budgets_lease_open(
     memory: &Memory<'_>,
@@ -32029,6 +32184,24 @@ pub fn vault_models_manifest_replace(
 ) -> MemoryResult<crate::llm::manifest::ModelManifest> {
     crate::task_verb::sdk::replace_model_manifest(memory, input)
 }
+pub fn vault_settings_web_connector(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+    crate::task_verb::sdk::read_web_connector_setting(memory)
+}
+pub fn vault_settings_web_connector_replace(
+    memory: &Memory<'_>,
+    input: crate::web_connector::WebConnectorSetting,
+) -> MemoryResult<crate::web_connector::WebConnectorSetting> {
+    crate::task_verb::sdk::replace_web_connector_setting(memory, input)
+}
+pub fn vault_connectors_web_usage(
+    memory: &Memory<'_>,
+    input: crate::web_connector::WebConnectorUsageRead,
+) -> MemoryResult<crate::web_connector::WebConnectorUsagePage> {
+    crate::task_verb::sdk::read_web_connector_usage(memory, input)
+}
 pub fn vault_models_oneironer_bind(
     memory: &Memory<'_>,
     input: crate::llm::manifest::doors::OneironerBind,
@@ -32350,6 +32523,19 @@ pub fn vault_models_trials_run(
 ) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
     crate::task_verb::sdk::host_only(memory, "vault.models.trials.run", &input)
 }
+pub fn vault_models_trials_resend_arm(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelTrialArmRef,
+) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
+    memory
+        .vault()
+        .resend_model_trial_arm_as_owner(
+            &memory.embedded_owner("vault.models.trials.resend_arm")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_models_trials_complete(
     memory: &Memory<'_>,
     input: crate::llm::catalog_doors::ModelTrialComplete,
@@ -32565,6 +32751,12 @@ pub fn vault_questions_read(
 ) -> MemoryResult<Option<crate::llm::decision::questions::QuestionRecord>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.read", &input)
 }
+pub fn vault_questions_outcome_windows(
+    memory: &Memory<'_>,
+    input: crate::receipt::QuestionOutcomeWindowsRequest,
+) -> MemoryResult<Vec<crate::llm::decision::questions::OutcomeWindowClose>> {
+    crate::task_verb::sdk::host_only(memory, "vault.questions.outcome_windows", &input)
+}
 pub fn vault_questions_answers(
     memory: &Memory<'_>,
     input: crate::receipt::QuestionAnswersRequest,
@@ -32624,6 +32816,12 @@ pub fn vault_decisions_asks_climb(
     input: crate::receipt::DecisionAskClimbRequest,
 ) -> MemoryResult<Option<crate::llm::decision::ResolvedRole>> {
     crate::task_verb::sdk::host_only(memory, "vault.decisions.asks.climb", &input)
+}
+pub fn vault_decisions_asks_confirm_grant(
+    memory: &Memory<'_>,
+    input: crate::receipt::DecisionAskConfirmGrantRequest,
+) -> MemoryResult<crate::llm::decision::DecisionAsk> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.asks.confirm_grant", &input)
 }
 pub fn self_decisions_asks(
     memory: &Memory<'_>,

@@ -3,7 +3,7 @@
 use super::super::types::invalid;
 use super::super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung,
-    PairedReading, ProviderPin, TypedDecision,
+    HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::learning_setting::SettingSpec;
 use crate::{EntityId, Result, Vault};
@@ -349,6 +349,9 @@ pub struct AnswerProposal {
     pub providers: Vec<ProviderPin>,
     /// Paired readings the providers measured with this answer; none means none was taken.
     pub paired: Vec<PairedReading>,
+    /// The host rule row the answer was read from, as id@revision (FIX 2974); none when no
+    /// rule row answered.
+    pub rule: Option<HostRuleRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -429,7 +432,7 @@ pub struct OutcomeLabel {
 }
 
 /// How a bound answer's outcome window closed (OF-516).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowOutcome {
     /// An admissible fact had labelled the answer by the close.
@@ -444,10 +447,11 @@ pub enum WindowOutcome {
 /// One answer's closed outcome window, written once by the question pump
 /// the first second after `ends_at`. A fact in the window that lands later
 /// still labels the answer and outranks a silence label.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeWindowClose {
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub answer: EntityId,
     pub question_version: u32,
     /// The window's last second: the answer's `answered_at` plus the horizon.

@@ -133,6 +133,7 @@ impl Vault {
             reason: hold.reason().to_owned(),
             cause: DreamerParkCause::Other,
             park_owner: PROGRAM_PARK_OWNER.to_owned(),
+            carried_spend: None,
             now,
         })?;
         Ok(())
