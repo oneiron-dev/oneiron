@@ -35,6 +35,7 @@ use super::dreamer::QuestionTimer;
 use super::scoped_child::{enqueue_scoped_child, reader_parent_for_wake};
 use crate::mcp::McpCodeModeProvider;
 use crate::models::{ModelRuntime, OfferLadder, RunBackend};
+use crate::runtime::wall_clock_ms as unix_millis_now;
 use crate::server::SyncServer;
 
 /// The run an agent's own generation is admitted under, on its parent's
@@ -228,13 +229,4 @@ impl ThingChildHost for ServedThingChildHost {
 fn not_launched(reason: &'static str, code: &'static str) -> ThingChildStart {
     tracing::info!(reason, code, "a thing branch's agent was not launched");
     ThingChildStart::Unavailable(reason)
-}
-
-/// The wall clock in unix milliseconds, as reader rows keep their times.
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }

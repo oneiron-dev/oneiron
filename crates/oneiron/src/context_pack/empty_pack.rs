@@ -222,6 +222,7 @@ pub(super) fn skipped_by_profile_pack() -> ContextPack {
         tokens: super::PackTokenStats::default(),
         items_truncated: super::PackItemAccounting::item_budget(),
         items_dropped: super::PackItemAccounting::token_budget(),
+        deadline_exceeded: false,
     };
     let retrieval_quality = RetrievalQualityReport::default();
     ContextPack {

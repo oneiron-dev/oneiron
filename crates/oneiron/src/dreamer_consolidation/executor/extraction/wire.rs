@@ -128,6 +128,21 @@ pub(in crate::dreamer_consolidation) fn contract_reply(
     Ok(reply)
 }
 
+/// Whether `finish` lets an extraction reply's JSON stand (FIX 7807). A
+/// finish that says the reply is cut, filtered, cancelled, partial or a tool
+/// turn refuses it; `Stop`, a deterministic fallback and a provider that
+/// reports no finish (`Other`) keep today's acceptance.
+fn finish_is_whole(finish: &FinishReason) -> bool {
+    !matches!(
+        finish,
+        FinishReason::Length
+            | FinishReason::ContentFiltered
+            | FinishReason::Cancelled
+            | FinishReason::ToolCalls
+            | FinishReason::Incomplete { .. }
+    )
+}
+
 /// The extraction step's check: the reply meets the contract, each of its
 /// candidates included, or it is refused and never memoized, so the next
 /// run asks again. A candidate names a `subject` label (a listed `P<n>` or
@@ -139,6 +154,12 @@ pub(in crate::dreamer_consolidation) fn contract_reply(
 pub(in crate::dreamer_consolidation) fn check_extraction_reply(
     response: &LlmResponse,
 ) -> std::result::Result<(), String> {
+    if !finish_is_whole(&response.finish_reason) {
+        return Err(format!(
+            "extraction reply did not finish whole ({:?})",
+            response.finish_reason
+        ));
+    }
     let reply = extraction_reply(response).map_err(|error| error.to_string())?;
     for (index, candidate) in reply.candidates.iter().enumerate() {
         if let Some(field) = contract_fault(candidate) {

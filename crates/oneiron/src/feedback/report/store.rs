@@ -132,6 +132,7 @@ impl Vault {
                 review: ReportReview::default(),
                 disclosure,
                 disclosure_basis: None,
+                disclosure_round: 0,
             };
             // A standing grant live for this publisher approves its text now.
             self.project_report_disclosure_in_txn(txn, &mut issue)?;
