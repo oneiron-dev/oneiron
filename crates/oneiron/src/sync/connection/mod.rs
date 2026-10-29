@@ -242,7 +242,13 @@ impl SyncConnection {
             .iter()
             .map(|head| crate::entity_id::bytes_to_hex_lower(head))
             .collect();
-        let mut request = reqwest::Client::new()
+        // FIX 6969: a redirect is answered, never followed with the slip
+        // headers; the status check below refuses a redirect answer.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| TransportError::Storage(format!("leave notice client failed: {e}")))?;
+        let mut request = client
             .post(url)
             .json(&serde_json::json!({ "authority_heads": heads }));
         for (name, value) in headers {
