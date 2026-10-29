@@ -82,7 +82,9 @@ fn kind(bytes: &[u8]) -> Option<Kind> {
     } else if bytes.starts_with(b"%PDF-") && bytes.get(5).is_some_and(u8::is_ascii_digit) {
         Some(Kind::Pdf)
     } else if bytes.len() >= 512
-        && bytes.get(257..).is_some_and(|magic| magic.starts_with(b"ustar"))
+        && bytes
+            .get(257..)
+            .is_some_and(|magic| magic.starts_with(b"ustar"))
     {
         // FIX 2471: a ustar header.
         Some(Kind::Tar)

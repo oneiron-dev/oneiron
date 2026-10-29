@@ -25,11 +25,10 @@ use super::{
     SeedOrigin, WorldKey, WorldKeyId, refused,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, FoldedMachine,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineEnrolmentRequest,
-    OwnerRootRecord, PinnedRoot, RequestCode, anchor_mark_stands, invalid_authority,
-    owner_root_records_in_txn, read_pin_row_in_txn, write_awaited_root_in_txn,
-    write_pinned_root_in_txn,
+    AuthorityEntryHash, AuthorityFold, FoldedMachine, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+    MachineEncryptionKey, MachineEnrolmentRequest, OwnerRootRecord, PinnedRoot, RequestCode,
+    anchor_mark_stands, invalid_authority, owner_root_records_in_txn, read_pin_row_in_txn,
+    write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, KitRecord, Result, SecretError};

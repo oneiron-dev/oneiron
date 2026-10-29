@@ -233,12 +233,7 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
-    let confirmed = vault.confirm_world_kit(
-        &owner,
-        &pieces,
-        passphrase.as_ref(),
-        &carry,
-    )?;
+    let confirmed = vault.confirm_world_kit(&owner, &pieces, passphrase.as_ref(), &carry)?;
     let vault_id = vault.vault_key_vault_id();
     let keys = &confirmed.activated.keys;
     emit(&Confirmed {
@@ -310,12 +305,7 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let restored = vault
-        .restore_world_kit(
-            &owner,
-            &pieces,
-            passphrase.as_ref(),
-            confirm,
-        )
+        .restore_world_kit(&owner, &pieces, passphrase.as_ref(), confirm)
         .map_err(show_root)?;
     emit(&Restored::from(restored))
 }
