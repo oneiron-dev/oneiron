@@ -56,7 +56,6 @@ pub(crate) mod connector_slate_routes;
 mod connector_subscription_routes;
 mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
-pub(super) use self::courtesy_delete_routes as cooperative_deletion_routes;
 mod craft_candidate_routes;
 mod decision_ask_routes;
 mod desktop_takeover_routes;
