@@ -179,6 +179,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         let answer = AgentVerbAnswer {
             output,
             rows: listed,
+            observations: Vec::new(),
         };
         drop(kept);
         Ok(Ok(answer))
@@ -224,6 +225,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 Ok(output) => Ok(AgentVerbAnswer {
                     output,
                     rows: Some(Vec::new()),
+                    observations: Vec::new(),
                 }),
                 Err(_) => Err(refusal("engine_error")),
             },

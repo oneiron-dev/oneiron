@@ -110,6 +110,7 @@ impl ScopedChildPorts for ThingChildPorts {
             .map(|output| AgentVerbAnswer {
                 output,
                 rows: Some(rows),
+                observations: Vec::new(),
             })
             .map_err(refusal))
     }
