@@ -74,6 +74,7 @@ pub(crate) use index::{
     erase_authority_actor_in_txn, erase_dirty_actor_in_txn, index_capture_in_txn,
     invalidate_solved_source_in_txn, refresh_witness_in_txn, reindex_restored_source_in_txn,
 };
+pub(crate) use records::secret_param_names_in_txn;
 pub use records::{
     file_workflow, record_workflow_run, resolve_workflow_in_txn, retire_workflow, retired_workflow,
     retired_workflows, site_workflows, supersedes_refusal, workflow,
