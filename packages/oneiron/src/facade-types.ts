@@ -8365,6 +8365,6 @@ export type CloseLensFrameReply = { closed: boolean }
 /** `oneiron::memory::transcript::TranscriptMessage` */
 export type TranscriptMessage = { id: string; short_id?: string | null; role: string; message_type?: string | null; occurred: number; text: string; metadata?: unknown | null; result?: MessageResultAttachment | null; incomplete: boolean; generating: boolean }
 /** `oneiron::memory::transcript::TranscriptTurn` */
-export type TranscriptTurn = { id: string; occurred_start: number; occurred_end: number; messages: TranscriptMessage[] }
+export type TranscriptTurn = { id: string; occurred_start: number; occurred_end: number; messages: TranscriptMessage[]; wake_outcome?: TurnProgramWakeOutcome | null }
 /** `oneiron::memory::transcript::TranscriptPage` */
 export type TranscriptPage = { conversation: string; turns: TranscriptTurn[]; next?: string | null }

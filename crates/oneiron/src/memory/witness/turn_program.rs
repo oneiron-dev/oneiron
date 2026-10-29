@@ -12,7 +12,7 @@
 use crate::dreamer_runner::{
     ArmTurnProgram, LandedTurnRef, TurnProgramAuthority, TurnProgramRegistration,
 };
-use super::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason};
+use super::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason, keep_wake_label_in_txn};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
@@ -104,9 +104,21 @@ impl Memory<'_> {
     /// program its actor armed (DOOR-141), and answers what it came to for
     /// the turn's receipt (FIX 9970). It never fails the turn: a wake it
     /// cannot record (no authority to seal, a read or write that fails) is
-    /// logged, rolled back alone and answered as unpersisted, and the turn
-    /// commits as it would have.
+    /// logged, rolled back alone, answered as unpersisted and kept as the
+    /// turn's label, and the turn commits as it would have.
     pub(super) fn record_turn_program_wakes_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        conversation: EntityId,
+        turn: EntityId,
+    ) -> TurnProgramWakeOutcome {
+        let outcome = self.turn_program_wakes_in_txn(wtxn, conversation, turn);
+        keep_wake_label_in_txn(self.vault, wtxn, turn, outcome);
+        outcome
+    }
+
+    /// [`Self::record_turn_program_wakes_in_txn`] before the turn's label.
+    fn turn_program_wakes_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         conversation: EntityId,

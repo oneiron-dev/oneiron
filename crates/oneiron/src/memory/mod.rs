@@ -338,7 +338,8 @@ pub use witness::{
     WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 pub(crate) use witness::{
-    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
+    erase_reply_assertions_in_txn, erase_turn_wake_label_in_txn, reply_assertions_owners,
+    reply_assertions_stub, turn_wake_outcome_in_txn,
 };
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;

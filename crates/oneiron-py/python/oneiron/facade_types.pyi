@@ -21682,6 +21682,7 @@ class TranscriptTurn(TypedDict):
     occurred_start: int
     occurred_end: int
     messages: list[TranscriptMessage]
+    wake_outcome: NotRequired[TurnProgramWakeOutcome | None]
 class TranscriptPage(TypedDict):
     conversation: str
     turns: list[TranscriptTurn]
