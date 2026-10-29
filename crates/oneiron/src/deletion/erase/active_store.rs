@@ -169,9 +169,18 @@ impl Vault {
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
         let note_removed = crate::note::erase::purge(self, wtxn, id)?;
-        ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
-        if had_graph_mutation {
+        if erase {
+            // Engine 00:43 for parked L01: destructive erase removes the derived
+            // payloads, never just their freshness marker, and always advances
+            // the graph version once, even for an isolated row.
+            ppr::purge_ppr_for_erase_in_txn(&self.store, wtxn, id, &neighbors)?;
+            self.store.clear_ppr_community_cache_in_txn(wtxn)?;
             ppr::increment_graph_version(&self.store, wtxn)?;
+        } else {
+            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
+            if had_graph_mutation {
+                ppr::increment_graph_version(&self.store, wtxn)?;
+            }
         }
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
