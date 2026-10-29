@@ -6752,8 +6752,8 @@ async fn vault_skills_fork(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.skills.fork")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.skills.fork", &value)?;
@@ -16710,8 +16710,8 @@ async fn vault_gate_policy_put(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.gate.policy.put")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.gate.policy.put", &value)?;
@@ -18915,8 +18915,8 @@ async fn vault_artifacts_publish(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.artifacts.publish")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.artifacts.publish", &value)?;
@@ -18949,8 +18949,8 @@ async fn vault_artifacts_repoint(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.artifacts.repoint")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.artifacts.repoint", &value)?;
