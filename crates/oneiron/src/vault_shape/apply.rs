@@ -99,6 +99,17 @@ pub enum ShapeItemState {
         quarantine_until: u64,
         requested_at: u64,
     },
+    /// A channel provision the identity's lifecycle gate holds for the
+    /// owner's approve-once press on `approval_digest` (FIX 2300). It waits
+    /// as [`Self::Proposed`] does, and the owner's next apply asks again as
+    /// exactly this request: under `request_ref`, for the identity
+    /// `identity_ref` it first asked for, on the clock it first asked with.
+    HeldProvision {
+        request_ref: String,
+        approval_digest: String,
+        identity_ref: String,
+        requested_at: u64,
+    },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
@@ -171,6 +182,7 @@ pub(super) const fn open(state: &ShapeItemState) -> bool {
             | ShapeItemState::Filed { .. }
             | ShapeItemState::FileRefused { .. }
             | ShapeItemState::Held { .. }
+            | ShapeItemState::HeldProvision { .. }
     )
 }
 
@@ -460,9 +472,15 @@ impl Vault {
             // A release the lifecycle gate held asks again as its own request
             // (FIX 2577): the owner's word was given when it was first asked.
             let held_release = matches!(journal.items[index].state, ShapeItemState::Held { .. });
+            // So does a provision the gate held (FIX 2300).
+            let held_provision = matches!(
+                journal.items[index].state,
+                ShapeItemState::HeldProvision { .. }
+            );
             // The released re-preview (FIX 10200): an approved widening whose
             // previewed reach moved under it lands only once planned again.
             let approved = !held_release
+                && !held_provision
                 && item.class == ShapeItemClass::Widening
                 && item.door.is_some()
                 && approve.contains(&item.seq);
@@ -486,6 +504,10 @@ impl Vault {
                 ShapeItemState::Proposed if held_release => {
                     let resting = &journal.items[index].state;
                     self.retire_shape_channel(owner, &item, &live, resting, now)
+                }
+                ShapeItemState::Proposed if held_provision => {
+                    let resting = &journal.items[index].state;
+                    self.provision_shape_channel_item(owner, &item, &live, resting, now, sources)
                 }
                 ShapeItemState::Proposed
                     if item.class == ShapeItemClass::Widening && !approve.contains(&item.seq) =>
@@ -517,6 +539,15 @@ impl Vault {
                 {
                     let resting = &journal.items[index].state;
                     self.retire_shape_channel(owner, &item, &live, resting, now)
+                }
+                // So does a new one provision, and its hold waits the same
+                // way (FIX 2300).
+                ShapeItemState::Proposed
+                    if item.change == ShapeChange::Create
+                        && matches!(item.target, ShapeTarget::Channel { .. }) =>
+                {
+                    let resting = &journal.items[index].state;
+                    self.provision_shape_channel_item(owner, &item, &live, resting, now, sources)
                 }
                 ShapeItemState::Proposed => {
                     match self.land_shape_item(owner, slips, &item, &live, now, sources) {
@@ -835,24 +866,6 @@ impl Vault {
                 owner.revalidate(self)?;
                 self.update_skill_record(&id, &record, occurred, now)?;
                 Ok(id.to_hex())
-            }
-            (
-                ShapeChange::Create,
-                ShapeTarget::Channel { channel, address },
-                Some(ShapeRow::Channel {
-                    provision: Some(provision),
-                    ..
-                }),
-            ) => {
-                let binding = provision.binding.resolve(|agent_id| {
-                    live.get(&ShapeTarget::Actor {
-                        agent_id: agent_id.to_owned(),
-                    })
-                    .and_then(|(_, entity)| *entity)
-                })?;
-                self.provision_shape_channel(
-                    owner, channel, address, provision, binding, now, sources,
-                )
             }
             (ShapeChange::Retire, ShapeTarget::Pack { name }, _) => {
                 let removed = self.remove_pack(owner, name)?;

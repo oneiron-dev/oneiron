@@ -409,7 +409,7 @@ export type ShapeItemClass = "receipted" | "widening" | "authority"
 /** `oneiron::vault_shape::plan::ShapePlanItem` */
 export type ShapePlanItem = { seq: number; target: ShapeTarget; change: ShapeChange; class: ShapeItemClass; before?: ShapeRow | null; after?: ShapeRow | null; door?: string | null }
 /** `oneiron::vault_shape::apply::ShapeItemState` */
-export type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "file_refused"; reason: string } | { state: "held"; request_ref: string; approval_digest: string; quarantine_until: number; requested_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string }
+export type ShapeItemState = { state: "pending" } | { state: "landed"; at: number; receipt: string } | { state: "proposed" } | { state: "filed"; proposal_ref: string; expires_at: number } | { state: "file_refused"; reason: string } | { state: "held"; request_ref: string; approval_digest: string; quarantine_until: number; requested_at: number } | { state: "held_provision"; request_ref: string; approval_digest: string; identity_ref: string; requested_at: number } | { state: "ceremony" } | { state: "no_door" } | { state: "refused"; reason: string }
 /** `oneiron::vault_shape::approval::ShapeApprovalDependencies` */
 export type ShapeApprovalDependencies = { digest: string }
 /** `oneiron::vault_shape::apply::ShapeApplyItem` */

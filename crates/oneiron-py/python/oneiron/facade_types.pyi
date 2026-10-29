@@ -1117,6 +1117,12 @@ class ShapeItemStateHeld(TypedDict):
     approval_digest: str
     quarantine_until: int
     requested_at: int
+class ShapeItemStateHeldProvision(TypedDict):
+    state: Literal["held_provision"]
+    request_ref: str
+    approval_digest: str
+    identity_ref: str
+    requested_at: int
 class ShapeItemStateCeremony(TypedDict):
     state: Literal["ceremony"]
 class ShapeItemStateNoDoor(TypedDict):
@@ -1124,7 +1130,7 @@ class ShapeItemStateNoDoor(TypedDict):
 class ShapeItemStateRefused(TypedDict):
     state: Literal["refused"]
     reason: str
-ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateFileRefused | ShapeItemStateHeld | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
+ShapeItemState = ShapeItemStatePending | ShapeItemStateLanded | ShapeItemStateProposed | ShapeItemStateFiled | ShapeItemStateFileRefused | ShapeItemStateHeld | ShapeItemStateHeldProvision | ShapeItemStateCeremony | ShapeItemStateNoDoor | ShapeItemStateRefused
 class ShapeApprovalDependencies(TypedDict):
     digest: str
 class ShapeApplyItem(TypedDict):

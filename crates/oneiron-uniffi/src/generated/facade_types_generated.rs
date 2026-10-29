@@ -3551,6 +3551,17 @@ pub enum ShapeItemState {
         #[serde(rename = "requested_at")]
         requested_at: u64,
     },
+    #[serde(rename = "held_provision")]
+    HeldProvision {
+        #[serde(rename = "request_ref")]
+        request_ref: String,
+        #[serde(rename = "approval_digest")]
+        approval_digest: String,
+        #[serde(rename = "identity_ref")]
+        identity_ref: String,
+        #[serde(rename = "requested_at")]
+        requested_at: u64,
+    },
     #[serde(rename = "ceremony")]
     Ceremony,
     #[serde(rename = "no_door")]
