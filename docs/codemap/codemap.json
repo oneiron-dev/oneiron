@@ -70131,7 +70131,7 @@
      "path": "src/sync/sweep_fence.rs",
      "purpose": "Windows a sweep holds closed while it rewrites their persisted state",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
