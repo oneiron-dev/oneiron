@@ -25865,7 +25865,7 @@
      "path": "src/dreamer_consolidation/wake_plan.rs",
      "purpose": "One frozen read revision and exact preparation of queued consolidation work",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "struct": 2
      }
     },
@@ -28616,7 +28616,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 3,
-      "fn": 16,
+      "fn": 17,
       "struct": 2
      }
     },
@@ -29392,7 +29392,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 4,
-      "fn": 5,
+      "fn": 6,
       "struct": 7,
       "trait": 1
      }
@@ -97513,6 +97513,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/dreamer/pause.rs",
+     "purpose": "The owner's own pause cause over the Dreamer (`POST /dreamer/pause`, `POST /dreamer/resume`), apart from the…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/dreamer/request_sources.rs",
      "purpose": "The Dreamer's routes as this server sends on them, each able to send one call under the rows the engine read…",
      "surface": {
@@ -97696,7 +97706,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 17
      }
     },
@@ -108861,13 +108871,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/admission.rs",
      "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 22
      }
     },
     {
@@ -113673,7 +113683,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 101,
+     "files": 102,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -114172,7 +114182,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1386,
+   "source_files": 1387,
    "test_files": 182
   },
   "oneiron-spawn": {
