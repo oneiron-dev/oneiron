@@ -152,6 +152,9 @@ pub(super) fn hydrate_entity(
     options: HydrateOptions<'_>,
     claims_suppressed: &mut usize,
 ) -> Result<Option<ContextEntity>> {
+    if let Some(deadline) = options.deadline {
+        deadline.answer_checkpoint(Error::IndexOverflow("context pack hydration"))?;
+    }
     let Some(live_raw) = vault
         .live_entity_in_txn(store, rtxn, &id)
         .map_err(|error| match error {
@@ -319,6 +322,7 @@ pub(super) fn hydrate_entity(
             &id,
             options.edge_cache,
             options.clamp,
+            options.deadline,
         )?)
     } else {
         None

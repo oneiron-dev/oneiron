@@ -59,6 +59,9 @@ struct LiveSeat {
     hooks: CompactHooks,
     /// Set for the rest of one `run` call when its pass ended without a swap.
     held: Option<CompactionSuppression>,
+    /// The backend's recovery count when `held` was set: a turn-scoped hold
+    /// ends once it moves (FIX 1112).
+    held_recoveries: u64,
     last_feed: Option<(Instant, u64)>,
     /// The run writes through a room it is bound to on a recording route:
     /// an off-record room's overlay, or a room on record at entry, under its
@@ -210,6 +213,7 @@ impl RunCompaction {
                 flight: None,
                 hooks: CompactHooks::default(),
                 held: None,
+                held_recoveries: 0,
                 last_feed: None,
                 session_bound: false,
                 overlay: false,
@@ -376,8 +380,30 @@ impl RunCompaction {
         if let Seat::Live(seat) = &mut self.seat {
             seat.driver.abandon();
             seat.held = Some(suppression);
+            seat.held_recoveries = seat.driver.backend().recoveries();
         }
         self.report.suppressed = Some(suppression);
+    }
+
+    /// Ends a hold whose cause has passed, so this turn's next breakpoint
+    /// tries the pass again: a turn-scoped hold once a model seat came back
+    /// since it was set (FIX 1112), a payer hold once the owners said yes
+    /// (FIX 3740). An auth, credit or sticky hold stays.
+    pub(super) fn wake_held(&mut self) {
+        let Seat::Live(seat) = &mut self.seat else {
+            return;
+        };
+        let woke = match seat.held {
+            Some(CompactionSuppression::TurnScoped { .. }) => {
+                seat.driver.backend().recoveries() != seat.held_recoveries
+            }
+            Some(CompactionSuppression::PayerNeeded) => seat.driver.backend().funded(),
+            _ => false,
+        };
+        if woke {
+            seat.held = None;
+            self.report.suppressed = None;
+        }
     }
 
     pub(super) fn swapped(&mut self, epoch: u64, first: u64, last: u64) {
@@ -409,6 +435,7 @@ impl RunCompaction {
         build: impl FnOnce(&mut CompactionDriver, Option<u64>) -> super::EngineExecutorResult<Flight>,
     ) -> std::result::Result<Option<WindowFullReason>, VerbHookStop> {
         self.report.used_tokens = used_tokens;
+        self.wake_held();
         let Seat::Live(seat) = &mut self.seat else {
             return Ok(None);
         };
@@ -529,6 +556,7 @@ impl RunCompaction {
                         seat.driver.abandon();
                         let held = CompactionSuppression::TurnScoped { check: None };
                         seat.held = Some(held);
+                        seat.held_recoveries = seat.driver.backend().recoveries();
                         self.report.suppressed = Some(held);
                     }
                 }
