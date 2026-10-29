@@ -175,6 +175,7 @@ vaultRetrievalPolicyAdmit(input: unknown): unknown
 vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+selfActor(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown

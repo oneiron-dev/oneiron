@@ -39,7 +39,10 @@ use super::*;
 use crate::error::Result;
 
 mod context;
+mod result_parents;
 mod settle;
+
+pub(crate) use result_parents::proven_residence_result_parents_in_txn;
 
 use context::image_stands_here;
 use settle::{SettledTail, settle_tail};

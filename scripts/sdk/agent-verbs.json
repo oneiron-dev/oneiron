@@ -2362,6 +2362,20 @@
       "openapi": true
     },
     {
+      "name": "self.actor",
+      "description": "The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::SelfActorRefs",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.actor\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.scope.position",
       "description": "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt.",
       "input": "crate::memory::RecordPositionRequest",

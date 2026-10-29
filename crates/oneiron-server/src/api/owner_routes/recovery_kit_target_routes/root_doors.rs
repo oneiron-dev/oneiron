@@ -161,6 +161,10 @@ async fn anchor(
     Ok(Json(answer))
 }
 
+/// How long a kit restore waits on its best-effort authority catch-up
+/// (FIX 11406) before it goes on without it.
+const KIT_RESTORE_CATCH_UP: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// `POST /v1/owner/roots/restore`: opens the world keys wrapped to the kit's
 /// root on this install. No world's setting changes; a kit this vault still
 /// lists as pending is refused, for `confirm`.
@@ -173,6 +177,25 @@ async fn restore(
     let owner = owner(&auth, &server)?;
     let body = payload.read(&server).await?;
     kit_target(&server, &body.target)?;
+    // FIX 11406: a best-effort authority catch-up, so the seed gate sees a
+    // kit root peers already carry. No machine, no live connection, an error
+    // or a stall past KIT_RESTORE_CATCH_UP leaves the restore as before.
+    let vault = Arc::clone(&server.vault);
+    let me = blocking(move || Ok(vault.local_machine()?.map(|machine| machine.id)))
+        .await
+        .ok()
+        .flatten();
+    if let Some(me) = me
+        && let Some(connection) = crate::residence_machines::connection(&me)
+    {
+        match tokio::time::timeout(KIT_RESTORE_CATCH_UP, connection.catch_up_authority()).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::debug!(error = %format!("{error:#}"), "kit restore authority catch-up skipped");
+            }
+            Err(_) => tracing::debug!("kit restore authority catch-up timed out"),
+        }
+    }
     let answer = blocking(move || -> OwnerResult<RootWorkAnswer> {
         let vault = server.vault();
         let confirm = confirmation(body.fingerprint.as_deref(), body.confirm_root.as_deref())?;

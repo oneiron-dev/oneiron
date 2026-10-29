@@ -206,10 +206,11 @@ pub struct RestoreArgs {
     #[arg(long, conflicts_with_all = ["activate", "rehearse", "inspect"])]
     pub open_pads: bool,
 
-    /// With `--open-pads`: the id of one of the owner's machines, 32 hex
-    /// digits, whose key this install's keystore still holds; it opens the
-    /// worlds that admit it. No key is made for it.
-    #[arg(long, value_name = "ID", requires = "open_pads")]
+    /// With `--open-pads` or a restore where no vault is yet: the id of one
+    /// of the owner's machines, 32 hex digits, whose key this install's
+    /// keystore still holds; it opens the worlds that admit it. No key is
+    /// made for it.
+    #[arg(long, value_name = "ID", conflicts_with_all = ["activate", "rehearse", "inspect"])]
     pub pad_machine: Option<String>,
 
     #[command(flatten)]
