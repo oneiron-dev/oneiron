@@ -54,6 +54,12 @@ pub(crate) async fn vault_secrets_register(
     surface: ActSurface,
     input: SecretRegisterRequest,
 ) -> Listed<SecretRegisterReply> {
+    // A wiped HTTP body's value, put back after the redacted args decoded
+    // (FIX 11442). Any other transport's input already carries its own.
+    let mut input = input;
+    if let Some(secret) = super::secret_body::current_secret() {
+        input.value_base64 = (*secret).clone();
+    }
     as_custody_owner(
         server,
         auth,
@@ -70,6 +76,12 @@ pub(crate) async fn vault_secrets_rotate(
     surface: ActSurface,
     input: SecretRotateRequest,
 ) -> Listed<SecretRotateReply> {
+    // A wiped HTTP body's value, put back after the redacted args decoded
+    // (FIX 11442). Any other transport's input already carries its own.
+    let mut input = input;
+    if let Some(secret) = super::secret_body::current_secret() {
+        input.value_base64 = (*secret).clone();
+    }
     as_custody_owner(server, auth, "vault.secrets.rotate", move |vault, owner| {
         rotate_secret_as(vault, owner, surface, input)
     })
