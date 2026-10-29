@@ -381,7 +381,7 @@ impl MediaRuntime {
         sources: Option<Vec<oneiron::EntityId>>,
     ) -> LlmResult<MediaResponse> {
         let run = self.media_run(payer, sources)?;
-        self.run_admitted(&run, request, voices).await
+        self.run_admitted(&run, request, voices, None).await
     }
 
     /// Job `id`, held here or kept in the vault. A kept job that has not

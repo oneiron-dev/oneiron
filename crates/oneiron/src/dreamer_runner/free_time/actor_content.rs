@@ -37,6 +37,7 @@ pub(super) fn scrub_policy_attribution(
     }
     if policy.set_by_agent == Some(*actor) {
         policy.set_by_agent = None;
+        policy.set_grant = None;
         changed = true;
     }
     if matches!(policy.surface, Some(ActSurface::LinkedDevice { machine }) if machine == *actor) {

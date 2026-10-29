@@ -69,6 +69,7 @@ pub(super) async fn draft_loop(
     admission: PassAdmission,
 ) {
     let mut changes = vault.subscribe_proactivity_changes();
+    let mut recoveries = runtime.recoveries();
     let mut pace = Pace::default();
     loop {
         // The pause epoch this round runs under, read before its gates, so a
@@ -103,6 +104,11 @@ pub(super) async fn draft_loop(
             }
             () = pause_lifted(epoch) => {}
             () = retry_due(due) => {}
+            recovered = recoveries.changed() => {
+                if recovered.is_ok() {
+                    pace.wake_all();
+                }
+            }
         }
     }
 }

@@ -245,6 +245,11 @@ impl GpuPool {
             .map(|secret| (secret.name.as_str(), secret.broker.as_ref()))
     }
 
+    /// The variable holding the pods' bearer key, for the pods' paid door.
+    pub(crate) fn api_key_env_name(&self) -> Option<&str> {
+        self.inner.config.api_key_env.as_deref()
+    }
+
     pub fn region(&self) -> &str {
         &self.inner.config.region
     }

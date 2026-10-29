@@ -112,6 +112,9 @@ pub(crate) struct RunHostDoor {
     /// The line the run's entry in flight spends on, which its `ai.speech`
     /// is admitted on (FIX 3194); empty between entries.
     line: Mutex<Option<RunAdmission>>,
+    /// The attempt the run's entry in flight serves (hex), which keys its
+    /// media calls (FIX 2245); empty between entries and for a turn program.
+    attempt: Mutex<Option<String>>,
     /// The live, verified slip whose turn woke a Dreamer turn program this
     /// door serves (FIX 8717): the reads this door admits for the run take
     /// its key. Its rows' surfaces take it from the call's origin. `None`
@@ -132,6 +135,7 @@ impl RunHostDoor {
             run: format!("agent-run:{}", run_id.to_hex()),
             run_id,
             line: Mutex::new(None),
+            attempt: Mutex::new(None),
             server: Arc::clone(server),
             actor,
             runtime,
@@ -174,6 +178,12 @@ impl RunHostDoor {
         *self.line.lock().unwrap_or_else(PoisonError::into_inner) = line;
     }
 
+    /// Binds the attempt the run's next entry serves, which keys its media
+    /// calls (FIX 2245). `None` clears it once the entry ends.
+    pub(crate) fn bind_attempt(&self, attempt: Option<String>) {
+        *self.attempt.lock().unwrap_or_else(PoisonError::into_inner) = attempt;
+    }
+
     /// CUA E8b: what this run's browser reached for TASK `task`, kept as
     /// the agent's solved-run evidence when its done-means' browser checks
     /// hold on the page (`goal`, under the run's recorded `type_ref`), under
@@ -205,6 +215,11 @@ impl AgentVerbDoor for RunHostDoor {
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         let line = self
             .line
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let attempt = self
+            .attempt
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
@@ -279,6 +294,7 @@ impl AgentVerbDoor for RunHostDoor {
                             verb,
                             input,
                             line.as_ref(),
+                            attempt.as_deref(),
                         )
                     }
                     None => answer_as_agent(
@@ -290,6 +306,7 @@ impl AgentVerbDoor for RunHostDoor {
                         input,
                         held,
                         line.as_ref(),
+                        attempt.as_deref(),
                     ),
                 },
             ));
@@ -499,9 +516,10 @@ fn board_as_agent(
 /// The rows it answers with are the ones that surface listed as served, and
 /// those its row picked beside the surface's reads (`None` when those are
 /// not known);
-/// `held` is the run's own screenshot an `ai.verdict` may name, and `line`
-/// the run's own line its `ai.speech` spends on. Blocking: call it on a
-/// blocking thread of the server's runtime.
+/// `held` is the run's own screenshot an `ai.verdict` may name, `line`
+/// the run's own line its `ai.speech` spends on, and `attempt` the attempt
+/// its media calls are keyed by. Blocking: call it on a blocking thread of
+/// the server's runtime.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the agent's call"
@@ -515,6 +533,7 @@ pub(crate) fn answer_as_agent(
     input: Value,
     held: Option<HeldImage>,
     line: Option<&RunAdmission>,
+    attempt: Option<&str>,
 ) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
@@ -537,7 +556,16 @@ pub(crate) fn answer_as_agent(
         verb_hook_boundary::row(&memory, name, input, |input| {
             sdk::validate_input(name, &input)?;
             HELD_IMAGE.sync_scope(held, || {
-                host_row(server, actor, &memory, verb, input, line, &mut evidence)
+                host_row(
+                    server,
+                    actor,
+                    &memory,
+                    verb,
+                    input,
+                    line,
+                    attempt,
+                    &mut evidence,
+                )
             })
         })?
     } else {
