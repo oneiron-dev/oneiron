@@ -24,10 +24,12 @@ use super::super::support::{
 pub(crate) fn agent_verb_observations_of(calls: &[CodeRunBridgeCall]) -> Vec<RunObservation> {
     calls
         .iter()
-        .filter_map(|call| match super::decode_self_dispatch_outcome(&call.outcome) {
-            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.observations),
-            _ => None,
-        })
+        .filter_map(
+            |call| match super::decode_self_dispatch_outcome(&call.outcome) {
+                Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.observations),
+                _ => None,
+            },
+        )
         .flatten()
         .collect()
 }
@@ -57,7 +59,9 @@ pub(super) fn keep_observations(
 pub(super) fn decode_observations(entries: &[(Value, Value)]) -> Result<Vec<RunObservation>> {
     map_get(entries, OBSERVATIONS)
         .ok()
-        .map_or(Ok(Vec::new()), |kept| decode_array(kept, decode_observation))
+        .map_or(Ok(Vec::new()), |kept| {
+            decode_array(kept, decode_observation)
+        })
 }
 
 fn observation_value(observation: &RunObservation) -> Result<Value> {

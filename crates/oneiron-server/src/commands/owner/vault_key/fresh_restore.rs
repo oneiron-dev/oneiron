@@ -67,9 +67,7 @@ impl RestoreWrap {
 
     /// The wrap `args` names, its secret read now; `None` when it names
     /// none. A flag the wrap does not read is refused.
-    pub(in crate::commands::owner) fn read(
-        args: &RestoreWrapArgs,
-    ) -> anyhow::Result<Option<Self>> {
+    pub(in crate::commands::owner) fn read(args: &RestoreWrapArgs) -> anyhow::Result<Option<Self>> {
         let Some(kind) = args.wrap_to else {
             return Ok(None);
         };
@@ -81,8 +79,14 @@ impl RestoreWrap {
             ),
             ("--wrap-label", !escrow && args.wrap_label.is_some()),
             ("--wrap-box-dir", !escrow && args.wrap_box_dir.is_some()),
-            ("--wrap-box-command", !escrow && args.wrap_box_command.is_some()),
-            ("--wrap-secret-file", escrow && args.wrap_secret_file.is_some()),
+            (
+                "--wrap-box-command",
+                !escrow && args.wrap_box_command.is_some(),
+            ),
+            (
+                "--wrap-secret-file",
+                escrow && args.wrap_secret_file.is_some(),
+            ),
         ];
         if let Some((flag, _)) = unused.iter().find(|(_, given)| *given) {
             anyhow::bail!("{flag} is not read by this --wrap-to");

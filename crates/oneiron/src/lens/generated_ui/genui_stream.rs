@@ -118,11 +118,13 @@ impl GeneratedUiRender {
             &patch_document(self)?,
             KEYED_MEMBERS,
         );
-        Ok(GeneratedUiSegment::CardStatePatch(GeneratedUiCardStatePatch {
-            protocol_version: self.protocol_version,
-            card_id: self.card_id.clone(),
-            patch,
-        }))
+        Ok(GeneratedUiSegment::CardStatePatch(
+            GeneratedUiCardStatePatch {
+                protocol_version: self.protocol_version,
+                card_id: self.card_id.clone(),
+                patch,
+            },
+        ))
     }
 
     #[must_use]
@@ -192,7 +194,13 @@ fn render_from_patch_document(mut document: Value) -> Result<GeneratedUiRender> 
             continue;
         };
         if let Some(children) = node.get("childRefs").and_then(Value::as_array) {
-            stack.extend(children.iter().rev().filter_map(Value::as_str).map(str::to_owned));
+            stack.extend(
+                children
+                    .iter()
+                    .rev()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
         }
         ordered.push(node);
     }
@@ -332,8 +340,7 @@ impl GeneratedUiStream {
             }
             (Phase::Complete { .. }, GeneratedUiSegment::CardElement(_)) => {
                 return Err(Error::InvalidConfig(
-                    "generated-ui card_element segments must precede card_state_update"
-                        .to_string(),
+                    "generated-ui card_element segments must precede card_state_update".to_string(),
                 ));
             }
             (Phase::Complete { .. }, GeneratedUiSegment::CardStateUpdate(_)) => {

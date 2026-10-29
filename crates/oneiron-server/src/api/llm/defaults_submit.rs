@@ -106,10 +106,13 @@ pub(super) async fn rule_proposal(
         Ok(None) => return refusal(StatusCode::FORBIDDEN, "policy_holder_required"),
     };
     let now = crate::api::unix_seconds_now();
-    match server
-        .vault
-        .rule_purpose_default_proposal(&person, &proposal, ruling.approve, surface, now)
-    {
+    match server.vault.rule_purpose_default_proposal(
+        &person,
+        &proposal,
+        ruling.approve,
+        surface,
+        now,
+    ) {
         Ok(proposal) => Json(proposal).into_response(),
         Err(error) => defaults_refusal(error),
     }

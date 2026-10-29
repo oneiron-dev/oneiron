@@ -125,7 +125,10 @@ async fn refusal_error(refused: Response) -> MemoryError {
             MEMORY_CODE_MODEL_UNAVAILABLE,
             "Retry later, or bind a [models.roles.local_vision] seat.",
         ),
-        _ => (MEMORY_CODE_INTERNAL, "This is an Oneiron server bug; please report it."),
+        _ => (
+            MEMORY_CODE_INTERNAL,
+            "This is an Oneiron server bug; please report it.",
+        ),
     };
     let mut refusal = if ask_image_refusal_status(&reason) == Some(status) {
         MemoryError::new(&reason, format!("{VERB}: {words}"), &[suggestion])

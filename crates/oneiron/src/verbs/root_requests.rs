@@ -18,9 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::authority::{
-    ActSurface, RecoveryRootId, RootChange, authority_log_entity_id_from_hash,
-};
+use crate::authority::{ActSurface, RecoveryRootId, RootChange, authority_log_entity_id_from_hash};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::memory::{MemoryError, MemoryResult};

@@ -205,15 +205,18 @@ impl AgentVerbDoor for RunHostDoor {
             // The run's thread holds the call while its guest acts; its step
             // verdicts spend on the run's line (FIX 3574).
             let memory = agent_memory(&self.server, self.actor, origin, invocation);
-            return self.observed(call.verb, self.guests.call(
-                &self.server,
-                &self.runtime,
-                call,
-                origin,
-                &memory,
-                VerdictAsker::Agent(self.actor, line),
-                self.actor.entity_ref(),
-            ));
+            return self.observed(
+                call.verb,
+                self.guests.call(
+                    &self.server,
+                    &self.runtime,
+                    call,
+                    origin,
+                    &memory,
+                    VerdictAsker::Agent(self.actor, line),
+                    self.actor.entity_ref(),
+                ),
+            );
         }
         let held = matches!(call.verb, AgentVerb::AiVerdict)
             .then(|| self.guests.held_image(&call.input))
@@ -232,73 +235,79 @@ impl AgentVerbDoor for RunHostDoor {
         // FIX 3103: the row writes for the run whose lease the origin seals.
         let run_writes = RunWriteToken::of_origin(&origin);
         self.runtime.spawn_blocking(move || {
-            let _ = sender.send(with_run_write_token(run_writes.as_ref(), || match resident {
-                Some(ResidentRow::Board) => {
-                    board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
-                        .map(|(output, rows)| (output, Some(rows)))
-                }
-                Some(ResidentRow::SelfBrief) => resident_rows::self_brief_as_agent(
-                    &server,
-                    actor,
-                    &origin,
-                    invocation,
-                    &board,
-                    line.as_ref(),
-                    input,
-                )
-                .map(|(output, rows)| (output, Some(rows))),
-                Some(ResidentRow::WeaveLens) => resident_rows::weave_lens_as_agent(
-                    &server,
-                    actor,
-                    run_id,
-                    &origin,
-                    invocation,
-                    line.as_ref(),
-                    input,
-                )
-                .map(|(output, rows)| (output, Some(rows))),
-                // An owner's own program takes the owner's rows (FIX 5911).
-                None if super::owner_program_rows::is_owner_row(verb) => {
-                    super::owner_program_rows::answer(
+            let _ = sender.send(with_run_write_token(
+                run_writes.as_ref(),
+                || match resident {
+                    Some(ResidentRow::Board) => {
+                        board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
+                            .map(|(output, rows)| (output, Some(rows)))
+                    }
+                    Some(ResidentRow::SelfBrief) => resident_rows::self_brief_as_agent(
+                        &server,
+                        actor,
+                        &origin,
+                        invocation,
+                        &board,
+                        line.as_ref(),
+                        input,
+                    )
+                    .map(|(output, rows)| (output, Some(rows))),
+                    Some(ResidentRow::WeaveLens) => resident_rows::weave_lens_as_agent(
+                        &server,
+                        actor,
+                        run_id,
+                        &origin,
+                        invocation,
+                        line.as_ref(),
+                        input,
+                    )
+                    .map(|(output, rows)| (output, Some(rows))),
+                    // An owner's own program takes the owner's rows (FIX 5911).
+                    None if super::owner_program_rows::is_owner_row(verb) => {
+                        super::owner_program_rows::answer(
+                            &server,
+                            actor,
+                            &origin,
+                            invocation,
+                            verb,
+                            input,
+                            line.as_ref(),
+                        )
+                    }
+                    None => answer_as_agent(
                         &server,
                         actor,
                         &origin,
                         invocation,
                         verb,
                         input,
+                        held,
                         line.as_ref(),
-                    )
-                }
-                None => answer_as_agent(
-                    &server,
-                    actor,
-                    &origin,
-                    invocation,
-                    verb,
-                    input,
-                    held,
-                    line.as_ref(),
-                ),
-            }));
+                    ),
+                },
+            ));
         });
         let Ok(answered) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: MEMORY_CODE_INTERNAL.to_owned(),
             }));
         };
-        self.observed(verb, match answered {
-            Ok((output, rows)) => Ok(Ok(AgentVerbAnswer::new(output, rows))),
-            // A verb hook's stop goes back to the run as the typed stop, and
-            // a model call no provider answered as the typed outage, which
-            // the run parks on (FIX 3194).
-            Err(error) => match (error.hook, error.retry_after) {
-                (Some(stop), _) => Err(oneiron::Error::from(*stop)),
-                (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
-                    Err(oneiron::Error::ProviderUnavailable { retry_after })
-                }
-                (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+        self.observed(
+            verb,
+            match answered {
+                Ok((output, rows)) => Ok(Ok(AgentVerbAnswer::new(output, rows))),
+                // A verb hook's stop goes back to the run as the typed stop, and
+                // a model call no provider answered as the typed outage, which
+                // the run parks on (FIX 3194).
+                Err(error) => match (error.hook, error.retry_after) {
+                    (Some(stop), _) => Err(oneiron::Error::from(*stop)),
+                    (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
+                        Err(oneiron::Error::ProviderUnavailable { retry_after })
+                    }
+                    (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
+                },
             },
-        })
+        )
     }
 
     /// The run's own calls keep the run's own admission. A consult landing
