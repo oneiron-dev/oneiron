@@ -172,6 +172,14 @@ pub const IMAGE_PRESENCE: QuestionFamily = QuestionFamily {
     class: DecisionClass::Retrieval,
 };
 
+/// The host's per-image pick (OF-329): does the task a read serves need this image in full?
+/// Keyed by the read's purpose; the wording is the host's.
+pub const IMAGE_FULL: QuestionFamily = QuestionFamily {
+    name: "memory.image_full",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
 /// Does this candidate violate one owner-authored policy row? Keyed by the
 /// document hash, row reference and action; wording comes from the row.
 pub const POLICY_OWNER_ROW: QuestionFamily = QuestionFamily {
@@ -456,6 +464,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     AI_VERDICT_ROUTINE,
     THINK_MORE,
     ASK_UP,
+    IMAGE_FULL,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,
     CONFLICT_SETTLE,
