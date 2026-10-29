@@ -6,10 +6,13 @@
 //! narrowed to some worlds or facets reads the frozen tree, and the
 //! proposal once its pack is gone, exactly when its own read admits the
 //! NOTE: the vault's own row admission, no second scope rule, and no live
-//! pack install asked for.
+//! pack install asked for. The tree itself reaches such a reader only when
+//! every row it names is one the reader's own lane reads, so no entity text
+//! from outside its admission rides in it.
 
 use serde::{Deserialize, Serialize};
 
+use super::GeneratedLens;
 use super::proposal::{LensProposalRecord, PROPOSALS};
 use crate::claim::ScopedRead;
 use crate::federation::record_scope::BirthPosition;
@@ -210,4 +213,77 @@ pub(super) fn proposal_admission_in(
             LensAdmission::Withheld
         },
     )
+}
+
+/// Whether `read` admits, in `txn`, every row `tree` names (FIX 2136): each
+/// 32-hex entity id or short ref anywhere in it, as a key or a value, that
+/// names a stored row. A reader admitted to a lens's scope is given its
+/// frozen tree only then, whole; text naming no row is the author's own.
+///
+/// # Errors
+///
+/// A tree that does not encode; a storage failure.
+pub(super) fn tree_admitted_in(
+    vault: &Vault,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    tree: &GeneratedLens,
+) -> Result<bool> {
+    let value =
+        serde_json::to_value(tree).map_err(|_| Error::CorruptedIndex("lens proposal record"))?;
+    let mut pending = vec![&value];
+    while let Some(value) = pending.pop() {
+        match value {
+            serde_json::Value::String(text) => {
+                if !ref_admitted_in(vault, read, txn, text)? {
+                    return Ok(false);
+                }
+            }
+            serde_json::Value::Array(items) => pending.extend(items),
+            serde_json::Value::Object(fields) => {
+                for (key, field) in fields {
+                    if !ref_admitted_in(vault, read, txn, key)? {
+                        return Ok(false);
+                    }
+                    pending.push(field);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `read` admits the row `text` names, when it names a stored one:
+/// a 32-hex entity id, or a short ref (an `@` suffix aside) that resolves.
+/// A row the reader's own lane refuses, or cannot judge, is outside it.
+fn ref_admitted_in(
+    vault: &Vault,
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    text: &str,
+) -> Result<bool> {
+    let reference = text
+        .split_once('@')
+        .map_or(text, |(reference, _)| reference)
+        .trim();
+    let id = match EntityId::from_hex(reference) {
+        Ok(id) => Some(id),
+        Err(_) => match crate::entity_id::parse_short_ref_syntax(reference) {
+            Ok((short_id, content_hash)) => vault
+                .hydrate_short_id_in(txn, short_id, content_hash)?
+                .map(|entry| entry.id),
+            Err(_) => None,
+        },
+    };
+    let Some(id) = id else {
+        return Ok(true);
+    };
+    if matches!(
+        live_entity_row_in_txn(&vault.store, txn, &id)?,
+        LiveEntityRow::Absent
+    ) {
+        return Ok(true);
+    }
+    Ok(read.is_entity_readable_in(txn, &id).unwrap_or(false))
 }

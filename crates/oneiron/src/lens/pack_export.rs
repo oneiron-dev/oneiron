@@ -17,8 +17,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::GeneratedLens;
 use super::artifact::lens_tree_in;
 use super::proposal::{PROPOSALS, reads_narrowed};
+use super::scope::tree_admitted_in;
 use crate::claim::ClaimReadStatus;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::secret_custody::SecretSight;
@@ -110,8 +112,9 @@ impl Memory<'_> {
             .map_err(|_| MemoryError::bad_request("lens_ref is a 32-hex lens ref"))?;
         let read = self.read_lane(ClaimReadStatus::Recorded)?;
         // A narrowed reader is given the tree where its read admits the
-        // lens's scope: its intent NOTE where the proposal placed it. It
-        // learns of no lens outside that scope, a missing one included.
+        // lens's scope, its intent NOTE where the proposal placed it, and
+        // every row the tree names. It learns of no lens outside that
+        // scope, a missing one included.
         let narrowed = reads_narrowed(read.actor_key());
         let outside = || {
             MemoryError::new(
@@ -121,7 +124,7 @@ impl Memory<'_> {
             )
         };
         let vault = self.vault();
-        let (record, tree, prompt_ref, prompt_readable) = {
+        let (record, tree, prompt_ref, prompt_readable, in_scope) = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             let record = PROPOSALS.get(&vault.store, &txn, &lens_ref)?.ok_or_else(|| {
                 if narrowed {
@@ -134,9 +137,15 @@ impl Memory<'_> {
             let prompt_ref = EntityId::from_hex(&record.prompt_ref)
                 .map_err(|_| Error::CorruptedIndex("lens proposal record"))?;
             let prompt_readable = read.is_entity_readable_in(&txn, &prompt_ref)?;
-            (record, tree, prompt_ref, prompt_readable)
+            let in_scope = !narrowed
+                || (prompt_readable && {
+                    let lens: GeneratedLens = serde_json::from_str(&tree)
+                        .map_err(|_| Error::CorruptedIndex("lens proposal record"))?;
+                    tree_admitted_in(vault, &read, &txn, &lens)?
+                });
+            (record, tree, prompt_ref, prompt_readable, in_scope)
         };
-        if narrowed && !prompt_readable {
+        if !in_scope {
             return Err(outside());
         }
         let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::LensPack);
