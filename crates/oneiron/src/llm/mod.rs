@@ -14,7 +14,7 @@ mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
 mod inference_admission;
-pub(crate) use inference_admission::admitted_as;
+pub use inference_admission::admitted_as;
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -130,6 +130,12 @@ pub use oneiron_model::llm::{
     SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
     SnapshotDigest, SnapshotMiss,
 };
+// DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
+pub use oneiron_model::llm::{
+    AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
+    SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
+    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
+};
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 
@@ -180,10 +186,12 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
-    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
+    ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
+    RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
+    VaultResidentLedger,
 };
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};

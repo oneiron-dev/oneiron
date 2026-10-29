@@ -11,6 +11,7 @@
 
 mod admit;
 mod erase;
+mod spawn_erase;
 
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +31,7 @@ use crate::{EntityId, LlmRequest, LlmResponse, Result, Vault};
 pub(crate) use self::admit::{put_staged_capsule, store_fork_response};
 pub(crate) use self::erase::erase_capsule_actor_in_txn;
 pub(super) use self::erase::{actor_gone_in_txn, capsule_bodies_in_txn, names_no_actor};
+pub(super) use self::spawn_erase::erase_spawn_prefixes_in_txn;
 
 /// Capsules. Key: id16(attempt) + be64(lease generation) + be64(step).
 const CAPSULES: SideTable<(EntityId, u64, u64), StepReplayCapsule, Named> =

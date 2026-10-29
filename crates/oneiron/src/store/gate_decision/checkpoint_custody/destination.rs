@@ -184,3 +184,34 @@ pub(super) fn delete_vault_meta_in_txn(
     }
     Ok(())
 }
+
+/// Replaces every host-order row of a vault with `rows`, in `wtxn`. Rows
+/// outside the family are refused (moved here whole from
+/// `checkpoint_custody`).
+pub(crate) fn replace_host_holds_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<()> {
+    if rows
+        .iter()
+        .any(|(key, _)| !key.starts_with(super::HOST_HOLD_PREFIX))
+    {
+        return Err(Error::CorruptedIndex("host-order legal hold rows"));
+    }
+    let vault_meta = store
+        .env
+        .open_database::<heed::types::Bytes, heed::types::Bytes>(wtxn, Some("vault_meta"))?
+        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+    let stale: Vec<Vec<u8>> = vault_meta
+        .prefix_iter(wtxn, super::HOST_HOLD_PREFIX)?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<std::result::Result<_, _>>()?;
+    for key in stale {
+        vault_meta.delete(wtxn, &key)?;
+    }
+    for (key, value) in rows {
+        vault_meta.put(wtxn, key, value)?;
+    }
+    Ok(())
+}

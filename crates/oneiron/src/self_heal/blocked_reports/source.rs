@@ -362,11 +362,16 @@ pub(crate) fn blocked_source_in(
 }
 
 /// Keeps the request a durable step is about to send (FIX 1662), before the
-/// call, under the attempt's lease generation, for the replay of a failure on
-/// a deployment that exports (the only one a code fix runs on). The row
-/// stamps the owners the step's Started row stamps, its `actor` and its
-/// `subject` (FIX 6659). Best effort: a capture that fails is logged by kind
-/// and never fails the step, whose replay is then not exact.
+/// call, under the attempt's lease generation and the call's index within the
+/// step (0 for the step's own request, then each corrective call's, FIX 6145),
+/// for the replay of a failure on a deployment that exports (the only one a
+/// code fix runs on). The row stamps the owners the step's Started row stamps,
+/// its `actor` and its `subject` (FIX 6659). Best effort: a capture that fails
+/// is logged by kind and never fails the step, whose replay is then not exact.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the step's identity, owners, call index and clock join the request"
+)]
 pub(crate) fn capture_durable_step(
     vault: &Vault,
     attempt: AttemptId,
@@ -374,12 +379,14 @@ pub(crate) fn capture_durable_step(
     actor: EntityId,
     subject: EntityId,
     request: &LlmRequest,
+    call: u32,
     now_ms: u64,
 ) {
     if !vault.config.failure_signals.exports() {
         return;
     }
-    if let Err(error) = keep_durable_step(vault, attempt, step, actor, subject, request, now_ms) {
+    let kept = keep_durable_step(vault, attempt, step, actor, subject, request, call, now_ms);
+    if let Err(error) = kept {
         tracing::warn!(
             kind = ?error.kind(),
             "a step's request was not kept; its replay is not exact"
@@ -387,6 +394,10 @@ pub(crate) fn capture_durable_step(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "capture_durable_step's inputs, kept whole"
+)]
 fn keep_durable_step(
     vault: &Vault,
     attempt: AttemptId,
@@ -394,6 +405,7 @@ fn keep_durable_step(
     actor: EntityId,
     subject: EntityId,
     request: &LlmRequest,
+    call: u32,
     now_ms: u64,
 ) -> Result<()> {
     let lease = AttemptQueue::new(vault)
@@ -403,7 +415,7 @@ fn keep_durable_step(
         attempt,
         step,
         lease,
-        call: 0,
+        call,
     };
     let row = StepReplaySource {
         request: KeptRequest {
@@ -430,8 +442,10 @@ fn keep_durable_step(
     })
 }
 
-/// Every durable step request kept for `attempt`, oldest first (FIX 1662).
-/// A row that does not read is not a request to replay.
+/// Every durable step request kept for `attempt`, oldest first (FIX 1662):
+/// by capture time, then lease generation, then call index, so the last row
+/// of a step is the last call it sent and an exact replay takes that call
+/// (FIX 6145). A row that does not read is not a request to replay.
 pub(crate) fn step_sources_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -448,7 +462,7 @@ pub(crate) fn step_sources_in(
             rows.push((key, source));
         }
     }
-    rows.sort_by_key(|(_, source)| source.captured_at_ms);
+    rows.sort_by_key(|(key, source)| (source.captured_at_ms, key.lease, key.call));
     Ok(rows)
 }
 

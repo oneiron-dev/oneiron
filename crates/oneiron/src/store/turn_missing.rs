@@ -15,7 +15,8 @@
 //! turn's entry once every MESSAGE it lists is back with its edge, and owes
 //! the turn the tag pass and sieve read it held back then. A deletion takes
 //! the MESSAGE it removes out of every entry, whether or not its row is
-//! here, and a TURN's own entry goes with the turn.
+//! here, and a TURN's own entry goes with the turn, as does a tag pass a
+//! tear left it owed ([`crate::tagging::owe_tag_pass_in_txn`]).
 
 use std::collections::BTreeSet;
 
@@ -166,28 +167,32 @@ pub(crate) fn erase_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId) ->
 
 /// The physical tear's hook, beside tagging's, with no vault in hand:
 /// [`forget_in_txn`], then each stored turn whose entry it emptied is owed
-/// its sieve read. The tag pass is the erase doors' to owe: they run
-/// [`erase_in_txn`] first, and a bare tear owes none.
+/// its sieve read, and its tag pass through the store for the tagging
+/// reconciler to mark with the vault's tagger (FIX 6262). The erase doors
+/// run [`erase_in_txn`] first and mark the pass themselves, so a tear after
+/// them finds no entry to empty.
 pub(crate) fn tear_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     for turn in forget_in_txn(store, txn, id)?.1 {
         if store.port_entity_present(txn, &turn)? {
             crate::dreamer_wake::owe_sieve_read_in_txn(store, txn, &turn)?;
+            crate::tagging::owe_tag_pass_in_txn(store, txn, &turn)?;
         }
     }
     Ok(())
 }
 
 /// Takes `id` out of every entry that lists it, whether or not its row and
-/// edges are here, and drops its own entry when it is a TURN, before the
-/// graph goes. Every entry is read: no index leads from a MESSAGE to the
-/// turns that list it. Returns whether an entry named `id`, and the turns
-/// whose entry it emptied, which lack nothing now.
+/// edges are here, and drops its own entry and any tag pass it is owed when
+/// it is a TURN, before the graph goes. Every entry is read: no index leads
+/// from a MESSAGE to the turns that list it. Returns whether an entry named
+/// `id`, and the turns whose entry it emptied, which lack nothing now.
 fn forget_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, Vec<EntityId>)> {
     let mut named = MISSING.delete(store, txn, id)?;
+    named |= crate::tagging::forget_tag_pass_in_txn(store, txn, id)?;
     let mut emptied = Vec::new();
     for (turn, mut missing) in MISSING.scan(store, txn)? {
         if !missing.remove(id) {
@@ -204,15 +209,16 @@ fn forget_in_txn(
     Ok((named, emptied))
 }
 
-/// Whether deleting `id` has an entry to change: its own, as a TURN, or one
-/// that lists it, so a headerless delete of a MESSAGE a demotion took, which
-/// only an untagged turn's entry may name, still reaches the hooks.
+/// Whether deleting `id` has an entry to change: its own, or a tag pass it
+/// is owed, as a TURN, or one that lists it, so a headerless delete of a
+/// MESSAGE a demotion took, which only an untagged turn's entry may name,
+/// still reaches the hooks.
 pub(crate) fn delete_scope_exists_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    if MISSING.contains(store, txn, id)? {
+    if MISSING.contains(store, txn, id)? || crate::tagging::tag_pass_owed_in_txn(store, txn, id)? {
         return Ok(true);
     }
     for row in MISSING.iter_from(store, txn, &[])? {

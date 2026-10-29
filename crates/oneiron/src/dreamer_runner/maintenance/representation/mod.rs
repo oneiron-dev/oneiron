@@ -7,6 +7,8 @@ mod proposal;
 #[cfg(test)]
 mod tests;
 
+use rmpv::Value;
+
 use crate::compaction::output::OutputRef;
 use crate::{EntityId, Error, Result};
 pub use approval::{
@@ -159,6 +161,22 @@ impl Packet {
 }
 fn invalid() -> Error {
     Error::InvalidClaimBody("invalid or stale representation proposal")
+}
+
+/// Every entity row a queued plan's input names: its packet's requested
+/// evidence and voice sources, its validated citations, and the reach-out a
+/// follow-up drafts from. The owner is not among them: they stand in the
+/// plan's envelope, never in the queue (FIX 4512).
+pub(crate) fn packet_claims(input: &Value) -> Result<Vec<EntityId>> {
+    let packet: Packet =
+        serde_json::from_str(input.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
+    let mut claims = Vec::new();
+    claims.extend(packet.request.evidence.iter().map(|source| source.claim));
+    claims.extend(packet.request.voice.iter().map(|source| source.claim));
+    claims.extend(packet.evidence.iter().map(|citation| citation.claim));
+    claims.extend(packet.voice.iter().map(|citation| citation.claim));
+    claims.extend(packet.reach_out.map(|pin| pin.claim));
+    Ok(claims)
 }
 
 pub(crate) use approval::{

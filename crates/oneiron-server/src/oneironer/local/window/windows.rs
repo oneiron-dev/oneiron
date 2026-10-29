@@ -32,6 +32,13 @@ use super::encode;
 /// infer that cannot build its window would.
 const SHRINKS: usize = 6;
 
+/// The most tokens two neighbouring parts both read: a quarter of a part
+/// otherwise. A span that starts in a part's own stretch is whole in that
+/// part when it is at most half the overlap long, and coreference between
+/// parts reaches only as far as the overlap. It bounds the text read twice
+/// (FIX 10704).
+const MAX_PART_OVERLAP_TOKENS: usize = 128;
+
 /// One call's windows: its parts, each a call a runtime runs whole.
 pub(crate) struct InferenceWindows {
     parts: Vec<WindowPart>,
@@ -151,8 +158,9 @@ fn joined(input: &EncoderInput) -> (String, Vec<usize>) {
 }
 
 /// `input` cut into parts of at most `piece` tokens of its turn's text,
-/// overlapping by a quarter of a part at most; `None` when a part still
-/// builds no window, for a smaller piece to try.
+/// overlapping by a quarter of a part, and [`MAX_PART_OVERLAP_TOKENS`], at
+/// most; `None` when a part still builds no window, for a smaller piece to
+/// try.
 fn split(
     counter: &WindowCounter,
     input: &EncoderInput,
@@ -169,7 +177,7 @@ fn split(
     if offsets.is_empty() {
         return Ok(None);
     }
-    let overlap = (piece / 4).min(128);
+    let overlap = (piece / 4).min(MAX_PART_OVERLAP_TOKENS);
     // Token ranges of each part.
     let mut ranges = Vec::new();
     let mut first = 0;

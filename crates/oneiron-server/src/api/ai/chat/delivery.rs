@@ -21,6 +21,7 @@ pub(in crate::api::ai::chat) fn streamed(
         user_turn,
         answering,
         credential,
+        board_omitted,
         ..
     } = started;
     let Answering {
@@ -31,6 +32,7 @@ pub(in crate::api::ai::chat) fn streamed(
     let accepted = ChatLine::Accepted {
         user_turn,
         message_id: handle.message_id().to_hex(),
+        board_omitted,
     };
     let head = futures_util::stream::once(async move { line(&accepted) });
     let events = subscription.filter_map(|event| async move {
@@ -109,6 +111,7 @@ pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
         turn,
         answering,
         credential,
+        board_omitted,
         ..
     } = started;
     let Answering {
@@ -150,6 +153,7 @@ pub(in crate::api::ai::chat) async fn whole(started: Started) -> Response {
         text: outcome.text,
         incomplete: !receipt.complete(),
         finish_reason: receipt.finish_reason,
+        board_omitted,
     })
     .into_response()
 }

@@ -402,7 +402,7 @@ impl FloorWrites<'_> {
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
         BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
-        self::attribution::witness_replayed_in_txn(self.store, wtxn, plan, None);
+        self::attribution::witness_replayed_in_txn(vault, wtxn, plan, None);
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
         // base text now, so it owes the vault's tagger a pass and its embedder
         // a vector (ARCH-0004), committed with the promotion. The receipt
@@ -643,7 +643,7 @@ impl FloorWrites<'_> {
         let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
         BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
-        self::attribution::witness_replayed_in_txn(self.store, wtxn, plan, Some(&fresh));
+        self::attribution::witness_replayed_in_txn(vault, wtxn, plan, Some(&fresh));
         crate::tagging::mark_turn_in_txn(
             vault,
             wtxn,

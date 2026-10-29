@@ -293,6 +293,9 @@ pub struct AttributionSplit {
     /// [`AttributionVerdict::ALL`] order.
     pub shares: Vec<AttributionShare>,
     pub unclear: Vec<UnclearNote>,
+    /// The label each region stands at after the floor, one per region in
+    /// hunk order: `unclear` where the answer was held (FIX 9808).
+    pub hunks: Vec<AttributionVerdict>,
 }
 
 impl AttributionSplit {

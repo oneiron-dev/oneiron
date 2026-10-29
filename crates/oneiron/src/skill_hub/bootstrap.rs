@@ -159,8 +159,7 @@ fn bind_shipped_pattern_in_txn(
     let Some(binding) = pattern_binding(name, skill) else {
         return Ok(());
     };
-    let tree_version = u32::try_from(crate::task_type::SEEDED_TREE_VERSION)
-        .map_err(|_| Error::InvariantViolation("seeded task-type tree version"))?;
+    let tree_version = crate::task_type::SEEDED_TREE_VERSION;
     crate::team::pattern::bind_pattern_skill_in_txn(vault, txn, &binding, tree_version)
 }
 

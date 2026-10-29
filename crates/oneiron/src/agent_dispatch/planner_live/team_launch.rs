@@ -144,8 +144,18 @@ impl AgentDispatcher<'_> {
         let rtxn = self.vault.store.env.read_txn()?;
         let planned = match self.planned_launch_in_txn(&rtxn, launch.name)? {
             LaunchStand::Planned(planned) => planned,
-            LaunchStand::Settled(view) => return Ok(*view),
+            LaunchStand::Settled(view) => {
+                if let Some(plan) = &view.plan {
+                    self.observe_seat(plan.plan.agent_def);
+                }
+                return Ok(*view);
+            }
         };
+        // FIX 9180: the plan's AGENT_DEF seats the leader and every member,
+        // noted before anything below can fail.
+        if let Ok(plan) = planned.plan() {
+            self.observe_seat(plan.plan.agent_def);
+        }
         let erased = self.target_erased_in_txn(&rtxn, &planned);
         drop(rtxn);
         if erased {

@@ -43,6 +43,7 @@ mod history;
 mod input;
 mod marker;
 mod output;
+mod owed;
 mod provisional;
 mod reconciler;
 mod register;
@@ -83,6 +84,7 @@ pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in
 pub(crate) use marker::text_entity_type_in_txn;
 pub(crate) use marker::{mark_on_publication_in_txn, mark_turn_in_txn, same_marker_identity};
 pub(crate) use output::{check_links, check_mood_parts, check_span_order};
+pub(crate) use owed::{forget_tag_pass_in_txn, owe_tag_pass_in_txn, tag_pass_owed_in_txn};
 pub(crate) use provisional::{
     confirm_in_txn as confirm_provisional_in_txn, mint_for_span_in_txn, provisional_in_txn,
     refuse_held_id_in_txn, release_held_id_in_txn, resolve_in_txn as resolve_provisional_in_txn,

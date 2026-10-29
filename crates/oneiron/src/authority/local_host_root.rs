@@ -11,8 +11,10 @@
 //! authority, this install's machine keys, its recovery pin or its
 //! standing: no Genesis is minted, no authority row is written, and the
 //! validator writes nothing to the vault. The one write is the in-place
-//! keystore replace of this install's `HostIssuerSeed` slot. No secret byte
-//! is returned, logged or named in an error.
+//! keystore replace of this install's `HostIssuerSeed` slot; once it lands,
+//! the seed is escrowed in the vault's key custody (FIX-LIST 10770), best
+//! effort, never changing the answer. No secret byte is returned, logged or
+//! named in an error.
 
 use oneiron_keystore::KeystoreError;
 
@@ -148,7 +150,9 @@ impl Vault {
     /// [`Self::validate_local_host_root_replacement`] passes, through the
     /// keystore's in-place replace: never delete then create. An empty slot
     /// stays empty, and a keystore with no in-place update writes nothing;
-    /// both are answers, not errors. The vault itself is not written.
+    /// both are answers, not errors. The vault's authority is not written; a
+    /// seed replaced in place is escrowed in its key custody (FIX-LIST
+    /// 10770), and a fault there is warned, never this answer.
     pub fn replace_retained_host_root_secret(
         &self,
         owner: &AuthenticatedOwner,
@@ -163,6 +167,9 @@ impl Vault {
                     "the owner replaced this install's retained host root in place; \
                      the vault's root and this install's standing are unchanged"
                 );
+                if let Ok(issuer) = HostSlipIssuer::from_seed(replacement) {
+                    self.escrow_host_slip_issuer_logged(&issuer);
+                }
                 Ok(RetainedHostRootReplace::Replaced(validated))
             }
             Ok(false) => Ok(RetainedHostRootReplace::Empty),

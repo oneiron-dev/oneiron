@@ -12,9 +12,6 @@ use crate::{Error, Result};
 
 use super::validate::{validate_lens_capability_name, validate_lens_token};
 
-pub(super) const MAX_LENS_TREE_DEPTH: usize = 64;
-pub(super) const MAX_LENS_COLLECTION_ITEMS: usize = 4096;
-
 macro_rules! lens_token_type {
     ($name:ident, $context:literal) => {
         lens_token_type!($name, $context, false);

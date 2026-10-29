@@ -134,6 +134,26 @@ fn logged_row(receipt: &RunReceipt) -> Value {
             "revision": revision,
             "from": from,
         }),
+        // FIX 7767: a call admitted past its resident's soft share, with
+        // the counts; the resident and allocation are ids.
+        RunEvent::ResidentOverdraft {
+            lease,
+            resident,
+            allocation,
+            share_units,
+            used_units,
+            overdraft_units,
+        } => json!({
+            "event": "resident_overdraft",
+            "revision": revision,
+            "lease_seq": lease_seq(lease),
+            "resident": resident.to_hex(),
+            "allocation": id(&allocation.id),
+            "allocation_generation": allocation.generation,
+            "share_units": share_units,
+            "used_units": used_units,
+            "overdraft_units": overdraft_units,
+        }),
         // FIX 2310: the planned child, the pick its plan named and the
         // model that answered in its place.
         RunEvent::PlanModelSubstituted {

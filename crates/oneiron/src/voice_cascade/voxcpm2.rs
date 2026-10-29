@@ -506,7 +506,7 @@ impl Vault {
 pub mod http;
 mod pcm;
 use pcm::PCM_WINDOW_BYTES;
-pub use pcm::VoxCpm2PcmBody;
+pub use pcm::{PcmSpool, VoxCpm2PcmBody};
 
 #[cfg(test)]
 mod tests;

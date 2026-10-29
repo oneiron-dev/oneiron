@@ -382,7 +382,9 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    let session = hook_session(Some(memory), verb)?;
+    // A call serving a room NOTE keeps its hooks' records for its session
+    // (FIX 4280, 10344), judged on the call's own input.
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     row_pre_resumable(
         memory,
         verb,
@@ -399,7 +401,7 @@ pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<Ver
 /// not the facade's credential-bound live-run wrapper. All other hooks and
 /// rewrite admission stay the same as [`row_pre`].
 pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    let session = hook_session(Some(memory), verb)?;
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     row_pre_resumable(
         memory,
         verb,
@@ -536,7 +538,7 @@ pub fn row(
         .plain_resume()
         .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
         .map(VerbResume::Row);
-    let session = hook_session(Some(memory), verb)?;
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     let pre = match row_pre_resumable(
         memory,
         verb,
@@ -610,7 +612,7 @@ where
     let args = encode(&input)?;
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
-    let session = hook_session(Some(memory), verb)?;
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     let mut pre = match row_pre_resumable(
         memory,
         verb,

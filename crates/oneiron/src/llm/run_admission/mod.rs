@@ -21,6 +21,7 @@ mod media;
 mod media_job;
 mod permit;
 mod receipt;
+mod resident;
 mod settle;
 mod wire;
 
@@ -46,6 +47,7 @@ pub use receipt::{
     CalledTeacher, MemoryReceipts, PermitFacts, RunEvent, RunReceipt, RunReceiptSink,
     RunStreamUsage, RunTokenUsage, TeacherReport,
 };
+pub use resident::{ResidentLedger, ResidentShare, ResidentStanding};
 pub use settle::CallOutcome;
 pub use wire::{WireCallError, WireSeat};
 
