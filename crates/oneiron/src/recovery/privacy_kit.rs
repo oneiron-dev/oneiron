@@ -37,7 +37,9 @@ pub enum KitSecretKind {
 }
 
 /// Where the owner keeps one piece. There is no host, cloud or server variant.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PieceHome {
     /// The issuing machine, in its device-only key slot; never the vault store or sync.

@@ -647,7 +647,14 @@ fn bind(
     answer: Value,
     refusals: &[(&str, &str)],
 ) {
-    bind_operation(spec, path, method, Some(body), json_answer(answer), refusals);
+    bind_operation(
+        spec,
+        path,
+        method,
+        Some(body),
+        json_answer(answer),
+        refusals,
+    );
 }
 
 /// [`bind`] for a route that reads no body: the operation declares none
