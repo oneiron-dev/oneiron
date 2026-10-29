@@ -27,9 +27,8 @@ use crate::api::owner_routes::widen_proposal_routes::{
     widen_answer_body_schema, widen_proposal_schema,
 };
 use crate::api::owner_routes::world_privacy_routes::{
-    set_widen_unanimity_body_schema, set_world_privacy_body_schema,
-    undo_world_privacy_body_schema, widen_unanimity_outcome_schema,
-    world_privacy_answer_body_schema, world_privacy_answer_schema,
+    set_widen_unanimity_body_schema, set_world_privacy_body_schema, undo_world_privacy_body_schema,
+    widen_unanimity_outcome_schema, world_privacy_answer_body_schema, world_privacy_answer_schema,
     world_privacy_outcome_schema, world_privacy_receipt_schema,
 };
 use crate::api::owner_routes::world_privacy_work_routes::{

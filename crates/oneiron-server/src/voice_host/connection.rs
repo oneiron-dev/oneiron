@@ -8,6 +8,7 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::claim::ScopedReadReceipt;
@@ -28,6 +29,7 @@ use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::time::{Instant, timeout, timeout_at};
 
 use oneiron::voice_cascade::media::VoiceMediaOutput;
+use oneiron::voice_cascade::spilled_audio::{AudioSpool, SpilledFrame};
 
 use super::media_bridge::{
     HEARD_REVISION, HeardWork, LIVE_ASR_FAILURE, LiveAsrFailure, MediaBridge, MediaEvent,
@@ -261,7 +263,7 @@ impl VoiceHost {
     ) -> io::Result<()> {
         tokio::pin!(stop);
         let mut reader = BufReader::new(read);
-        let mut frame = FrameReader::new();
+        let mut frame = FrameReader::new(Arc::clone(&self.vault));
         let mut pending: Option<Pending<'_>> = None;
         // Whether `pending` enriches a final: words heard live after it wait.
         let mut pending_final = false;
@@ -735,15 +737,27 @@ impl Drop for EndOnDrop<'_> {
 
 /// State survives select cancellation: partial frame bytes and the absolute
 /// deadline cannot reset each time an enrichment response becomes ready.
+/// The partial frame spills past the spool's inline bound instead of
+/// growing in memory while its newline is waited for (FIX 3728).
 struct FrameReader {
-    bytes: Vec<u8>,
+    frame: SpilledFrame,
+    spool: AudioSpool,
+    vault: Arc<oneiron::Vault>,
     deadline: Instant,
 }
 
 impl FrameReader {
-    fn new() -> Self {
+    fn new(vault: Arc<oneiron::Vault>) -> Self {
+        // A body directory that would not open leaves frames in memory,
+        // still served.
+        let spool = AudioSpool::new(&vault).unwrap_or_else(|error| {
+            tracing::warn!(%error, "voice frames held in memory; their spill directory did not open");
+            AudioSpool::unspilled(&vault)
+        });
         Self {
-            bytes: Vec::new(),
+            frame: SpilledFrame::new(),
+            spool,
+            vault,
             deadline: Instant::now() + Duration::from_secs(30),
         }
     }
@@ -754,7 +768,7 @@ impl FrameReader {
                 .await
                 .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "voice read timeout"))??;
             if available.is_empty() {
-                return if self.bytes.is_empty() {
+                return if self.frame.is_empty() {
                     Ok(None)
                 } else {
                     Err(io::Error::new(
@@ -763,16 +777,22 @@ impl FrameReader {
                     ))
                 };
             }
-            if self.bytes.is_empty() {
+            if self.frame.is_empty() {
                 self.deadline = Instant::now() + Duration::from_secs(5);
             }
             let newline = available.iter().position(|byte| *byte == b'\n');
             let count = newline.unwrap_or(available.len());
-            self.bytes.extend_from_slice(&available[..count]);
+            self.frame
+                .append(&self.spool, &available[..count])
+                .map_err(|_| io::Error::other("voice frame spill write failed"))?;
             reader.consume(count + usize::from(newline.is_some()));
             if newline.is_some() {
                 self.deadline = Instant::now() + Duration::from_secs(30);
-                return Ok(Some(std::mem::take(&mut self.bytes)));
+                let frame = std::mem::take(&mut self.frame);
+                let bytes = frame
+                    .finish(&self.spool, &self.vault)
+                    .map_err(|_| io::Error::other("voice frame spill read failed"))?;
+                return Ok(Some(bytes));
             }
         }
     }

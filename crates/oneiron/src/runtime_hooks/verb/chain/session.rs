@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 use crate::code_run::{SessionHookPhase, SessionHookState};
-use crate::runtime_hooks::{HookGrant, HookOutcome, VerbHookStop, filter};
+use crate::runtime_hooks::{HookGrant, HookOutcome, VerbHookStop, filter, store};
 use crate::skill_hub::pack_catalog::HookPhase;
 use crate::store::SessionStoreView;
 use crate::{Result, Vault};
@@ -188,13 +188,26 @@ impl<'c> Chain<'c> {
         } else {
             SessionHookPhase::Pre
         };
-        hooks.hold(self.runs.iter().map(|run| HeldRun {
-            key: run.key,
-            receipt: self.receipt(run),
-            saved: self.saved(run, at),
-            hook: hook_name(run.binding),
-            phase,
-            state: state(run),
+        let rtxn = self.vault.store.env.read_txn().ok();
+        hooks.hold(self.runs.iter().map(|run| {
+            let mut receipt = self.receipt(run);
+            let mut saved = self.saved(run, at);
+            let erased = rtxn.as_ref().map_or(true, |txn| {
+                store::dependencies_erased_in_txn(self.vault, txn, &run.hook_dependencies())
+                    .unwrap_or(true)
+            });
+            if erased {
+                store::scrub_receipt_payload(&mut receipt);
+                store::scrub_verb_payload(&mut saved);
+            }
+            HeldRun {
+                key: run.key,
+                receipt,
+                saved,
+                hook: hook_name(run.binding),
+                phase,
+                state: state(run),
+            }
         }));
     }
 }

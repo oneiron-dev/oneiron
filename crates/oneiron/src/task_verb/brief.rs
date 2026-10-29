@@ -642,6 +642,8 @@ impl QueueTaskBrief {
         let mut moved = Vec::new();
         for (target, digest) in pins {
             match pin_holds_in(vault, txn, target, digest)? {
+                // FIX 11106: a copy keeps a pin whose row is gone, as stale.
+                None if copied => moved.push(target),
                 None => return Err(MemoryError::from(Error::EntityNotFound)),
                 Some(true) => {}
                 Some(false) if copied => moved.push(target),

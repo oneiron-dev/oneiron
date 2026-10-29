@@ -461,9 +461,15 @@ impl<'c> Chain<'c> {
                     }
                 }
                 Some(_) => None,
-                // A refused Skip (including a blocking hook's) cannot
-                // turn compaction into an Ask and stop the pass.
-                None if self.call.verb == COMPACT => None,
+                // A refused Skip stays invalid, never an indirect Ask. A
+                // genuine blocking execution failure takes the Write Ask.
+                None if self.call.verb == COMPACT
+                    && self.runs.last().is_some_and(|run| {
+                        run.reason.as_deref() == Some("a host.compact pre-hook may not skip")
+                    }) =>
+                {
+                    None
+                }
                 None if binding.selector.blocking => match self.call.domain {
                     VerbDomain::Read => Some(self.hide(binding)),
                     VerbDomain::Write => {
@@ -595,6 +601,10 @@ impl<'c> Chain<'c> {
             hex_lower(key),
             request,
             self.vault.store.clock.now_recorded_at(),
+            self.call
+                .turn
+                .clone()
+                .map(|target| target.for_phase(self.phase)),
         )?;
         let lineage = self.lineage(id, key);
         self.blocks.push((block_id(key)?, row, lineage));
