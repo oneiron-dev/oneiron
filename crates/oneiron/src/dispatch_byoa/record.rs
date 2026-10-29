@@ -21,10 +21,12 @@ use crate::temporal::TimeRange;
 use super::error::{ByoaResult, ERR_ARTIFACT_COLLISION, ERR_RUNNER_RECORD, invalid};
 use super::exhaust::ensure_byoa_runtime_actor;
 
-/// The record `id`'s head version holds, if `id` holds one.
+/// The record `id`'s head version holds, if `id` holds one. A head that does
+/// not decode as `T` reads as absent, under a key-only WARN, never a failed
+/// read.
 ///
 /// # Errors
-/// A store failure, or a head that does not decode as `T`.
+/// A store failure.
 pub(super) fn head_record<T: DeserializeOwned>(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -39,9 +41,16 @@ pub(super) fn head_record<T: DeserializeOwned>(
     let Some(bytes) = vault.read_blob_artifact_version_in_txn(rtxn, id, head.version)? else {
         return Ok(None);
     };
-    rmp_serde::from_slice(&bytes)
-        .map(Some)
-        .map_err(|_| invalid(ERR_RUNNER_RECORD))
+    match rmp_serde::from_slice(&bytes) {
+        Ok(record) => Ok(Some(record)),
+        Err(_) => {
+            tracing::warn!(
+                record = %id.to_hex(),
+                "byoa runner seat record head does not decode: read as absent"
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// Appends `record` as the head of `id`, made on first use as the artifact

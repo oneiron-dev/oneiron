@@ -140,7 +140,7 @@ pub struct HealPendingProposal {
     /// The gate decision that holds it for consent; `None` when the tray does not answer
     /// for its sequence row, so no decision is known (FIX 7378).
     pub decision: Option<[u8; 16]>,
-    /// Its predicate; `None` when its live body is gone.
+    /// Its predicate, from its live body or its stamped pending-consent row.
     pub predicate: Option<String>,
     /// When it entered the tray; `None` when the tray does not answer for its sequence
     /// row (FIX 7378).
@@ -366,6 +366,19 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut rows: BTreeMap<HealSourceRef, HealResidue> = BTreeMap::new();
         for pending in self.pending_heal_refs_in_txn(&txn, &COACH_PROPOSALS)? {
+            let stamped_predicate = if pending.body.is_none() {
+                soft(self.store.pending_gate_consent_in_txn(&txn, &pending.claim))?
+                    .flatten()
+                    .and_then(|record| record.predicate)
+            } else {
+                None
+            };
+            if stamped_predicate
+                .as_deref()
+                .is_some_and(|predicate| !COACH_PROPOSALS.contains(&predicate))
+            {
+                continue;
+            }
             let (source, gap) = match pending.body.as_ref() {
                 None => (
                     HealSourceRef::Unproved(pending.claim),
@@ -388,7 +401,10 @@ impl Vault {
             row.proposals.push(HealPendingProposal {
                 claim: pending.claim,
                 decision: pending.decision.map(crate::store::GateDecisionId::as_bytes),
-                predicate: pending.body.map(|body| body.predicate),
+                predicate: pending
+                    .body
+                    .map(|body| body.predicate)
+                    .or(stamped_predicate),
                 proposed_at: pending.created_at,
             });
         }

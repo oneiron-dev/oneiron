@@ -74,12 +74,7 @@ impl ScopedRead<'_> {
     + Sync
     + 'p {
         move |store, txn, id| {
-            // A CLAIM whose body does not decode is no candidate, as the D19
-            // gate holds; it does not end the search.
-            if let Some(row) = crate::ports::EntityStoreRead::port_entity_record(store, txn, id)?
-                && row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                && crate::claim::decode_claim_body(&row.body, true).is_err()
-            {
+            if !plan_row_decodes(store, txn, id)? {
                 return Ok(false);
             }
             if self.recall_candidate_in(txn, policy, filter, id)? {
@@ -125,14 +120,15 @@ impl ScopedRead<'_> {
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let admitted = self.plan_admits(&filter, &policy, &excluded);
+        let admitted = self.plan_gate(&filter, &policy, &excluded);
         let results = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .filter_candidates(&admitted)
+            .filter_candidates(&plan_row_decodes)
+            .gate_candidates(&admitted)
             .search(query, vector, None, limit)
             .run_for_pack()?;
         self.filter_search_results(
@@ -174,14 +170,15 @@ impl ScopedRead<'_> {
             });
         }
         let excluded = self.request_exclusions(&policy, requested)?;
-        let admitted = self.plan_admits(&filter, &policy, &excluded);
+        let admitted = self.plan_gate(&filter, &policy, &excluded);
         let mut pipeline = self
             .vault
             .query()
             .reading(self.store_read())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.actor_key.clone())
-            .filter_candidates(&admitted);
+            .filter_candidates(&plan_row_decodes)
+            .gate_candidates(&admitted);
         if let Some(query) = query {
             pipeline = pipeline.search_text(query, limit);
         }
@@ -490,5 +487,145 @@ impl<'v> ScopedRead<'v> {
             }
         }
         Ok(true)
+    }
+}
+
+/// A CLAIM whose body does not decode is no candidate, as the D19 gate holds;
+/// it does not end the search.
+fn plan_row_decodes(
+    store: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(
+        match crate::ports::EntityStoreRead::port_entity_record(store, txn, id)? {
+            Some(row) if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
+                crate::claim::decode_claim_body(&row.body, true).is_ok()
+            }
+            _ => true,
+        },
+    )
+}
+
+impl<'v> ScopedRead<'v> {
+    /// [`Self::recall_candidate_in`] for the candidates of one read in
+    /// `txn`, under one relationship authority for them all (FIX 11648).
+    pub(crate) fn recall_candidates_in<'t>(
+        &'t self,
+        txn: &'t heed::RoTxn<'t>,
+        policy: &'t PolicyManifestResolution,
+        filter: &'t ResolvedRetrievalFilter,
+    ) -> impl Fn(&EntityId) -> Result<bool> + 't {
+        let held = HeldAuthority::default();
+        move |id| self.is_entity_retrievable_held_in(txn, policy, filter, id, &held)
+    }
+
+    /// [`Self::recall_candidate_in`] for a candidate of the retrieval
+    /// snapshot read in `snapshot`, under the relationship authority `held`
+    /// holds for it (FIX 11648); a candidate checked in any other
+    /// transaction loads its own. The caller borrows `snapshot` for as long
+    /// as `held`, so no other transaction stands at its address.
+    fn snapshot_candidate_in(
+        &self,
+        snapshot: &heed::RoTxn<'_>,
+        held: &HeldAuthority<'v>,
+        txn: &heed::RoTxn<'_>,
+        policy: &PolicyManifestResolution,
+        filter: &ResolvedRetrievalFilter,
+        id: &EntityId,
+    ) -> Result<bool> {
+        if std::ptr::eq(txn, snapshot) {
+            return self.is_entity_retrievable_held_in(txn, policy, filter, id, held);
+        }
+        self.recall_candidate_in(txn, policy, filter, id)
+    }
+
+    /// A recall's candidate admission under its query plan: the predicate of
+    /// [`Self::recall_candidate_in`], under one relationship authority for
+    /// each retrieval snapshot (FIX 11648).
+    pub(crate) fn recall_candidate_gate<'p>(
+        &'p self,
+        policy: &'p PolicyManifestResolution,
+        filter: &'p ResolvedRetrievalFilter,
+    ) -> RecallCandidateGate<'p, 'v> {
+        RecallCandidateGate {
+            read: self,
+            policy,
+            filter,
+        }
+    }
+
+    /// [`Self::plan_admits`] past its decode check (`plan_row_decodes`, the
+    /// search's candidate filter), under one relationship authority for each
+    /// retrieval snapshot (FIX 11648).
+    pub(super) fn plan_gate<'p>(
+        &'p self,
+        filter: &'p ResolvedRetrievalFilter,
+        policy: &'p PolicyManifestResolution,
+        excluded: &'p RequestExclusions,
+    ) -> PlanGate<'p, 'v> {
+        PlanGate {
+            read: self,
+            policy,
+            filter,
+            excluded,
+        }
+    }
+}
+
+/// [`ScopedRead::recall_candidate_gate`].
+pub(crate) struct RecallCandidateGate<'p, 'v> {
+    read: &'p ScopedRead<'v>,
+    policy: &'p PolicyManifestResolution,
+    filter: &'p ResolvedRetrievalFilter,
+}
+
+impl crate::pipeline::CandidateGate for RecallCandidateGate<'_, '_> {
+    fn in_txn<'t>(
+        &'t self,
+        txn: &'t heed::RoTxn<'t>,
+    ) -> Box<crate::pipeline::SnapshotCandidateFilter<'t>> {
+        let held = HeldAuthority::default();
+        Box::new(
+            move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
+                self.read
+                    .snapshot_candidate_in(txn, &held, rtxn, self.policy, self.filter, id)
+            },
+        )
+    }
+}
+
+/// [`ScopedRead::plan_gate`].
+pub(super) struct PlanGate<'p, 'v> {
+    read: &'p ScopedRead<'v>,
+    policy: &'p PolicyManifestResolution,
+    filter: &'p ResolvedRetrievalFilter,
+    excluded: &'p RequestExclusions,
+}
+
+impl crate::pipeline::CandidateGate for PlanGate<'_, '_> {
+    fn in_txn<'t>(
+        &'t self,
+        txn: &'t heed::RoTxn<'t>,
+    ) -> Box<crate::pipeline::SnapshotCandidateFilter<'t>> {
+        let held = HeldAuthority::default();
+        Box::new(
+            move |_: &crate::store::StoreRead<'_>, rtxn: &heed::RoTxn<'_>, id: &EntityId| {
+                let read = self.read;
+                if read.snapshot_candidate_in(txn, &held, rtxn, self.policy, self.filter, id)? {
+                    return Ok(true);
+                }
+                if let Some(ceiling) = &self.excluded.ceiling
+                    && read.snapshot_candidate_in(txn, &held, rtxn, self.policy, ceiling, id)?
+                {
+                    self.excluded
+                        .ids
+                        .lock()
+                        .map_err(|_| Error::InvariantViolation("request exclusions lock"))?
+                        .insert(*id);
+                }
+                Ok(false)
+            },
+        )
     }
 }

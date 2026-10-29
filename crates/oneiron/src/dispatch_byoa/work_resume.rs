@@ -25,7 +25,9 @@ use super::error::ByoaResult;
 use super::exhaust::{ByoaEgressPort, ByoaTerminalReceipt, decode_byoa_record};
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{RunnerSeatPolicy, SeatRoute, SeatSpent, SkippedRunnerSeat};
-use super::work_binding::{RunnerSeatChoice, RunnerWorkBindingId, head_hop, seat_index};
+use super::work_binding::{
+    RunnerSeatChoice, RunnerWorkBindingId, head_hop, remap_seat, seat_index,
+};
 use super::work_hand_off::{HandOff, SeatSearch};
 
 /// A bound work a spend parked, to resume on a seat (FIX 7450).
@@ -115,7 +117,7 @@ where
             return Ok(RunnerWorkResume::Gone);
         };
         let attempt = AttemptId::from_bytes(&head.attempt)?;
-        let seat = seat_index(head.seat);
+        let seat = remap_seat(policy, &head, seat_index(head.seat))?;
         if attempt != request.expected_attempt {
             return Ok(RunnerWorkResume::Current { seat, attempt });
         }
@@ -197,6 +199,7 @@ where
 pub(super) fn moved_on_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
+    policy: &RunnerSeatPolicy,
     receipt: &ByoaTerminalReceipt,
     spent: Option<&SeatSpent>,
 ) -> ByoaResult<Option<SeatRoute>> {
@@ -218,10 +221,13 @@ pub(super) fn moved_on_in_txn(
         return Ok(None);
     };
     let connector_kind = decode_byoa_record(&attempt)?.connector.kind();
+    let seat = remap_seat(policy, &head, seat_index(head.seat))?;
+    let mut receipt = receipt.clone();
+    receipt.skipped_seats = head.skipped;
     Ok(Some(SeatRoute::NextSeat {
-        receipt: receipt.clone(),
+        receipt,
         spent: spent.clone(),
-        seat: seat_index(head.seat),
+        seat,
         outcome: ByoaDispatchOutcome::Existing(ByoaDispatchStatus {
             attempt,
             connector_kind,

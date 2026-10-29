@@ -26,6 +26,7 @@ impl Vault {
     pub(super) fn settle_held_scrubs_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         super::super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
         self.store.settle_gate_scrubs_in_txn(txn)?;
+        self.store.settle_owed_staged_erases_in_txn(txn)?;
         Ok(())
     }
 }
@@ -48,6 +49,9 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     }
     let sources: Vec<EntityId> = ids.iter().copied().collect();
     if vault.store.gate_scrubs_owed_in_txn(txn, &sources)? {
+        return Ok(true);
+    }
+    if vault.store.staged_erases_owed_in_txn(txn, &sources)? {
         return Ok(true);
     }
     if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {

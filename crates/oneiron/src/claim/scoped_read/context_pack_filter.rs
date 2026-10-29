@@ -1,4 +1,5 @@
 //! Final actor-bound context-pack filtering before rendering and telemetry.
+use super::access_gate::HeldAuthority;
 use super::*;
 use crate::context_pack::{ContextPack, EmptyContext, EmptyReason, PackCriticalAccounting};
 
@@ -46,6 +47,9 @@ impl ScopedRead<'_> {
             .lock()
             .map_err(|_| Error::InvariantViolation("recall authority lock"))? = Some(fold);
         let result = (|| {
+            // One relationship authority for every row this filter checks in
+            // its snapshot, not one per row (FIX 11648).
+            let held = HeldAuthority::default();
             let had_l2_base = pack.l2_base.is_some();
             let mut auxiliary_suppressed = 0;
             if let Some(summary) = pack.l2_base.as_ref() {
@@ -71,7 +75,7 @@ impl ScopedRead<'_> {
             for hit in std::mem::take(&mut pack.capabilities) {
                 let item = self.admit_in(&rtxn, &hit.id, || {
                     if !self
-                        .is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, &hit.id)?
+                        .is_entity_retrievable_held_in(&rtxn, &policy, &filter, &hit.id, &held)?
                     {
                         return Ok(None);
                     }
@@ -92,6 +96,7 @@ impl ScopedRead<'_> {
                     &filter,
                     disclosure,
                     std::mem::take(&mut pack.results),
+                    &held,
                 )?;
             let (mut neighbors, neighbor_suppressed, neighbor_rows_suppressed) = self
                 .filter_context_entities(
@@ -100,6 +105,7 @@ impl ScopedRead<'_> {
                     &filter,
                     disclosure,
                     std::mem::take(&mut pack.neighbors),
+                    &held,
                 )?;
             let (reachability_claims, reachability_rows) = self
                 .retain_neighbors_reachable_from_results(
@@ -120,7 +126,7 @@ impl ScopedRead<'_> {
                 result_suppressed + neighbor_suppressed + reachability_claims;
             let mut admitted = PackCriticalAccounting::default();
             for id in &critical.budget_omitted_ids {
-                if self.is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, id)?
+                if self.is_entity_retrievable_held_in(&rtxn, &policy, &filter, id, &held)?
                     && crate::context_pack::disclosure_admits_target(
                         &self.store_read(),
                         &rtxn,
@@ -155,7 +161,7 @@ impl ScopedRead<'_> {
     }
 }
 
-impl ScopedRead<'_> {
+impl<'v> ScopedRead<'v> {
     fn filter_context_entities(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -163,6 +169,7 @@ impl ScopedRead<'_> {
         filter: &ResolvedRetrievalFilter,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
         entities: Vec<ContextEntity>,
+        held: &HeldAuthority<'v>,
     ) -> Result<(Vec<ContextEntity>, usize, usize)> {
         let mut kept = Vec::with_capacity(entities.len());
         let mut claims_suppressed = 0;
@@ -171,7 +178,7 @@ impl ScopedRead<'_> {
             let admission =
                 self.admit_in(rtxn, &entity.id, || {
                     Ok((self
-                        .is_entity_retrievable_with_policy_in(rtxn, policy, filter, &entity.id)?
+                        .is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, held)?
                         && self.context_entity_revision_is_readable_in(
                             rtxn, policy, filter, &entity,
                         )?)
