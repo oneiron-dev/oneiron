@@ -279,7 +279,7 @@ export type ConcernMoveOutcome = { kind: "ask_coach"; card: string; ask: AgentHe
 /** `oneiron::memory::diagnostics::DiagnosticsListRequest` */
 export type DiagnosticsListRequest = { event_class?: string | null; actor_ref?: string | null; evidence_ref?: string | null; limit: number }
 /** `oneiron_contracts::claim::receipt::ReadScope` */
-export type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean }
+export type ReadScope = { entity_types?: string[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean }
 /** `oneiron_contracts::claim::receipt::ScopedReadReceipt` */
 export type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] }
 /** `oneiron::claim::scoped_read::receipt::ScopedReadResult` */
