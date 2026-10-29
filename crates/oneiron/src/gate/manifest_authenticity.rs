@@ -238,6 +238,28 @@ impl Vault {
         Ok(())
     }
 
+    /// Lifts the quarantine marker on a manifest id, so bytes declared
+    /// under it count again as any declaration does. An install never
+    /// lifts it by itself.
+    pub fn lift_manifest_quarantine(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+    ) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
+            .ok_or(Error::EntityNotFound)?;
+        if EntityMetadataHeader::parse(&raw)
+            .is_none_or(|h| h.entity_type != ENTITY_TYPE_POLICY_MANIFEST)
+        {
+            return Err(Error::InvalidConfig("not a policy manifest".into()));
+        }
+        QUARANTINED.delete(&self.store, &mut txn, &HexId(id))?;
+        txn.commit()?;
+        Ok(())
+    }
+
     /// Shared owner-authenticated manifest write door. Fixture policies and
     /// re-authoring take the same decode, target-type and write checks.
     pub(crate) fn write_owner_policy_manifest_in_txn(
