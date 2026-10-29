@@ -39143,6 +39143,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning/conversion_chain.rs",
+     "purpose": "One judge-conversion chain, resolved whole: an old score follows the swap maps to the current judge, and a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -62405,7 +62415,7 @@
      "path": "src/skill_attribution/credit_join.rs",
      "purpose": "The one reconciler of an anchored outcome's late credit (FIX 3241, FIX 10108, OF-540)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 1,
       "struct": 1
      }
@@ -62503,7 +62513,7 @@
      "path": "src/skill_attribution/late_credit.rs",
      "purpose": "Late credit over the run's recorded, actually-used derived-from edges",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 2
      }
@@ -62515,7 +62525,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "re-export": 19
      }
     },
@@ -64922,7 +64932,17 @@
      "path": "src/skill_reliability/amended.rs",
      "purpose": "Amendment verdicts on an attempt's outcome row (ARCH-0056 §5): one record per attempt, and the later verdict…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/anchored_amendment.rs",
+     "purpose": "The join between a judged amendment's defect share and the native anchored pack outcome it revises (FIX 10148)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -73166,7 +73186,7 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 10,
       "re-export": 11
      }
@@ -82045,7 +82065,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "learning": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82570,7 +82590,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82838,7 +82858,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5534,
+   "source_files": 5536,
    "test_files": 902
   },
   "oneiron-android": {
