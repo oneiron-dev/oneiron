@@ -44,6 +44,9 @@ impl SpeculativeReadScope {
     ) -> Result<PassOutput> {
         let lane = vault.scoped_read(self.key.clone());
         let (filter, policy) = lane.recall_plan()?;
+        // The kinds here, then the actor gate under one authority per
+        // snapshot (FIX 11648).
+        let gate = lane.recall_candidate_gate(&policy, &filter);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &crate::EntityId| {
                 let Some(row) = store.port_entity_record(txn, id)? else {
@@ -53,7 +56,7 @@ impl SpeculativeReadScope {
                     || !crate::memory::CONTAINER_KINDS.contains(&row.entity_type),
                     |kinds| kinds.contains(&row.entity_type),
                 );
-                Ok(wanted && lane.recall_candidate_in(txn, &policy, &filter, id)?)
+                Ok(wanted)
             };
         let mut builder = pass
             .builder(vault, deadline)
@@ -61,7 +64,8 @@ impl SpeculativeReadScope {
             .corpus(self.corpus.clone())
             .authority_filter(filter.clone())
             .scoped_note_reader(self.key.clone())
-            .filter_candidates(&admitted);
+            .filter_candidates(&admitted)
+            .gate_candidates(&gate);
         if let Some(facet) = &self.facet {
             builder = builder.facet(facet, FacetMode::Strict);
         }

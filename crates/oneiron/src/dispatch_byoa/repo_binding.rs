@@ -123,6 +123,7 @@ fn checkout_error(error: CheckoutError) -> super::error::ByoaError {
 /// at the vault's time, or claimed for another TASK: that attempt enqueues
 /// unbound, so a checkout made live between enqueue and execute still runs
 /// (FIX 7197), and its execution pins it here then ([`start_execution`]).
+/// A successor claims its fresh checkout only for a CLI connector, as here.
 ///
 /// # Errors
 /// A store failure; [`ERR_EXECUTION_CHECKOUT`] for a checkout row that does
@@ -266,11 +267,12 @@ pub(super) fn mark_stale_capture_in_txn<E>(
     Ok(())
 }
 
-/// The checkout a next seat's successor of `spent` at seat `seat` runs
+/// The checkout a next seat's CLI successor of `spent` at seat `seat` runs
 /// against: a fresh id derived from the spent attempt and the seat when the
 /// work is bound to a checkout (`source`: the spent attempt's own custody,
 /// else the custody its bound work kept), else `base`, the checkout the
-/// work ran on or names, as before.
+/// work ran on or names, as before. An endpoint or MCP successor neither
+/// uses nor claims it.
 ///
 /// # Errors
 /// A derived id the checkout door refuses.
@@ -295,12 +297,13 @@ pub(super) fn successor_checkout(
     CheckoutId::from_bytes(bytes).map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))
 }
 
-/// Claims the fresh checkout `checkout` for a next seat's successor,
+/// Claims the fresh checkout `checkout` for a next seat's CLI successor,
 /// through the shipped claim path in the routing writer: the repo, TASK and
 /// holder of `source` (the custody [`successor_checkout`] derived it from),
-/// its lease's class and lifetime (none stays none). A replay finds it
-/// claimed and claims nothing; unbound work runs its successor on its own
-/// checkout, as before.
+/// its lease's class and lifetime (none stays none). The caller claims only
+/// for a CLI successor; an endpoint or MCP successor claims nothing. A
+/// replay finds it claimed and claims nothing; unbound work runs its
+/// successor on its own checkout, as before.
 ///
 /// # Errors
 /// [`ERR_EXECUTION_CHECKOUT`] for a derived id holding another lease; a
