@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1190 facade rows, 4304 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1142.
+// UniFFI census: 1191 facade rows, 4306 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1143.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -33225,6 +33225,23 @@ pub struct SecretRewrapRequest {
     pub recipients: Vec<String>,
 }
 
+/// `oneiron::verbs::secret_custody::SecretRevokeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRevokeRequest {
+    #[serde(rename = "name")]
+    pub name: String,
+}
+
+/// `oneiron::verbs::secret_custody::SecretRevokeReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretRevokeReply {
+    #[serde(rename = "custody")]
+    pub custody: SecretCustodyReply,
+    #[serde(flatten)]
+    pub secret_rotation_receipt: Option<SecretRotationReceipt>,
+}
+
 /// `oneiron::verbs::secret_custody::SecretCustodyGetRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -66363,7 +66380,7 @@ pub enum TypeOperand {
     },
 }
 
-/// `oneiron_browser::field::TextReference`.
+/// `oneiron_browser::field::spec::TextReference`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TextReference {
@@ -66373,7 +66390,7 @@ pub struct TextReference {
     pub text: String,
 }
 
-/// `oneiron_browser::field::FieldSpec`.
+/// `oneiron_browser::field::spec::FieldSpec`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct FieldSpec {
@@ -66403,6 +66420,12 @@ pub struct FieldSpec {
     pub enum_values: Option<Vec<String>>,
     #[serde(rename = "secret", default, skip_serializing_if = "Option::is_none")]
     pub secret: Option<String>,
+    #[serde(
+        rename = "secret_is_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_is_text: Option<bool>,
 }
 
 /// `oneiron_browser::replay::ReplayAction`.
@@ -66739,7 +66762,41 @@ pub struct WorkflowSeed {
     pub license: String,
 }
 
-/// `oneiron_browser::library::ProposeInput`.
+/// `oneiron_browser::library::live_run::SecretArg`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(deny_unknown_fields)]
+pub enum SecretArg {
+    #[serde(rename = "handle")]
+    Handle(String),
+    #[serde(rename = "text")]
+    Text(String),
+}
+
+/// `oneiron_browser::switch::SnapshotBounds`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotBounds {
+    #[serde(
+        rename = "read_chars",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub read_chars: Option<u64>,
+    #[serde(
+        rename = "snapshot_origins",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_origins: Option<u64>,
+    #[serde(
+        rename = "snapshot_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_bytes: Option<u64>,
+}
+
+/// `oneiron_browser::library::propose::ProposeInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ProposeInput {
@@ -66773,6 +66830,18 @@ pub struct ProposeInput {
     pub seed: Option<WorkflowSeed>,
     #[serde(rename = "candidate", default, skip_serializing_if = "Option::is_none")]
     pub candidate: Option<String>,
+    #[serde(
+        rename = "secret_args",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_args: Option<std::collections::HashMap<String, SecretArg>>,
+    #[serde(
+        rename = "snapshot_bounds",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub snapshot_bounds: Option<SnapshotBounds>,
 }
 
 /// `oneiron_browser::library::draft::SlotField`.
@@ -67767,6 +67836,12 @@ pub struct BrowserAnswerObservationPage {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: ObservationPage,
 }
@@ -67861,6 +67936,12 @@ pub struct BrowserAnswerFindOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: FindOutput,
 }
@@ -68033,6 +68114,12 @@ pub struct BrowserAnswerWaitForOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: WaitForOutput,
 }
@@ -68087,6 +68174,12 @@ pub struct BrowserAnswerExpectOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: ExpectOutput,
 }
@@ -68167,6 +68260,12 @@ pub struct BrowserAnswerScreenshotOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: ScreenshotOutput,
 }
@@ -68229,6 +68328,12 @@ pub struct BrowserAnswerImageOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: ImageOutput,
 }
@@ -68439,6 +68544,12 @@ pub struct BrowserAnswerBatchOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: BatchOutput,
 }
@@ -68511,6 +68622,12 @@ pub struct BrowserAnswerLibraryFindOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: LibraryFindOutput,
 }
@@ -68576,6 +68693,12 @@ pub struct BrowserAnswerDraftOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: DraftOutput,
 }
@@ -68644,6 +68767,12 @@ pub struct BrowserAnswerDemonstrationStarted {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: DemonstrationStarted,
 }
@@ -68697,6 +68826,12 @@ pub struct BrowserAnswerDemonstrationOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: DemonstrationOutput,
 }
@@ -68711,7 +68846,7 @@ pub struct LiveRunRequestProposeInput {
     pub spec: ProposeInput,
 }
 
-/// `oneiron_browser::library::WorkflowCheck`.
+/// `oneiron_browser::library::propose::WorkflowCheck`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum WorkflowCheck {
     #[serde(rename = "solved")]
@@ -68801,7 +68936,7 @@ pub enum SupersedeOutcome {
     Dropped,
 }
 
-/// `oneiron_browser::library::ProposeOutput`.
+/// `oneiron_browser::library::propose::ProposeOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ProposeOutput {
     #[serde(rename = "admitted")]
@@ -68859,6 +68994,12 @@ pub struct BrowserAnswerProposeOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: ProposeOutput,
 }
@@ -68913,6 +69054,12 @@ pub struct BrowserAnswerLibraryRetireOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: LibraryRetireOutput,
 }
@@ -68978,6 +69125,12 @@ pub struct BrowserAnswerLibraryRetiredOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: LibraryRetiredOutput,
 }
@@ -68991,17 +69144,7 @@ pub enum LibraryRunMode {
     Assisted,
 }
 
-/// `oneiron_browser::library::SecretArg`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(deny_unknown_fields)]
-pub enum SecretArg {
-    #[serde(rename = "handle")]
-    Handle(String),
-    #[serde(rename = "text")]
-    Text(String),
-}
-
-/// `oneiron_browser::library::LibraryRunInput`.
+/// `oneiron_browser::library::live_run::LibraryRunInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LibraryRunInput {
@@ -69031,7 +69174,7 @@ pub struct LiveRunRequestLibraryRunInput {
     pub spec: LibraryRunInput,
 }
 
-/// `oneiron_browser::library::LibraryRunOutput`.
+/// `oneiron_browser::library::live_run::LibraryRunOutput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LibraryRunOutput {
     #[serde(rename = "workflow")]
@@ -69077,6 +69220,12 @@ pub struct BrowserAnswerLibraryRunOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: LibraryRunOutput,
 }
@@ -69137,32 +69286,14 @@ pub struct BrowserAnswerHandoverOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: HandoverOutput,
-}
-
-/// `oneiron_browser::switch::SnapshotBounds`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct SnapshotBounds {
-    #[serde(
-        rename = "read_chars",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub read_chars: Option<u64>,
-    #[serde(
-        rename = "snapshot_origins",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub snapshot_origins: Option<u64>,
-    #[serde(
-        rename = "snapshot_bytes",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub snapshot_bytes: Option<u64>,
 }
 
 /// `oneiron_browser::switch::SwitchEngineInput`.
@@ -69227,6 +69358,12 @@ pub struct BrowserAnswerSwitchEngineOutput {
     pub session_manifest: Option<SessionManifest>,
     #[serde(rename = "press", default, skip_serializing_if = "Option::is_none")]
     pub press: Option<PressAnswer>,
+    #[serde(
+        rename = "solved_capture",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub solved_capture: Option<String>,
     #[serde(flatten)]
     pub flattened: SwitchEngineOutput,
 }

@@ -47,7 +47,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/recovery-kit/upkeep", get(upkeep))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PadAccess {
     /// The install this call's kit is for, 32 hex: this one.
@@ -62,7 +62,7 @@ struct PadAccess {
 }
 
 /// Where the kept pad objects a grant reached are.
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum PadAccessHome {
     /// The home this install's connection reaches.
@@ -72,7 +72,7 @@ enum PadAccessHome {
 }
 
 /// What a kit grant of pad access did, by kept generation (hex).
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 struct PadAccessAnswer {
     /// The machine granted, 32 hex.
     machine: String,
@@ -88,6 +88,18 @@ struct PadAccessAnswer {
     pending: Vec<String>,
     /// How many are pending.
     pending_count: usize,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/recovery-kit/pad-access`'s body (FIX 11611):
+/// [`PadAccess`].
+pub(crate) fn pad_access_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PadAccess>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/recovery-kit/pad-access`'s answer (FIX 11611):
+/// [`PadAccessAnswer`].
+pub(crate) fn pad_access_answer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PadAccessAnswer>()
 }
 
 /// `POST /v1/owner/recovery-kit/pad-access`: the owner's kit grants a

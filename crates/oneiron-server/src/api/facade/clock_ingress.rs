@@ -1,5 +1,5 @@
-//! A facade or MCP call over a damaged authority clock floor (FIX 11190, FIX
-//! 11201, FIX 11202).
+//! A facade, owner-table or MCP call over a damaged authority clock floor (FIX
+//! 11190, FIX 11201, FIX 11202, FIX 11523).
 //!
 //! A damaged floor, on a handle that holds no anchor, refuses every reading
 //! of the authority clock, so every proof judged against it refuses before a
@@ -33,6 +33,7 @@ use axum::http::request::Parts;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::{IntoResponse, Response};
 use oneiron::authority::{CapabilitySlip, ClockRepairCaller};
+use oneiron::code_run::actions::{ActionArgument, ActionRegistry};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::AuthorityClockRepair;
 use serde_json::{Value, json};
@@ -47,11 +48,34 @@ pub(crate) const REPAIR_VERB: &str = "vault.authority.clock.repair";
 /// Where every facade verb is served.
 const FACADE_PREFIX: &str = "/v1/core/facade/";
 
+/// Where the app's actions are served.
+const ACTIONS_PREFIX: &str = "/v1/core/actions/";
+
 /// The MCP endpoints whose `tools/call` names one verb.
 const MCP_PATHS: [&str; 2] = ["/mcp", "/mcp/tool-first"];
 
 /// The header an MCP call's slip rides in, ahead of `Authorization`.
 const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
+
+/// The owner routes that share a facade verb, by full path (FIX 11523):
+/// H1-H4, the four owner doors whose `hooked_row` runs the same row as the
+/// facade. Each classifies as a direct call of its verb, so the owner's
+/// revoke lands over a damaged floor; any other owner route keeps today's
+/// path.
+const OWNER_VERBS: [(&str, &str); 4] = [
+    ("/v1/owner/guests/revoke", "vault.guests.revoke"),
+    ("/v1/owner/support-grants/revoke", "vault.support_grants.revoke"),
+    ("/v1/owner/legal-holds/lift-and-erase", "vault.legal_holds.lift_and_erase"),
+    ("/v1/owner/embedding-spaces/probes/delete", "vault.embedding_spaces.probes.delete"),
+];
+
+/// The facade verb of an owner route in [`OWNER_VERBS`], if it names one.
+fn owner_verb(path: &str) -> Option<&'static str> {
+    OWNER_VERBS
+        .iter()
+        .find(|(route, _)| *route == path)
+        .map(|(_, verb)| *verb)
+}
 
 /// What the binding door decided about a request over a floor that refuses
 /// readings. It rides the request's extensions; only [`classify_request`]
@@ -65,22 +89,31 @@ pub(crate) enum ClockIngress {
 }
 
 /// The binding door's decision on `request`: `None` for every request that
-/// is not a facade or MCP call, and for every call while this handle's
-/// authority readings hold. Otherwise the call's verb and its own payload
-/// are classified (an MCP `tools/call` by the tool it names and the input
-/// its arguments assemble), with the body read here and handed back
-/// unchanged: a body that is not JSON, and a call classified as neither,
-/// takes today's path as it arrived. A body this door cannot read back (past
-/// the facade's request bound), and a call whose classification faults, gets
-/// the clock's own typed refusal, `AUTHORITY_CLOCK_CORRUPT`.
+/// is not a facade, action, owner-table or MCP call, and for every call
+/// while this handle's authority readings hold. Otherwise the call's verb
+/// and its own payload are classified (an owner-table route by its row and
+/// its body as sent; an MCP `tools/call` by the tool it names and the input
+/// its arguments assemble; an action by the verb-table row its table
+/// resolves and that row's input from its one argument), with the body read
+/// here and handed back unchanged: a content-encoded body is classified on
+/// a decoded copy, and a body that is not JSON, and a call classified as
+/// neither, takes today's path as it arrived. A body this door cannot read
+/// back (past the facade's request bound), and a call whose classification
+/// faults, gets the clock's own typed refusal, `AUTHORITY_CLOCK_CORRUPT`.
 pub(crate) async fn classify_request(
     server: &SyncServer,
     request: Request,
 ) -> Result<(Request, Option<ClockIngress>), Response> {
     let path = request.uri().path();
-    let verb = path.strip_prefix(FACADE_PREFIX).map(str::to_owned);
+    // An owner route in the table classifies as a direct call of its verb
+    // (FIX 11523); any other owner route is no call.
+    let verb = path
+        .strip_prefix(FACADE_PREFIX)
+        .map(str::to_owned)
+        .or_else(|| owner_verb(path).map(str::to_owned));
+    let action = path.strip_prefix(ACTIONS_PREFIX).map(str::to_owned);
     let mcp = MCP_PATHS.contains(&path);
-    if (verb.is_none() && !mcp)
+    if (verb.is_none() && action.is_none() && !mcp)
         || !server
             .vault()
             .authority_clock_refuses_readings()
@@ -96,11 +129,22 @@ pub(crate) async fn classify_request(
     let bytes = axum::body::to_bytes(body, limit)
         .await
         .map_err(|_| clock_corrupt_refusal())?;
-    let call = serde_json::from_slice::<Value>(&bytes)
+    // This door runs outside the body codec, so a content-encoded body is
+    // classified on a decoded copy (FIX 11520) and handed back raw.
+    let decoded = crate::api::body_codec::decode_copy(&parts.headers, parts.uri.path(), &bytes);
+    let probe: &[u8] = decoded.as_deref().unwrap_or(bytes.as_ref());
+    let call = serde_json::from_slice::<Value>(probe)
         .ok()
         .and_then(|body| match verb {
             Some(verb) => Some((verb, body)),
-            None => mcp_tool_call(body),
+            None => match action {
+                Some(action) => {
+                    let args: Vec<ActionArgument> =
+                        serde_json::from_value(body.get("args")?.clone()).ok()?;
+                    action_row_call(&action, &args)
+                }
+                None => mcp_tool_call(body),
+            },
         });
     let ingress = match call {
         None => None,
@@ -123,7 +167,8 @@ fn clock_corrupt_refusal() -> Response {
 
 /// The verb an MCP `tools/call` names and the input its arguments assemble,
 /// as its generated tool assembles them; a call whose arguments do not
-/// decode carries its `spec` as the input.
+/// decode carries its `spec` as the input. An `invoke_action` call names
+/// its verb-table row through the app's table (FIX 11524).
 fn mcp_tool_call(body: Value) -> Option<(String, Value)> {
     if body.get("method")?.as_str()? != "tools/call" {
         return None;
@@ -134,11 +179,40 @@ fn mcp_tool_call(body: Value) -> Option<(String, Value)> {
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if tool == crate::mcp::MCP_INVOKE_ACTION_TOOL {
+        let verb = arguments.get("verb")?.as_str()?;
+        let args: Vec<ActionArgument> =
+            serde_json::from_value(arguments.get("args")?.clone()).ok()?;
+        return action_row_call(verb, &args);
+    }
     let input = serde_json::from_value::<crate::mcp::McpVerbArguments>(arguments.clone())
         .ok()
         .and_then(|args| crate::api::mcp_gateway::mcp_agent_verb_input(&tool, &args).ok())
         .or_else(|| arguments.get("spec").cloned())?;
     Some((tool, input))
+}
+
+/// An app action call's verb-table row and its input (FIX 11524): the row
+/// the app's table resolves the action to under its own name, and the row's
+/// whole input from the call's arguments, as the row's build reads them.
+/// `None` for a factory action, an unregistered verb, or a call whose row
+/// input does not decode: those keep today's path, and a mixed action
+/// today's refusal.
+fn action_row_call(action: &str, args: &[ActionArgument]) -> Option<(String, Value)> {
+    let input = action_row_input(args)?;
+    let app = ActionRegistry::app().ok()?;
+    Some((app.row_verb(action)?.to_owned(), input))
+}
+
+/// A verb-table or run row action's whole input from the call's arguments
+/// (FIX 11524), as the row's own build reads them: one text parsed as JSON,
+/// or one structured argument. Any other shape is no row input.
+fn action_row_input(args: &[ActionArgument]) -> Option<Value> {
+    match args {
+        [ActionArgument::Text(input)] => serde_json::from_str(input.as_str()).ok(),
+        [ActionArgument::Json(input)] => Some(input.value().clone()),
+        _ => None,
+    }
 }
 
 /// Whether a call of `verb` on `input` runs as an owner's restriction-only
@@ -156,6 +230,26 @@ pub(crate) fn restrictive_call(server: &SyncServer, verb: &str, input: Option<&V
             && oneiron::task_verb::revoke_lands::restriction_only_call(server.vault(), verb, input)
                 .unwrap_or(false)
     })
+}
+
+/// Whether an app action call of `verb` with `args` runs as an owner's
+/// restriction-only act at dispatch (FIX 11524): only while this handle's
+/// authority readings refuse, and only for a call whose row the app's table
+/// resolves and the engine classifies as wholly an erase or a revoke. Any
+/// other action keeps today's path, and a mixed action today's refusal.
+pub(crate) fn restrictive_action(
+    server: &SyncServer,
+    verb: &str,
+    args: &[ActionArgument],
+) -> bool {
+    // The app's table is read only while the readings refuse.
+    let refuses = server
+        .vault()
+        .authority_clock_refuses_readings()
+        .unwrap_or(true);
+    refuses
+        && action_row_call(verb, args)
+            .is_some_and(|(row, input)| restrictive_call(server, &row, Some(&input)))
 }
 
 /// Whether the binding door left this request's owner repair unjudged.
