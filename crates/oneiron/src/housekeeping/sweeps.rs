@@ -136,6 +136,15 @@ pub(super) fn run(
             noticed: count(vault.notify_matured_shared_acts()?),
         },
         HousekeepingSweep::SecretLiftHistory => return secret_lift(vault, deadline),
+        HousekeepingSweep::ClaimVadDebt => {
+            let (settled, failed, left) = vault.drain_owed_claim_vads(now, || deadline.passed())?;
+            return Ok(Run {
+                work: SweepWork::ClaimVadDebt { settled, failed },
+                complete: left == 0,
+                cursor: None,
+                covered_until: None,
+            });
+        }
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune

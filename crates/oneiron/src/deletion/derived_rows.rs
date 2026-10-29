@@ -53,6 +53,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::edit_distance::miner::erase_source_claim_in_txn,
     // FIX 9918: a typed question's copies of an erased judgment answer.
     crate::llm::decision::questions::erase_question_source_in_txn,
+    // FIX 9598: an erased claim's owed VAD consolidation.
+    crate::store::settle_claim_vad_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.
