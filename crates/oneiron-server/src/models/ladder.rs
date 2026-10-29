@@ -23,6 +23,8 @@ mod live_fork;
 mod shadow_capture;
 mod step_attempt;
 mod step_quota;
+// FIX 1743: a stream's probation slot, and its end to its offer's health.
+mod stream_health;
 mod worker_lease;
 
 use futures_util::StreamExt;
@@ -1937,7 +1939,9 @@ impl OfferLadder {
     /// partials) on the first rung that serves it: one permit for the whole
     /// stream, reserving `bound_ms` of audio at the rung's rate, started at
     /// its media gate before any audio leaves. An open stream never moves to
-    /// another rung; a voice route pins its one rung.
+    /// another rung; a voice route pins its one rung. It holds its offer's
+    /// probation slot to its end, which reports to its offer's health (FIX
+    /// 1743).
     pub(super) fn open_media_stream(
         &self,
         run: &RunAdmission,
@@ -1964,6 +1968,10 @@ impl OfferLadder {
             if !media.takes(&bound) || self.passes_over(call, index, &mut walk) {
                 continue;
             }
+            // A stream takes its offer's probation slot as a request does.
+            let Some(probe) = self.probe_unless_managed(index, &mut walk) else {
+                continue;
+            };
             let reserve = oneiron::llm::run_admission::MediaStreamLease::reserve_units(
                 bound.operation,
                 &media.caps,
@@ -1976,7 +1984,8 @@ impl OfferLadder {
                 reserve,
             )?;
             let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
-            return gate.open_stream(&bound, permit, media.caps.clone(), bound_ms);
+            let lease = gate.open_stream(&bound, permit, media.caps.clone(), bound_ms)?;
+            return Ok(stream_health::reported(lease, probe));
         }
         Err(self.unanswered(call, walk))
     }
