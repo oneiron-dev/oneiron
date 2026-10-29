@@ -42,7 +42,7 @@ impl Memory<'_> {
         let now = self.vault().store.clock.now_recorded_at();
         let census = self.ask_census_in(&txn, input, group_ref, now)?;
         let question_digest =
-            ask_settlement::question_digest(self.vault(), &txn, &census.effective.what)?
+            ask_settlement::question_digest(self.vault(), &txn, census.question())?
                 .ok_or(crate::Error::EntityNotFound)?;
         Ok(census.into_session_parts(group_ref, self.actor(), input, question_digest))
     }
