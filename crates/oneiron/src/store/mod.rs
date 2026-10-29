@@ -116,6 +116,8 @@ pub mod ports {
     };
 }
 
+mod active_write_txn;
+pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;

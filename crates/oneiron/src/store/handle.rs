@@ -3,7 +3,6 @@
 //! The canonical open sequence lives in [`super::open_gates`]; see the
 //! module doc on [`crate::store`] for the gate order.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
@@ -20,32 +19,7 @@ use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration};
 
 use super::*;
 
-thread_local! {
-    static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
-}
-
 pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
-
-pub(crate) struct ActiveWriteTxnGuard;
-
-impl Drop for ActiveWriteTxnGuard {
-    fn drop(&mut self) {
-        ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
-            depth.set(depth.get().saturating_sub(1));
-        });
-    }
-}
-
-pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
-    ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
-        depth.set(depth.get().saturating_add(1));
-    });
-    ActiveWriteTxnGuard
-}
-
-pub(crate) fn active_write_txn_depth() -> usize {
-    ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
-}
 
 pub struct RawDatabases {
     pub(crate) entities: Database<Bytes, Bytes>,
