@@ -440,15 +440,15 @@ impl Link {
                             if stop_sent(&mut stop) {
                                 break None;
                             }
-                            if renewal.commit(&candidate) {
-                                break Some(config);
+                            if let Some(committed) = renewal.commit(&candidate) {
+                                break Some((config, committed));
                             }
                         }
                     }
                 };
                 let _ = end.send(());
                 let ran = observed.await;
-                let Some(config) = renewed else {
+                let Some((config, committed)) = renewed else {
                     stopped(home, ran);
                     return;
                 };
@@ -475,7 +475,14 @@ impl Link {
                     return;
                 }
             };
-            tracing::info!(%home, "device sync reconnects on its renewed credential");
+            match committed {
+                renewal::CommitOutcome::Retargeted => {
+                    tracing::info!(%home, "device sync reconnects on its moved route");
+                }
+                renewal::CommitOutcome::Renewed => {
+                    tracing::info!(%home, "device sync reconnects on its renewed credential");
+                }
+            }
         }
     }
 }

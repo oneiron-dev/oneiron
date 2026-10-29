@@ -632,12 +632,9 @@ impl WireTelemetry {
     }
     /// The sequence after the last call-volume question kept.
     fn next_question_seq(&self) -> Result<u64> {
-        let last = self
-            .vault
-            .sync_state_keys_with_prefix(QUESTION_SEQ)?
-            .last()
-            .and_then(|key| key.strip_prefix(QUESTION_SEQ)?.parse::<u64>().ok());
-        Ok(last.map_or(0, |seq| seq.saturating_add(1)))
+        Ok(self
+            .last_kept_question_seq()?
+            .map_or(0, |seq| seq.saturating_add(1)))
     }
     /// Keeps `window` as telemetry, which moves no backup watermark (FIX
     /// 6730).
