@@ -193,8 +193,9 @@ impl Vault {
     /// The live setup plane, keeping an entity-backed row only when
     /// `visible` admits its entity. Base reality and received worlds are not
     /// this vault's arrangement, so they are not rows, and neither is a
-    /// retired skill or channel identity, an unnamed mask, or a quarantined
-    /// manifest. A world with no name is named by its id.
+    /// retired skill, a requested (unbound) or retired channel identity, an
+    /// unnamed mask, or a quarantined manifest. A world with no name is
+    /// named by its id.
     pub(super) fn read_live_shape(
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -314,7 +315,8 @@ impl Vault {
                 let identity = decode_channel_identity_body(&body)?;
                 if matches!(
                     identity.state(),
-                    ChannelIdentityState::Released
+                    ChannelIdentityState::Requested
+                        | ChannelIdentityState::Released
                         | ChannelIdentityState::Quarantine
                         | ChannelIdentityState::Tombstone
                 ) {
