@@ -226,7 +226,10 @@ pub(super) fn memory_floor_fold(floor_bytes: u64) -> AuthorityFold {
 pub(super) fn is_slip_op(op: &AuthorityOp) -> bool {
     matches!(
         op,
-        AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
+        AuthorityOp::SlipMint(_)
+            | AuthorityOp::SlipRevoke { .. }
+            | AuthorityOp::SlipConsume { .. }
+            | AuthorityOp::SlipGrantRevoke { .. }
     )
 }
 

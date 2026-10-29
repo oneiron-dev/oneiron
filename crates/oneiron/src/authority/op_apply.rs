@@ -47,7 +47,8 @@ pub(super) fn apply_op(
         }
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
-        | AuthorityOp::SlipConsume { .. } => {}
+        | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::SlipGrantRevoke { .. } => {}
         AuthorityOp::FederationConfirm(action) => {
             state.federation_confirms.insert(entry_hash, action.clone());
         }
@@ -548,11 +549,7 @@ fn pact_merge_tiebreak_side<'a>(
             encode_federation_pact_scope(&pact.pact_scope).unwrap_or_default(),
         )
     };
-    if key(left) <= key(right) {
-        left
-    } else {
-        right
-    }
+    if key(left) <= key(right) { left } else { right }
 }
 
 /// Commutative, associative, idempotent per-pact merge join.
