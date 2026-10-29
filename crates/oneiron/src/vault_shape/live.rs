@@ -1,6 +1,8 @@
 //! The live arrangement read as a shape: every setup-plane row the vault
 //! holds now, under the names a seed declares. Entity-backed rows and the
 //! policy frontier come from one snapshot; the pack catalog verifies its own.
+use super::channel::ShapeChannelProvision;
+use super::live_source::{LiveSkill, UnlanedChannel, channel_holding};
 use super::manifest_json::manifest_json;
 use super::reach::{ReachActor, ReachRows, ReachSender};
 use super::seed::hex;
@@ -207,7 +209,8 @@ impl Vault {
     /// [`Self::read_live_shape`], listing in `sources` the rows it stands
     /// on: each entity a kept row is read from once `visible` admits it (a
     /// name's later duplicates too), each installed pack's source beside its
-    /// load, and, whatever `visible` admits, every row the policy frontier
+    /// load, each skill's hub provenance claim its source is read from, and,
+    /// whatever `visible` admits, every row the policy frontier
     /// and the reach line are read from (the stored manifests the frontier
     /// folds, every roster actor, each sending identity with its fact heads,
     /// every connector key the join reads). Grants, the shared vault and its
@@ -219,6 +222,8 @@ impl Vault {
     ) -> Result<LiveShape> {
         let mut rows = Vec::new();
         let mut reach = ReachRows::default();
+        let mut skills: Vec<LiveSkill> = Vec::new();
+        let mut unlaned: Vec<UnlanedChannel> = Vec::new();
         let policy_frontier = {
             let txn = self.store.env.read_txn()?;
             let policy_frontier =
@@ -301,6 +306,9 @@ impl Vault {
                 ) {
                     continue;
                 }
+                // Its source is read once the grants that admit its
+                // publisher are (FIX 2668).
+                skills.push((rows.len(), id));
                 rows.push((
                     ShapeRow::Skill {
                         skill_id: record.skill_id,
@@ -341,11 +349,28 @@ impl Vault {
                         may_send,
                     });
                 }
+                // The provision its body states (FIX 2668): an active body
+                // holds no lane, so the lifecycle ledger is read for it.
+                let provision = match (
+                    channel_holding(&identity, &reach.actors),
+                    identity.pending_fulfillment(),
+                ) {
+                    (Some((custody, binding)), Some(lane)) => Some(ShapeChannelProvision {
+                        custody,
+                        binding,
+                        fulfillment: lane.into(),
+                    }),
+                    (Some((custody, binding)), None) => {
+                        unlaned.push((rows.len(), id, custody, binding));
+                        None
+                    }
+                    (None, _) => None,
+                };
                 rows.push((
                     ShapeRow::Channel {
                         channel: identity.channel().to_owned(),
                         address: identity.address_or_handle().to_owned(),
-                        provision: None,
+                        provision,
                     },
                     Some(id),
                 ));
@@ -374,6 +399,7 @@ impl Vault {
                     None,
                 ));
             }
+            self.source_live_skills_in_txn(&txn, &mut rows, &skills, &reach.grants, sources)?;
             reach.connectors = self.reach_connectors_in_txn(&txn, None)?;
             if sources.listing() {
                 // Every key the join reads: an actor's own key on a connector
@@ -385,6 +411,7 @@ impl Vault {
             }
             policy_frontier
         };
+        self.lane_live_channels(&mut rows, unlaned)?;
         // The pack catalog checks each install against its live source in a
         // snapshot of its own, so it reads after this one has closed.
         for receipt in self.installed_packs()? {

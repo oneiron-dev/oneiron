@@ -23,6 +23,7 @@ mod connector_reach;
 mod grant;
 mod group;
 mod live;
+mod live_source;
 mod manifest;
 mod manifest_json;
 mod member;

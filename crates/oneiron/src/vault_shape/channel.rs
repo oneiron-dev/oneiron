@@ -81,6 +81,16 @@ impl From<ShapeMailScope> for DelegatedGrantScope {
     }
 }
 
+impl From<DelegatedGrantScope> for ShapeMailScope {
+    fn from(scope: DelegatedGrantScope) -> Self {
+        match scope {
+            DelegatedGrantScope::MailRead => Self::MailRead,
+            DelegatedGrantScope::MailMetadata => Self::MailMetadata,
+            DelegatedGrantScope::MailSend => Self::MailSend,
+        }
+    }
+}
+
 /// Whom the identity speaks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "to", rename_all = "snake_case")]
@@ -142,6 +152,16 @@ impl From<ShapeChannelFulfillment> for ChannelIdentityFulfillment {
             ShapeChannelFulfillment::Api => Self::Api,
             ShapeChannelFulfillment::Manual => Self::Manual,
             ShapeChannelFulfillment::Review => Self::Review,
+        }
+    }
+}
+
+impl From<ChannelIdentityFulfillment> for ShapeChannelFulfillment {
+    fn from(mode: ChannelIdentityFulfillment) -> Self {
+        match mode {
+            ChannelIdentityFulfillment::Api => Self::Api,
+            ChannelIdentityFulfillment::Manual => Self::Manual,
+            ChannelIdentityFulfillment::Review => Self::Review,
         }
     }
 }
