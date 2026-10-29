@@ -76,14 +76,17 @@ pub(crate) async fn wake(
 }
 
 /// Starts the pump. Each pass runs on a blocking thread, held by `admit` (a
-/// managed vault frozen for reap skips it), every [`PUMP`], or at once after
-/// a pass that claimed its full [`PUMP_ATTEMPTS`].
+/// managed vault frozen for reap skips it), at once after a pass that
+/// claimed its full [`PUMP_ATTEMPTS`], on the vault's post-commit attempt
+/// signal (an enqueue), or every [`PUMP`] as a backstop.
 pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
+    let signals = AttemptQueue::new(server.vault()).subscribe();
     tokio::spawn(async move {
+        let mut signals = signals;
         loop {
             let more = {
                 let Some(server) = weak.upgrade() else {
@@ -112,7 +115,17 @@ pub(crate) fn spawn(
                 }
             };
             if !more {
-                tokio::time::sleep(PUMP).await;
+                tokio::select! {
+                    result = signals.recv() => {
+                        if matches!(
+                            result,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed)
+                        ) {
+                            break;
+                        }
+                    }
+                    _ = tokio::time::sleep(PUMP) => {}
+                }
             }
         }
     })

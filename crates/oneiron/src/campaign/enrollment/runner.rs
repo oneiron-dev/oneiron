@@ -309,17 +309,16 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             CampaignHomeNodeAdmission::NotHomeNode(designation) => {
                 Ok(CampaignEnrollmentClaim::NotHomeNode(designation))
             }
-            CampaignHomeNodeAdmission::Designated(_) => self
-                .vault
-                .with_write_txn_grouped(|txn| {
-                    crate::ports::JobQueue::port_job_claim(
-                        self.vault,
-                        txn,
-                        Some(CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND),
+            // `claim_kind` wakes observers only when it claims, so an empty
+            // claim never self-wakes the pump (ONE-2100).
+            CampaignHomeNodeAdmission::Designated(_) => {
+                AttemptQueue::new(self.vault)
+                    .claim_kind(
+                        CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND,
                         ClaimAttempt { lease_owner, now },
                     )
-                })
-                .map(CampaignEnrollmentClaim::Queue),
+                    .map(CampaignEnrollmentClaim::Queue)
+            }
         }
     }
 
