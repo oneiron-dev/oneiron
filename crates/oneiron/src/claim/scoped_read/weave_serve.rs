@@ -216,7 +216,7 @@ impl WeaveItemCorrectionView {
 
 /// One served item. A claim comes through the same served claim view as
 /// every other read; the rest are refs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "item", rename_all = "snake_case")]
 pub enum WeaveItemView {
     Claim {
@@ -291,7 +291,7 @@ pub enum WeaveItemView {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WeaveSectionView {
     pub kind: WeaveSectionKind,
     pub items: Vec<WeaveItemView>,
@@ -305,7 +305,7 @@ pub struct WeaveSectionView {
 /// section shows, how many agree with the expensive path. It is counted
 /// from those items, never kept apart. `sampled: 0` is no samples: no
 /// score, never a success.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WeaveSieveScoreView {
     pub sampled: u64,
     pub agreeing: u64,
@@ -316,7 +316,7 @@ pub struct WeaveSieveScoreView {
 }
 
 /// A live weave report, with its narrowing receipt.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WeaveReportView {
     pub sections: Vec<WeaveSectionView>,
     pub narrowing: ScopedReadReceipt,

@@ -15,7 +15,7 @@
 //! length (`sealed_spool`, FIX 5674). Each act's surface is audit only: no
 //! route here refuses on where the owner said yes.
 
-mod pending;
+pub(crate) mod pending;
 mod sealed_spool;
 
 use std::sync::Arc;
@@ -55,6 +55,17 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secrets/rewrap", post(rewrap_secret))
         .route("/secrets/custody", get(custody_view).post(sealed_change))
         .merge(pending::routes())
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/rewrap`'s body (FIX 11611): [`RewrapBody`].
+pub(crate) fn rewrap_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RewrapBody>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/rewrap`'s answer (FIX 11611):
+/// [`secrets::CustodyReply`].
+pub(crate) fn custody_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<secrets::CustodyReply>()
 }
 
 /// The body is read by `RegisterSecret::read`, as rotation's is: the owner
@@ -124,7 +135,7 @@ async fn revoke_secret(
 }
 
 /// `POST /v1/owner/secrets/rewrap`: the installs the owner permits now.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RewrapBody {
     name: String,
@@ -284,6 +295,50 @@ struct SealedHead {
     /// register carries none and the reply says so.
     #[serde(default)]
     manifest_ref: Option<String>,
+}
+
+/// The wire shape of [`SealedHead`] plus its required `input_base64` member,
+/// for the OpenAPI schema only (FIX 11656): `POST /v1/owner/secrets/custody`'s
+/// body. Never read at runtime; `sealed_spool` parses the body.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the sealed change's wire shape")]
+struct SealedChangeBody {
+    /// `register` or `rotate`.
+    change: String,
+    secret_id: String,
+    generation: u32,
+    /// The custody revision the surface read, as 64 hex.
+    seen: String,
+    holder: String,
+    recipients: Vec<SealedPermitBody>,
+    /// For a register, the `manifest_ref` its sealed record names: this
+    /// install attaches the manifest it resolves for it. Absent, it attaches
+    /// the vault's one current approved manifest, or records that the
+    /// register carries none and the reply says so.
+    #[serde(default)]
+    manifest_ref: Option<String>,
+    /// The input sealed to the holder's key, as standard base64: one
+    /// envelope, or the frame of numbered envelopes a body past one
+    /// envelope's plaintext bound needs.
+    input_base64: String,
+}
+
+/// The wire shape of [`PermitBody`], for the OpenAPI schema only (FIX 11656):
+/// one exact permit a sealed input binds.
+#[derive(schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[expect(dead_code, reason = "schema mirror of the sealed permit's wire shape")]
+struct SealedPermitBody {
+    machine: String,
+    profile: String,
+    encryption_key_digest: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/custody`'s body (FIX 11656):
+/// [`SealedChangeBody`].
+pub(crate) fn sealed_change_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SealedChangeBody>()
 }
 
 /// `POST /v1/owner/secrets/custody`: records a register or rotate whose

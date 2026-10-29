@@ -1,7 +1,7 @@
 //! Owner-only setup and the Console's closed organization action list.
 use crate::{
     auth::{CoreAuth, CoreScope},
-    error::{ApiError, EnvelopedApiError},
+    error::{ApiError, ApiErrorEnvelope, EnvelopedApiError},
     server::SyncServer,
 };
 use axum::{
@@ -32,6 +32,20 @@ fn policy_error(error: OrgAdminError) -> ApiError {
     }
 }
 
+/// Fix one organization's admin policy, once.
+#[utoipa::path(
+    post,
+    path = "/v1/core/org-admin/{org}/policy",
+    params(("org" = String, Path, description = "Hex organization id.")),
+    request_body(content = Object, description = "`OrgAdminPolicy`: `org_ref` (32 hex), `admin_refs` (32 hex each) and `powers` (`org:...` names).", content_type = "application/json"),
+    responses(
+        (status = 200, description = "The organization is configured.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed organization id, or the policy names another organization.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Not an owner act, or the organization administration power is denied.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Organization setup failed, or it is already configured.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn configure(
     State(server): State<Arc<SyncServer>>,
     Path(org): Path<String>,

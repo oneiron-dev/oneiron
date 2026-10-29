@@ -140,6 +140,7 @@ impl Vault {
             folder: landing.namespace.clone(),
             notes,
             links,
+            name_only: Vec::new(),
         };
         match self.land_folder_batch(owner, landing, &batch, read) {
             Ok(links) => {
@@ -158,6 +159,7 @@ impl Vault {
                 folder: landing.namespace.clone(),
                 notes: vec![note.clone()],
                 links: Vec::new(),
+                name_only: Vec::new(),
             };
             match self.land_folder_batch(owner, landing, &alone, read) {
                 Ok(_) => report.landed += 1,

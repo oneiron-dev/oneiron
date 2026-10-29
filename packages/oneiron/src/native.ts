@@ -576,6 +576,7 @@ vaultSecretsLiftHistory(input: unknown): unknown
 vaultSecretsRegister(input: unknown): unknown
 vaultSecretsRotate(input: unknown): unknown
 vaultSecretsRewrap(input: unknown): unknown
+vaultSecretsRevoke(input: unknown): unknown
 vaultSecretsCustodyGet(input: unknown): unknown
 vaultSecretsCustodySubmit(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown

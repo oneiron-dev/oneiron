@@ -14,6 +14,7 @@
 use super::approval::{
     ShapeApprovalDependencies, check_waiting_shape_approval, moves_reach, repin_waiting,
 };
+use super::item_refs::landing_receipt_refs;
 use super::live::{ShapeSources, facet_name, world_name};
 use super::member::{lowers_member, pending_invitation};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
@@ -134,6 +135,13 @@ pub struct ShapeApplyItem {
     /// to revoke them, so the revocation waits for one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub slips_kept: bool,
+    /// The entities its landing's receipt or refusal names, as its door
+    /// listed them while it landed or refused it, and the id the door
+    /// returned (FIX 11151, 11175): what a reader's view of that receipt is
+    /// judged by. `None`: its door lists none, or a read it ran could not
+    /// be followed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_refs: Option<Vec<String>>,
 }
 
 /// One apply: its journal row, and `vault.shape.apply`'s answer.
@@ -348,6 +356,7 @@ impl Vault {
                             state: ShapeItemState::Pending,
                             approval: Some(pin.clone()),
                             slips_kept: false,
+                            receipt_refs: None,
                         })
                         .collect(),
                     done: false,
@@ -500,6 +509,9 @@ impl Vault {
                 self.put_shape_apply(journal, now)?;
                 continue;
             }
+            // What this item's own door lists, kept on the item (FIX 11175):
+            // on for each door that lists its rows.
+            let mut landing = None;
             let state = match held(&item) {
                 ShapeItemState::Proposed if held_release => {
                     let resting = &journal.items[index].state;
@@ -507,7 +519,14 @@ impl Vault {
                 }
                 ShapeItemState::Proposed if held_provision => {
                     let resting = &journal.items[index].state;
-                    self.provision_shape_channel_item(owner, &item, &live, resting, now, sources)
+                    self.provision_shape_channel_item(
+                        owner,
+                        &item,
+                        &live,
+                        resting,
+                        now,
+                        landing.insert(ShapeSources::on()),
+                    )
                 }
                 ShapeItemState::Proposed
                     if item.class == ShapeItemClass::Widening && !approve.contains(&item.seq) =>
@@ -547,10 +566,18 @@ impl Vault {
                         && matches!(item.target, ShapeTarget::Channel { .. }) =>
                 {
                     let resting = &journal.items[index].state;
-                    self.provision_shape_channel_item(owner, &item, &live, resting, now, sources)
+                    self.provision_shape_channel_item(
+                        owner,
+                        &item,
+                        &live,
+                        resting,
+                        now,
+                        landing.insert(ShapeSources::on()),
+                    )
                 }
                 ShapeItemState::Proposed => {
-                    match self.land_shape_item(owner, slips, &item, &live, now, sources) {
+                    let landing = landing.insert(ShapeSources::on());
+                    match self.land_shape_item(owner, slips, &item, &live, now, landing) {
                         Ok(receipt) => {
                             // The skills a pack bundles, and the actors a
                             // channel binds, read live for the items after.
@@ -569,6 +596,7 @@ impl Vault {
                 }
                 rest => rest,
             };
+            journal.items[index].receipt_refs = landing_receipt_refs(&state, landing, sources);
             // The journal's own landing moves what the waiting items stand
             // on: they follow it, and only it.
             if let ShapeItemState::Landed { receipt, .. } = &state {

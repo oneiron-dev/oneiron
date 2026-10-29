@@ -13,6 +13,7 @@ use super::BridgeLimits;
 use super::codec::{self, Frame, Request, Response};
 use crate::Vault;
 use crate::speculative::SpeculativeFireDecision;
+use crate::voice_cascade::spilled_audio::AudioSpool;
 use crate::voice_cascade::{PartialEnricher, SpeculativeRetrievalBridge, UtteranceHandle};
 
 const IO_TICK: Duration = Duration::from_millis(200);
@@ -67,9 +68,17 @@ impl Connection {
             .set_write_timeout(Some(Duration::from_secs(1)))?;
         let mut reader = BufReader::with_capacity(1024, &self.stream);
         let mut writer = &self.stream;
+        // Inbound frames spill past the inline bound (FIX 3728); a body
+        // directory that would not open leaves them in memory, served.
+        let spool = AudioSpool::new(&vault).unwrap_or_else(|error| {
+            tracing::warn!(%error, "voice frames held in memory; their spill directory did not open");
+            AudioSpool::unspilled(&vault)
+        });
+        let spool_vault = Arc::clone(&vault);
         let mut session = WireSession::new(vault, limits);
         loop {
-            let bytes = match codec::read_frame(&mut reader, &self.shutdown)? {
+            let bytes = match codec::read_frame(&mut reader, &self.shutdown, &spool, &spool_vault)?
+            {
                 Frame::Data(bytes) => bytes,
                 Frame::End => break,
                 Frame::Fatal(code) => {

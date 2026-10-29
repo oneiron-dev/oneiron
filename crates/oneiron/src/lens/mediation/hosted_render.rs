@@ -36,7 +36,7 @@ pub struct HostedLensRender {
 /// What a hosted lens render answers: the card's id, the exact render its
 /// host lowered (and, on a server, holds the frame of), and the lens tree.
 /// It carries no frame.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LensFrameCard {
     /// The card an event names, and the path a server takes its events at
     /// (`POST /v1/core/lens-frames/{card_id}/events`).

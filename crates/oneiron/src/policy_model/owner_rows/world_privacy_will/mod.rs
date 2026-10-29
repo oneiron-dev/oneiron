@@ -54,7 +54,7 @@ use record::{NewRequest, WorldPrivacyRequestKind as Kind};
 pub const WORLD_PRIVACY_ROW_REF: &str = "world_privacy";
 
 /// What one world-settings act came to.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldPrivacyOutcome {
     /// The settings changed: the receipt.

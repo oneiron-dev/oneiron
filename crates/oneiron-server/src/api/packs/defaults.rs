@@ -28,10 +28,30 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/packs/defaults/restore-skill", post(restore_hub_skill))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct HubSkillRequest {
     subtree: String,
+}
+
+/// The OpenAPI schema of the hub skill writes' body (FIX 11611), shared by
+/// `POST /v1/owner/packs/defaults/import` and
+/// `POST /v1/owner/packs/defaults/restore-skill`: [`HubSkillRequest`].
+pub(crate) fn hub_skill_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HubSkillRequest>()
+}
+
+/// The OpenAPI schema of the hub skill writes' answer (FIX 11611), shared by
+/// `POST /v1/owner/packs/defaults/import` and
+/// `POST /v1/owner/packs/defaults/restore-skill`: [`HubImportReceipt`].
+pub(crate) fn hub_import_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HubImportReceipt>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/defaults/restore`'s answer (FIX 11611):
+/// one [`HubImportReceipt`] per restored default.
+pub(crate) fn hub_import_receipts_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Vec<HubImportReceipt>>()
 }
 
 async fn restore_defaults(

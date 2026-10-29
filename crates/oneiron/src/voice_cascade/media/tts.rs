@@ -12,10 +12,15 @@ impl<Q: VoiceMediaQueue> MediaTtsAdapter<Q> {
     pub fn new(
         vault: Arc<Vault>,
         route: MediaVoiceRoute,
+        fallbacks: Vec<MediaVoiceRoute>,
         render: VoiceRender,
         queue: Q,
     ) -> Result<Self> {
-        if route.operation() != AiOperation::Speech {
+        if route.operation() != AiOperation::Speech
+            || fallbacks
+                .iter()
+                .any(|route| route.operation() != AiOperation::Speech)
+        {
             return Err(invalid("a TTS adapter speaks on a speech route"));
         }
         if let VoiceRender::Stock(name) = &render
@@ -26,9 +31,11 @@ impl<Q: VoiceMediaQueue> MediaTtsAdapter<Q> {
         Ok(Self {
             vault,
             route,
+            fallbacks,
             render,
             queue,
             binding: None,
+            bound: Vec::new(),
             generation: None,
             phase: Phase::Fresh,
             buffer: String::new(),
@@ -60,21 +67,35 @@ impl<Q: VoiceMediaQueue> MediaTtsAdapter<Q> {
         if self.buffer.is_empty() {
             return Ok(());
         }
-        if let Some(binding) = &self.binding
-            && !binding.is_current(&self.vault)
-        {
-            self.revoke(generation);
-            return Err(invalid("voice withdrawn, evicted or stale"));
-        }
+        // The first bound target whose voice is still current speaks; the
+        // rest ride along for the worker to try when a provider is down.
+        let (route, voice, binding, fallbacks) = match &self.render {
+            VoiceRender::Stock(name) => (
+                &self.route,
+                Some(MediaVoice::Stock { name: name.clone() }),
+                None,
+                Vec::new(),
+            ),
+            VoiceRender::Bank { .. } => {
+                let Some(chosen) = self
+                    .bound
+                    .iter()
+                    .position(|(_, binding)| binding.is_current(&self.vault))
+                else {
+                    self.revoke(generation);
+                    return Err(invalid("voice withdrawn, evicted or stale"));
+                };
+                let (route, binding) = &self.bound[chosen];
+                let mut rest = self.bound.clone();
+                rest.remove(chosen);
+                (route, Some(binding.voice()), Some(binding.clone()), rest)
+            }
+        };
         let next = self
             .next_submission
             .checked_add(1)
             .ok_or_else(|| invalid("submission exhausted"))?;
-        let voice = match &self.render {
-            VoiceRender::Stock(name) => Some(MediaVoice::Stock { name: name.clone() }),
-            VoiceRender::Bank { .. } => self.binding.as_ref().map(BankVoiceBinding::voice),
-        };
-        let request = self.route.request(
+        let request = route.request(
             MediaPart::Text {
                 text: self.buffer.clone(),
             },
@@ -85,7 +106,8 @@ impl<Q: VoiceMediaQueue> MediaTtsAdapter<Q> {
             generation,
             submission: self.next_submission,
             request,
-            voice: self.binding.clone(),
+            voice: binding,
+            fallbacks,
         })?;
         self.next_submission = next;
         self.buffer.clear();
@@ -107,29 +129,24 @@ impl<Q: VoiceMediaQueue> TtsSeamClient for MediaTtsAdapter<Q> {
                 return Err(invalid("adapter is single-generation"));
             }
             // A banked voice binds before any word: no clone, no speech.
-            self.binding = match &self.render {
-                VoiceRender::Stock(_) => None,
-                VoiceRender::Bank {
-                    voice_id, register, ..
-                } if self.route.reference_target => Some(BankVoiceBinding::bind_reference(
-                    &self.vault,
-                    voice_id,
-                    &self.route.target,
-                    register.as_deref(),
-                    self.route.locality,
-                )?),
-                VoiceRender::Bank {
-                    voice_id,
-                    include_generated,
-                    ..
-                } => Some(BankVoiceBinding::bind(
-                    &self.vault,
-                    voice_id,
-                    &self.route.target,
-                    *include_generated,
-                    self.route.locality,
-                )?),
-            };
+            // Every target that holds it binds, the lane's route first; a
+            // fallback that does not bind is simply not a candidate, and
+            // none binding refuses with the lane route's own refusal.
+            if matches!(self.render, VoiceRender::Bank { .. }) {
+                let mut refusal = None;
+                for route in std::iter::once(&self.route).chain(&self.fallbacks) {
+                    match bind_on(&self.vault, &self.render, route) {
+                        Ok(binding) => self.bound.push((route.clone(), binding)),
+                        Err(error) => {
+                            refusal.get_or_insert(error);
+                        }
+                    }
+                }
+                match self.bound.first() {
+                    Some((_, binding)) => self.binding = Some(binding.clone()),
+                    None => return Err(refusal.expect("the lane route is always tried")),
+                }
+            }
             self.generation = Some(generation);
             self.phase = Phase::Open;
             return Ok(());
@@ -179,5 +196,38 @@ impl<Q: VoiceMediaQueue> TtsSeamClient for MediaTtsAdapter<Q> {
             }
         }
         Ok(())
+    }
+}
+
+/// Binds the banked `render` voice on `route`'s target: from its source
+/// clip on a target that renders from refs, as its recorded clone on one
+/// that keeps clones.
+fn bind_on(
+    vault: &Vault,
+    render: &VoiceRender,
+    route: &MediaVoiceRoute,
+) -> Result<BankVoiceBinding> {
+    match render {
+        VoiceRender::Bank {
+            voice_id, register, ..
+        } if route.reference_target => BankVoiceBinding::bind_reference(
+            vault,
+            voice_id,
+            &route.target,
+            register.as_deref(),
+            route.locality,
+        ),
+        VoiceRender::Bank {
+            voice_id,
+            include_generated,
+            ..
+        } => BankVoiceBinding::bind(
+            vault,
+            voice_id,
+            &route.target,
+            *include_generated,
+            route.locality,
+        ),
+        VoiceRender::Stock(_) => Err(invalid("a stock voice binds nothing")),
     }
 }

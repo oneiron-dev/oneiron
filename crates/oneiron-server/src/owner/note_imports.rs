@@ -10,7 +10,8 @@
 use base64::Engine as _;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::note::{
-    ImportedNote, ImportedNoteBatch, ImportedNoteLink, NOTES_IMPORT_SOURCE, OriginalBytes,
+    FileFacts, ImportedNote, ImportedNoteBatch, ImportedNoteLink, NOTES_IMPORT_SOURCE,
+    NameOnlyFile, NameOnlyReason, OriginalBytes,
 };
 use oneiron::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,20 @@ pub(crate) struct NoteLink {
     pub(crate) to: String,
 }
 
+/// One file held by name only, on the wire.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NoteNameOnly {
+    /// The file's path under the folder, `/`-separated.
+    pub(crate) path: String,
+    pub(crate) why: NameOnlyReason,
+    pub(crate) facts: FileFacts,
+    /// The file's own bytes, kept as its original once the batch is
+    /// approved (FIX 11587); none when the walk never read them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) original: Option<NoteOriginal>,
+}
+
 /// A notes batch on the wire.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +79,9 @@ pub(crate) struct NoteBatch {
     pub(crate) folder: String,
     pub(crate) notes: Vec<NoteFile>,
     pub(crate) links: Vec<NoteLink>,
+    /// Files held by name only, with the bytes the walk read (FIX 11587).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) name_only: Vec<NoteNameOnly>,
 }
 
 /// What the owner is asked to approve.
@@ -85,10 +103,10 @@ pub(crate) struct NoteApproved {
     pub(crate) request_id: String,
     pub(crate) notes: usize,
     pub(crate) links: usize,
-    /// Notes whose file's original was kept after the batch landed.
+    /// Files whose original was kept with the approve, notes and name-only
+    /// files (FIX 11587).
     pub(crate) originals_kept: usize,
-    /// Notes whose original could not be kept; their text landed all the
-    /// same.
+    /// Files whose original could not be kept; what landed stays landed.
     pub(crate) originals_unkept: usize,
 }
 
@@ -139,10 +157,12 @@ pub(crate) fn approve(
     let request_id = batch.request_id.clone();
     let exact = previewed(vault, owner, batch, digest)?;
     let receipt = vault.approve_imported_note_batch(owner, &exact)?;
-    // The originals the owner approved with the batch, each kept on its own
-    // once the notes landed: one that cannot be kept is counted, and never
-    // takes back what landed (FIX 7779).
-    let (mut originals_kept, mut originals_unkept) = (0, 0);
+    // The name-only originals the engine kept with the approve (FIX 11587),
+    // plus the notes' own, each kept on its own once the notes landed: one
+    // that cannot be kept is counted, and never takes back what landed (FIX
+    // 7779).
+    let (mut originals_kept, mut originals_unkept) =
+        (receipt.name_only_kept, receipt.name_only_unkept);
     for note in &exact.notes {
         let Some(original) = &note.original else {
             continue;
@@ -244,6 +264,34 @@ pub(crate) fn engine_batch(batch: NoteBatch) -> OwnerResult<ImportedNoteBatch> {
                 to: link.to,
             })
             .collect(),
+        name_only: batch
+            .name_only
+            .into_iter()
+            .map(|file| -> OwnerResult<NameOnlyFile> {
+                let original = file
+                    .original
+                    .map(|original| {
+                        Ok::<_, OwnerError>(OriginalBytes {
+                            media_type: original.media_type,
+                            bytes: base64::engine::general_purpose::STANDARD
+                                .decode(&original.bytes_base64)
+                                .map_err(|_| {
+                                    OwnerError::Invalid(format!(
+                                        "the original of {:?} is not standard base64",
+                                        file.path
+                                    ))
+                                })?,
+                        })
+                    })
+                    .transpose()?;
+                Ok(NameOnlyFile {
+                    path: file.path,
+                    why: file.why,
+                    facts: file.facts,
+                    original,
+                })
+            })
+            .collect::<OwnerResult<Vec<_>>>()?,
     })
 }
 
@@ -276,6 +324,20 @@ impl From<ImportedNoteBatch> for NoteBatch {
                 .map(|link| NoteLink {
                     from: link.from,
                     to: link.to,
+                })
+                .collect(),
+            name_only: batch
+                .name_only
+                .into_iter()
+                .map(|file| NoteNameOnly {
+                    path: file.path,
+                    why: file.why,
+                    facts: file.facts,
+                    original: file.original.map(|original| NoteOriginal {
+                        media_type: original.media_type,
+                        bytes_base64: base64::engine::general_purpose::STANDARD
+                            .encode(&original.bytes),
+                    }),
                 })
                 .collect(),
         }

@@ -52,7 +52,7 @@ struct AskPage {
     open: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerAsk {
     seq: u64,
@@ -63,11 +63,35 @@ struct AnswerAsk {
     reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevokeRule {
     /// The rule row's id, 32 hex characters.
     id: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/asks/answer`'s body (FIX 11652):
+/// [`AnswerAsk`].
+pub(crate) fn answer_ask_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerAsk>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/asks/answer`'s answer (FIX 11652):
+/// [`DecisionAsk`].
+pub(crate) fn decision_ask_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DecisionAsk>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/rules/revoke`'s body (FIX 11652):
+/// [`RevokeRule`].
+pub(crate) fn revoke_rule_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevokeRule>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/rules/revoke`'s answer (FIX 11652):
+/// [`HostRule`].
+pub(crate) fn host_rule_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HostRule>()
 }
 
 /// `GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=<bool>`: the

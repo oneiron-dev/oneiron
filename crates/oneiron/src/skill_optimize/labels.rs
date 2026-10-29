@@ -85,7 +85,7 @@ fn invalid() -> Error {
 
 /// The evidence for raising a calibration question. Both kinds have two
 /// explicit alternatives, so an uncertainty does not silently supply a label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JudgeAskReason {
     RevisionDisagreement,
@@ -100,13 +100,15 @@ pub enum JudgeAskReason {
 
 /// One question for the responsible human. `id` binds its complete immutable
 /// question; `delivered_at` is only a delivery marker, never an answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JudgeAsk {
     pub id: [u8; 32],
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub skill: EntityId,
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub responsible: EntityId,
     pub campaign: String,
     pub evidence: String,
@@ -122,7 +124,7 @@ pub struct JudgeAsk {
 
 /// What a [`JudgeAskReason::RubricRecheck`] or
 /// [`JudgeAskReason::RubricRegrade`] ask is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JudgeRegrade {
     /// The label's ask id.

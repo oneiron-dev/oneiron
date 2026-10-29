@@ -356,6 +356,18 @@ impl ActionRegistry {
         };
         self.resolve(action.command().as_str())
     }
+
+    /// The verb-table or run row an action of `id` runs as (FIX 11524): the
+    /// row under its own name a host door answers, or the typed call a code
+    /// run makes. `None` for a factory action, whose call its host factory
+    /// builds, and for an unregistered verb.
+    pub fn row_verb(&self, id: &str) -> Option<&'static str> {
+        match self.verbs.get(id)?.build {
+            ActionBuild::Verb(verb) => Some(verb.as_str()),
+            ActionBuild::Run(verb) => Some(verb.as_str()),
+            ActionBuild::Factory(_) => None,
+        }
+    }
 }
 
 fn invalid(message: &str) -> Error {

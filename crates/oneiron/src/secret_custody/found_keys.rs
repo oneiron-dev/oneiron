@@ -247,6 +247,12 @@ pub(crate) fn note_found_keys_in_txn(
     Ok(())
 }
 
+/// Whether a record is due its notice, read through `txn`: what
+/// [`raise_found_key_notices_in_txn`] raises at the next write's commit.
+pub(crate) fn found_key_notices_due_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(DUE.iter_from(&vault.store, txn, &[])?.next().is_some())
+}
+
 /// Raises the needs-you notice of each record left due, one inbox Ask per
 /// owner, at a write's commit boundary. A write under an actor's in-flight
 /// binding raises none: the next write does.

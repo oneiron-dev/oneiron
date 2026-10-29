@@ -7,21 +7,23 @@ mod walk;
 
 pub(crate) use self::cache_evict::evict_ppr_cache_page;
 pub(crate) use self::cache_store::{
-    MAX_PPR_SEEDS, cleanup_ppr_cache, drop_rebuildable_ppr_cache, flush_deferred_ppr_cache_writes,
-    flush_deferred_ppr_cache_writes_admitted, increment_graph_version, invalidate_ppr_for_delete,
-    invalidate_ppr_for_edge, read_graph_version,
+    MAX_PPR_DEPTH, MAX_PPR_SEEDS, cleanup_ppr_cache, drop_rebuildable_ppr_cache,
+    flush_deferred_ppr_cache_writes, flush_deferred_ppr_cache_writes_admitted,
+    increment_graph_version, invalidate_ppr_for_delete, invalidate_ppr_for_edge,
+    purge_ppr_for_erase_in_txn, read_graph_version,
 };
 pub(crate) use self::community::{
     CommunityPprDiversity, CommunityPprRequest, ppr_expand_in_txn_with_community_diagnostics,
     ppr_query_in_txn_with_community_deferred_cache,
 };
-pub(crate) use self::policy::{SeedWeighting, canonical_vad_alpha};
 #[cfg(test)]
-pub(crate) use self::policy::{lambda_for_kind, specificity_seed_weights};
+pub(crate) use self::policy::lambda_for_kind;
+pub(crate) use self::policy::{SeedWeighting, canonical_vad_alpha};
 pub(crate) use self::query::{
     DeferredPprCacheWrite, ppr_query_in_txn_with_diagnostics,
-    ppr_query_in_txn_with_vad_deferred_cache, ppr_query_scoped_in_txn,
-    ppr_query_scoped_in_txn_with_diagnostics,
+    ppr_query_in_txn_with_diagnostics_and_deadline, ppr_query_in_txn_with_vad_deferred_cache,
+    ppr_query_scoped_in_txn, ppr_query_scoped_in_txn_with_diagnostics,
+    ppr_query_scoped_in_txn_with_diagnostics_and_deadline,
 };
 #[cfg(test)]
 use self::query::{ppr_query, ppr_query_in_txn};

@@ -20,10 +20,25 @@ use zeroize::Zeroizing;
 
 use super::stamp::rfc3339_secs;
 
+/// [`VaultKeyWrapKind`]'s wire shape (FIX 11653 route (b)): `oneiron-crypto`
+/// has no schemars dependency, so this schema-only mirror states the shape
+/// the vault-key answers' `kind` reads on the wire. Never used at runtime.
+#[derive(schemars::JsonSchema)]
+#[schemars(rename = "VaultKeyWrapKind")]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[expect(dead_code, reason = "schema mirror of VaultKeyWrapKind's wire shape")]
+pub(crate) enum VaultKeyWrapKindSchema {
+    Device { install: String },
+    Password,
+    Passkey { credential: String },
+    Escrow { label: String },
+}
+
 /// One wrap as the owner reads it.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct WrapView {
     pub(crate) id: String,
+    #[schemars(with = "VaultKeyWrapKindSchema")]
     pub(crate) kind: VaultKeyWrapKind,
     pub(crate) created: String,
     /// For a passkey: the PRF input (`prf.eval.first`) to ask it at, base64url.
@@ -52,7 +67,7 @@ impl WrapView {
 
 /// Whether the vault has a data key, whether this handle holds it, and its
 /// wraps.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct VaultKeyReport {
     pub(crate) vault_id: String,
     pub(crate) status: VaultKeyStatus,
@@ -72,7 +87,7 @@ pub(crate) struct VaultKeyReport {
 
 /// One escrow recipient retired after its secret was released, as the
 /// owner reads its receipt. Ids and times only.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct RetiredEscrowView {
     pub(crate) label: String,
     pub(crate) receipt_id: String,

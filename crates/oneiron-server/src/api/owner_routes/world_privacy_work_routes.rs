@@ -55,7 +55,7 @@ struct WorldSettings {
 }
 
 /// What a settings change or re-assertion committed.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct WorldPrivacyWork {
     #[serde(flatten)]
     receipt: WorldPrivacyReceipt,
@@ -72,6 +72,20 @@ impl From<WorldPrivacyReceipt> for WorldPrivacyWork {
             receipt,
         }
     }
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/settings`'s body
+/// (FIX 11611), shared with `/worlds/privacy/reassert`:
+/// [`WorldPrivacySetInput`].
+pub(crate) fn world_privacy_set_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacySetInput>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/settings`'s answer
+/// (FIX 11611), shared with `/worlds/privacy/reassert`:
+/// [`WorldPrivacyWork`].
+pub(crate) fn world_privacy_work_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyWork>()
 }
 
 /// `GET /v1/owner/worlds/privacy/settings?world=<id>`: the world's settings

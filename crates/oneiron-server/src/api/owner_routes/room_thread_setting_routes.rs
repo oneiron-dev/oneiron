@@ -23,8 +23,20 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/settings/room-threads", get(read).post(put))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/settings/room-threads`'s body (FIX 11611):
+/// [`RoomThreadSettingsChange`].
+pub(crate) fn room_thread_change_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RoomThreadSettingsChange>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/room-threads`'s answer (FIX 11611):
+/// [`RoomThreadSettings`].
+pub(crate) fn room_thread_settings_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RoomThreadSettings>()
+}
+
 /// The owner's two switches, as they read now.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RoomThreadSettings {
     /// Whether an Admin may walk into a private thread, from now on.
@@ -34,7 +46,7 @@ struct RoomThreadSettings {
 }
 
 /// A change to either switch, or both; an absent one stays as it is.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RoomThreadSettingsChange {
     #[serde(default)]
