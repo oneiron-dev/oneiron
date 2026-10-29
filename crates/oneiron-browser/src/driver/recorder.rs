@@ -323,8 +323,10 @@ impl CdpDriver {
                 let target = info.get("targetId").and_then(Value::as_str);
                 !target.is_some_and(|target| self.pipe.recording_listens(target))
             })
-            .filter_map(|info| info.get("url").and_then(Value::as_str))
-            .map(|url| self.url_shown(url))
+            .filter_map(|info| {
+                let url = info.get("url").and_then(Value::as_str)?;
+                Some(self.url_shown(url))
+            })
             .collect())
     }
 
@@ -507,7 +509,7 @@ fn scoped<'a>(named: &[&'a Row], descriptor: &Descriptor, name: &str) -> Vec<&'a
     let scopes: Vec<String> = descriptor
         .sc
         .iter()
-        .map(|(role, name)| format!("{role} \"{}\"", clip(name)))
+        .map(|(role, label)| format!("{role} \"{}\"", clip(label)))
         .collect();
     let key = row_key(&scopes, &descriptor.r, name);
     let twins: Vec<String> = (1..=u32::try_from(named.len()).unwrap_or(u32::MAX))
