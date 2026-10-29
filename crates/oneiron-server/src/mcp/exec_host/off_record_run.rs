@@ -16,7 +16,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 
-use super::{ActiveRun, McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost};
+use super::{McpCodeExecutionError, McpCodeModeProvider, McpEngineNativeCodeHost};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::server::ReaderSeats;
@@ -134,11 +134,17 @@ impl AgentVerbDoor for OffRecordRunDoor {
 
     /// The run's own `vault.search` reads on the caller's key, in the room,
     /// each posting admitted on that key's lane (FIX 5976). Every other call
-    /// the run serves itself is admitted as a host that binds no door does.
+    /// the run serves itself is admitted as a host that binds no door does,
+    /// while the caller's credential is live (FIX 9504): a revoked
+    /// credential's run serves no call of its own, and none of them asks
+    /// for a read or search scope it never needed.
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        if !self.caller.credential_is_live(&self.vault) {
+            return Err(api_refusal(&ApiError::unauthorized()));
+        }
         match call {
             RunCall::Bridge(SelfEffect::MemorySearch) => self.caller_key().map(Some),
             _ => Ok(None),
@@ -183,11 +189,13 @@ impl McpEngineNativeCodeHost {
     /// The session's route takes every row the run makes (its replay
     /// record, scripts, observations and raw outputs) and its spilled
     /// outputs land in the session's own body directory, so close drops them
-    /// all. It waits its turn with `execute_code`'s runs, under `actor`'s
-    /// own key, and never enters one run twice at once. It takes no model
-    /// seat and runs its configured model. Its `self.spawn` queues reader
-    /// children in the room, under the seat this host's reader seats lend
-    /// it, as an `execute_code` run's does (FIX 7507).
+    /// all. It waits behind an earlier entry of the same run still running,
+    /// in arrival order, then its turn with `execute_code`'s runs, under
+    /// `actor`'s own key, so it never enters one run twice at once (FIX
+    /// 9505). It takes no model seat and runs its configured model. Its
+    /// `self.spawn` queues reader children in the room, under the seat this
+    /// host's reader seats lend it, as an `execute_code` run's does (FIX
+    /// 7507).
     pub(crate) async fn execute_in_off_record_session(
         &self,
         vault: Arc<Vault>,
@@ -199,7 +207,7 @@ impl McpEngineNativeCodeHost {
     ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
         let provider = Arc::clone(&self.provider);
         let reader_seats = self.reader_seats.clone();
-        let guard = ActiveRun::acquire(Arc::clone(&self.active), run_id)?;
+        let guard = self.active.acquire(run_id).await?;
         let permit = self
             .runs
             .admit(format!("off-record:{}", actor.entity_ref().to_hex()))

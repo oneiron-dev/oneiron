@@ -16,7 +16,7 @@ use super::roles::DREAMER_EXTRACTION_ROLE;
 use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
 use super::step_charge::StepChargeTally;
 use super::thing_agent::{ThingPass, ThingPassEnd};
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, ReadSetProducer};
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::dreamer_wake::WakeAttemptContext;
 use crate::llm::{
@@ -50,6 +50,23 @@ impl ConsolidationExecutor<'_> {
         let config = ctx.vault.consolidation_selection()?;
         let (slices, low_trust) =
             resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
+        // The attempt's read set: every row its slices' calls read, which
+        // every later read of this branch reads within (FIX 7019).
+        let read = slices
+            .iter()
+            .flat_map(|slice| slice.sources.iter().copied())
+            .collect();
+        super::declare_attempt_reads(
+            ctx.vault,
+            attempt_id,
+            &[ReadSetProducer::DREAMER_EXTRACTION],
+        );
+        super::record_attempt_reads(
+            ctx.vault,
+            attempt_id,
+            ReadSetProducer::DREAMER_EXTRACTION,
+            Some(read),
+        );
         let width = if low_trust {
             1
         } else {
@@ -119,6 +136,7 @@ impl ConsolidationExecutor<'_> {
                         transcript: &slice.transcript,
                         labels: &slice.labels,
                         scope: &slice.scope,
+                        sources: &slice.sources,
                     })
                     .collect(),
                 namespace,

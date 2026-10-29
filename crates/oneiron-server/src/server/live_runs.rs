@@ -59,8 +59,8 @@ pub(crate) const LIVE_RUN_UNAVAILABLE: &str = "live_run_unavailable";
 /// The run's lease moved on.
 pub(crate) const LIVE_RUN_STALE: &str = "live_run_stale";
 /// The run stayed mid-entry or mid-action for the whole guard wait. Its
-/// own code, apart from `execute_code`'s `code_run_busy` (FIX 3456), so
-/// each door states only its own hints.
+/// own code, apart from `execute_code`'s codes (FIX 3456), so each door
+/// states only its own hints.
 pub(crate) const LIVE_RUN_BUSY: &str = "live_run_busy";
 /// Another credential is attached to this lease generation, and the attach
 /// did not ask to rebind.

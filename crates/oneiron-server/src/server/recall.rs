@@ -1,9 +1,10 @@
 //! The recall verb as every server transport runs it.
 //!
-//! One place builds recall's execution inputs, so the HTTP facade and the
-//! WebSocket read RPC run the same recall for the same request: above light
+//! One place builds recall's execution inputs, so the facade's doors (on
+//! HTTP and on a held socket alike), a pumped run's host row and the
+//! synchronous door run the same recall for the same request: above light
 //! effort the query is embedded whenever the vault's embedder is serving, and
-//! the caller's `as_of` rides along. Both doors read as the bound principal
+//! the caller's `as_of` rides along. Every door reads as the bound principal
 //! under the slip it presented (ONE-1187-D6).
 //! A vault with no embedder, or one still loading its model, recalls on its
 //! sparse signals and says so (`sparse: true`). On the one-space preset the
@@ -51,8 +52,8 @@ impl SyncServer {
     /// (FIX 805); `None` is the vault owner's.
     ///
     /// Blocking: it may embed the query and it reads the vault. Async callers
-    /// take [`Self::recall_off_runtime`]; a synchronous caller that may sit on
-    /// a runtime worker wraps it in [`blocking`].
+    /// take [`Self::recall_off_runtime_listing`]; a synchronous caller that
+    /// may sit on a runtime worker wraps it in [`blocking`].
     pub(crate) fn recall(
         &self,
         memory: &Memory<'_>,
@@ -243,34 +244,21 @@ impl SyncServer {
         }
     }
 
-    /// [`Self::recall`] for `actor` under the slip it presented, from where
-    /// its connection sits, on the blocking pool. When the request names a
-    /// room turn, every read recall makes runs inside that room (ARCH-0067
-    /// §8).
+    /// [`Self::recall`] for `actor` under the slip it presented, toward
+    /// where its connection sits, on the blocking pool. When the request
+    /// names a room turn, every read recall makes runs inside that room
+    /// (ARCH-0067 §8).
     ///
     /// A request with a deadline answers by it whatever the blocking work is
     /// doing: past it, the door returns the last pack recall published (before
     /// retrieval, no items; once assembled, the items before the scope census;
     /// both `partial`, under the reader's receipt), and the cut work stops at
     /// its next checkpoint.
-    pub(crate) async fn recall_off_runtime(
-        self: &Arc<Self>,
-        actor: EntityId,
-        class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
-        locality: CallerLocality,
-        room: Option<EntityId>,
-        input: RecallRequest,
-    ) -> MemoryResult<MemoryPack> {
-        self.recall_off_runtime_listing(actor, class, proof, locality, room, input)
-            .await
-            .0
-    }
-
-    /// [`Self::recall_off_runtime`], with each row the pack is derived from
-    /// without naming it (a reaction claim a line counts) as recall read it,
-    /// for a door that judges the pack again before it leaves this device
-    /// (DEC-0005). A pack cut at its deadline comes with the rows read by then.
+    ///
+    /// Beside the pack come the rows it is derived from without naming them
+    /// (a reaction claim a line counts) as recall read them, for a door that
+    /// judges the pack again before it leaves this device (DEC-0005). A pack
+    /// cut at its deadline comes with the rows read by then.
     /// It asks no home: an opened device's pack says it answered alone. Its
     /// reads go to `destination` (FIX 4937): a locality alone is a
     /// destination nobody proved, as before.
@@ -391,8 +379,8 @@ impl SyncServer {
         (pack, producers.take())
     }
 
-    /// [`Self::recall`] for `actor` at a synchronous door (the WebSocket read
-    /// RPC), which has no runtime to stop waiting on. A light recall under a
+    /// [`Self::recall`] for `actor` at a synchronous door, which has no
+    /// runtime to stop waiting on. A light recall under a
     /// deadline (call mode, or light effort with its own `deadline_ms`) reads
     /// on a thread of its own, and the door waits for it only until the
     /// answer is due, then answers with the last pack recall published. Above

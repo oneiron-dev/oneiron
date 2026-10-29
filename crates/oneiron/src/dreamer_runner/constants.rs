@@ -131,6 +131,9 @@ pub(super) const KEY_BUDGET_ID: &str = "budget_id";
 pub(super) const KEY_TOTAL_UNITS: &str = "total_units";
 pub(super) const KEY_REMAINING_UNITS: &str = "remaining_units";
 pub(super) const KEY_RESERVED_UNITS: &str = "reserved_units";
+pub(super) const KEY_OVERDRAFT_UNITS: &str = "overdraft_units";
+pub(super) const KEY_OWED_CALLS: &str = "owed_calls";
+pub(super) const KEY_OWED_UNITS: &str = "owed_units";
 pub(super) const KEY_UPDATED_AT: &str = "updated_at";
 pub(super) const KEY_CREATED_AT: &str = "created_at";
 pub(super) const KEY_NODE_ID: &str = "node_id";
@@ -141,25 +144,29 @@ pub(super) const KEY_PARK_OWNER: &str = "park_owner";
 pub(super) const KEY_PARKED_AT: &str = "parked_at";
 pub(super) const KEY_CAUSE: &str = "cause";
 
-pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 1;
-pub(super) const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 1;
+// v2 adds the mandatory overdraft and owed keys (FIX 8702, 8728, 9015).
+pub(super) const DREAMER_BUDGET_SCHEMA_VERSION: u64 = 2;
+pub(super) const DREAMER_BUDGET_RESERVATION_SCHEMA_VERSION: u64 = 2;
 pub(super) const DREAMER_RUN_TREE_SCHEMA_VERSION: u64 = 1;
 // v2 adds the mandatory `park_owner` token; v1 rows (no owner) fail closed.
 // The typed `cause` key is mandatory too: a row without one fails closed.
 pub(super) const DREAMER_PARKED_SCHEMA_VERSION: u64 = 2;
-pub(super) const DREAMER_BUDGET_KEYS: [&str; 6] = [
+pub(super) const DREAMER_BUDGET_KEYS: [&str; 8] = [
     KEY_SCHEMA_VERSION,
     KEY_BUDGET_ID,
     KEY_TOTAL_UNITS,
     KEY_REMAINING_UNITS,
     KEY_RESERVED_UNITS,
+    KEY_OVERDRAFT_UNITS,
+    KEY_OWED_CALLS,
     KEY_UPDATED_AT,
 ];
-pub(super) const DREAMER_BUDGET_RESERVATION_KEYS: [&str; 6] = [
+pub(super) const DREAMER_BUDGET_RESERVATION_KEYS: [&str; 7] = [
     KEY_SCHEMA_VERSION,
     KEY_BUDGET_ID,
     KEY_ATTEMPT_ID,
     KEY_RESERVED_UNITS,
+    KEY_OWED_UNITS,
     KEY_CREATED_AT,
     KEY_UPDATED_AT,
 ];

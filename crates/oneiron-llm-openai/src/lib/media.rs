@@ -15,7 +15,9 @@ use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaJobState, MediaPart, MediaRequest, MediaResponse,
     MediaUsage, ReferenceCompatibility,
 };
+use oneiron::llm::{INFERENCE_CALLS_KEY, InferenceCallReceipt};
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use super::image::{
@@ -309,13 +311,18 @@ impl<T: OpenAiMediaTransport> OpenAiMediaBackend<T> {
             0 => measured_ms.unwrap_or(0),
             reported => reported,
         };
-        let usage = MediaUsage {
+        // A worker's inference receipts (FIX 8318) also go where the run
+        // reads them, bound to the model this call was admitted for; its
+        // usage stays as it came.
+        let receipts = transcription_receipts(&raw, &request.model);
+        let mut usage = MediaUsage {
             input_tokens,
             output_tokens,
             audio_ms,
             raw_provider: json!({ "usage": raw }),
             ..MediaUsage::default()
         };
+        usage.put_inference_calls(&receipts);
         Ok(MediaResponse {
             parts: vec![MediaPart::Text { text }],
             usage,
@@ -661,6 +668,27 @@ fn reference_file(name: &'static str, index: usize, part: MediaPart) -> LlmResul
         return Err(FatalLlmError::InvalidRequest.into());
     };
     reference_part(name, index, ImageBytes { bytes, media_type })
+}
+
+/// The inference receipts a transcription's usage carries under
+/// [`INFERENCE_CALLS_KEY`] (a local ASR worker's), each bound to `model`,
+/// the engine model the call was admitted for. A record that does not read
+/// as a receipt is no evidence and is left out.
+fn transcription_receipts(usage: &Value, model: &ModelId) -> Vec<InferenceCallReceipt> {
+    usage
+        .get(INFERENCE_CALLS_KEY)
+        .and_then(Value::as_array)
+        .map(|records| {
+            records
+                .iter()
+                .filter_map(|record| InferenceCallReceipt::deserialize(record).ok())
+                .map(|receipt| InferenceCallReceipt {
+                    model: Some(model.clone()),
+                    ..receipt
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A provider job id is a path segment: letters, digits, `_` and `-` only.

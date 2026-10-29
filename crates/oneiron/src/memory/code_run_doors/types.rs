@@ -11,6 +11,11 @@ pub struct CodeRunTypeDiagnosticsRequest {
     /// The step's `check_ref`, as its feedback named it:
     /// `type_diagnostics:<run>:<step>:<invocation>`.
     pub check_ref: String,
+    /// The live off-record session the step's run is bound to, for a run in
+    /// one: its feedback is read on that session's route alone, never on
+    /// the vault's when the session is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_ref: Option<String>,
 }
 
 /// Names the one model whose healed-turn tally the owner reads.

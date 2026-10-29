@@ -6,9 +6,12 @@ use std::collections::{HashMap, VecDeque};
 use oneiron::EntityId;
 use oneiron::engine_executor::RunCompaction;
 
-/// Seats held at once. Past it the least recently used one is dropped; its
+/// Seats held at once before an idle one is reclaimed. Past it the least
+/// recently used seat with no pass pending or uncollected is dropped; its
 /// run builds a fresh seat at its next call, and its swapped epochs stay
-/// durable.
+/// durable. A seat whose pass is in flight is never dropped, so a resumed
+/// run joins its own pass (FIX 9508); when every seat holds one, they all
+/// stay.
 const MAX_HELD_SEATS: usize = 256;
 
 #[derive(Default)]
@@ -31,7 +34,15 @@ impl RunSeats {
             return;
         }
         while self.seats.len() >= MAX_HELD_SEATS {
-            let Some(oldest) = self.order.pop_front() else {
+            // Only an idle seat, which a later call builds again, is
+            // reclaimed; a seat whose pass is pending or uncollected keeps
+            // its receiver for the run to join.
+            let idle = self.order.iter().position(|held| {
+                self.seats
+                    .get(held)
+                    .is_none_or(|seat| !seat.report().in_flight)
+            });
+            let Some(oldest) = idle.and_then(|at| self.order.remove(at)) else {
                 break;
             };
             self.seats.remove(&oldest);

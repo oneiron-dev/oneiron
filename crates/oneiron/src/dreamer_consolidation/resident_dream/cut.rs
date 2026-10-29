@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use super::{
-    DreamCut, PAD_CUT_MARK, PADS, ResidentDreamPartial, ResidentDreamProgress, Room,
+    DreamCut, PAD_CUT_MARK, PADS, PADS_SECTION, ResidentDreamPartial, ResidentDreamProgress, Room,
     WORDS_CUT_MARK, diary_review_words, read_on_from, resident_forks,
 };
 use crate::edge::EdgeActorClass;
@@ -80,7 +80,7 @@ pub(super) fn cut_pads(
         }
         break;
     }
-    cut.sections.push(("Sealed scratchpads", pad_lines));
+    cut.sections.push((PADS_SECTION, pad_lines));
     Ok(authors)
 }
 

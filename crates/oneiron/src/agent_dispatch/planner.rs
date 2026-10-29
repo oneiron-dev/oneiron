@@ -50,6 +50,7 @@ use super::types::{CareLevel, SpawnNeed, SpawnOverride};
 use super::widen_record::invalid;
 
 pub(super) use self::budget_resolution::launch_budget;
+pub(crate) use self::budget_resolution::resolved_budget_ask;
 pub use self::measured::{MeasuredRate, PatternCandidate};
 pub use self::receipt::SpawnPlanReceipt;
 

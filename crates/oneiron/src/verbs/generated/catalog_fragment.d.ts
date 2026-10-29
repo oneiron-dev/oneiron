@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4242 declarations.
+// Census: 1213 code-mode rows (1173 host rows, 40 run rows), 4243 declarations.
 // Replies: 1088 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
@@ -945,7 +945,7 @@ declare namespace Sdk {
   type InboxLensRow = { item_id: string; kind: InboxLensKind; pile: InboxLensPile; thread_ref?: string | null; identity?: string | null; actor: string; facet?: string | null; participants: InboxLensParticipant[]; impact: number; occurred_at: number; receipt_ref?: string | null; payload_ref?: string | null; concern?: InboxLensConcern | null; diary_review?: InboxLensDiaryReview | null; sender?: string | null; widening?: ConsultWidening | null };
   type InboxConcernGroup = { agent: string; items: string[] };
   type InboxLensPage = { items: InboxLensRow[]; concern_groups: InboxConcernGroup[] };
-  type InboxRunGroupsRequest = { limit?: number | null };
+  type InboxRunGroupsRequest = { limit?: number | null; after?: string | null };
   type InboxExceptionClass = "checker_hedge" | "manifest_critical" | "supersedes_user_stated" | "conflict" | "meeting_outcome_check_in" | "plugin_install";
   type ReceiptKind = "outbound" | "gate" | "identity_lifecycle" | "scoped_read" | "share" | "artifact_settle" | "proposal_outcome" | "commitment_lifecycle" | "extraction" | "served_form" | "hook" | "reference_refusal" | "task_lifecycle";
   type ReceiptRecord = { receipt_id: string; receipt_kind: ReceiptKind; occurred_at: number; actor?: string | null; on_behalf_of?: string | null; outcome: string; job_ref?: string | null; trigger_ref?: string | null; policy_trace?: string[]; fields?: Record<string, string> };
@@ -954,6 +954,7 @@ declare namespace Sdk {
   type InboxPointerRow = { claim_id: string; duplicate_of_claim_id: string; duplicate_of_group_key: string };
   type InboxSubCluster = { key: string; member_claim_ids: string[] };
   type InboxGroup = { group_key: string; run_id: string; headline: string; created_at: number; members?: InboxGroupMember[]; held_member_count: number; pointer_rows?: InboxPointerRow[]; sub_clusters?: InboxSubCluster[]; new_claim_count: number; update_count: number; conflict_count: number };
+  type InboxGroupPage = { groups: InboxGroup[]; next?: string | null };
   type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
   type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
   type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
@@ -1501,7 +1502,18 @@ declare namespace Sdk {
   type OffRecordClaimRequest = { session_ref: string; claim: ScopedClaimInput };
   type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
   type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";
-  type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number };
+  type ProgramStepIdentity = { run: string; program_seq: number; invocation: number };
+  type ProgramPreparationNote = { code: string; detail?: string | null };
+  type TypeCheckFacts = { language: string; file: string; backend: string; pin: string; action_digest?: string | null; elapsed_us?: number | null; peak_memory_bytes?: number | null };
+  type DiagnosticMeasures = { count: number; bytes: number };
+  type TypeDiagnostic = { file?: string | null; line: number; column: number; category: string; code: number; message: string; message_bytes: number };
+  type DiagnosticCollection = { form: "inline"; diagnostics: TypeDiagnostic[] } | { form: "stored"; handle: string; occurrence: string; byte_len: number };
+  type TypeDiagnostics = { state: "complete"; check: TypeCheckFacts; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "pending"; check: TypeCheckFacts } | { state: "failed"; check: TypeCheckFacts; failure: string; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "unavailable"; reason: string; detail?: string | null };
+  type ProgramStepFeedback = { step: ProgramStepIdentity; check_ref: string; preparation_note?: ProgramPreparationNote | null; type_diagnostics: TypeDiagnostics };
+  type TypeCheckState = "complete" | "pending" | "failed" | "unavailable";
+  type FeedbackWithheldReason = "recipient" | "placement" | "producers_unknown" | "conflicted_root" | "release_check_failed";
+  type ProgramStepFeedbackRelease = (ProgramStepFeedback & { release: "released" }) | { release: "withheld"; step: ProgramStepIdentity; check_ref: string; state: TypeCheckState; check?: TypeCheckFacts | null; failure?: string | null; unavailable?: string | null; measures?: DiagnosticMeasures | null; preparation_code?: string | null; reason: FeedbackWithheldReason };
+  type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number; program_steps?: ProgramStepFeedbackRelease[] };
   type OffRecordRoomRequest = { room: string; session_ref: string };
   type OffRecordNoticeAct = "saved_talk" | "saved_turn" | "saving_from_here" | "saving_stopped" | "exported" | "save_suggested" | "save_declined";
   type OffRecordRoomNotice = { act: OffRecordNoticeAct; by: string; at: string };
@@ -2288,21 +2300,10 @@ declare namespace Sdk {
   type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: CodeFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput };
   type ForeignCodeProposal = { proposal_ref: string; receipt_ref: string; actor_ref: string; source: ForeignCodeSource; approval: ForeignCodeApproval; effect: ForeignCodeEffect };
   type ForeignCodeIsolation = { backend: string; runtime: string; image: string; argv_digest: string; network: string; generation: string; fence_proven: boolean };
-  type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string };
+  type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string; program_steps?: ProgramStepFeedbackRelease[] };
   type CodeRunModelHealCountRequest = { model_id: string };
   type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
-  type CodeRunTypeDiagnosticsRequest = { check_ref: string };
-  type ProgramStepIdentity = { run: string; program_seq: number; invocation: number };
-  type ProgramPreparationNote = { code: string; detail?: string | null };
-  type TypeCheckFacts = { language: string; file: string; backend: string; pin: string; action_digest?: string | null; elapsed_us?: number | null; peak_memory_bytes?: number | null };
-  type DiagnosticMeasures = { count: number; bytes: number };
-  type TypeDiagnostic = { file?: string | null; line: number; column: number; category: string; code: number; message: string; message_bytes: number };
-  type DiagnosticCollection = { form: "inline"; diagnostics: TypeDiagnostic[] } | { form: "stored"; handle: string; occurrence: string; byte_len: number };
-  type TypeDiagnostics = { state: "complete"; check: TypeCheckFacts; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "pending"; check: TypeCheckFacts } | { state: "failed"; check: TypeCheckFacts; failure: string; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "unavailable"; reason: string; detail?: string | null };
-  type ProgramStepFeedback = { step: ProgramStepIdentity; check_ref: string; preparation_note?: ProgramPreparationNote | null; type_diagnostics: TypeDiagnostics };
-  type TypeCheckState = "complete" | "pending" | "failed" | "unavailable";
-  type FeedbackWithheldReason = "recipient" | "placement" | "producers_unknown" | "conflicted_root" | "release_check_failed";
-  type ProgramStepFeedbackRelease = (ProgramStepFeedback & { release: "released" }) | { release: "withheld"; step: ProgramStepIdentity; check_ref: string; state: TypeCheckState; check?: TypeCheckFacts | null; failure?: string | null; unavailable?: string | null; measures?: DiagnosticMeasures | null; preparation_code?: string | null; reason: FeedbackWithheldReason };
+  type CodeRunTypeDiagnosticsRequest = { check_ref: string; session_ref?: string | null };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
   type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
   type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; word_ref: EntityId };
@@ -4395,7 +4396,7 @@ declare function crawl(input: Sdk.WebCrawlRequest): Promise<Sdk.CrawlResult | St
 /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it; `workflow`: its bound try), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
-/** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
+/** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal. */
 declare function execute_code(input: Sdk.ForeignCodeRunRequest): Promise<Sdk.ForeignCodeRunResult | StoredResult>;
 declare const feedback: {
   /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
@@ -4678,7 +4679,7 @@ declare namespace self {
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
   const off_record: {
-    /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+    /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer. */
     execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
   };
   const report_blocked: (input: Sdk.ReportBlockedInput) => Promise<Sdk.ReportBlockedOutput | StoredResult>;
@@ -5424,7 +5425,7 @@ declare const vault: Sdk.VaultHost & {
       /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
       renew(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolLeaseView | StoredResult>;
     };
-    /** Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again. */
+    /** Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref. */
     type_diagnostics(input: Sdk.CodeRunTypeDiagnosticsRequest): Promise<Sdk.ProgramStepFeedbackRelease | null | StoredResult>;
     views: {
       /** Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest. */
@@ -6002,8 +6003,8 @@ declare const vault: Sdk.VaultHost & {
       /** Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows. */
       review(input: Sdk.EmptyRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     };
-    /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
-    groups(input: Sdk.InboxRunGroupsRequest): Promise<Sdk.InboxGroup[] | StoredResult>;
+    /** Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it. */
+    groups(input: Sdk.InboxRunGroupsRequest): Promise<Sdk.InboxGroupPage | StoredResult>;
     /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
     lens(input: Sdk.InboxLensRequest): Promise<Sdk.InboxLensPage | StoredResult>;
   };

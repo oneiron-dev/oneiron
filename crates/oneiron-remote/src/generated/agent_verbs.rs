@@ -637,9 +637,7 @@ impl OneironClient {
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
                 "vault.inbox.groups" => {
-                    remote_agent_verb_output::<Vec<oneiron::inbox::InboxGroup>>(
-                        client, verb, &input,
-                    )
+                    remote_agent_verb_output::<oneiron::inbox::InboxGroupPage>(client, verb, &input)
                 }
                 "vault.weave.digest.render" => remote_agent_verb_output::<
                     Option<oneiron::claim::WeaveDigestRendered>,
@@ -6120,7 +6118,7 @@ impl OneironClient {
     pub fn vault_inbox_groups(
         &self,
         input: &oneiron::agent_inbox_lens::InboxRunGroupsRequest,
-    ) -> Result<Vec<oneiron::inbox::InboxGroup>, MemoryError> {
+    ) -> Result<oneiron::inbox::InboxGroupPage, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

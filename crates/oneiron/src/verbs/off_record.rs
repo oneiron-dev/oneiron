@@ -27,6 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::code_run::ProgramStepFeedbackRelease;
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::off_record::{OffRecordBackendClass, OffRecordMode};
 
@@ -179,6 +180,14 @@ pub struct OffRecordExecuted {
     pub steps_run: u32,
     /// Bridge calls the run's record holds.
     pub bridge_calls: usize,
+    /// Each program step's type feedback the run keeps on the session's
+    /// route, as it stands, beside the answer and never inside it (FIX
+    /// 10389): released whole, or withheld with none of its text when its
+    /// own release check holds it for the destination. Its late result is
+    /// read by its `check_ref` and this session's ref with
+    /// `vault.code.type_diagnostics`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub program_steps: Vec<ProgramStepFeedbackRelease>,
 }
 
 /// A session row on a bare embedded handle: refused, as this handle binds no

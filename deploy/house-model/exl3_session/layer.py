@@ -425,15 +425,18 @@ class SessionLayer(Registry):
 
         def step():
             # One chore: the pages first, then a chunk of KV, then the
-            # stage once every page is written; None until then.
-            anchor = progress["anchor"]
-            if anchor is None:
-                anchor = progress["anchor"] = self._import_begin(session, generation, rebuilt, count)
-            progress["written"] = self._import_pages(session, anchor, rebuilt, progress["written"],
-                                                     self.scheduler.executor.transfer_chunk(work))
-            if progress["written"] < count:
-                return None
-            return self._import_stage(session, op_id, generation, anchor, rebuilt, size, sha256)
+            # stage once every page is written; None until then. The cache's
+            # pages and KV are inference tensors, so they are written under
+            # inference mode, as the generator writes them.
+            with torch.inference_mode():
+                anchor = progress["anchor"]
+                if anchor is None:
+                    anchor = progress["anchor"] = self._import_begin(session, generation, rebuilt, count)
+                progress["written"] = self._import_pages(session, anchor, rebuilt, progress["written"],
+                                                         self.scheduler.executor.transfer_chunk(work))
+                if progress["written"] < count:
+                    return None
+                return self._import_stage(session, op_id, generation, anchor, rebuilt, size, sha256)
 
         try:
             while True:

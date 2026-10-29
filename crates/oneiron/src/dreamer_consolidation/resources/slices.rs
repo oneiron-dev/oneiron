@@ -17,6 +17,9 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     /// not the user's own words (FIX 9017): its framed input may not be
     /// lent as clean, so it stays on the per-slice path.
     pub(in crate::dreamer_consolidation) low_trust: bool,
+    /// The rows its transcript was read from (FIX 6998): every row its
+    /// labels name and each MESSAGE its TURNs' words were projected from.
+    pub(in crate::dreamer_consolidation) sources: Vec<EntityId>,
 }
 
 impl BranchResources<'_> {
@@ -125,12 +128,21 @@ impl BranchResources<'_> {
                             .priors
                             .iter()
                             .any(|(id, prior)| page.shows(*id) && low_trust_prior(prior));
+                    let mut sources: Vec<EntityId> = labels.rows().collect();
+                    sources.extend(
+                        chunk
+                            .iter()
+                            .filter_map(|(id, _)| self.texts.get(id))
+                            .flat_map(TurnText::versions)
+                            .map(|(message, _)| message),
+                    );
                     slices.push(ExtractionSlice {
                         turns: chunk.iter().map(|(id, _)| *id).collect(),
                         transcript,
                         scope: scope.clone(),
                         labels,
                         low_trust: slice_low_trust,
+                        sources,
                     });
                 }
             }

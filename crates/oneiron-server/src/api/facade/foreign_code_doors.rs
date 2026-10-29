@@ -1,5 +1,8 @@
 //! The foreign `execute_code` projection. A request keeps its own credential
 //! and the existing code-host permit; no owner or actor-only fallback is used.
+//! The host's type-feedback service is lent to the run as it is, never
+//! loaded or waited on here (FIX 10389); a failed run's refusal keeps its
+//! program's feedback beside it ([`SourceListed`]).
 use std::sync::Arc;
 
 use oneiron::code_sandbox::foreign::ForeignCodeArtifact;
@@ -8,7 +11,7 @@ use oneiron::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 
-use super::host_doors::support::{Listed, credential_listing, refused};
+use super::host_doors::support::{SourceListed, credential_source_listing, source_refused};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 
@@ -45,12 +48,12 @@ pub(crate) async fn execute_code(
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: ForeignCodeRunRequest,
-) -> Listed<ForeignCodeRunResult> {
+) -> SourceListed<ForeignCodeRunResult> {
     if let Err(error) = foreign_code_admits(server, auth) {
-        return refused(error);
+        return source_refused(error);
     }
     if session.is_some() {
-        return refused(MemoryError::new(
+        return source_refused(MemoryError::new(
             oneiron::memory::MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
             "foreign code receipts require canonical storage",
             &[],
@@ -61,16 +64,17 @@ pub(crate) async fn execute_code(
         .and_then(|host| host.engine_native())
         .filter(|host| host.provider().production_runtime_available())
     else {
-        return refused(MemoryError::new(
+        return source_refused(MemoryError::new(
             MEMORY_CODE_MODEL_UNAVAILABLE,
             "no verified code host is bound",
             &[],
         ));
     };
+    let type_feedback = host.provider().code_check().cloned();
     let permit = match host.runs().admit(auth.idempotency_principal()).await {
         Ok(permit) => permit,
         Err(_) => {
-            return refused(MemoryError::new(
+            return source_refused(MemoryError::new(
                 oneiron::memory::MEMORY_CODE_INVALID_STATE,
                 "foreign code waited out before admission",
                 &[],
@@ -79,13 +83,13 @@ pub(crate) async fn execute_code(
     };
     let caller = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
-        Err(error) => return refused(error.into_memory_error()),
+        Err(error) => return source_refused(error.into_memory_error()),
     };
     // The guest's proposed files spool on the server's one disk floor, the
     // one its uploads keep (FIX 7650).
     let spool: Arc<dyn oneiron::code_sandbox::ProposalSpoolFloor> =
         Arc::new(server.transfers.disk.clone());
-    credential_listing(server, auth, caller, "execute_code", move |_, _, memory| {
+    credential_source_listing(server, auth, caller, "execute_code", move |_, _, memory| {
         let _permit = permit;
         let manifest: serde_json::Value = serde_json::from_str(COMPONENT_MANIFEST)
             .map_err(|_| super::host_doors::support::internal("execute_code"))?;
@@ -106,6 +110,7 @@ pub(crate) async fn execute_code(
             },
             oneiron::code_sandbox::microvm::ExecutionBudget::default(),
             spool,
+            type_feedback.as_ref(),
         )
     })
     .await

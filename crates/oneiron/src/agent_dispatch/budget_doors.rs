@@ -117,7 +117,8 @@ pub struct LocalRunnerBudgetCounter {
     pub total_units: u64,
     pub remaining_units: u64,
     pub reserved_units: u64,
-    /// `total_units - remaining_units - reserved_units`: what settled.
+    /// `total_units - remaining_units - reserved_units`, plus spend settled
+    /// beyond the total: what settled.
     pub spent_units: u64,
     pub updated_at: u64,
 }
@@ -377,17 +378,13 @@ pub fn runner_budget_reservations_as_owner(
     })
 }
 
-/// The counter as the owner reads it, with what settled as spent. A row
-/// whose remaining and reserved units exceed its total refuses: the runner
-/// never writes one.
+/// The counter as the owner reads it, with what settled as spent, an
+/// overdraft among it (FIX 8702). A row whose remaining and reserved units
+/// exceed its total refuses: the runner never writes one.
 fn runner_counter(row: &DreamerBudgetRecord) -> Result<LocalRunnerBudgetCounter> {
-    let spent_units = row
-        .total_units
-        .checked_sub(row.remaining_units)
-        .and_then(|free| free.checked_sub(row.reserved_units))
-        .ok_or(crate::Error::InvariantViolation(
-            "dreamer budget counter is inconsistent",
-        ))?;
+    let spent_units = row.spent_units().ok_or(crate::Error::InvariantViolation(
+        "dreamer budget counter is inconsistent",
+    ))?;
     Ok(LocalRunnerBudgetCounter {
         total_units: row.total_units,
         remaining_units: row.remaining_units,

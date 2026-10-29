@@ -6,9 +6,7 @@ use crate::edit_distance::delta::AmendmentDelta;
 use crate::error::Error;
 use crate::receipt::{ReceiptRecord, ReceiptView};
 use crate::side_table::{CodecError, RawValue};
-
-/// Upper bound on pending-consent rows visited per browse projection pass.
-pub const INBOX_PENDING_SCAN_LIMIT: usize = 10_000;
+use crate::store::PendingGateConsentRecord;
 
 /// Sub-clusters by entity/theme are emitted only when a run surfaces at
 /// least this many members ("when the run emits many items").
@@ -159,6 +157,9 @@ pub struct InboxQuery {
     pub now: u64,
     /// Maximum number of groups returned.
     pub limit: usize,
+    /// Resume after the page that answered this cursor (FIX 9873).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<InboxGroupCursor>,
 }
 
 impl InboxQuery {
@@ -167,22 +168,99 @@ impl InboxQuery {
         Self {
             now: crate::unix_seconds_now(),
             limit,
+            after: None,
         }
     }
 
     #[must_use]
     pub const fn at(now: u64, limit: usize) -> Self {
-        Self { now, limit }
+        Self {
+            now,
+            limit,
+            after: None,
+        }
     }
+
+    /// This query, resuming after `after` when it is set.
+    #[must_use]
+    pub const fn after(self, after: Option<InboxGroupCursor>) -> Self {
+        Self { after, ..self }
+    }
+}
+
+/// Where one browse page ended (FIX 9873): the tray position of the earliest
+/// pending row of the last group it served, in the tray's own order
+/// (proposal time, decision id, claim id). The next page serves the groups
+/// whose earliest row lies after it. It resumes the traversal and nothing
+/// else: it names no authority, expires nothing and counts nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct InboxGroupCursor {
+    created_at: u64,
+    decision_id: [u8; 16],
+    claim_id: [u8; 16],
+}
+
+impl InboxGroupCursor {
+    /// The token's length: 8 + 16 + 16 bytes as lowercase hex.
+    const TOKEN_LEN: usize = 80;
+
+    /// The position of `record` in the tray's order.
+    pub(crate) fn of(record: &PendingGateConsentRecord) -> Self {
+        Self {
+            created_at: record.created_at,
+            decision_id: record.decision_id.as_bytes(),
+            claim_id: record.claim_id,
+        }
+    }
+
+    /// The cursor as a page's `next` carries it: 80 lowercase hex.
+    #[must_use]
+    pub fn to_token(&self) -> String {
+        let mut bytes = Vec::with_capacity(Self::TOKEN_LEN / 2);
+        bytes.extend_from_slice(&self.created_at.to_be_bytes());
+        bytes.extend_from_slice(&self.decision_id);
+        bytes.extend_from_slice(&self.claim_id);
+        crate::entity_id::bytes_to_hex_lower(&bytes)
+    }
+
+    /// Reads a token [`Self::to_token`] wrote; `None` for anything else.
+    #[must_use]
+    pub fn parse(token: &str) -> Option<Self> {
+        if token.len() != Self::TOKEN_LEN || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let bytes: Vec<u8> = (0..token.len())
+            .step_by(2)
+            .map(|at| u8::from_str_radix(&token[at..at + 2], 16).ok())
+            .collect::<Option<_>>()?;
+        Some(Self {
+            created_at: u64::from_be_bytes(bytes[..8].try_into().ok()?),
+            decision_id: bytes[8..24].try_into().ok()?,
+            claim_id: bytes[24..40].try_into().ok()?,
+        })
+    }
+}
+
+/// One browse page (FIX 9873): complete visible groups in the tray's order,
+/// and where the next page resumes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct InboxGroupPage {
+    pub groups: Vec<InboxGroup>,
+    /// Pass back as the next request's `after`. Absent when no group lies
+    /// past this page. A group the dial holds back whole is passed over, so
+    /// a later page can come back with no visible group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
 }
 
 /// One dreamer-run group card over open pending proposals.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct InboxGroup {
     /// Group key: the run-tree ROOT attempt id (OF-193) when the run resolves in
-    /// the attempt queue, otherwise the provenance-stamped run id.
+    /// the attempt queue, otherwise the provenance-stamped run id. Every
+    /// pending proposal of every run under that root is one of its members.
     pub group_key: String,
-    /// The provenance-stamped dreamer run id.
+    /// The provenance-stamped dreamer run id of the group's earliest member.
     pub run_id: String,
     /// Dreamer-authored headline from the run brief's stated intent plus the
     /// run's item counts.

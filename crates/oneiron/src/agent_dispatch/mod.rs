@@ -131,6 +131,7 @@ pub use self::planner::{
     resolve_care, top_shapes,
 };
 pub use self::planner_live::{LivePlanRequest, PlannerSeat, PlannerSkills};
+pub(crate) use self::planner::resolved_budget_ask;
 pub use self::task_type_tree::{
     SourcedTypeTree, TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at,
     load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,

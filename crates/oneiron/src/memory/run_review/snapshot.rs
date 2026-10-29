@@ -14,6 +14,21 @@ pub(super) fn claim_author(body: &crate::claim::ClaimBody) -> MemoryResult<Entit
         .ok_or_else(|| MemoryError::bad_request("the claim has no authenticated author"))
 }
 
+/// An external effect's verdict, from the outcome its gate receipt recorded
+/// (FIX 9965): only a recorded allow, or a consent that approved it, landed;
+/// a held effect still waits; every other outcome (a deny, a rejection, a
+/// let-go or a superseded ask) never ran. A recorded allow says the gate
+/// admitted the effect, not that its far end received it.
+fn effect_verdict(outcome: &str) -> RunChangeVerdict {
+    match outcome {
+        "allow" | "approved" | crate::edit_distance::delta::OUTCOME_APPROVED_AMENDED => {
+            RunChangeVerdict::Landed
+        }
+        "pending" => RunChangeVerdict::Waiting,
+        _ => RunChangeVerdict::Rejected,
+    }
+}
+
 pub(super) fn binding(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -115,14 +130,10 @@ pub(super) fn binding(
                     .ok_or_else(|| MemoryError::not_found("topology ledger member is absent"))?;
                 bytes.extend_from_slice(blake3::hash(&raw.encode()).as_bytes());
             }
-            Ok((
-                bytes,
-                if event.approval == ClaimApprovalStatus::Proposed {
-                    RunChangeVerdict::Waiting
-                } else {
-                    RunChangeVerdict::Landed
-                },
-            ))
+            // FIX 9966: the effective ledger's resolution or cancellation,
+            // not the immutable Proposed flag, says whether it still waits.
+            let outcome = super::topology::topology_outcome_in_txn(vault, txn, id, &event)?;
+            Ok((bytes, outcome.verdict))
         }
         RunReviewChange::ExternalEffect { receipt_ref } => {
             let id = receipt_ref.strip_prefix("gate:").ok_or_else(|| {
@@ -139,7 +150,7 @@ pub(super) fn binding(
             Ok((
                 serde_json::to_vec(&record)
                     .map_err(|_| MemoryError::bad_request("effect receipt cannot be encoded"))?,
-                RunChangeVerdict::Landed,
+                effect_verdict(&record.outcome),
             ))
         }
         RunReviewChange::Delete { entity_ref } | RunReviewChange::Erase { entity_ref } => {

@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::{PackAdapter, PackRuntimeRecipe, PackSource, invalid};
 use crate::code_sandbox::SandboxProposalWrite;
+use crate::code_sandbox::source::PreparedSource;
 use crate::{Result, skill_hub::HubFile};
 
 const OUTPUT_PATH: &str = "/mnt/workspace/adapter-output.json";
@@ -88,13 +89,23 @@ impl ScriptExecutionPlan {
         );
         &self.files
     }
-    pub(crate) fn assemble_program(&self, grants: &BTreeMap<String, Value>) -> Result<String> {
-        let authored = std::str::from_utf8(&self.files[self.script_index].content)
-            .map_err(|_| invalid("adapter script is not UTF-8"))?;
-        // The authored script is prepared before the grants prelude joins it
-        // (FIX 8276): TypeScript runs as the JavaScript Oxc prints for it,
-        // JavaScript as written. The pack's source tree stays as admitted.
-        let prepared = crate::code_sandbox::source::prepare_source(authored);
+    /// The adapter script as its author wrote it, owned by the plan apart
+    /// from the program the guest runs: its run prepares it once and checks
+    /// it before any grant joins it (FIX 8276, FIX 10389).
+    pub(crate) fn authored(&self) -> Result<&str> {
+        std::str::from_utf8(&self.files[self.script_index].content)
+            .map_err(|_| invalid("adapter script is not UTF-8"))
+    }
+
+    /// The program the guest runs: `prepared`, the authored script's one
+    /// preparation, after the grants prelude. TypeScript runs as the
+    /// JavaScript Oxc printed for it, JavaScript as written; the pack's
+    /// source tree stays as admitted.
+    pub(crate) fn assemble_program(
+        &self,
+        prepared: &PreparedSource<'_>,
+        grants: &BTreeMap<String, Value>,
+    ) -> Result<String> {
         let script = prepared.executed();
         let prelude = GrantPrelude::encode(grants)?;
         shape(self.program.assemble(script.len(), prelude.0.len()))?;

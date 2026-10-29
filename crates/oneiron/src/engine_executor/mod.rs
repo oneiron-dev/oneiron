@@ -32,6 +32,9 @@ mod wire;
 pub(crate) use self::attempt_cancels::{AttemptCancels, stop_attempt_step};
 pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
 pub use self::code_check::TypeFeedback;
+// FIX 10389: a program a door other than a run's own step runs, checked as a
+// step's is.
+pub(crate) use self::code_check::{CheckedDoor, LatestFeedback, RowsCheck};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
@@ -39,7 +42,7 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, entered_run};
-pub use self::shadow_step::run_shadow_step;
+pub use self::shadow_step::{ArmTypeFeedback, run_shadow_step};
 pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
@@ -47,7 +50,7 @@ pub(crate) use self::store::{
     is_result_output_path, result_handle_json, store_result_output_path,
 };
 pub use self::types::{
-    ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
+    CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
     ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig,
     EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult,
     EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY, JsCodeModeHost,

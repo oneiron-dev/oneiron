@@ -14,14 +14,15 @@ use crate::llm::{
     ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
-/// The dreaming's admitted request and its step hash.
+/// The dreaming's admitted request, its step hash and the craft note claims
+/// its craft message was read from (FIX 6998).
 pub(super) fn dream_request(
     ctx: &WakeAttemptContext<'_>,
     attempt_id: AttemptId,
     resident_id: EntityId,
     model: &ResidentDreamModel<'_>,
     cut: &DreamCut,
-) -> Result<(LlmRequest, [u8; 32])> {
+) -> Result<(LlmRequest, [u8; 32], Vec<EntityId>)> {
     let locality = model
         .inference
         .selected_locality()
@@ -30,14 +31,22 @@ pub(super) fn dream_request(
     // attempt so its manifest names them: fixed input beside its cut, never
     // diary progress, so no cut defers or consumes it. A craft that does not
     // read leaves the dreaming as it was.
-    let craft = match ctx
-        .vault
-        .load_resident_craft(attempt_id, &resident_id, ctx.now_ms / 1_000)
-    {
-        Ok(notes) => crate::actor_claims::craft_message_text(&notes),
+    let (craft, craft_rows) = match ctx.vault.load_resident_craft(
+        attempt_id,
+        &resident_id,
+        ctx.now_ms / 1_000,
+    ) {
+        Ok(notes) => (
+            crate::actor_claims::craft_message_text(&notes),
+            notes
+                .iter()
+                .filter(|note| crate::actor_claims::craft_note_line(&note.body).is_some())
+                .map(|note| note.claim)
+                .collect(),
+        ),
         Err(error) => {
             tracing::warn!(kind = ?error.kind(), ?attempt_id, "a resident's craft did not read; it dreams without it");
-            None
+            (None, Vec::new())
         }
     };
     let mut messages = vec![LlmMessage {
@@ -95,5 +104,5 @@ pub(super) fn dream_request(
     let step_hash = request
         .canonical_hash()
         .map_err(|_| invalid("the dreaming request did not hash"))?;
-    Ok((request, step_hash))
+    Ok((request, step_hash, craft_rows))
 }
