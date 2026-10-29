@@ -213,7 +213,8 @@ impl Vault {
     /// whatever `visible` admits, every row the policy frontier
     /// and the reach line are read from (the stored manifests the frontier
     /// folds, every roster actor, each sending identity with its fact heads,
-    /// every connector key the join reads). Grants, the shared vault and its
+    /// every connector key and standing outbound grant the join reads).
+    /// Standing consent grants, the shared vault and its
     /// members are authority state, so they list no row of their own.
     pub(super) fn read_live_shape_into(
         &self,
@@ -401,6 +402,7 @@ impl Vault {
             }
             self.source_live_skills_in_txn(&txn, &mut rows, &skills, &reach.grants, sources)?;
             reach.connectors = self.reach_connectors_in_txn(&txn, None)?;
+            reach.outbound = self.reach_outbound_in_txn(&txn, &policy_frontier, sources)?;
             if sources.listing() {
                 // Every key the join reads: an actor's own key on a connector
                 // takes it out of a key bound to none (catalog keys are keys).

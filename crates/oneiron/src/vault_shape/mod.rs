@@ -27,6 +27,7 @@ mod live_source;
 mod manifest;
 mod manifest_json;
 mod member;
+mod outbound_reach;
 mod plan;
 mod reach;
 mod retire;
