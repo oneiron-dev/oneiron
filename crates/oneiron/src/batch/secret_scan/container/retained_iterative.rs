@@ -187,7 +187,7 @@ impl RetainedLeafTransform for FillPlaces<'_> {
         }
         spans.sort_unstable_by_key(|(span, _)| *span);
         if self.handles.is_some() && writes_handles(path, &bytes) {
-            return filled_with(&bytes, spans).map_err(Stop::Fail);
+            return filled_with(&bytes, &spans).map_err(Stop::Fail);
         }
         filled(&bytes, spans.into_iter().map(|(span, _)| span)).map_err(Stop::Fail)
     }
