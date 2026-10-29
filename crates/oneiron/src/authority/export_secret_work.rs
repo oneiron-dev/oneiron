@@ -372,28 +372,4 @@ impl Vault {
         savepoint.commit()?;
         Ok(receipt)
     }
-
-    /// Each of `requests` as this install's fold stands now: a recorded
-    /// request's status read again (an owner's read of an export receipt).
-    pub(crate) fn refreshed_holder_export_requests(
-        &self,
-        requests: Vec<HolderExportRequest>,
-    ) -> Vec<HolderExportRequest> {
-        if requests.is_empty() {
-            return requests;
-        }
-        let fold = self
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::Error::from)
-            .and_then(|txn| self.authority_view_readonly_in_txn(&txn));
-        match fold {
-            Ok(fold) => requests
-                .into_iter()
-                .map(|request| request.refreshed(&fold))
-                .collect(),
-            Err(_) => requests,
-        }
-    }
 }

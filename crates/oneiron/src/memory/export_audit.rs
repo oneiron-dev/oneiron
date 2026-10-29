@@ -176,21 +176,28 @@ impl Vault {
     }
 }
 
-/// Every export audit row in `txn`, oldest first.
-/// A row's holder requests read as the fold in `txn` stands (FIX 4624(b)).
+/// Every export audit row in `txn`, oldest first, each holder request's
+/// status read again from the fold in `txn` (FIX 4624(b)); a fold that does
+/// not read leaves each as its row recorded it.
 fn export_receipts_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<ExportReceipt>> {
-    let fold = vault.authority_view_readonly_in_txn(txn)?;
-    Ok(EXPORT_RECEIPTS
+    let mut receipts: Vec<ExportReceipt> = EXPORT_RECEIPTS
         .scan(&vault.store, txn)?
         .into_iter()
-        .map(|(_, mut receipt)| {
+        .map(|(_, receipt)| receipt)
+        .collect();
+    if receipts
+        .iter()
+        .any(|receipt| !receipt.holder_requests.is_empty())
+        && let Ok(fold) = vault.authority_view_readonly_in_txn(txn)
+    {
+        for receipt in &mut receipts {
             receipt.holder_requests = std::mem::take(&mut receipt.holder_requests)
                 .into_iter()
                 .map(|request| request.refreshed(&fold))
                 .collect();
-            receipt
-        })
-        .collect())
+        }
+    }
+    Ok(receipts)
 }
 
 /// Records `copy`, once it has left (FIX 6427): its audit row under a fresh
