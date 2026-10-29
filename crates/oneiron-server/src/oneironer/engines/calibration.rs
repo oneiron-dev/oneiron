@@ -241,6 +241,9 @@ pub(super) struct MeasuredRow {
     /// every case. A cold or broken load, or a call that failed, is no
     /// parity result, and the next start measures again.
     pub(super) keep: bool,
+    /// Why an in-process worker's calibration failed, when it held cases:
+    /// its down reason's detail.
+    pub(super) detail: Option<&'static str>,
 }
 
 /// What measuring one Candle engine left.
@@ -274,7 +277,7 @@ pub(super) fn measure(
         }
     };
     let windows = tagger.window_counter();
-    let MeasuredRow { row, keep } =
+    let MeasuredRow { row, keep, .. } =
         measure_loaded(&windows, candidate, &mut tagger, key, reference);
     Measured {
         row,
@@ -299,7 +302,11 @@ pub(super) fn measure_loaded(
     key: &RowKey,
     reference: &Reference,
 ) -> MeasuredRow {
-    let unkept = |row: Row| MeasuredRow { row, keep: false };
+    let unkept = |row: Row, detail: Option<&'static str>| MeasuredRow {
+        row,
+        keep: false,
+        detail,
+    };
     let mut held = Vec::with_capacity(reference.cases.len());
     for (input, expected) in &reference.cases {
         match windows.count(input) {
@@ -312,7 +319,7 @@ pub(super) fn measure_loaded(
             Err(_) => {
                 let row = Row::unmeasured(key, 0, 0);
                 tracing::warn!(engine = %row.engine, "oneironer engine could not window a reference case");
-                return unkept(row);
+                return unkept(row, None);
             }
         }
     }
@@ -321,11 +328,11 @@ pub(super) fn measure_loaded(
     // kernels and caches no later call does.
     let Some(&(first, _, _)) = held.first() else {
         tracing::warn!(engine = %row.engine, "no oneironer reference case fits the engine's window");
-        return unkept(row);
+        return unkept(row, None);
     };
     if worker.run(first).is_err() {
         tracing::warn!(engine = %row.engine, "oneironer engine failed a reference case");
-        return unkept(row);
+        return unkept(row, Some("reference_failed"));
     }
     let mut clear = true;
     let mut samples = Vec::with_capacity(held.len());
@@ -343,7 +350,7 @@ pub(super) fn measure_loaded(
             Ok(answer) => clear &= clears(reference.bar, expected, &answer),
             Err(_) => {
                 tracing::warn!(engine = %row.engine, "oneironer engine failed a reference case");
-                return unkept(row);
+                return unkept(row, Some("reference_failed"));
             }
         }
     }
@@ -354,5 +361,9 @@ pub(super) fn measure_loaded(
         row.p95_ms = Some(timing.p95_ms);
     }
     row.clears = clear;
-    MeasuredRow { row, keep: true }
+    MeasuredRow {
+        row,
+        keep: true,
+        detail: None,
+    }
 }

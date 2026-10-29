@@ -33,6 +33,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use oneiron::memory::extraction::ExecutionRuntime;
+
 use super::super::bundle::{COREML_ROW, MLX_ROW, ReadManifest, read_manifest};
 use super::super::coreml;
 use super::super::dispatcher::{
@@ -350,7 +352,8 @@ impl Calibration {
     /// the slot is preferred, so a second worker's admission never ranks
     /// Candle back above the first. A row that does not clear, or holds no
     /// case, is down; a call that failed is a crash, and the next session
-    /// measures again.
+    /// measures again, except on an in-process worker, whose calibration
+    /// error is down with its reason named.
     fn admit(&mut self, worker: &mut dyn Worker) -> Result<usize, Fault> {
         if let Some(rank) = self.admitted {
             return Ok(rank);
@@ -369,6 +372,9 @@ impl Calibration {
                 if !run.keep {
                     return Err(if run.row.cases == 0 {
                         Fault::Down(PARITY_FAILED.to_owned())
+                    } else if self.descriptor.runtime() == ExecutionRuntime::CoreMl {
+                        let detail = run.detail.unwrap_or("reference_failed");
+                        Fault::Down(format!("calibration_failed:{detail}"))
                     } else {
                         Fault::Crash("calibration_failed")
                     });
