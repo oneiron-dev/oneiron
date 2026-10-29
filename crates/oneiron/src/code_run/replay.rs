@@ -445,6 +445,9 @@ pub struct CodeRunRawOutput {
     /// Whether the producer finished the body. An incomplete one is kept as
     /// far as it got, and says so; it never reads as a success.
     pub complete: bool,
+    /// Every row this occurrence's bytes were produced from; `None` when
+    /// any constituent is unknown (FIX 7104).
+    pub input_rows: Option<Vec<EntityId>>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -487,6 +490,7 @@ impl CodeRunRawOutput {
             },
             lines: facts.lines,
             complete,
+            input_rows: None,
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -514,6 +518,7 @@ impl CodeRunRawOutput {
             kind: CodeRunOutputKind::Binary,
             lines: 0,
             complete: true,
+            input_rows: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),

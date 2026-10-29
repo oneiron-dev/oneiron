@@ -87,6 +87,7 @@ impl EngineNativeExecutor<'_> {
         if config.run_id.as_bytes() != attempt.as_bytes() {
             return;
         }
+        let source_rows = self.step_source_rows(config, record);
         capture_step(
             vault,
             &StepCapture {
@@ -99,6 +100,7 @@ impl EngineNativeExecutor<'_> {
                 request,
                 task: &config.task,
                 exposures,
+                source_rows,
                 start: Some(StepStartCapture {
                     record,
                     model: &config.model,

@@ -51,7 +51,7 @@ pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 9] = [
 ];
 pub const CODE_RUN_STEP_CHECKPOINT_KEYS: [&str; 4] =
     ["seq", "label", "state_hash", "created_at_ms"];
-pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 8] = [
+pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 9] = [
     "handle",
     "path",
     "raw_blake3",
@@ -60,6 +60,7 @@ pub const CODE_RUN_RAW_OUTPUT_KEYS: [&str; 8] = [
     "lines",
     "complete",
     "preview",
+    "input_rows",
 ];
 pub const CODE_RUN_OUTPUT_PREVIEW_KEYS: [&str; 3] = ["codec", "text", "truncated"];
 pub const CODE_RUN_ABI_LAYOUT_CHECK_KEYS: [&str; 4] =
@@ -112,6 +113,7 @@ const KEY_KIND: &str = CODE_RUN_RAW_OUTPUT_KEYS[4];
 const KEY_LINES: &str = CODE_RUN_RAW_OUTPUT_KEYS[5];
 const KEY_COMPLETE: &str = CODE_RUN_RAW_OUTPUT_KEYS[6];
 const KEY_PREVIEW: &str = CODE_RUN_RAW_OUTPUT_KEYS[7];
+const KEY_INPUT_ROWS: &str = CODE_RUN_RAW_OUTPUT_KEYS[8];
 
 const KEY_CODEC: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[0];
 const KEY_TEXT: &str = CODE_RUN_OUTPUT_PREVIEW_KEYS[1];
@@ -380,6 +382,10 @@ fn encode_raw_output(output: &CodeRunRawOutput) -> Value {
             Value::from(KEY_PREVIEW),
             encode_output_preview(&output.preview),
         ),
+        (
+            Value::from(KEY_INPUT_ROWS),
+            encode_optional_entity_rows(&output.input_rows),
+        ),
     ])
 }
 
@@ -398,6 +404,8 @@ fn decode_raw_output(value: &Value) -> Result<CodeRunRawOutput> {
         lines: u64_value(required(fields[5], "missing output lines")?)?,
         complete: bool_value(required(fields[6], "missing output complete")?)?,
         preview: decode_output_preview(required(fields[7], "missing output preview")?)?,
+        // A pre-carrier output has no witnessed input set.
+        input_rows: decode_optional_entity_rows(fields[8])?,
     };
     validate_raw_output(&output)?;
     Ok(output)
