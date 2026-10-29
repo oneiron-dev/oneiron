@@ -322,7 +322,8 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         }
     }
 
-    /// Executes one claimed attempt: the membership consequence leg.
+    /// Executes one claimed attempt: the membership consequence leg, an
+    /// entry's enrollment or an exit's leaving (FIX 2635).
     ///
     /// Outward firing is deliberately a SECOND leg
     /// (`run_enrollment_outbound_leg`): a crash between the cohort write and
@@ -357,11 +358,10 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         // dead work in the review queue instead of dropping it. A spent
         // entry's due pause wake is the one exception to the evidence check:
         // it re-enters through a fresh evaluation in `spent_entry`, so
-        // evidence that moved during the pause is read there (FIX 9662).
-        if event.transition != MembershipTransition::Entered {
-            return Ok(EnrollmentExecution::SkippedStale);
-        }
-        if !self.spent_entry_wakes(&event, now)
+        // evidence that moved during the pause is read there (FIX 9662). An
+        // exit is stale once its entity matches again (FIX 2635).
+        let exit = event.transition == MembershipTransition::Exited;
+        if (exit || !self.spent_entry_wakes(&event, now))
             && !self.evidence_still_holds(evaluator, &event, now).await?
         {
             return Ok(EnrollmentExecution::SkippedStale);
@@ -383,16 +383,38 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             return Ok(refused);
         }
         let membership_event = event.membership_event();
+        let state = if exit {
+            CampaignMemberState::Exited
+        } else {
+            CampaignMemberState::Enrolled
+        };
         let plan = MembershipWritePlan {
-            value: derived_member_value(
-                &membership_event,
-                CampaignMemberState::Enrolled,
-                vec![step.member_channel()],
-            ),
+            value: derived_member_value(&membership_event, state, vec![step.member_channel()]),
             event: membership_event,
         };
+        let committed = commit_membership_plan(self.vault, &plan, now)?;
+        if exit {
+            // The member leaves (`campaign.member` exit, FIX 2635): an exit
+            // owes nothing outward, and its replay wakes no saved pause.
+            return Ok(match committed {
+                MembershipCommitOutcome::Applied | MembershipCommitOutcome::RecordedOnly => {
+                    EnrollmentExecution::Applied {
+                        outbound_intent: None,
+                    }
+                }
+                MembershipCommitOutcome::AlreadyApplied => EnrollmentExecution::AlreadyApplied {
+                    outbound_intent: None,
+                },
+                MembershipCommitOutcome::DeferredUntil { until } => {
+                    EnrollmentExecution::DeferredUntil { until }
+                }
+                MembershipCommitOutcome::RejectedStaleEpoch { current_epoch } => {
+                    EnrollmentExecution::RejectedStaleEpoch { current_epoch }
+                }
+            });
+        }
         let outbound_intent = enrollment_intent_id(&event, &step)?;
-        Ok(match commit_membership_plan(self.vault, &plan, now)? {
+        Ok(match committed {
             MembershipCommitOutcome::Applied => EnrollmentExecution::Applied { outbound_intent },
             // The event landed on a membership whose own state holds: nothing
             // is owed outward (FIX 9664).
@@ -527,8 +549,15 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             }
             Err(error) => return Err(error),
         };
-        Ok(outcome.decision.verdict == MatchVerdict::Match
-            && outcome.evidence_hash == event.evidence_hash)
+        Ok(match event.transition {
+            MembershipTransition::Entered => {
+                outcome.decision.verdict == MatchVerdict::Match
+                    && outcome.evidence_hash == event.evidence_hash
+            }
+            // An exit holds while its entity still does not match, whatever
+            // evidence the non-match reads now (FIX 2635).
+            MembershipTransition::Exited => outcome.decision.verdict != MatchVerdict::Match,
+        })
     }
 }
 
