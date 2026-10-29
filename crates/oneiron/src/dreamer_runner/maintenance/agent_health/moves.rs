@@ -9,8 +9,10 @@
 //! reader takes only what those doors already admit it, and no detector or
 //! pass calls this.
 //!
-//! The control runs first, in its own writes, with no transaction of this
-//! module open; its receipt lands on the card after it, in a second write,
+//! The control runs through its own door, whose write checks the caller's
+//! standing and the card's retry key again and lands the receipt on the
+//! card beside the control, with the TURN, MESSAGE or signal it actually
+//! stored: the two commit together or not at all (FIX 8533). The receipt is
 //! keyed by actor and retry key. The same key returns the stored receipt and
 //! runs nothing again; the same key with other words is refused as a reused
 //! signal key is. A receipt records the evidence basis the caller read and
@@ -27,14 +29,11 @@ use crate::claim::{CallerLocality, ClaimReadStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::People;
 use crate::memory::{
-    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, MessagePersonReceipt,
-    MessagePersonRequest,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
+    MessagePersonReceipt, MessagePersonRequest,
 };
 use crate::run_tree::RunSignalState;
-use crate::task_verb::sdk::{
-    SteerReceipt, SteerRequest, steer_child, steer_child_as_owner, steer_child_at,
-    steer_child_at_as_owner,
-};
+use crate::task_verb::sdk::{SteerReceipt, SteerRequest, steer_linked};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
 const BASIS_DOMAIN: &[u8] = b"oneiron.coach.agent_health.move_basis.v1";
@@ -403,13 +402,14 @@ fn unix_ms() -> u64 {
 /// `self.message` to the PERSON of the card's agent, as the caller: the
 /// person comes from the card, never from the request, and the door reads
 /// it again through the caller's own read. A caller whose read does not hold
-/// that PERSON is refused here, its handle unnamed (FIX 8537).
+/// that PERSON is refused here, its handle unnamed (FIX 8537). `check` and
+/// `record` run in the message's own write, before and after it lands.
 fn note(
     memory: &Memory<'_>,
     card: &AgentHealthCard,
-    text: &str,
-    from_project: Option<&str>,
-    to_project: Option<&str>,
+    (text, from_project, to_project): (&str, Option<&str>, Option<&str>),
+    check: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    record: impl FnOnce(&mut heed::RwTxn<'_>, &MessagePersonReceipt) -> MemoryResult<()>,
 ) -> MemoryResult<MessagePersonReceipt> {
     let people = People::load(memory.vault(), unix_ms(), &mut |_| Ok(true))?;
     let row = people
@@ -425,13 +425,17 @@ fn note(
             &[],
         ));
     }
-    memory.message_person(&MessagePersonRequest {
-        pr: row.handle.clone(),
-        text: text.to_owned(),
-        mention: None,
-        from_project: from_project.map(str::to_owned),
-        to_project: to_project.map(str::to_owned),
-    })
+    memory.message_person_linked(
+        &MessagePersonRequest {
+            pr: row.handle.clone(),
+            text: text.to_owned(),
+            mention: None,
+            from_project: from_project.map(str::to_owned),
+            to_project: to_project.map(str::to_owned),
+        },
+        check,
+        record,
+    )
 }
 
 fn link(landed: &Landed, attempt: Option<EntityId>) -> ConcernMoveLink {
@@ -458,8 +462,8 @@ fn link(landed: &Landed, attempt: Option<EntityId>) -> ConcernMoveLink {
     }
 }
 
-/// The receipt, on the card as it reads in the second write. A twin call
-/// with the same key that landed first keeps its receipt.
+/// The receipt, on the card as it reads in the control's own write. A twin
+/// call with the same key that landed first keeps its receipt.
 fn record_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -504,8 +508,10 @@ fn record_in_txn(
 }
 
 /// A note or a steer, for both doors: the card and the caller's standing in
-/// one read, where a retry returns; the control through its own door, with
-/// nothing open here; then the receipt in a second write.
+/// one read, where a retry returns; then the control through its own door,
+/// whose write checks the caller's standing, the card and its retry key
+/// again before the control lands and records the receipt after it, so the
+/// control and its receipt commit together (FIX 8533).
 fn take(
     memory: &Memory<'_>,
     taker: Taker<'_>,
@@ -545,12 +551,29 @@ fn take(
         }
         card
     };
+    let write = MoveWrite {
+        memory,
+        taker,
+        card_key,
+        key,
+        payload: &payload,
+        observed,
+        replayed: std::cell::Cell::new(None),
+        recorded: std::cell::Cell::new(None),
+    };
     let landed = match control {
         Control::Note {
             text,
             from_project,
             to_project,
-        } => Landed::Note(note(memory, &card, text, from_project, to_project)?),
+        } => note(
+            memory,
+            &card,
+            (text, from_project, to_project),
+            |txn| write.check_in_txn(txn),
+            |txn, message| write.record_in_txn(txn, Landed::Note(message.clone())),
+        )
+        .map(drop),
         Control::Steer { instruction } => {
             let task = card.task.ok_or_else(|| {
                 MemoryError::bad_request("this concern card names no task to steer")
@@ -566,33 +589,92 @@ fn take(
                 .attempt
                 .map(|attempt| crate::attempt_queue::AttemptId::from_bytes(attempt.as_bytes()))
                 .transpose()?;
-            Landed::Steer(match (taker, attempt) {
-                (Taker::Agent, None) => steer_child(memory, request)?,
-                (Taker::Agent, Some(attempt)) => steer_child_at(memory, request, attempt)?,
-                (Taker::Owner(owner), None) => steer_child_as_owner(memory, owner, request)?,
-                (Taker::Owner(owner), Some(attempt)) => {
-                    steer_child_at_as_owner(memory, owner, request, attempt)?
-                }
-            })
+            let owner = match taker {
+                Taker::Agent => None,
+                Taker::Owner(owner) => Some(owner),
+            };
+            steer_linked(
+                memory,
+                owner,
+                request,
+                attempt,
+                |txn| write.check_in_txn(txn),
+                |txn, steer| write.record_in_txn(txn, Landed::Steer(steer.clone())),
+            )
+            .map(drop)
         }
     };
-    let landing = Landing {
-        actor,
-        actor_class: memory.actor_class().gate_actor_class(),
-        key,
-        payload: &payload,
-        observed,
-        landed,
-    };
-    Ok(match taker {
-        Taker::Agent => memory.with_verified_actor_write_txn(|txn| {
-            Ok(record_in_txn(vault, txn, card_key, &landing)?)
-        })?,
-        Taker::Owner(owner) => vault.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(vault, txn)?;
-            record_in_txn(vault, txn, card_key, &landing)
-        })?,
-    })
+    if let Some(receipt) = write.replayed.take() {
+        return Ok(ConcernMoveOutcome::Applied {
+            card: handle,
+            receipt,
+        });
+    }
+    landed?;
+    Ok(write.recorded.take().ok_or(Error::InvariantViolation(
+        "a landed concern move records its receipt in its write",
+    ))?)
+}
+
+/// What a move's control checks and records in its own writer (FIX 8533).
+struct MoveWrite<'a, 'm> {
+    memory: &'a Memory<'m>,
+    taker: Taker<'a>,
+    card_key: &'a CardKey,
+    key: &'a str,
+    payload: &'a str,
+    observed: Option<&'a ConcernMoveBasis>,
+    /// The receipt a twin call landed under this key first: the answer,
+    /// with this control rolled back unsent.
+    replayed: std::cell::Cell<Option<ConcernMoveReceipt>>,
+    /// The receipt this control's write recorded.
+    recorded: std::cell::Cell<Option<ConcernMoveOutcome>>,
+}
+
+impl MoveWrite<'_, '_> {
+    /// Before the control lands: the caller's standing, the card and its
+    /// key, as the read checked them, now in the writer that commits.
+    fn check_in_txn(&self, txn: &mut heed::RwTxn<'_>) -> MemoryResult<()> {
+        let vault = self.memory.vault();
+        let actor = self.memory.actor();
+        match self.taker {
+            Taker::Agent => self.memory.verify_actor_write_in_txn(txn)?,
+            Taker::Owner(owner) => {
+                owner.revalidate_in_txn(vault, txn)?;
+            }
+        }
+        let card = CARDS
+            .get(&vault.store, txn, self.card_key)?
+            .ok_or_else(|| MemoryError::not_found("no such concern card"))?;
+        if matches!(self.taker, Taker::Agent) && !may_read(vault, txn, &card, actor)? {
+            return Err(forbidden());
+        }
+        if let Some(receipt) = taken(&card, actor, self.key, self.payload)? {
+            self.replayed.set(Some(receipt));
+            return Err(MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "this move's key already holds a receipt",
+                &[],
+            ));
+        }
+        Ok(())
+    }
+
+    /// After the control landed: its receipt on the card, naming what the
+    /// control actually stored.
+    fn record_in_txn(&self, txn: &mut heed::RwTxn<'_>, landed: Landed) -> MemoryResult<()> {
+        let landing = Landing {
+            actor: self.memory.actor(),
+            actor_class: self.memory.actor_class().gate_actor_class(),
+            key: self.key,
+            payload: self.payload,
+            observed: self.observed,
+            landed,
+        };
+        let outcome = record_in_txn(self.memory.vault(), txn, self.card_key, &landing)?;
+        self.recorded.set(Some(outcome));
+        Ok(())
+    }
 }
 
 impl Vault {
@@ -601,8 +683,8 @@ impl Vault {
     /// [`Self::ask_coach_on_agent_health_card`]. A note and a steer run as
     /// the owner's own Human caller at `locality`, as the owner's steer route
     /// builds it: the note through `self.message`'s door, the steer through
-    /// the owner's steer, which rechecks the proof. The same key returns the
-    /// first receipt.
+    /// the owner's steer, which rechecks the proof. The receipt lands in the
+    /// control's own write. The same key returns the first receipt.
     ///
     /// # Errors
     ///
@@ -641,7 +723,7 @@ impl Memory<'_> {
     /// evidence returns the standing ask. A note goes to the card's agent
     /// through `self.message`'s door and a steer to its TASK's live run
     /// through `steer`'s, each under that door's own rule; its receipt lands
-    /// on the card after it, and the same key returns it.
+    /// on the card in the control's own write, and the same key returns it.
     pub fn concern_move(&self, input: &ConcernMoveRequest) -> MemoryResult<ConcernMoveOutcome> {
         let key = parse_card_ref(&input.card).ok_or_else(|| {
             MemoryError::bad_request("card is a health: handle from a concern row")
