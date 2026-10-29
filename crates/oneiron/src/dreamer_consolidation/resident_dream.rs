@@ -599,7 +599,14 @@ pub async fn run_resident_dream(
             step_hashes: Vec::new(),
         });
     }
-    let (request, step_hash, craft) = dream_request(ctx, attempt_id, resident_id, &model, &cut)?;
+    let (request, step_hash, craft) = dream_request(
+        ctx,
+        attempt_id,
+        resident_id,
+        &model,
+        &cut,
+        free_time.is_some(),
+    )?;
     // The call sends under the rows its cut and craft were read from.
     let rows = cut.source_rows().map(|mut rows| {
         rows.extend(craft);
@@ -671,7 +678,7 @@ pub async fn run_resident_dream(
     if ctx.deadline.expired() {
         return Ok(charges.checkpoint());
     }
-    let (entry, craft) = match reply::diary_entry(&response) {
+    let parsed = match reply::diary_entry(&response) {
         Ok(read) => read,
         // Only a memo stored before the check can hold no entry: it goes,
         // and the Retry asks again (FIX 7431, OF-193a). A memo that does
@@ -701,9 +708,10 @@ pub async fn run_resident_dream(
         resident,
         resident_id,
         DreamWrite {
-            entry: &entry,
-            craft: &craft,
+            entry: &parsed.entry,
+            craft: &parsed.craft,
             free_time: &free_time,
+            another_round: parsed.another_round,
         },
         &cut,
         now,
