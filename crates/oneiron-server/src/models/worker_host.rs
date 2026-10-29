@@ -49,8 +49,8 @@ use oneiron::llm::{
 };
 use oneiron_driver::{
     AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
-    ExecutorRegistration, InferenceWorker, PressureDecision, UnloadOutcome, WorkRequest,
-    WorkTicket, WorkerPolicy, WorkerProbe, WorkerSpec,
+    ExecutorRegistration, InferenceWorker, PressureDecision, UnloadOutcome, WorkEnvelope,
+    WorkRequest, WorkTicket, WorkerPolicy, WorkerProbe, WorkerSpec,
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
@@ -289,8 +289,13 @@ async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
 }
 
 /// Takes a device ticket for one bound call before its worker acquire. No
-/// device means the route keeps its existing unmediated path.
-pub(super) fn admit_bound_work(worker: &InferenceWorker, context: WorkContext) -> BoundWork {
+/// device means the route keeps its existing unmediated path. `envelope` is
+/// the call's incremental charge beyond the worker's steady declaration.
+pub(super) fn admit_bound_work(
+    worker: &InferenceWorker,
+    context: WorkContext,
+    envelope: WorkEnvelope,
+) -> BoundWork {
     let ticket = HOST.get().and_then(|host| {
         let hosted = host.lock();
         let hosted = hosted.get(&worker.spec().worker_id)?;
@@ -301,6 +306,7 @@ pub(super) fn admit_bound_work(worker: &InferenceWorker, context: WorkContext) -
             worker.resource_class(),
             hosted.row.id.clone(),
         );
+        request.envelope = envelope;
         request.class = context.class;
         request.priority = context.priority;
         request.deadline = context.deadline;

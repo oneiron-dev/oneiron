@@ -47,7 +47,7 @@ use oneiron::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, SchedulingReceipt, SegmentManifest,
     WorkerBuildEvidence, WorkerFailure,
 };
-use oneiron_driver::WorkerActivity;
+use oneiron_driver::{WorkEnvelope, WorkerActivity};
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
@@ -223,8 +223,14 @@ async fn begin(
 ) -> Result<Begun, OpenAiCompatTransportError> {
     // The ticket precedes demand; an early exit cancels it without touching
     // the worker. Foreground arrival yields only update-capable background
-    // calls on the same device.
-    let mut work = worker_host::admit_bound_work(&route.worker, context);
+    // calls on the same device. EXL3's steady declaration covers its weights,
+    // KV pool and workspace, so a call's incremental host charge is qualified
+    // zero; an unknown steady commitment still fails the ledger's room check.
+    let envelope = WorkEnvelope {
+        kv_increment_mib: Some(0),
+        workspace_mib: Some(0),
+    };
+    let mut work = worker_host::admit_bound_work(&route.worker, context, envelope);
     let _foreground = if work.is_foreground() {
         match work.device() {
             Some(device) => Some(updates::foreground_arrival(device).await),

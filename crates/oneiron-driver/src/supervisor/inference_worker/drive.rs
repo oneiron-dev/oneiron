@@ -171,6 +171,7 @@ impl Inner {
             Err(ended) => return ended,
         };
         *attempt = 0;
+        self.mark_loaded();
         {
             let mut state = self.lock();
             state.epoch = observed
@@ -181,7 +182,6 @@ impl Inner {
             state.phase = Phase::Ready(observed);
             state.failure_detail = None;
         }
-        self.mark_loaded();
         self.notify();
         tracing::info!(worker = %self.spec.worker_id, model = %self.spec.model, "model worker ready");
         let mut idle_since: Option<Instant> = None;

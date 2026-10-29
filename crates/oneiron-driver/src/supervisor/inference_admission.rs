@@ -579,6 +579,15 @@ impl DeviceAdmission {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         state.grants.remove(&grant);
         state.tickets.remove(&ticket);
+        for child in state
+            .tickets
+            .values_mut()
+            .filter(|child| child.blocked_by == Some(ticket))
+        {
+            child.blocked_by = None;
+            child.request.parent = None;
+            child.request.cancel = fresh_cancel(&child.request.cancel);
+        }
         state.paused.remove(&ticket);
         state.pressure = PressureState::None;
         drop(state);
