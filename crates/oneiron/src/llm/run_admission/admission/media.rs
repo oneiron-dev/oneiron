@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use super::super::gate::GatedBackend;
 use super::super::host::OfferBinding;
-use super::super::media::{MediaBackend, MediaGate, MediaRequest};
+use super::super::media::MediaGate;
 use super::super::permit::RunPermit;
 use super::{RunAdmission, RunCall, RunDenied};
 use crate::llm::SingleRouteBackend;
+use crate::llm::media::{MediaBackend, MediaRequest};
 
 impl RunAdmission {
     /// The only backend a host hands a run for `offer`, over that offer's own
