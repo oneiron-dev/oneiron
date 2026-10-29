@@ -7,7 +7,10 @@ use super::super::reader_authority::question_lane;
 use super::super::records::*;
 use super::super::store::*;
 use super::asker;
-use super::{Answered, Prepared, Proposed, SourceRow, UnitAnswer, land, source, validate_decided, validate_proposal};
+use super::{
+    Answered, Prepared, Proposed, SourceRow, UnitAnswer, land, source, validate_decided,
+    validate_proposal,
+};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::llm::decision::{DecisionReceipt, TypedDecision};
 use crate::side_table::SideKey;
@@ -253,7 +256,9 @@ pub(super) fn refresh_with(
                 answer.unit,
                 &answer.decision.evidence,
             )?;
-            super::super::ask_history::put_graph_answer_in_txn(vault, txn, question, principal, &answer)?;
+            super::super::ask_history::put_graph_answer_in_txn(
+                vault, txn, question, principal, &answer,
+            )?;
             answers.push(answer);
         }
         if matches!(trigger, RefreshTrigger::Schedule) {

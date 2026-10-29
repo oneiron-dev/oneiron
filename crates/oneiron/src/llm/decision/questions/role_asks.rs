@@ -144,7 +144,10 @@ impl Vault {
             let Some(held) = ask.answer.as_ref() else {
                 return Ok(None);
             };
-            let Some(by) = held.by.id().filter(|_| held.answer != DecisionAnswer::Abstain)
+            let Some(by) = held
+                .by
+                .id()
+                .filter(|_| held.answer != DecisionAnswer::Abstain)
             else {
                 return Ok(None);
             };

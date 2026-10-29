@@ -38,11 +38,9 @@ fn print_ask_text(record: &VoicePrintRecordV1) -> String {
                 .collect::<String>()
         ),
     };
-    let contact = record
-        .contact_ref
-        .map_or_else(String::new, |contact| {
-            format!(" as contact {}", contact.to_hex())
-        });
+    let contact = record.contact_ref.map_or_else(String::new, |contact| {
+        format!(" as contact {}", contact.to_hex())
+    });
     format!(
         "A voice print of someone who is not an owner was made: subject {subject}{contact} \
          (print {print}), with no written release shown, and {law}. The print is kept and \

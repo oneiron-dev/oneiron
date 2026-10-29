@@ -81,12 +81,7 @@ fn waits_past_schedule(error: &RetryableLlmError, retry: usize, max_retries: usi
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
     let Some(reset_ms) = retry_after
-        .or_else(|| {
-            resets_at
-                .iter()
-                .find(|at| **at > now)
-                .map(|at| at - now)
-        })
+        .or_else(|| resets_at.iter().find(|at| **at > now).map(|at| at - now))
         .map(|secs| secs.saturating_mul(1000))
     else {
         return false;

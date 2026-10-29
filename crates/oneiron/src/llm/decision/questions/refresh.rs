@@ -8,10 +8,10 @@ mod manual;
 mod pump;
 
 pub(crate) use self::asker::{standing_asker, standing_asker_for_question};
-pub use self::manual::refresh_standing_question_with;
-pub(super) use self::pump::hold_failed;
 use self::calls::graph_proposal;
 use self::execution::refresh_with;
+pub use self::manual::refresh_standing_question_with;
+pub(super) use self::pump::hold_failed;
 use self::pump::{due_work, refresh_due_as, role_runner};
 
 use super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};

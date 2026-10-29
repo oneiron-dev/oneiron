@@ -1276,7 +1276,10 @@ impl OfferLadder {
         let sent = gate.generate(bound, permit.lease());
         let Some(answered) = call
             .deadline
-            .bound(super::http::holding_chat_replies(self.rests.reply_budgets(), sent))
+            .bound(super::http::holding_chat_replies(
+                self.rests.reply_budgets(),
+                sent,
+            ))
             .await
         else {
             settle_failed(permit);

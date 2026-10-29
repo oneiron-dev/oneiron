@@ -5,8 +5,7 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 use oneiron::BudgetLease;
 use oneiron::llm::{
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
-    returned_model_wire_id,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId, returned_model_wire_id,
 };
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
