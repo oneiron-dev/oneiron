@@ -207,6 +207,27 @@ impl PackFitPolicy for QualifiedPackFitPolicy<'_> {
 pub struct PackHookReplay {
     pub hook: String,
     pub entries: Vec<crate::runtime_hooks::HookReplayEntry>,
+    /// The test did not replay this hook in full: it took no entry (a verb
+    /// hook with no saved run, a fact hook with no past fact), or an entry's
+    /// inputs are gone (`missing_history`). The verdict still stands.
+    pub unreplayed: bool,
+}
+
+impl PackHookReplay {
+    fn new(hook: &super::PackHook, entries: Vec<crate::runtime_hooks::HookReplayEntry>) -> Self {
+        let unreplayed = entries.is_empty()
+            || entries.iter().any(|entry| {
+                matches!(
+                    entry.result,
+                    crate::runtime_hooks::HookReplayResult::MissingHistory { .. }
+                )
+            });
+        Self {
+            hook: hook.name.clone(),
+            entries,
+            unreplayed,
+        }
+    }
 }
 
 /// What a Candidate hook pack's test found, and where the pack stands after.
@@ -223,8 +244,9 @@ impl Vault {
     /// returns; live, the hook reads at its publisher's Grant. With no entry
     /// failed, refused or out of time, the pack installs in one writer, and
     /// an install over a bound pack follows the hook update rule. Otherwise it
-    /// stays Candidate, and the replays say why. A verb hook has no replay
-    /// yet, so its pack waits.
+    /// stays Candidate, and the replays say why. A fact hook replays over
+    /// past facts, a verb hook over its saved runs; a hook with nothing to
+    /// replay is labelled unreplayed and does not hold the pack.
     pub fn qualify_pack_hooks(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -232,9 +254,7 @@ impl Vault {
         source_id: crate::EntityId,
     ) -> Result<PackHookQualification> {
         use super::admission::{PACK_CANDIDATE, PackCommit};
-        use super::{
-            HookAuthor, HookPhase, PackCandidateReason, PackHookBinding, PackInstallDisposition,
-        };
+        use super::{HookAuthor, PackCandidateReason, PackHookBinding, PackInstallDisposition};
         let source = self
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
@@ -261,9 +281,6 @@ impl Vault {
         let mut replays = Vec::new();
         let mut passed = true;
         for hook in source.hooks() {
-            if hook.selector.phase != HookPhase::Fact {
-                return Err(invalid("a verb hook has no replay to qualify it yet"));
-            }
             let (id, row) = PackHookBinding::for_hook(
                 pack,
                 source_id,
@@ -280,10 +297,7 @@ impl Vault {
                         if outcome == "failed" || outcome == "refused"
                 )
             });
-            replays.push(PackHookReplay {
-                hook: hook.name.clone(),
-                entries,
-            });
+            replays.push(PackHookReplay::new(hook, entries));
         }
         if !passed {
             return Ok(PackHookQualification {
@@ -372,9 +386,7 @@ impl Vault {
         source_id: crate::EntityId,
     ) -> Result<(PackHookQualification, Option<Vec<crate::EntityId>>)> {
         use super::admission::{PACK_CANDIDATE, PackCommit};
-        use super::{
-            HookAuthor, HookPhase, PackCandidateReason, PackHookBinding, PackInstallDisposition,
-        };
+        use super::{HookAuthor, PackCandidateReason, PackHookBinding, PackInstallDisposition};
         let source = self
             .get_pack_source(&source_id)?
             .ok_or_else(|| invalid("pack source missing"))?;
@@ -402,9 +414,6 @@ impl Vault {
         let mut passed = true;
         let mut rows = Some(vec![source_id]);
         for hook in source.hooks() {
-            if hook.selector.phase != HookPhase::Fact {
-                return Err(invalid("a verb hook has no replay to qualify it yet"));
-            }
             let (id, row) = PackHookBinding::for_hook(
                 pack,
                 source_id,
@@ -426,10 +435,7 @@ impl Vault {
                         if outcome == "failed" || outcome == "refused"
                 )
             });
-            replays.push(PackHookReplay {
-                hook: hook.name.clone(),
-                entries,
-            });
+            replays.push(PackHookReplay::new(hook, entries));
         }
         let rows = rows.map(|mut rows| {
             rows.sort_unstable();
