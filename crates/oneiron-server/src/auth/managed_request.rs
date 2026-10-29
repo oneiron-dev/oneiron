@@ -387,7 +387,7 @@ impl CoreAuth {
         server.managed_issuer.as_ref()?;
         let caller = match attested_owner(extensions, server) {
             // A member's own act at a member door his supervisor signed
-            // (FIX 1302 stage 1), where the request carries no slip and so
+            // (FIX 1302), where the request carries no slip and so
             // would be anonymous: that person, and no one else.
             None => match Self::for_attested_person(headers, extensions, path, server) {
                 Some(person) => Ok(person),

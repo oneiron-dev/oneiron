@@ -20,6 +20,10 @@
 //! socket it came on, never the attestation that signed only the upgrade, and
 //! is his own call only while the vault records him as its live owner.
 //!
+//! A managed vault's member with no slip, whose supervisor signed the
+//! upgrade for him (`ManagedPersonAction`), opens his own socket, whose
+//! calls reach the member doors alone (FIX 1302 stage 2, [`person_socket`]).
+//!
 //! On a managed vault each call is admitted under the reap freeze as the
 //! `POST` it becomes, and a receipt the socket writes outside a call (a
 //! ping's, a protocol refusal's) is admitted alone. While the vault is frozen
@@ -44,7 +48,10 @@ use super::protocol_close;
 use super::socket_stop::StoppingTransport;
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 use crate::auth::{CoreAuth, RevokedTokenJtis};
-use crate::managed::{ManagedCarrierContext, ManagedOwnerSession};
+use crate::managed::{ManagedCarrierContext, ManagedOwnerSession, ManagedPersonSession};
+
+mod person_socket;
+pub(super) use self::person_socket::{person_upgrade, signed_person_holder};
 use crate::protocol::{TAG_RPC, close_codes};
 use crate::server::SyncServer;
 
@@ -140,6 +147,10 @@ enum Credential {
     /// owner at the upgrade: a stale owner sign-in, whose socket books and
     /// nothing more (FIX 5935, [`booking_upgrade`]).
     Booking(ManagedOwnerSession),
+    /// A managed vault's member, whose upgrade his supervisor signed: a
+    /// socket that reaches the member doors and nothing more (FIX 1302
+    /// stage 2, [`person_upgrade`]).
+    Person(ManagedPersonSession),
 }
 
 /// What every call's request carries from the upgrade: its credential, the
@@ -164,6 +175,12 @@ impl Caller {
             Credential::Booking(_) => serde_json::from_value::<McpOwnerCall>(params)
                 .ok()
                 .filter(|call| crate::api::booking_socket_admits(&call.surface, &call.body))
+                .map(Call::Owner),
+            // His call is spelled as the owner's is, with no holder proof,
+            // carried only through the member socket's serve gate.
+            Credential::Person(_) => serde_json::from_value::<McpOwnerCall>(params)
+                .ok()
+                .filter(|call| crate::api::person_socket_admits(&call.surface, &call.body))
                 .map(Call::Owner),
         }
     }
@@ -195,6 +212,9 @@ impl Caller {
         }
         // Whose socket it came on, never the attestation of the upgrade.
         if let Credential::Owner(session) | Credential::Booking(session) = &self.credential {
+            extensions.insert(*session);
+        }
+        if let Credential::Person(session) = &self.credential {
             extensions.insert(*session);
         }
         if let Some(managed) = &self.managed {
