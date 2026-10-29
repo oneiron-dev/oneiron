@@ -308,18 +308,46 @@ pub(crate) fn finish_residence_directive_in_txn(
     };
     result.validate()?;
     // The result names the directive and the rows its signer's standing
-    // rests on, never an unrelated main-log head.
+    // rests on, never an unrelated main-log head. On a vault that adopted a
+    // checkpoint image, those of them covered off its frontier are named
+    // through the frontier rows proven above them instead (FIX 5412); where
+    // that result does not stand, the explicit parents are tried, as before.
     let mut parents = standing_rows(&fold, machine);
     parents.insert(pending.entry);
     let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
-    let entry = sign_side_entry(
-        &fold,
-        &key,
-        next_sequence(&fold, &signer)?,
-        parents,
-        AuthorityOp::ResidenceResult(result),
-        now,
-    )?;
+    let seq = next_sequence(&fold, &signer)?;
+    let signed = |parents| {
+        sign_side_entry(
+            &fold,
+            &key,
+            seq,
+            parents,
+            AuthorityOp::ResidenceResult(result.clone()),
+            now,
+        )
+    };
+    if let Some(proven) =
+        crate::authority::proven_residence_result_parents_in_txn(&vault.store, txn, &fold, &parents)
+    {
+        let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+        if let Ok(entry) = signed(proven)
+            && let Ok(hash) = put_result_in_txn(vault, &mut savepoint, entry, now)
+        {
+            savepoint.commit()?;
+            return Ok(hash);
+        }
+    }
+    put_result_in_txn(vault, txn, signed(parents)?, now)
+}
+
+/// Stores the signed result `entry` in `txn`. Refused unless the fold
+/// accepts it.
+fn put_result_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entry: crate::authority::AuthorityLogEntry,
+    now: u64,
+) -> Result<AuthorityEntryHash> {
     let hash = authority_entry_hash(&entry)?;
     vault.put_authority_log_entries_in_txn(
         txn,

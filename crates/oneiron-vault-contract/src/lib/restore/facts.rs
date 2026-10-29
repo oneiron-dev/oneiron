@@ -115,6 +115,10 @@ pub struct RestoreReportWire {
     /// none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub credential_notes: Vec<String>,
+    /// What the restore did not carry of its source's current pad objects
+    /// (PAD-1), each as the engine words it. Absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pad_object_notes: Vec<String>,
 }
 
 /// Everything the restore verified, beside what the plan expected.

@@ -3205,6 +3205,8 @@ export class Oneiron {
       /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
       attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
     },
+    /** The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else. */
+    actor: (input: Facade.EmptyRequest): Facade.SelfActorRefs => this.#call(() => this.#client.selfActor(input) as Facade.SelfActorRefs),
     admission: {
       /** Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work. */
       status: (input: Facade.AdmissionStatusRequest): Facade.AdmissionReceipt | null => this.#call(() => this.#client.selfAdmissionStatus(input) as Facade.AdmissionReceipt | null),

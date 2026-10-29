@@ -324,11 +324,12 @@ fn apply_host_limits(config: &mut ServeConfig, host: HostLimits) {
         .min(host.memory_bytes / HOST_SCAN_BLOB_SHARE);
 }
 
-/// What a socket upgraded on an embedded engine's channel or mesh lives under
-/// (OF-237): the engine's stop watch, and the drain serving awaits before any
-/// worker stops. [`serve_channel`] puts it on every request it serves, and the
-/// mesh's router carries it as an extension; a server that is not embedded
-/// puts none, and its sockets run as they always have.
+/// What a socket upgraded on a request carrying an upgrade lifetime lives
+/// under (OF-237): the server's stop watch, and the drain serving awaits
+/// before any worker stops. [`serve_channel`] puts it on every request it
+/// serves, the mesh's router carries it as an extension, and plain and
+/// managed serve put it on theirs through [`upgrade_lifetime`] (FIX 4757);
+/// a request without one runs its socket as before.
 #[derive(Clone)]
 struct UpgradeLifetime {
     stopped: watch::Receiver<bool>,
@@ -366,19 +367,19 @@ pub(crate) fn upgrade_lifetime(
     (app, async move { upgrades.drained().await })
 }
 
-/// One upgrade's place in its embedded engine's drain, and that engine's stop
-/// watch. Dropped, with the callback that owns it or with an upgrade that
-/// never completed, it releases the place.
+/// One upgrade's place in its server's drain, and that server's stop watch.
+/// Dropped, with the callback that owns it or with an upgrade that never
+/// completed, it releases the place.
 pub(crate) struct UpgradeHold {
     stopped: watch::Receiver<bool>,
     place: watch::Receiver<()>,
 }
 
 impl UpgradeHold {
-    /// The hold an embedded engine's channel asks of an upgrade on the
-    /// request whose `extensions` these are, taken before the upgrade
-    /// registers, so the drain waits for it from the start. `None` for a
-    /// request no embedded channel carried.
+    /// The hold a request carrying an upgrade lifetime asks of an upgrade
+    /// on the request whose `extensions` these are, taken before the
+    /// upgrade registers, so the drain waits for it from the start. `None`
+    /// for a request without one.
     pub(crate) fn take(extensions: &Extensions) -> Option<Self> {
         extensions.get::<UpgradeLifetime>().map(|lifetime| Self {
             stopped: lifetime.stopped.clone(),
@@ -387,11 +388,11 @@ impl UpgradeHold {
     }
 
     /// Runs `socket`, an upgrade's whole callback, under `hold`, handing it
-    /// the engine's stop, which the callback answers itself: it stops reading
-    /// at its next wait, closes its transport and waits for every call it
-    /// admitted. Its place is released only once it has returned, so no call
-    /// is cut off and no worker stops under one. Without a hold the stop never
-    /// turns.
+    /// the server's stop, which the callback answers itself: it stops
+    /// reading at its next wait, closes its transport and waits for every
+    /// call it admitted. Its place is released only once it has returned,
+    /// so no call is cut off and no worker stops under one. Without a hold
+    /// the stop never turns.
     pub(crate) async fn run<F: Future<Output = ()>>(
         hold: Option<Self>,
         socket: impl FnOnce(UpgradeStop) -> F,
@@ -405,14 +406,15 @@ impl UpgradeHold {
     }
 }
 
-/// An embedded engine's stop, as the socket [`UpgradeHold::run`] runs sees it
-/// (OF-237). A socket no embedded engine carried has one that never turns.
+/// A server's stop, as the socket [`UpgradeHold::run`] runs sees it (OF-237).
+/// A socket on a request without an upgrade lifetime has one that never
+/// turns.
 #[derive(Clone)]
 pub(crate) struct UpgradeStop(Option<watch::Receiver<bool>>);
 
 impl UpgradeStop {
-    /// Returns once the engine stops, and at once from then on; never for a
-    /// socket outside an embedded engine.
+    /// Returns once the server stops, and at once from then on; never for a
+    /// socket on a request without an upgrade lifetime.
     pub(crate) async fn turned(&mut self) {
         match &mut self.0 {
             Some(stopped) => stop_turned(stopped).await,

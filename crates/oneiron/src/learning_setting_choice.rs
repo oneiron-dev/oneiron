@@ -232,10 +232,10 @@ pub(crate) fn erase_choice_actor_in_txn(
     Ok(())
 }
 
-/// Erasing `project` from the owner's choice rows (FIX 6038): every seed and
-/// pin laid over that project goes, whoever set it; rows over the vault, a
-/// goal, a type or another project stay. A key that does not parse is passed
-/// over with a WARN, never an abort.
+/// Erasing `entity` from the owner's choice rows (FIX 6038, FIX 11533):
+/// every seed and pin laid over that project or goal goes, whoever set it;
+/// rows over the vault, a type, another project or another goal stay. A key
+/// that does not parse is passed over with a WARN, never an abort.
 ///
 /// # Errors
 ///
@@ -243,13 +243,13 @@ pub(crate) fn erase_choice_actor_in_txn(
 pub(crate) fn erase_choice_scope_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    project: &EntityId,
+    entity: &EntityId,
 ) -> Result<()> {
     let rows = CHOICE
         .iter_raw_from(&vault.store, wtxn, &[])?
         .map(|row| row.map(|(key, _)| key))
         .collect::<Result<Vec<_>>>()?;
-    for key in project_row_keys(rows, project, "choice") {
+    for key in project_row_keys(rows, entity, "choice") {
         CHOICE.delete(&vault.store, wtxn, &key)?;
     }
     Ok(())

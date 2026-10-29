@@ -46,6 +46,8 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+// The caller's own actor and person refs (FIX 1047).
+pub(crate) use super::self_actor_doors::*;
 pub(crate) use super::saved_query_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
