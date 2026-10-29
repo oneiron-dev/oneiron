@@ -54,6 +54,7 @@ pub(crate) mod home_digests;
 pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;
+pub(crate) mod live_lease;
 mod local_vision;
 pub(crate) mod payer_funding;
 mod policy;

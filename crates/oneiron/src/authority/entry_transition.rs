@@ -485,7 +485,10 @@ pub(super) fn fold_entry_state(
     }
     if matches!(
         entry.op,
-        AuthorityOp::SlipMint(_) | AuthorityOp::SlipRevoke { .. } | AuthorityOp::SlipConsume { .. }
+        AuthorityOp::SlipMint(_)
+            | AuthorityOp::SlipRevoke { .. }
+            | AuthorityOp::SlipConsume { .. }
+            | AuthorityOp::SlipGrantRevoke { .. }
     ) {
         // A consent cosigner cannot launder an agent primary into a mint issuer.
         if !roster_has_live_owner(&state.roster, &signer) || state.slips.apply(entry, hash).is_err()
@@ -613,6 +616,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
         | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::SlipGrantRevoke { .. }
         | AuthorityOp::FederationConfirm(_)
         | AuthorityOp::CriticalWriteConfirm(_)
         | AuthorityOp::FederationLifecycle(_)
