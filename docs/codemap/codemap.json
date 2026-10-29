@@ -3143,7 +3143,7 @@
      "path": "src/authority/checkpoint_image/replay.rs",
      "purpose": "An image's replay evidence (OF-469, FIX 3007): the fold state at each covered row off the frontier, as the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -3749,7 +3749,7 @@
      "path": "src/authority/host_action.rs",
      "purpose": "Who a host credential acts as inside its vault (FIX 2222, owner ruling \"A + support\", 2026-10-18)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 4,
       "struct": 1
      }
@@ -9409,8 +9409,8 @@
      "purpose": "Owner-controlled public booking publication on the ordinary claim store",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
-      "fn": 5,
+      "crate-vis": 3,
+      "fn": 6,
       "re-export": 2,
       "struct": 2
      }
@@ -13288,13 +13288,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/scoped_read/authority_fingerprint.rs",
      "purpose": "A canonical fingerprint of the live read authority behind one actor key (FIX 9661), the second half of a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -13421,7 +13422,7 @@
      "path": "src/claim/scoped_read/mod.rs",
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 13,
       "struct": 1
      }
@@ -13639,7 +13640,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 17,
       "fn": 4
      }
     },
@@ -34660,7 +34661,17 @@
      "path": "src/gate/doors/mod.rs",
      "purpose": "Claim write doors: policy gating for local claim writes",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/doors/nonbatch_refusal.rs",
+     "purpose": "A non-batch reference refusal, carried out of its failed write and receipted outside it (FIX 9109)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -57388,7 +57399,7 @@
      "path": "src/runtime_hooks/mod.rs",
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 3,
       "re-export": 11
      }
@@ -57562,7 +57573,7 @@
      "purpose": "Fact sources and their typed positions (ARCH-0080 §4 Sources and cursors)",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 5,
       "fn": 7,
       "struct": 4
@@ -59423,7 +59434,7 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -80416,7 +80427,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 161,
+     "files": 162,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81314,7 +81325,7 @@
    },
    "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5415,
+   "source_files": 5416,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97705,7 +97716,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking/front.rs",
