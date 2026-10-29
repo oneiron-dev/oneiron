@@ -42,8 +42,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut conversion_tasks = AuthoredMin::default();
     let mut depth_default = AuthoredMin::default();
     let mut depth_max = AuthoredMin::default();
-    // The edit-distance thresholds' seeded rows are fallbacks (FIX 9802, 9809).
-    let mut threshold_seeds = crate::gate::edit_distance_thresholds::SeededThresholdRows::default();
+    // The seeded `policy_values` rows are fallbacks an authored row of the
+    // same key and scope replaces (FIX 9802, 9809, 11346).
+    let mut value_seeds = crate::gate::policy_value_seeds::SeededPolicyValueRows::default();
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -456,7 +457,7 @@ pub(crate) fn resolve_policy_manifest(
                         body,
                     );
                 }
-                threshold_seeds.fold(
+                value_seeds.fold(
                     store,
                     txn,
                     &id,
@@ -607,7 +608,7 @@ pub(crate) fn resolve_policy_manifest(
     // A trusted owner-authored row wins over the immutable shipped fallback.
     // A conflict among owner rows never silently picks a pruning horizon.
     resolution.gate_decision_retention = owner_retention.or(default_retention);
-    threshold_seeds.finish(&mut resolution.policy_values);
+    value_seeds.finish(&mut resolution.policy_values);
     resolution.project_depth_default = depth_default.resolve();
     resolution.project_depth_max = depth_max.resolve();
     resolution.project_conversion.max_tasks = conversion_tasks
