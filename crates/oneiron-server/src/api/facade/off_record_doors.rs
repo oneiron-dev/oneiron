@@ -542,10 +542,6 @@ pub(crate) async fn vault_off_record_claims_upsert(
 /// A session run's refusal as the row's.
 fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
     let (code, suggestion) = match error {
-        McpCodeExecutionError::RunBusy => (
-            MEMORY_CODE_INVALID_STATE,
-            "Call again once the run's current entry ends.",
-        ),
         McpCodeExecutionError::HostUnbound
         | McpCodeExecutionError::RunWaitedOut
         | McpCodeExecutionError::ProviderUnavailable { .. } => (

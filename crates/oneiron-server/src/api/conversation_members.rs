@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     auth::{CoreAuth, CoreScope},
-    error::{ApiError, EnvelopedApiError},
+    error::{ApiError, ApiErrorDetails, EnvelopedApiError},
     server::SyncServer,
 };
 use axum::{
@@ -137,7 +137,8 @@ pub(super) async fn write_member(
         .map_err(|e| core_engine_error("members read failed", e))?;
     Ok(Json(json!({"member_ids":members})))
 }
-/// A refused room join, in the core error envelope.
+/// A refused room join, in the core error envelope. A refusal keeps the
+/// engine's code, words and suggestions, bound to `room_join` (FIX 6032).
 fn join_error(error: oneiron::memory::MemoryError) -> ApiError {
     use oneiron::memory::{
         MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
@@ -146,8 +147,15 @@ fn join_error(error: oneiron::memory::MemoryError) -> ApiError {
     match error.code.as_str() {
         MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, Some("join")),
         MEMORY_CODE_NOT_FOUND => ApiError::not_found("room", None),
-        MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => {
-            ApiError::forbidden_scope("room_join")
+        MEMORY_CODE_FORBIDDEN => ApiError::new(
+            error.message,
+            ApiErrorDetails::Forbidden {
+                required_scope: Some("room_join".to_owned()),
+            },
+            error.suggestions,
+        ),
+        MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            ApiError::owner_binding_required(error.message, Some("room_join"), error.suggestions)
         }
         MEMORY_CODE_INVALID_STATE => ApiError::invalid_state(Some("room_join")),
         _ => {

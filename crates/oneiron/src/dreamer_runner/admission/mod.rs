@@ -6,6 +6,7 @@
 
 mod buckets;
 mod settlement;
+mod spend;
 mod validation;
 use self::validation::validate_admission_input;
 
@@ -403,18 +404,18 @@ impl DreamerRunnerStore<'_> {
         let fenced = super::free_time_items_fenced_in_txn(self.vault, wtxn, queue_kind)?;
         #[cfg(not(feature = "sync"))]
         let fenced = false;
+        // Every scan takes only a row this worker may run (FIX 8703), so
+        // the row it picks is the one claimed below, by its id.
         let candidate = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
             self.ready_macro_candidate_in_txn(wtxn, &input)?
         } else if queue_kind == DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
-            self.ready_unparked_program_in_txn(wtxn, input.now)?
-        } else if fenced {
-            self.attempts
-                .ready_kind_matching_in_txn(wtxn, queue_kind, input.now, |record| {
-                    Ok(!super::free_time_item_waits_unstarted(record))
-                })?
+            self.ready_unparked_program_in_txn(wtxn, input.now, &input.lease_owner)?
         } else {
             self.attempts
-                .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
+                .ready_kind_matching_in_txn(wtxn, queue_kind, input.now, |record| {
+                    Ok(record.accepts_worker(&input.lease_owner)
+                        && !(fenced && super::free_time_item_waits_unstarted(record)))
+                })?
         };
         let Some(candidate_attempt_id) = candidate else {
             return Ok(DreamerKindAdmissionResult {
@@ -477,22 +478,14 @@ impl DreamerRunnerStore<'_> {
             lease_owner: input.lease_owner,
             now: input.now,
         };
-        // A candidate chosen on its own row (a MACRO bucket, a program's
-        // park, work beside a fenced free-time item) is claimed by id, never
-        // as whichever row of its kind is next.
-        let claim = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind()
-            || queue_kind == DREAMER_TURN_PROGRAM_ATTEMPT_KIND
-            || fenced
-        {
-            crate::ports::JobQueue::port_job_claim_id(
-                self.vault,
-                wtxn,
-                candidate_attempt_id,
-                request,
-            )?
-        } else {
-            crate::ports::JobQueue::port_job_claim(self.vault, wtxn, Some(queue_kind), request)?
-        };
+        // The candidate is claimed by its id in this writer, never as
+        // whichever row of its kind is next (FIX 8703).
+        let claim = crate::ports::JobQueue::port_job_claim_id(
+            self.vault,
+            wtxn,
+            candidate_attempt_id,
+            request,
+        )?;
         let ClaimOutcome::Claimed(attempt) = claim else {
             return Ok(DreamerKindAdmissionResult {
                 outcome: DreamerAdmissionOutcome::Empty,
@@ -540,6 +533,7 @@ impl DreamerRunnerStore<'_> {
                 budget_id: input.budget_id,
                 attempt_id: attempt.id,
                 reserved_units: input.reserve_units,
+                owed_units: 0,
                 created_at: input.now,
                 updated_at: input.now,
             };
@@ -612,6 +606,7 @@ impl DreamerRunnerStore<'_> {
             budget_id: input.budget_id,
             attempt_id: input.child_attempt,
             reserved_units: input.reserve_units,
+            owed_units: 0,
             created_at: input.now,
             updated_at: input.now,
         };
@@ -653,9 +648,10 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// Refills one wake-budget counter to a replacement total, as the
-    /// owner. Spent and reserved units keep their claim: the refill only
-    /// raises what is left, and replaying the same total adds nothing
-    /// twice. The owner's proof is checked in the refill's transaction.
+    /// owner. Spent and reserved units keep their claim, an overdraft among
+    /// the spent (FIX 8702): the refill only raises what is left, and
+    /// replaying the same total adds nothing twice. The owner's proof is
+    /// checked in the refill's transaction.
     pub fn refill_budget_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -669,13 +665,9 @@ impl DreamerRunnerStore<'_> {
         let mut record =
             read_or_initialize_budget_in_txn(self.vault, &wtxn, budget_id, total_units, now)?;
         validate_budget_record(&record)?;
-        let spent_units = record
-            .total_units
-            .checked_sub(record.remaining_units)
-            .and_then(|free| free.checked_sub(record.reserved_units))
-            .ok_or(invalid_dreamer_runner(
-                "dreamer budget counter is inconsistent",
-            ))?;
+        let spent_units = record.spent_units().ok_or(invalid_dreamer_runner(
+            "dreamer budget counter is inconsistent",
+        ))?;
         let committed_units = spent_units
             .checked_add(record.reserved_units)
             .ok_or(Error::ArithmeticOverflow("dreamer budget refill units"))?;
@@ -686,6 +678,7 @@ impl DreamerRunnerStore<'_> {
         }
         record.total_units = total_units;
         record.remaining_units = total_units - committed_units;
+        record.overdraft_units = 0;
         record.updated_at = now;
         validate_budget_record(&record)?;
         put_budget_record_in_txn(self.vault, &mut wtxn, &record)?;
@@ -788,6 +781,8 @@ fn read_or_initialize_budget_in_txn(
             total_units: budget_total_units,
             remaining_units: budget_total_units,
             reserved_units: 0,
+            overdraft_units: 0,
+            owed_calls: 0,
             updated_at: now,
         });
     };
@@ -916,48 +911,4 @@ fn top_up_budget_reservation_in_txn(
     };
     BUDGET_RESERVATION.put(&vault.store, wtxn, &reservation_key, &reservation)?;
     Ok(reservation)
-}
-
-fn settle_budget_for_child(
-    budget: &mut DreamerBudgetRecord,
-    reservation: DreamerBudgetReservation,
-    actual_units: u64,
-    now: u64,
-) -> Result<DreamerBudgetSettlement> {
-    validate_budget_reservation(&reservation)?;
-    if reservation.budget_id != budget.budget_id {
-        return Err(invalid_dreamer_runner(
-            "dreamer budget reservation targets a different counter",
-        ));
-    }
-    if reservation.reserved_units > budget.reserved_units {
-        return Err(invalid_dreamer_runner(
-            "dreamer budget reservation exceeds reserved units",
-        ));
-    }
-
-    let refunded_units = reservation.reserved_units.saturating_sub(actual_units);
-    let over_reserved_units = actual_units.saturating_sub(reservation.reserved_units);
-    let remaining_after_refund = budget
-        .remaining_units
-        .checked_add(refunded_units)
-        .ok_or(Error::ArithmeticOverflow("dreamer budget refund units"))?;
-    if over_reserved_units > remaining_after_refund {
-        return Err(invalid_dreamer_runner(
-            "dreamer budget settlement exceeds remaining units",
-        ));
-    }
-
-    budget.reserved_units -= reservation.reserved_units;
-    budget.remaining_units = remaining_after_refund - over_reserved_units;
-    budget.updated_at = now;
-    validate_budget_record(budget)?;
-
-    Ok(DreamerBudgetSettlement {
-        budget: budget.clone(),
-        reservation,
-        actual_units,
-        refunded_units,
-        over_reserved_units,
-    })
 }

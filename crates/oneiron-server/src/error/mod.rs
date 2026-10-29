@@ -67,6 +67,22 @@ pub enum ErrorCode {
     /// WebSocket close code and not reachable from an HTTP route.
     #[serde(rename = "PAYLOAD_TOO_LARGE")]
     PayloadTooLarge,
+    /// FIX 2222, FIX 6032: a host credential where no host acts as a person,
+    /// the engine's own refusal code, a 403 like [`Self::Forbidden`].
+    #[serde(rename = "HOST_ACTION_REQUIRES_SUPPORT_GRANT")]
+    HostActionRequiresSupportGrant,
+    /// FIX 6032: the authority log refuses this actor the act, the engine's
+    /// own refusal code, a 403 like [`Self::Forbidden`].
+    #[serde(rename = "OWNER_BINDING_REQUIRED")]
+    OwnerBindingRequired,
+    /// FIX 6032: a courtesy deletion's signed body names no pact, or does not
+    /// verify against its pinned key; the two read the same.
+    #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED")]
+    CourtesyDeleteUnauthenticated,
+    /// FIX 6032: a control credential whose scopes do not grant the control
+    /// operation it asked for.
+    #[serde(rename = "CONTROL_SCOPE_DENIED")]
+    ControlScopeDenied,
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -102,6 +118,10 @@ impl ErrorCode {
         Self::EmbedderUnavailable,
         Self::SummaryWriterUnavailable,
         Self::PayloadTooLarge,
+        Self::HostActionRequiresSupportGrant,
+        Self::OwnerBindingRequired,
+        Self::CourtesyDeleteUnauthenticated,
+        Self::ControlScopeDenied,
         Self::CrdtAuthExpired,
         Self::CrdtDecodeError,
         Self::CrdtUnknownTag,
@@ -131,6 +151,12 @@ impl ErrorCode {
             Self::EmbedderUnavailable => "EMBEDDER_UNAVAILABLE",
             Self::SummaryWriterUnavailable => "SUMMARY_WRITER_UNAVAILABLE",
             Self::PayloadTooLarge => "PAYLOAD_TOO_LARGE",
+            Self::HostActionRequiresSupportGrant => {
+                oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
+            }
+            Self::OwnerBindingRequired => oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED,
+            Self::CourtesyDeleteUnauthenticated => COURTESY_DELETE_REFUSAL_CODE,
+            Self::ControlScopeDenied => CONTROL_SCOPE_REFUSAL_CODE,
             Self::CrdtAuthExpired => "4001",
             Self::CrdtDecodeError => "4002",
             Self::CrdtUnknownTag => "4003",
@@ -146,7 +172,11 @@ impl ErrorCode {
             | Self::CrdtUnknownTag
             | Self::CrdtVersionMismatch => StatusCode::BAD_REQUEST,
             Self::Unauthorized | Self::CrdtAuthExpired => StatusCode::UNAUTHORIZED,
-            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Forbidden
+            | Self::HostActionRequiresSupportGrant
+            | Self::OwnerBindingRequired
+            | Self::CourtesyDeleteUnauthenticated
+            | Self::ControlScopeDenied => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::NotImplemented => StatusCode::NOT_IMPLEMENTED,
             Self::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
@@ -248,6 +278,17 @@ pub enum ApiErrorDetails {
         max_bytes: usize,
         received_bytes: usize,
     },
+    #[serde(
+        rename = "HOST_ACTION_REQUIRES_SUPPORT_GRANT",
+        rename_all = "camelCase"
+    )]
+    HostActionRequiresSupportGrant { required_scope: Option<String> },
+    #[serde(rename = "OWNER_BINDING_REQUIRED", rename_all = "camelCase")]
+    OwnerBindingRequired { required_scope: Option<String> },
+    #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED", rename_all = "camelCase")]
+    CourtesyDeleteUnauthenticated { required_scope: Option<String> },
+    #[serde(rename = "CONTROL_SCOPE_DENIED", rename_all = "camelCase")]
+    ControlScopeDenied { required_scope: Option<String> },
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
@@ -289,6 +330,12 @@ impl ApiErrorDetails {
             Self::EmbedderUnavailable => ErrorCode::EmbedderUnavailable,
             Self::SummaryWriterUnavailable => ErrorCode::SummaryWriterUnavailable,
             Self::PayloadTooLarge { .. } => ErrorCode::PayloadTooLarge,
+            Self::HostActionRequiresSupportGrant { .. } => {
+                ErrorCode::HostActionRequiresSupportGrant
+            }
+            Self::OwnerBindingRequired { .. } => ErrorCode::OwnerBindingRequired,
+            Self::CourtesyDeleteUnauthenticated { .. } => ErrorCode::CourtesyDeleteUnauthenticated,
+            Self::ControlScopeDenied { .. } => ErrorCode::ControlScopeDenied,
             Self::CrdtAuthExpired => ErrorCode::CrdtAuthExpired,
             Self::CrdtDecodeError => ErrorCode::CrdtDecodeError,
             Self::CrdtUnknownTag { .. } => ErrorCode::CrdtUnknownTag,
@@ -686,6 +733,9 @@ fn next_request_id() -> String {
 }
 
 mod schema;
+mod typed_refusal;
+
+use self::typed_refusal::{CONTROL_SCOPE_REFUSAL_CODE, COURTESY_DELETE_REFUSAL_CODE};
 
 // The schema generators keep their `crate::error::*` paths through this seam.
 pub use self::schema::{
