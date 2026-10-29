@@ -43,12 +43,11 @@ impl std::fmt::Debug for ClockRepairCaller {
 
 enum Caller {
     /// A slip and its holder proof, unverified: the owner's own slip, or a
-    /// self-hosted host root's.
+    /// self-hosted host root's, with the owner a managed vault's supervisor
+    /// attested beside it, if any.
     HolderProof {
-        slip: Box<CapabilitySlip>,
-        timestamp: u64,
-        signature: Vec<u8>,
-        nonce: Vec<u8>,
+        proof: HolderProof,
+        attested: Option<EntityId>,
     },
     /// A slip its transport verified when the call was admitted.
     Verified(Box<VerifiedSlip>),
@@ -58,6 +57,14 @@ enum Caller {
     DevMode,
     /// The embedded owner of the handle that holds the writer lease.
     Embedded,
+}
+
+/// A slip and its holder proof as a request carried them.
+struct HolderProof {
+    slip: Box<CapabilitySlip>,
+    timestamp: u64,
+    signature: Vec<u8>,
+    nonce: Vec<u8>,
 }
 
 impl ClockRepairCaller {
@@ -74,11 +81,30 @@ impl ClockRepairCaller {
         nonce: Vec<u8>,
     ) -> Self {
         Self(Caller::HolderProof {
-            slip: Box::new(slip),
-            timestamp,
-            signature,
-            nonce,
+            proof: HolderProof {
+                slip: Box::new(slip),
+                timestamp,
+                signature,
+                nonce,
+            },
+            attested: None,
         })
+    }
+
+    /// This holder proof beside the owner `holder` a managed vault's
+    /// supervisor attested for the same request: the repair's writer binds
+    /// the slip only when it names that person, as a managed request's slip
+    /// beside another person's attestation is refused everywhere (FIX
+    /// 11190). Any other caller is left as it is.
+    #[must_use]
+    pub fn beside_attested_owner(self, holder: EntityId) -> Self {
+        match self.0 {
+            Caller::HolderProof { proof, .. } => Self(Caller::HolderProof {
+                proof,
+                attested: Some(holder),
+            }),
+            other => Self(other),
+        }
     }
 
     /// A slip this call's transport verified when it admitted the call (a
@@ -90,9 +116,10 @@ impl ClockRepairCaller {
     }
 
     /// The owner `holder` a managed vault's supervisor attested for this one
-    /// request, as its managed ingress verified the attestation. Only that
-    /// verified attestation names one; the repair's writer judges whether
-    /// the vault records `holder` as its live owner.
+    /// request (or the held socket it came on), as its managed ingress
+    /// verified the attestation. Only that verified attestation names one;
+    /// the repair's writer judges whether the vault records `holder` as its
+    /// live owner.
     #[must_use]
     pub fn managed_owner(holder: EntityId) -> Self {
         Self(Caller::ManagedOwner(holder))
@@ -111,6 +138,28 @@ impl ClockRepairCaller {
     pub(crate) fn embedded() -> Self {
         Self(Caller::Embedded)
     }
+
+    /// The person this caller says the repair acts for, before anything is
+    /// judged: the person its slip names, the attested owner, or, for a host
+    /// credential, the embedded owner its host action can name. The repair
+    /// acts for no one else; its writer proves whether it acts for this one.
+    /// `None` for a slip that names no person or host.
+    #[must_use]
+    pub fn person(&self) -> Option<EntityId> {
+        let named = |holder: &str| {
+            if holder == HOST_HOLDER {
+                crate::vault::embedded_owner_actor_id().ok()
+            } else {
+                EntityId::from_hex(holder).ok()
+            }
+        };
+        match &self.0 {
+            Caller::HolderProof { proof, .. } => named(&proof.slip.claims.holder_ref),
+            Caller::Verified(slip) => named(&slip.claims().holder_ref),
+            Caller::ManagedOwner(holder) => Some(*holder),
+            Caller::DevMode | Caller::Embedded => crate::vault::embedded_owner_actor_id().ok(),
+        }
+    }
 }
 
 /// What a caller is held to before the writer opens: nothing that reads the
@@ -119,12 +168,18 @@ enum Judged {
     /// The owner's identity, authenticated as `authenticate_owner` does,
     /// with the slip the writer binds to it.
     OwnerSlip(Box<AuthenticatedOwner>, Box<VerifiedSlip>),
-    /// A self-hosted host root's holder proof.
+    /// The owner's identity and the holder proof the writer verifies, beside
+    /// the owner a managed vault's supervisor attested.
+    AttestedProof {
+        owner: Box<AuthenticatedOwner>,
+        proof: HolderProof,
+        attested: EntityId,
+    },
+    /// A self-hosted host root's holder proof; beside an attested owner it
+    /// binds no one.
     HostProof {
-        slip: Box<CapabilitySlip>,
-        timestamp: u64,
-        signature: Vec<u8>,
-        nonce: Vec<u8>,
+        proof: HolderProof,
+        attested: Option<EntityId>,
     },
     /// A verified host root.
     HostRoot(Box<VerifiedSlip>),
@@ -138,6 +193,11 @@ fn not_the_owner(reason: &'static str) -> Error {
     Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
 }
 
+/// The refusal of a slip beside another person's attestation.
+fn conflicts_with_attested() -> Error {
+    not_the_owner("the slip names another person than the owner its supervisor attested")
+}
+
 impl crate::Vault {
     /// [`Self::repair_authority_clock`] for `caller` as its ingress took it
     /// (FIX 11190, FIX 11202): the caller is judged only in the repair's
@@ -147,7 +207,8 @@ impl crate::Vault {
     /// either way.
     ///
     /// # Errors
-    /// The owner refusal when `caller` is not this vault's live owner;
+    /// The owner refusal when `caller` is not this vault's live owner, or
+    /// its slip names another person than the owner attested beside it;
     /// [`Error::HostActionRequiresSupportGrant`] for a host credential on a
     /// vault that is not self-hosted; the repair's own errors otherwise.
     pub fn repair_authority_clock_for(
@@ -155,25 +216,36 @@ impl crate::Vault {
         caller: ClockRepairCaller,
     ) -> Result<crate::authority::AuthorityClockRepair> {
         let judged = match caller.0 {
-            Caller::HolderProof {
-                slip,
-                timestamp,
-                signature,
-                nonce,
-            } if slip.claims.holder_ref != HOST_HOLDER => {
-                return self.repair_authority_clock_by_slip(&slip, timestamp, &signature, &nonce);
+            Caller::HolderProof { proof, attested }
+                if proof.slip.claims.holder_ref == HOST_HOLDER =>
+            {
+                Judged::HostProof { proof, attested }
             }
             Caller::HolderProof {
-                slip,
-                timestamp,
-                signature,
-                nonce,
-            } => Judged::HostProof {
-                slip,
-                timestamp,
-                signature,
-                nonce,
-            },
+                proof,
+                attested: None,
+            } => {
+                return self.repair_authority_clock_by_slip(
+                    &proof.slip,
+                    proof.timestamp,
+                    &proof.signature,
+                    &proof.nonce,
+                );
+            }
+            Caller::HolderProof {
+                proof,
+                attested: Some(attested),
+            } => {
+                let holder = proof.slip.claims.holder_ref.clone();
+                let actor = EntityId::from_hex(&holder)
+                    .map_err(|_| not_the_owner("the slip names no person"))?;
+                let owner = self.authenticate_owner(actor, &holder, true, GateDecisionId::now())?;
+                Judged::AttestedProof {
+                    owner: Box::new(owner),
+                    proof,
+                    attested,
+                }
+            }
             Caller::Verified(slip) if slip.claims().holder_ref == HOST_HOLDER => {
                 Judged::HostRoot(slip)
             }
@@ -211,15 +283,22 @@ impl crate::Vault {
             Judged::OwnerSlip(owner, slip) => {
                 return self.bind_owner_credential_in_txn(txn, *owner, *slip);
             }
-            Judged::HostProof {
-                slip,
-                timestamp,
-                signature,
-                nonce,
+            Judged::AttestedProof {
+                owner,
+                proof,
+                attested,
             } => {
-                let root = self.admit_capability_slip_request_in_txn(
-                    txn, &slip, timestamp, &signature, &nonce,
-                )?;
+                let slip = self.admit_holder_proof_in_txn(txn, &proof)?;
+                if slip.claims().holder_ref != attested.to_hex() {
+                    return Err(conflicts_with_attested());
+                }
+                return self.bind_owner_credential_in_txn(txn, *owner, slip);
+            }
+            Judged::HostProof { proof, attested } => {
+                let root = self.admit_holder_proof_in_txn(txn, &proof)?;
+                if attested.is_some() {
+                    return Err(conflicts_with_attested());
+                }
                 self.host_action_owner_in_txn(txn, Some(&root))?
             }
             Judged::HostRoot(root) => self.host_action_owner_in_txn(txn, Some(&*root))?,
@@ -239,6 +318,21 @@ impl crate::Vault {
             ));
         }
         Ok(owner)
+    }
+
+    /// `proof` verified, and its nonce spent, in the repair's writer `txn`.
+    fn admit_holder_proof_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        proof: &HolderProof,
+    ) -> Result<VerifiedSlip> {
+        self.admit_capability_slip_request_in_txn(
+            txn,
+            &proof.slip,
+            proof.timestamp,
+            &proof.signature,
+            &proof.nonce,
+        )
     }
 
     /// Whether this handle's authority readings refuse now: the clock floor
