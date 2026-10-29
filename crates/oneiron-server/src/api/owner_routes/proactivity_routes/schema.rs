@@ -1,7 +1,7 @@
 //! The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611),
 //! `POST /v1/owner/proactivity/action-mode`, the two
-//! `POST /v1/owner/representation/*` writes, `POST /v1/owner/stewardship`
-//! and `POST /v1/owner/self-heal/findings/label` (FIX 11611 part D),
+//! `POST /v1/owner/representation/*` writes, `POST /v1/owner/stewardship`,
+//! `POST /v1/owner/self-heal/findings/label` (FIX 11611 part D) and
 //! `POST /v1/owner/proactivity/digest/assemble` (FIX 11654).
 //! [`super`] is already past the file-size bar, so their schema fns live
 //! here, beside the route files' own.
