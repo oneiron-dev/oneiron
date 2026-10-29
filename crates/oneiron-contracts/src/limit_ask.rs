@@ -493,6 +493,14 @@ pub enum EngineLimit {
     /// it the row asks and the whole batch is accounted, one transaction
     /// chunk after another.
     ConnectorDispatchBatch,
+    /// Bytes of the whole encoded identity-decision state one identity ask
+    /// sends its ladder (FIX 8302). Past it the row asks and the whole
+    /// state is still sent.
+    IdentityDecisionStateBytes,
+    /// Bytes of the whole source message one identity mention's ask keeps
+    /// (FIX 8303). Past it the row asks and the whole message is still kept
+    /// and sent.
+    IdentityExcerptBytes,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
