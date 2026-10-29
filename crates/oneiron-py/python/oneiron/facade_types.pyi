@@ -16203,6 +16203,7 @@ class VoiceTargetCloneView(TypedDict):
     ref_digest: str
     cloned_at: int
     revision: str
+    awaiting_verification: bool
 class VoiceTargetInspection(TypedDict):
     target: str
     locality: ModelLocality

@@ -302,6 +302,10 @@ pub struct VoiceTargetRecord {
     /// Fresh on every new or replaced record. A hosted binding fences on it, so a
     /// withdrawn and re-recorded target cannot revive an older binding.
     pub revision: [u8; 16],
+    /// The vendor holds the clone until the voice is verified there (FIX 1567):
+    /// no finished clone yet.
+    #[serde(default)]
+    pub awaiting_verification: bool,
 }
 
 /// A target that uploads the banked refs with every request keeps no provider
@@ -451,15 +455,21 @@ impl Vault {
     }
 
     /// Saves the vendor's return value only if this request still matches the
-    /// bank and the render consent it was prepared under.
+    /// bank and the render consent it was prepared under; `awaiting_verification`
+    /// when the vendor holds the clone until the voice is verified there.
     pub fn record_voice_target_clone(
         &self,
         request: &VoiceTargetClone,
         vendor_voice_id: &str,
         cloned_at: u64,
+        awaiting_verification: bool,
     ) -> Result<VoiceTargetRecord> {
         let txn = self.store.env.write_txn()?;
-        record_target_clone_in(&self.store, txn, request, vendor_voice_id, cloned_at)
+        let vendor = VendorClone {
+            id: vendor_voice_id,
+            awaiting_verification,
+        };
+        record_target_clone_in(&self.store, txn, request, vendor, cloned_at)
     }
 
     /// The target's record and the render consent that reaches it at
@@ -715,7 +725,7 @@ fn record_target_clone_in(
     store: &crate::store::Store,
     mut txn: heed::RwTxn<'_>,
     request: &VoiceTargetClone,
-    vendor_voice_id: &str,
+    vendor: VendorClone<'_>,
     cloned_at: u64,
 ) -> Result<VoiceTargetRecord> {
     let selected = select_clone(
@@ -732,11 +742,12 @@ fn record_target_clone_in(
     let record = VoiceTargetRecord {
         voice_id: request.voice_id.clone(),
         target: request.target.clone(),
-        vendor_voice_id: vendor_voice_id.into(),
+        vendor_voice_id: vendor.id.into(),
         source_packs: request.source_packs.clone(),
         ref_digest: request.ref_digest,
         cloned_at,
         revision: uuid::Uuid::new_v4().into_bytes(),
+        awaiting_verification: vendor.awaiting_verification,
     };
     let target_key = target_key(&request.voice_id, &request.target)?;
     let owner = read_identity(store, &txn, &request.voice_id)?
@@ -963,6 +974,9 @@ fn read_pack(
 mod actor;
 #[path = "ref_bank/owner_acts.rs"]
 mod owner_acts;
+// FIX 1567: a clone its vendor holds for verification, and its verification.
+#[path = "ref_bank/target_verification.rs"]
+mod target_verification;
 // Every render decision, kept once beside the current one (FIX 4396).
 #[path = "ref_bank/render_history.rs"]
 mod render_history;
@@ -975,10 +989,11 @@ mod validation;
 pub use actor::{VoiceBankActor, VoiceCreator};
 pub(crate) use checkpoint_response::{voice_bank_owners, voice_bank_row, voice_bank_scan};
 pub use owner_acts::{
-    VoiceBankInspection, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
+    VoiceBankInspection, VoiceBankView, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
     VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
 };
 use render_history::{RenderEventKey, read_render_consent, record_render_consent_in};
+use target_verification::VendorClone;
 pub use render_history::{
     VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,
 };

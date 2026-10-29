@@ -17,6 +17,7 @@ use super::render_history::{
     VoiceRenderConsentWrite, VoiceRenderEventView, read_render_consent, record_render_consent_in,
     voice_render_lineage_in,
 };
+use super::target_verification::VendorClone;
 use super::validation::pack_intake_crossed;
 use super::{
     PACKS, VoiceIdentity, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRenderConsent,
@@ -102,6 +103,9 @@ pub struct VoiceTargetCloneView {
     pub ref_digest: String,
     pub cloned_at: u64,
     pub revision: String,
+    /// The vendor holds the clone until the voice is verified there (FIX
+    /// 1567): no finished clone yet.
+    pub awaiting_verification: bool,
 }
 
 /// One named render target, as the bank holds it for the voice.
@@ -137,6 +141,23 @@ pub struct VoiceBankInspection {
     /// None before a render decision is recorded.
     pub render_consent: Option<VoiceRenderConsentView>,
     pub target: VoiceTargetInspection,
+}
+
+/// The voice as the bank holds it, for its owner (FIX 1567), read from one
+/// snapshot: its identity, each pack's metadata, its current render
+/// decision, and each named target's current clone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceBankView {
+    pub voice_id: String,
+    /// None while only the voice's render decision is recorded.
+    pub identity: Option<VoiceIdentityView>,
+    /// Each of the identity's packs, in its order.
+    pub packs: Vec<VoicePackSummary>,
+    /// None before a render decision is recorded.
+    pub render_consent: Option<VoiceRenderConsentView>,
+    /// Each target the host names, in its order.
+    pub targets: Vec<VoiceTargetInspection>,
 }
 
 impl From<&VoiceIdentity> for VoiceIdentityView {
@@ -177,6 +198,7 @@ impl From<VoiceTargetRecord> for VoiceTargetCloneView {
             ref_digest: bytes_to_hex_lower(&record.ref_digest),
             cloned_at: record.cloned_at,
             revision: bytes_to_hex_lower(&record.revision),
+            awaiting_verification: record.awaiting_verification,
         }
     }
 }
@@ -270,11 +292,16 @@ impl Vault {
         request: &VoiceTargetClone,
         vendor_voice_id: &str,
         cloned_at: u64,
+        awaiting_verification: bool,
     ) -> Result<VoiceTargetRecord> {
         let txn = self.store.env.write_txn()?;
         let party = actor.revalidate_in_txn(self, &txn)?;
         party.bind_in(&self.store, &txn, &request.voice_id)?;
-        record_target_clone_in(&self.store, txn, request, vendor_voice_id, cloned_at)
+        let vendor = VendorClone {
+            id: vendor_voice_id,
+            awaiting_verification,
+        };
+        record_target_clone_in(&self.store, txn, request, vendor, cloned_at)
     }
 
     /// [`Self::evict_voice_target`] for the actor's own voice, under its
@@ -314,28 +341,108 @@ impl Vault {
         if party.bind_in(&self.store, &txn, voice_id)?.is_none() {
             return Ok(None);
         }
-        let identity = read_identity(&self.store, &txn, voice_id)?;
-        let render_consent = read_render_consent(&self.store, &txn, voice_id)?;
+        let (identity, packs, render_consent) = self.voice_bank_in(&txn, voice_id)?;
+        let target = self.target_inspection_in(
+            &txn,
+            identity.as_ref(),
+            voice_id,
+            target,
+            include_generated,
+            locality,
+        )?;
+        Ok(Some(VoiceBankInspection {
+            voice_id: voice_id.to_owned(),
+            identity: identity.as_ref().map(VoiceIdentityView::from),
+            packs,
+            render_consent: render_consent.map(VoiceRenderConsentView::from),
+            target,
+        }))
+    }
+
+    /// The voice as the bank holds it, from one snapshot, for the owner's
+    /// own view (FIX 1567): the identity, each pack's metadata, the current
+    /// render decision, and each of `targets`, named at the locality its
+    /// host states, with its clone while it is current. No provider call and
+    /// no write. None when the bank holds nothing of the voice.
+    pub fn voice_bank_view(
+        &self,
+        voice_id: &str,
+        targets: &[(String, ModelLocality)],
+        include_generated: bool,
+    ) -> Result<Option<VoiceBankView>> {
+        valid_id(voice_id)?;
+        let txn = self.store.env.read_txn()?;
+        let (identity, packs, render_consent) = self.voice_bank_in(&txn, voice_id)?;
+        if identity.is_none() && render_consent.is_none() {
+            return Ok(None);
+        }
+        let mut inspected = Vec::with_capacity(targets.len());
+        for (target, locality) in targets {
+            valid_id(target)?;
+            inspected.push(self.target_inspection_in(
+                &txn,
+                identity.as_ref(),
+                voice_id,
+                target,
+                include_generated,
+                *locality,
+            )?);
+        }
+        Ok(Some(VoiceBankView {
+            voice_id: voice_id.to_owned(),
+            identity: identity.as_ref().map(VoiceIdentityView::from),
+            packs,
+            render_consent: render_consent.map(VoiceRenderConsentView::from),
+            targets: inspected,
+        }))
+    }
+
+    /// The voice's identity, each pack's metadata and its current render
+    /// decision, read in `txn`.
+    fn voice_bank_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        voice_id: &str,
+    ) -> Result<(
+        Option<VoiceIdentity>,
+        Vec<VoicePackSummary>,
+        Option<VoiceRenderConsent>,
+    )> {
+        let identity = read_identity(&self.store, txn, voice_id)?;
+        let render_consent = read_render_consent(&self.store, txn, voice_id)?;
         let mut packs = Vec::new();
         for id in identity.iter().flat_map(|identity| &identity.pack_ids) {
-            let pack = read_pack(&self.store, &txn, id)?
+            let pack = read_pack(&self.store, txn, id)?
                 .ok_or_else(|| invalid("voice identity has missing refs"))?;
-            let crossed = pack_intake_crossed(&pack, limits_for(&self.store, &txn, &pack.owner)?)
+            let crossed = pack_intake_crossed(&pack, limits_for(&self.store, txn, &pack.owner)?)
                 .into_iter()
                 .map(str::to_owned)
                 .collect();
             packs.push(pack_summary(pack, crossed));
         }
-        // A clone is current only under a render consent that reaches the
-        // target, as a render admits it: a withdrawn or narrowed decision
-        // shows none. The decision read above already surfaced a corrupt
-        // row, so a refusal here is the consent's.
-        let current = match &identity {
+        Ok((identity, packs, render_consent))
+    }
+
+    /// One named target as the bank holds it for the voice, read in `txn`.
+    /// A clone is current only under a render consent that reaches the
+    /// target, as a render admits it: a withdrawn or narrowed decision shows
+    /// none. The decision read before already surfaced a corrupt row, so a
+    /// refusal here is the consent's.
+    fn target_inspection_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        identity: Option<&VoiceIdentity>,
+        voice_id: &str,
+        target: &str,
+        include_generated: bool,
+        locality: ModelLocality,
+    ) -> Result<VoiceTargetInspection> {
+        let current = match identity {
             Some(identity) => {
-                match admit_render(&self.store, &txn, voice_id, &identity.owner, locality) {
+                match admit_render(&self.store, txn, voice_id, &identity.owner, locality) {
                     Ok(_) => current_target(
                         &self.store,
-                        &txn,
+                        txn,
                         voice_id,
                         target,
                         include_generated,
@@ -348,18 +455,12 @@ impl Vault {
             }
             None => None,
         };
-        Ok(Some(VoiceBankInspection {
-            voice_id: voice_id.to_owned(),
-            identity: identity.as_ref().map(VoiceIdentityView::from),
-            packs,
-            render_consent: render_consent.map(VoiceRenderConsentView::from),
-            target: VoiceTargetInspection {
-                target: target.to_owned(),
-                locality,
-                include_generated,
-                current,
-            },
-        }))
+        Ok(VoiceTargetInspection {
+            target: target.to_owned(),
+            locality,
+            include_generated,
+            current,
+        })
     }
 
     /// The actor's voice's render history (FIX 4396), from one snapshot:

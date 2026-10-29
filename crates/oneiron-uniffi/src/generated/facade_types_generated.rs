@@ -50603,6 +50603,8 @@ pub struct VoiceTargetCloneView {
     pub cloned_at: u64,
     #[serde(rename = "revision")]
     pub revision: String,
+    #[serde(rename = "awaiting_verification")]
+    pub awaiting_verification: bool,
 }
 
 /// `oneiron::voice_identity::ref_bank::owner_acts::VoiceTargetInspection`.

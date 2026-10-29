@@ -61,6 +61,7 @@ fn media_routes() -> Router<Arc<SyncServer>> {
         .route("/transcribe", post(media::transcribe))
         .route("/embed", post(media::embed))
         .route("/ask_image", post(vision::ask_image))
+        .route("/voices/{voice_id}", get(voices::view))
         .route("/voices/{voice_id}/packs", post(voices::bank_pack))
         .route(
             "/voices/{voice_id}/render_consent",

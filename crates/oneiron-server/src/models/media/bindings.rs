@@ -90,6 +90,16 @@ impl MediaRuntime {
         self.cloners.get(target).cloned()
     }
 
+    /// Each hosted render target that clones, by name, at the locality its
+    /// clone wire states (FIX 1567).
+    #[must_use]
+    pub fn clone_targets(&self) -> Vec<(String, oneiron::ModelLocality)> {
+        self.cloners
+            .iter()
+            .map(|(target, cloner)| (target.clone(), cloner.locality()))
+            .collect()
+    }
+
     /// A run of its own on the media meter for a voice clone's calls (FIX
     /// 3009): the clone wire admits and settles each one on it. Its permits
     /// carry `sources`, the rows the calls are read from (FIX 11311), `None`

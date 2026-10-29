@@ -6381,7 +6381,7 @@ export type VoicePackSummary = { version: number; id: string; origin: VoiceRefOr
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceRenderConsentView` */
 export type VoiceRenderConsentView = { event_id: string; subject: string; subject_kind: VoiceRefSubjectKind; recorded_by: string; occurred_at: number; reach: ModelLocality; basis?: VoiceConsentBasis | null; state: VoiceConsentState; revision: string; sequence: number }
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceTargetCloneView` */
-export type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string }
+export type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string; awaiting_verification: boolean }
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceTargetInspection` */
 export type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null }
 /** `oneiron::voice_identity::ref_bank::owner_acts::VoiceBankInspection` */
