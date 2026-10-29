@@ -1067,3 +1067,18 @@ pub struct OutboundIntentReceipt {
     /// True when the idempotency key coalesced.
     pub deduped: bool,
 }
+
+// ── export ──────────────────────────────────────────────────────────────
+
+/// One whole-vault export written to the caller's file (FIX 11177): its
+/// format, length and BLAKE3, as its receipt records them. The archive is
+/// the caller's file.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ExportReceipt {
+    /// The archive manifest's `format`: `archive` or `okf`.
+    pub format: String,
+    /// The archive's length in bytes.
+    pub bytes: u64,
+    /// BLAKE3 of the archive, lowercase hex.
+    pub digest: String,
+}

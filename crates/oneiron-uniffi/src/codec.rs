@@ -24,11 +24,11 @@ use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
     ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
     DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput,
-    LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp,
-    MentionProvenance, NeighborHit, NeighborHits, NeighborOpts, OutboundDraftInput,
-    OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt, ReadScope,
-    RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope,
+    EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt, ForgetSelector,
+    HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
+    MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
+    ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope,
     RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
     RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint,
     TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor, WitnessMessage,
@@ -1211,6 +1211,16 @@ impl Lift<engine::RecallResidence> for RecallResidence {
                     window: hit.window,
                 })
                 .collect(),
+        })
+    }
+}
+
+impl Lift<engine::MemoryExportReceipt> for ExportReceipt {
+    fn lift(receipt: engine::MemoryExportReceipt) -> Result<Self, OneironError> {
+        Ok(Self {
+            format: receipt.format,
+            bytes: receipt.bytes,
+            digest: receipt.digest,
         })
     }
 }
