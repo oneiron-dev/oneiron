@@ -366,12 +366,14 @@ pub(crate) fn trial_source_frontier(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: EntityId,
+    read_lane: &crate::claim::FrozenReadLane,
     unit: EntityId,
 ) -> Result<Option<[u8; 32]>> {
     source(
         vault,
         txn,
         principal,
+        read_lane,
         WriteActor::new(principal, crate::EdgeActorClass::Human),
         unit,
     )
@@ -382,6 +384,7 @@ fn source(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: EntityId,
+    read_lane: &crate::claim::FrozenReadLane,
     actor: WriteActor,
     unit: EntityId,
 ) -> Result<Option<SourceRow>> {
@@ -389,8 +392,13 @@ fn source(
     // Unscoped storage reads can reveal private NOTE bodies and stale birth text.
     // The manifest permits a keyed read, but relationship membership and
     // AccessGrants belong to the question principal, not the host caller.
-    let principal_key =
-        source_actor_key(vault, txn, principal, None)?.require_access_grants(Some(principal));
+    // The principal reads inside the lane its version was saved under, as
+    // every other read of the question does (OF-506, FIX 1712).
+    let principal_key = read_lane.narrow_in_txn(
+        vault,
+        txn,
+        source_actor_key(vault, txn, principal, None)?.require_access_grants(Some(principal)),
+    )?;
     let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?
         .require_access_grants(Some(principal));
     // FIX 7461: each lane also reads under its own reader's live owner
@@ -466,14 +474,15 @@ pub(super) fn source_actor_key(
         .ok_or(Error::InvariantViolation("question actor key"))
 }
 
-/// Lands one answer as a proposed claim private to `principal`. An answer
+/// Lands one answer to `record`'s version as a proposed claim, stamped for
+/// the audience the version names (FIX 1825). An answer
 /// resting on a graph context's `rows` reads no wider than any of them, as a
 /// one-off graph ask's does; a lone unit bounds it by its own claim terms.
 fn land(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     actor: WriteActor,
-    principal: EntityId,
+    record: &QuestionRecord,
     answer: &AnswerRecord,
     raw: &[u8],
     rows: Option<&[super::standing::Source]>,
@@ -488,7 +497,7 @@ fn land(
     );
     let mut taint = ClaimSource::Imported;
     if let Some(rows) = rows {
-        taint = super::standing::constrain_sources(&mut candidate, rows, principal)?;
+        taint = super::standing::constrain_sources(&mut candidate, rows, record.principal)?;
     } else if answer.source_kind == crate::registry::ENTITY_TYPE_CLAIM {
         let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
         taint = body.source.unwrap_or(ClaimSource::Imported);
@@ -504,9 +513,7 @@ fn land(
             candidate = candidate.with_world(world);
         }
     }
-    candidate = candidate
-        .with_evidence_taint(taint)?
-        .with_private_reader(principal)?
+    candidate = super::answer_landing::stamp_answer(candidate.with_evidence_taint(taint)?, record)?
         .with_evidence(rmpv::Value::Array(
             answer
                 .decision

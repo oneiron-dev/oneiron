@@ -22,7 +22,9 @@
 //! waking actor or the verified owner, on the caller's own read lane; PR3b
 //! adds the checkpoint its restarter resumes from. A hold no condition
 //! returns is the owner's to stop or, once its checkpoint validates, to
-//! resume (`release`, FIX 5880).
+//! resume (`release`, FIX 5880). A try whose sealed slip no longer stands is
+//! its waking actor's to rebind to a live slip of theirs (`rebind`, FIX
+//! 11429), as a queued turn action is.
 
 mod admit;
 mod arm;
@@ -31,6 +33,7 @@ mod bodies;
 mod erase;
 mod lease;
 mod read;
+mod rebind;
 mod release;
 mod resume;
 mod run;
@@ -66,6 +69,7 @@ pub use self::read::{
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
     settled_program_step, turn_program_admission,
 };
+pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{
     ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
     release_turn_program_hold_as_owner,

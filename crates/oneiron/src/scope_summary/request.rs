@@ -24,15 +24,13 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
 mod editor_sources;
+mod requester_lane;
 
 pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).
 pub(super) const SOURCES_KEY: &str = "sources";
 const SUMMARY_ID_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary:v1";
 const MEMO_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary-memo:v2";
-/// The purpose a NOTE set's summary takes unless its caller names another
-/// (FIX 5757): never a session recap.
-const NOTE_SET_PURPOSE: &str = "note_summary";
 
 /// What the caller asks the Dreamer to summarize; never caller-authored prose.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,7 +158,8 @@ impl ScopeSummaryPlan {
     }
 
     /// The requester's surface a landing's reply is checked and receipted on
-    /// (OF-063), bound from the declaration's admitted byline.
+    /// (OF-063), bound from the declaration's admitted byline; its reply lane
+    /// is narrowed by the lane the declaration froze (FIX 2194).
     fn requester_surface<'v>(&self, vault: &'v Vault) -> Memory<'v> {
         vault.memory(self.requester.entity_ref(), self.requester.actor_class())
     }
@@ -364,19 +363,7 @@ impl Vault {
         run_id: Option<&str>,
         now: u64,
     ) -> Result<ScopeSummaryQueued> {
-        let purpose = match &request.target {
-            ScopeSummaryTarget::Scope {
-                scope:
-                    ScopeSelector {
-                        path: ScopePath::SubSession(_),
-                        ..
-                    },
-                ..
-            } => "sub_agent_merge_artifact",
-            ScopeSummaryTarget::Sources { scope: None, .. } => NOTE_SET_PURPOSE,
-            ScopeSummaryTarget::Arc { .. } => super::arc::ARC_PURPOSE,
-            _ => "session_recap",
-        };
+        let purpose = requester_lane::default_purpose(&request.target);
         let previous = derivation::current_in_txn(self, txn, request, purpose)?;
         let input = derivation::declaration(request, purpose, previous);
         plan_in_txn(self, txn, &input)?;
@@ -455,6 +442,7 @@ impl Vault {
     ) -> Result<bool> {
         let requester = plan.requester_surface(self);
         let lane = reply_lane(&requester, plan.asks_reply())?;
+        let lane = requester_lane::narrowed_reply_lane(self, plan, lane)?;
         let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             if plan_in_txn(self, txn, &derivation::decode(&plan.input)?)? != *plan
                 || plan.evidence_in_txn(self, txn)? != *evidence
@@ -528,6 +516,7 @@ impl Vault {
         let id = composed_summary_id(attempt);
         let requester = plan.requester_surface(self);
         let lane = reply_lane(&requester, plan.asks_reply())?;
+        let lane = requester_lane::narrowed_reply_lane(self, plan, lane)?;
         let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             if let Some(result) = super::status::result_in_txn(self, txn, attempt)? {
                 return Ok(((EntityId::from_hex(&result.summary)?, None), None));

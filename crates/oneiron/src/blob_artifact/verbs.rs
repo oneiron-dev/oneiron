@@ -852,6 +852,11 @@ impl Memory<'_> {
             .iter()
             .map(|reference| entity(reference))
             .collect::<MemoryResult<Vec<_>>>()?;
+        // The caller's own lane reads the target and its evidence (FIX 1533).
+        let named: Vec<EntityId> = std::iter::once(artifact)
+            .chain(evidence.iter().copied())
+            .collect();
+        self.require_credential_reads(&named)?;
         let actor = self.artifact_actor();
         let (_, at) = self.artifact_moment();
         let started = std::time::Instant::now();

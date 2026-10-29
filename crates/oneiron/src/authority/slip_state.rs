@@ -17,6 +17,11 @@ pub struct SlipAuthorityState {
     /// Only verified `SlipRevoke` operations. A collision is not an operator act.
     pub explicit_revoked: BTreeSet<[u8; 32]>,
     pub consumed: BTreeSet<[u8; 32]>,
+    /// Each Grant a verified `SlipGrantRevoke` withdrew (FIX 1978), in hex as
+    /// a mint's claims name it. Every mint under one joins `revoked`, one
+    /// merged in after the withdrawal from whichever replica minted it
+    /// included.
+    pub revoked_grants: BTreeSet<String>,
 }
 impl SlipAuthorityState {
     pub(super) fn apply(
@@ -41,6 +46,9 @@ impl SlipAuthorityState {
                         return Err(invalid_authority());
                     }
                 }
+                if self.under_revoked_grant(&action.claims) {
+                    self.revoked.insert(claims.slip_id);
+                }
                 self.mints.insert(
                     claims.slip_id,
                     FoldedSlip {
@@ -53,6 +61,9 @@ impl SlipAuthorityState {
             AuthorityOp::SlipRevoke { slip_id } => {
                 self.revoked.insert(*slip_id);
                 self.explicit_revoked.insert(*slip_id);
+            }
+            AuthorityOp::SlipGrantRevoke { grant_ref } => {
+                self.revoke_grant(grant_ref.to_hex());
             }
             AuthorityOp::SlipConsume { slip_id } => {
                 // Consumption is a monotone subtree kill. An offline single-use
@@ -81,10 +92,14 @@ impl SlipAuthorityState {
         Ok(())
     }
     /// Union is commutative; colliding identifiers are unusable, never first-wins.
+    /// A mint either side holds under a Grant either side withdrew is revoked.
     pub(super) fn merge_from(&mut self, other: &Self) {
         self.revoked.extend(&other.revoked);
         self.explicit_revoked.extend(&other.explicit_revoked);
         self.consumed.extend(&other.consumed);
+        let fresh_grants = !other.revoked_grants.is_subset(&self.revoked_grants);
+        self.revoked_grants
+            .extend(other.revoked_grants.iter().cloned());
         for (id, mint) in &other.mints {
             match self.mints.get(id) {
                 Some(prior) if prior != mint => {
@@ -94,11 +109,36 @@ impl SlipAuthorityState {
                     }
                 }
                 None => {
+                    if self.under_revoked_grant(&mint.action.claims) {
+                        self.revoked.insert(*id);
+                    }
                     self.mints.insert(*id, mint.clone());
                 }
                 _ => {}
             }
         }
+        if fresh_grants {
+            self.tombstone_revoked_grants();
+        }
+    }
+    /// Withdraws every slip minted under `grant_ref` (hex), now and when
+    /// one merges later (FIX 1978). It stays out of `explicit_revoked`: no
+    /// revoke names the slip itself.
+    pub(super) fn revoke_grant(&mut self, grant_ref: String) {
+        if self.revoked_grants.insert(grant_ref) {
+            self.tombstone_revoked_grants();
+        }
+    }
+    fn under_revoked_grant(&self, claims: &SlipClaims) -> bool {
+        claims
+            .grant_ref
+            .as_ref()
+            .is_some_and(|grant| self.revoked_grants.contains(grant))
+    }
+    fn tombstone_revoked_grants(&mut self) {
+        let revoked_grants = std::mem::take(&mut self.revoked_grants);
+        self.tombstone_withdrawn_grants(|grant| revoked_grants.contains(grant));
+        self.revoked_grants = revoked_grants;
     }
     /// FIX-LIST 1978: every mint whose signed `grant_ref` names a guest
     /// Grant `withdrawn` says this vault withdrew joins `revoked`, as a

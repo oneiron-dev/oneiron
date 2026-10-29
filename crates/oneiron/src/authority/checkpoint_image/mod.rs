@@ -65,8 +65,11 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// 5412), and the fold keeps each valid residence directive (FIX 5412). 16:
 /// the fold keeps each setting's signed acts, the refused export acts and
 /// each agent-carried act's Grant, and an image carries the bodies of both
-/// ops (FIX 4624, FIX 5660).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 16;
+/// ops (FIX 4624, FIX 5660). 17: the fold keeps each Grant a signed
+/// `SlipGrantRevoke` withdrew and its revoke proofs carry one (FIX 1978), a
+/// pact that ends keeps no plaintext scope, and one keyed digest over two
+/// scopes suspends the pact (FIX 7907).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 17;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

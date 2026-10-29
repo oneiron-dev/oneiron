@@ -83,6 +83,7 @@ vaultShapeGroups(input: unknown): unknown
 vaultShapeGroupsResolve(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
+selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
 selfGrantsAnswer(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
@@ -213,6 +214,7 @@ vaultCampaignProgramUpdate(input: unknown): unknown
 vaultCampaignProgramArchive(input: unknown): unknown
 vaultTurnProgramsArm(input: unknown): unknown
 vaultTurnProgramsDisarm(input: unknown): unknown
+vaultTurnProgramsRebind(input: unknown): unknown
 selfSavedQueryCreate(input: unknown): unknown
 selfSavedQueryRead(input: unknown): unknown
 selfSavedQueryUpdate(input: unknown): unknown
