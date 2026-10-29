@@ -2598,13 +2598,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/attempt_queue/payload_erase.rs",
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -23970,6 +23970,7 @@
       "ByoaDispatchOutcome",
       "ByoaDispatchStatus",
       "CliSandboxSpec",
+      "DevRunnerRefs",
       "DispatchByoa",
       "ProtocolAttachKind",
       "ProtocolAttachSpec"
@@ -23981,7 +23982,7 @@
       "crate-vis": 19,
       "enum": 5,
       "fn": 12,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -24083,7 +24084,7 @@
      "path": "src/dispatch_byoa/mod.rs",
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 1,
       "re-export": 16
      }
@@ -24239,7 +24240,7 @@
      "path": "src/dispatch_byoa/seat_quota.rs",
      "purpose": "What each runner seat's quota last read as (OF-137), kept by the route so a pass picks seats without reading…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 1
      }
@@ -24275,9 +24276,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/dispatch_byoa/staged_input/erase.rs",
-     "purpose": "A staged job's artifact erased with its TASK (FIX 7502, 7614)",
+     "purpose": "A staged job's artifact erased with its TASK (FIX 7502, 7614, 7612)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -24339,7 +24340,7 @@
      "path": "src/dispatch_byoa/work_binding.rs",
      "purpose": "A Dreamer's runner work, bound once and handed seat to seat (OF-137): \"the router mints the next attempt on…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 5,
       "fn": 6,
       "struct": 4
@@ -81299,7 +81300,7 @@
     "attempt_queue": {
      "files": 59,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Generic LMDB-backed background attempt queue"
     },
@@ -82781,7 +82782,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 116,
+   "over_bar": 117,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 5529,
    "test_files": 902
