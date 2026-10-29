@@ -121,15 +121,15 @@ impl Replay<'_> {
         )
     }
 
-    /// No run pinned this entry. The live entity stands in only while its
-    /// body is the one the entry wrote; a generative hook's verdicts ask the
-    /// live ladder, as the runner would.
+    /// No run pinned this entry. The source's exact live or retained revision
+    /// supplies the body the entry wrote; a generative hook's verdicts ask
+    /// the live ladder, as the runner would.
     pub(super) fn live(
         &self,
         lane: &ScopedRead<'_>,
         entry: &FactEntry,
     ) -> Result<Option<HookReplayResult>> {
-        let Some(seen) = read::fact_row(lane, self.grant, entry.entity)? else {
+        let Some(seen) = read::fact_row(lane, self.grant, entry)? else {
             return Ok(None);
         };
         let actor = filter::actor_class(self.vault, entry.actor)?;

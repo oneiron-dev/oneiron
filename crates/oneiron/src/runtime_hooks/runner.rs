@@ -402,7 +402,7 @@ impl Pass<'_> {
                 return Ok(());
             }
         };
-        let Some(seen) = read::fact_row(&lane, &grant, entry.entity)? else {
+        let Some(seen) = read::fact_row(&lane, &grant, entry)? else {
             self.report.skipped += 1;
             return Ok(());
         };
@@ -632,7 +632,7 @@ pub(super) fn input_json(
     claim: &Value,
     now: u64,
 ) -> Result<String> {
-    let input = json!({
+    let mut input = json!({
         "hook": {
             "binding": binding_id.to_hex(),
             "code": binding.code.to_hex(),
@@ -656,6 +656,12 @@ pub(super) fn input_json(
         "claim": claim,
         "now": now,
     });
+    if let Some(settlement) = entry.settlement {
+        input["fact"]["settlement"] = json!({
+            "kind": settlement.kind,
+            "outcome": settlement.outcome,
+        });
+    }
     serde_json::to_string(&input).map_err(|_| Error::InvariantViolation("hook input encode"))
 }
 

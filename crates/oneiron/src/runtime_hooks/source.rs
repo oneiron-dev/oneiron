@@ -6,8 +6,10 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::ports::{ChangeLogStore, ChangeLogStoreRead, ChangeOp, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::vault::RevisionRef;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -184,6 +186,13 @@ impl FactOp {
     }
 }
 
+/// The settlement detail a proposal fact carries into its hook input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct SettlementDetails {
+    pub(super) kind: SettlementKind,
+    pub(super) outcome: SettledOutcome,
+}
+
 /// One fact read from a source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FactEntry {
@@ -197,6 +206,10 @@ pub(super) struct FactEntry {
     pub(super) input_hash: [u8; 32],
     /// BLAKE3 of the entity's body as this fact left it, when known.
     pub(super) body_hash: Option<[u8; 32]>,
+    /// The exact live or retained revision with that body, when it remains.
+    pub(super) revision: Option<RevisionRef>,
+    /// The settlement door and outcome, only for a proposal fact.
+    pub(super) settlement: Option<SettlementDetails>,
     /// The claim's predicate, for block expiry only. Filters read the claim
     /// under the hook's grant instead.
     pub(super) predicate: Option<String>,
@@ -384,8 +397,25 @@ fn claim_changes_after(
         if record.entity_type != ENTITY_TYPE_CLAIM {
             continue;
         }
-        let predicate = crate::claim::decode_claim_body(&record.body, true)
-            .ok()
+        let revision = crate::vault::entity_revision::revision_for_body_hash_in_txn(
+            vault,
+            &rtxn,
+            &change.entity,
+            &change.input_hash,
+        )?;
+        let historical = match revision {
+            Some(revision) => crate::vault::entity_revision::read_entity_revision_in_txn(
+                vault,
+                &rtxn,
+                &change.entity,
+                crate::vault::ReadMode::Pinned(revision),
+            )?,
+            None => None,
+        };
+        let predicate = historical
+            .as_deref()
+            .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+            .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
             .map(|body| body.predicate);
         batch.entries.push(FactEntry {
             position,
@@ -396,6 +426,8 @@ fn claim_changes_after(
             recorded_at: change.recorded_at,
             input_hash: change.input_hash,
             body_hash: Some(change.input_hash),
+            revision,
+            settlement: None,
             predicate,
         });
     }
@@ -421,6 +453,12 @@ fn settlements_after(
         let (sequence, settled) = row?;
         let position = FactPosition::Settlement(SettlementPosition(sequence));
         batch.through = Some(position);
+        let revision = match settled.body_hash.as_ref() {
+            Some(body_hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
+                vault, &rtxn, &settled.proposal, body_hash,
+            )?,
+            None => None,
+        };
         batch.entries.push(FactEntry {
             position,
             kind: FactKind::ProposalSettled,
@@ -430,6 +468,11 @@ fn settlements_after(
             recorded_at: settled.recorded_at,
             input_hash: settled.input_hash(),
             body_hash: settled.body_hash,
+            revision,
+            settlement: Some(SettlementDetails {
+                kind: settled.kind,
+                outcome: settled.outcome,
+            }),
             predicate: None,
         });
     }
