@@ -84,6 +84,24 @@ pub(crate) fn weave_link_correction_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<WeaveLinkCorrectionView>()
 }
 
+/// The OpenAPI schema of `POST /v1/owner/weave/report`'s body (FIX 11655):
+/// [`WeaveReportRequest`]. `POST /v1/owner/weave/lens` takes the same body.
+pub(crate) fn weave_report_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReportRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/report`'s answer (FIX 11655):
+/// [`WeaveReportView`].
+pub(crate) fn weave_report_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WeaveReportView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/weave/lens`'s answer (FIX 11655):
+/// [`LensFrameCard`].
+pub(crate) fn weave_lens_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LensFrameCard>()
+}
+
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {
     OwnerError::Refused(error.to_string())
 }
