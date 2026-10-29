@@ -211,23 +211,14 @@ struct ManifestFields {
 fn rotate_redacted(fields: RotateFields<'_>) -> Value {
     let mut redacted = serde_json::Map::new();
     redacted.insert("name".to_owned(), Value::String(fields.name));
-    redacted.insert(
-        "value_base64".to_owned(),
-        Value::String(String::new()),
-    );
+    redacted.insert("value_base64".to_owned(), Value::String(String::new()));
     if let Some(holder) = fields.holder {
         redacted.insert("holder".to_owned(), Value::String(holder));
     }
     if !fields.recipients.is_empty() {
         redacted.insert(
             "recipients".to_owned(),
-            Value::Array(
-                fields
-                    .recipients
-                    .into_iter()
-                    .map(Value::String)
-                    .collect(),
-            ),
+            Value::Array(fields.recipients.into_iter().map(Value::String).collect()),
         );
     }
     Value::Object(redacted)
@@ -249,28 +240,16 @@ fn register_redacted(fields: RegisterFields<'_>) -> Option<Value> {
         );
     }
     if let Some(manifest) = fields.manifest {
-        redacted.insert(
-            "manifest".to_owned(),
-            serde_json::to_value(manifest).ok()?,
-        );
+        redacted.insert("manifest".to_owned(), serde_json::to_value(manifest).ok()?);
     }
-    redacted.insert(
-        "value_base64".to_owned(),
-        Value::String(String::new()),
-    );
+    redacted.insert("value_base64".to_owned(), Value::String(String::new()));
     if let Some(holder) = fields.holder {
         redacted.insert("holder".to_owned(), Value::String(holder));
     }
     if !fields.recipients.is_empty() {
         redacted.insert(
             "recipients".to_owned(),
-            Value::Array(
-                fields
-                    .recipients
-                    .into_iter()
-                    .map(Value::String)
-                    .collect(),
-            ),
+            Value::Array(fields.recipients.into_iter().map(Value::String).collect()),
         );
     }
     Some(Value::Object(redacted))
