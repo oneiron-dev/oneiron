@@ -15,7 +15,7 @@ use super::approval::{
     ShapeApprovalDependencies, check_waiting_shape_approval, moves_reach, repin_waiting,
 };
 use super::live::{ShapeSources, facet_name, world_name};
-use super::member::lowers_member;
+use super::member::{lowers_member, pending_invitation};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
 use super::shared_setup::{CreatorAnswer, ShapeLearningOutcome, creator_answer, report_unread};
@@ -661,6 +661,13 @@ impl Vault {
                 .id),
             (
                 ShapeChange::Update,
+                ShapeTarget::Member { .. },
+                Some(ShapeRow::Member { .. }),
+            ) if pending_invitation(current).is_some() => Err(invalid(
+                "their invitation at another role is still pending; withdraw it, or wait for their answer",
+            )),
+            (
+                ShapeChange::Update,
                 ShapeTarget::Member { member },
                 Some(ShapeRow::Member { role, .. }),
             ) => Ok(self
@@ -672,9 +679,18 @@ impl Vault {
                     slips,
                 )?
                 .id),
-            (ShapeChange::Retire, ShapeTarget::Member { member }, _) => Ok(self
-                .remove_shared_member(owner, shared()?, person(member)?, slips)?
-                .id),
+            // Retiring a person still invited withdraws the invitation
+            // (FIX 2573), the owner's own act.
+            (ShapeChange::Retire, ShapeTarget::Member { member }, _) => {
+                match pending_invitation(current) {
+                    Some(invitation) => Ok(self
+                        .withdraw_shared_invitation(owner, shared()?, person(member)?, invitation)?
+                        .id),
+                    None => Ok(self
+                        .remove_shared_member(owner, shared()?, person(member)?, slips)?
+                        .id),
+                }
+            }
             (ShapeChange::Create, ShapeTarget::World { name }, _) => {
                 let world = self.create_world(owner, name, now)?;
                 sources.list(world);

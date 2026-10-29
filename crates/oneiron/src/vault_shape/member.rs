@@ -143,11 +143,13 @@ impl ShapeSeed {
             ShapeRow::Member {
                 member: creator.to_hex(),
                 role: ShapeMemberRole::Owner,
+                pending_invitation: None,
             },
         ];
         rows.extend(pick.members.iter().map(|member| ShapeRow::Member {
             member: member.member.clone(),
             role: member.role.unwrap_or(default_role),
+            pending_invitation: None,
         }));
         let seed = Self { rows };
         seed.validate()?;
@@ -156,16 +158,41 @@ impl ShapeSeed {
 }
 
 /// Whether `item` lowers or removes a member: the change that ends the
-/// member's capability slips (FIX 2574).
+/// member's capability slips (FIX 2574). A person still invited holds none.
 pub(super) fn lowers_member(item: &ShapePlanItem) -> bool {
     match (item.change, &item.before, &item.after) {
-        (ShapeChange::Retire, Some(ShapeRow::Member { .. }), _) => true,
+        (
+            ShapeChange::Retire,
+            Some(ShapeRow::Member {
+                pending_invitation: None,
+                ..
+            }),
+            _,
+        ) => true,
         (
             ShapeChange::Update,
-            Some(ShapeRow::Member { role: was, .. }),
+            Some(ShapeRow::Member {
+                role: was,
+                pending_invitation: None,
+                ..
+            }),
             Some(ShapeRow::Member { role: now, .. }),
         ) => now.reach() < was.reach(),
         _ => false,
+    }
+}
+
+/// The invitation a live member row is still pending on, by id (FIX 2573).
+pub(super) fn pending_invitation(live: Option<&(ShapeRow, Option<EntityId>)>) -> Option<&str> {
+    match live {
+        Some((
+            ShapeRow::Member {
+                pending_invitation: Some(invitation),
+                ..
+            },
+            _,
+        )) => Some(invitation),
+        _ => None,
     }
 }
 

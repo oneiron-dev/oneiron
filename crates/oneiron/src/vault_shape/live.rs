@@ -269,16 +269,42 @@ impl Vault {
                     },
                     None,
                 ));
-                for (member, role) in self.shared_members_in_txn(&txn, shared.vault_id)? {
-                    if let Some(role) = ShapeMemberRole::of(role) {
+                let members = self.shared_members_in_txn(&txn, shared.vault_id)?;
+                for (member, role) in &members {
+                    if let Some(role) = ShapeMemberRole::of(*role) {
                         rows.push((
                             ShapeRow::Member {
                                 member: member.to_hex(),
                                 role,
+                                pending_invitation: None,
                             },
-                            Some(member),
+                            Some(*member),
                         ));
                     }
+                }
+                // An invited person reads as a member at the role offered,
+                // pending until they accept (FIX 2573).
+                let now = self.store.clock.peek_recorded_at();
+                for invitation in
+                    self.pending_shared_invitations_in_txn(&txn, shared.vault_id, now)?
+                {
+                    let (Ok(invitee), Some(role)) = (
+                        EntityId::from_hex(&invitation.invitee),
+                        ShapeMemberRole::of(invitation.role),
+                    ) else {
+                        continue;
+                    };
+                    if members.iter().any(|(member, _)| *member == invitee) {
+                        continue;
+                    }
+                    rows.push((
+                        ShapeRow::Member {
+                            member: invitation.invitee,
+                            role,
+                            pending_invitation: Some(invitation.id),
+                        },
+                        Some(invitee),
+                    ));
                 }
             }
             for (id, body) in self.shape_bodies_in_txn(&txn, ENTITY_TYPE_AGENT_DEF)? {

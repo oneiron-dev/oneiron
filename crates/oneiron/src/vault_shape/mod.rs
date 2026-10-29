@@ -122,6 +122,12 @@ pub enum ShapeRow {
     Member {
         member: String,
         role: ShapeMemberRole,
+        /// The invitation the person has not answered yet, by id (FIX
+        /// 2573): the live read names an invited person a member at the
+        /// role it offers, pending, until they accept and the row turns
+        /// live. A seed need not state it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pending_invitation: Option<String>,
     },
     /// A world (ARCH-0022), by name. A missing world is created.
     World { name: String },
@@ -349,6 +355,16 @@ impl ShapeRow {
             (Self::Pack { version: None, .. }, Self::Pack { .. })
             | (Self::Skill { version: None, .. }, Self::Skill { .. })
             | (Self::Channel { .. }, Self::Channel { .. }) => true,
+            // An invited person is the member the invitation names, at its
+            // role, whether or not they have accepted yet.
+            (
+                Self::Member { member, role, .. },
+                Self::Member {
+                    member: have,
+                    role: at,
+                    ..
+                },
+            ) => member == have && role == at,
             // One reference is one bound: a grant read by it is the grant.
             (Self::Grant { .. }, Self::Grant { .. }) => self.target() == live.target(),
             // The vault stores a manifest as its install door completes it.
