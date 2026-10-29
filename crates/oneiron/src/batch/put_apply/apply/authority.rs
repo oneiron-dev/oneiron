@@ -1,3 +1,5 @@
+//! First-seen and sequence observation for AUTHORITY_LOG puts, staged in the same transaction.
+
 use super::*;
 
 /// Keep first observation, signer maximum and replay advisory in the same put transaction.

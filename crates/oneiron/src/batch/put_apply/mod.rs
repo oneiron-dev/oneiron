@@ -12,7 +12,7 @@ mod request;
 use std::collections::BTreeSet;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, RecordError, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
@@ -106,12 +106,6 @@ fn decode_previous_skill_record(
     let prior_body = &old_record[ENTITY_METADATA_HEADER_LEN..];
     match crate::skill::decode_skill_record(prior_body) {
         Ok(record) => Ok(Some(record)),
-        Err(error)
-            if error.kind() == ErrorKind::InvalidSkillBody
-                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-        {
-            Ok(None)
-        }
         Err(error) => Err(error),
     }
 }
