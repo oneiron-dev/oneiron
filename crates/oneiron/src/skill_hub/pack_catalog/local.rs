@@ -1,14 +1,16 @@
 //! The owner's own pack install, `vault.packs.put` (ARCH-0080 §8, slice 1),
 //! and the vault's `local` pack. A put is the owner's consent: it installs
-//! the folder and binds its hooks in one transaction.
+//! the folder and binds its hooks in one transaction. A resident agent puts
+//! the `local` pack too, and binds the hooks it wrote as its own (§7).
 use super::admission::{PACK_INSTALL, PackCommit, pack_permissions, refuse_engine_namespace};
+use super::hooks::HookBinder;
 use super::{
     PackAdapter, PackFitVerdict, PackInstallDisposition, PackInstallReceipt, PackInstallStatus,
-    PackKind, PackQualification, PackQualifier, PackSource, PackTree,
+    PackKind, PackQualification, PackQualifier, PackSource, PackTree, invalid,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::skill_hub::{HubFile, HubPin, HubRef};
-use crate::{EntityId, TimeRange, Vault, error::Result};
+use crate::{EdgeActorClass, EntityId, TimeRange, Vault, WriteActor, error::Result};
 
 /// The vault's own pack, kind capability, for its own hooks. Vault open
 /// creates it; it never publishes to a hub (ARCH-0080 local pack).
@@ -41,7 +43,28 @@ impl Vault {
         files: Vec<HubFile>,
     ) -> Result<PackInstallDisposition> {
         let tree = PackSource::from_tree(files)?;
-        self.put_pack_source(owner, tree, None)
+        self.put_pack_source(HookBinder::Owner(owner), tree, None)
+    }
+
+    /// `vault.packs.put` by a resident agent (ARCH-0080 §7, §8 local pack):
+    /// the agent replaces the `local` pack, and each hook whose body it
+    /// wrote binds as its own, in a claim stamped with the agent, reading and
+    /// acting at the agent's own ceiling. A binding another author stands on
+    /// is left as it is; the owner sees every binding and turns any off. A
+    /// put of any other pack is refused.
+    pub fn put_local_pack_as_agent(
+        &self,
+        agent: &WriteActor,
+        files: Vec<HubFile>,
+    ) -> Result<PackInstallDisposition> {
+        if agent.actor_class() != EdgeActorClass::Agent {
+            return Err(invalid("an agent's put takes an agent writer"));
+        }
+        let tree = PackSource::from_tree(files)?;
+        if tree.source.manifest.name != LOCAL_PACK_NAME {
+            return Err(invalid("an agent puts the local pack only"));
+        }
+        self.put_pack_source(HookBinder::Agent(*agent), tree, None)
     }
 
     /// Owner-authored connectors use the same source-bound qualification as
@@ -56,12 +79,12 @@ impl Vault {
         refuse_engine_namespace(&tree.source)?;
         let qualification = qualifier.qualify(&tree.source)?;
         super::qualify::validate_qualification(&tree.source, &qualification)?;
-        self.put_pack_source(owner, tree, Some(qualification))
+        self.put_pack_source(HookBinder::Owner(owner), tree, Some(qualification))
     }
 
     fn put_pack_source(
         &self,
-        owner: &AuthenticatedOwner,
+        binder: HookBinder<'_>,
         tree: PackTree,
         qualification: Option<PackQualification>,
     ) -> Result<PackInstallDisposition> {
@@ -72,7 +95,14 @@ impl Vault {
         // row is evidence on its hash, and holds nothing here.
         let advisories = self.pack_advisories(source, false, crate::unix_seconds_now())?;
         let disposition = self.with_write_txn_grouped(|txn| {
-            let holder = owner.revalidate_in_txn(self, txn)?.to_hex();
+            let holder = match binder {
+                HookBinder::Owner(owner) => owner.revalidate_in_txn(self, txn)?,
+                HookBinder::Agent(agent) => {
+                    self.verify_write_actor_in_txn(txn, &agent)?;
+                    agent.entity_ref()
+                }
+            }
+            .to_hex();
             let at = crate::unix_seconds_now();
             let occurred = TimeRange { start: at, end: at };
             let source_id = self.stage_pack_source_in_txn(txn, source, occurred, at)?;
@@ -106,7 +136,7 @@ impl Vault {
                 },
             )?;
             if matches!(disposition, PackInstallDisposition::Installed(_)) {
-                self.bind_pack_hooks_in_txn(txn, owner, source_id, source)?;
+                self.bind_hooks_in_txn(txn, binder, source_id, source)?;
             }
             Ok(disposition)
         })?;

@@ -7,8 +7,15 @@
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-const MAX_NODES: usize = 8192;
-const MAX_DEPTH: usize = 32;
+/// The deepest builder or projection recursion: the nesting serde_json's parser
+/// admits, so the builder never refuses a parsed document for its depth, and
+/// the ref path the projection walks keeps the same stack floor.
+const MAX_DEPTH: usize = 128;
+/// The root projection may expand refs to this many times the schema's own
+/// node count.
+const REF_EXPANSION_FACTOR: usize = 64;
+/// The root projection's expansion allowance however small the schema is.
+const MIN_EXPANSION: usize = 8192;
 const DRAFT: &str = "https://json-schema.org/draft/2020-12/schema";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -209,10 +216,12 @@ impl Builder {
 }
 impl ResolvedToolSchema {
     pub(super) fn parse(raw: &Value) -> Result<Self, String> {
+        // The builder debits each JSON value at most once, so the document's
+        // own value count bounds it and a finite schema never exhausts it.
         let mut builder = Builder {
             nodes: BTreeMap::new(),
             resources: BTreeSet::new(),
-            remaining: MAX_NODES,
+            remaining: value_count(raw),
         };
         let root = builder.schema(
             raw,
@@ -234,12 +243,19 @@ impl ResolvedToolSchema {
             canonical: Value::Null,
         };
         let mut stack = BTreeSet::new();
-        let mut remaining = MAX_NODES;
+        let mut checked = BTreeSet::new();
         // An unused definition is still schema input, so its unresolved or
         // cyclic references cannot hide under a successful root projection.
         for id in result.nodes.keys() {
-            result.project(id, &mut stack, &mut remaining)?;
+            result.check(id, &mut stack, &mut checked)?;
         }
+        // Without refs the root projection visits each node once; refs may
+        // expand it to a multiple of the schema's own size, never past that.
+        let mut remaining = result
+            .nodes
+            .len()
+            .saturating_mul(REF_EXPANSION_FACTOR)
+            .max(MIN_EXPANSION);
         result.canonical = result.project(&result.root, &mut stack, &mut remaining)?;
         Ok(result)
     }
@@ -256,6 +272,57 @@ impl ResolvedToolSchema {
             return Err(format!("{}: unresolved schema ref {text}", id.label()));
         }
         Ok(target)
+    }
+    /// Resolves every ref the projection of `id` follows and refuses a cycle,
+    /// building no value. A node checked once is not walked again: its refs
+    /// resolve and no path through it returns to it.
+    fn check(
+        &self,
+        id: &SchemaNodeId,
+        stack: &mut BTreeSet<SchemaNodeId>,
+        checked: &mut BTreeSet<SchemaNodeId>,
+    ) -> Result<(), String> {
+        if checked.contains(id) {
+            return Ok(());
+        }
+        if stack.len() >= MAX_DEPTH {
+            return Err("schema resolution bound exceeded".into());
+        }
+        if !stack.insert(id.clone()) {
+            return Err(format!("{}: cyclic schema ref", id.label()));
+        }
+        let node = self
+            .nodes
+            .get(id)
+            .ok_or_else(|| format!("{}: schema node missing", id.label()))?;
+        for (key, field) in &node.fields {
+            if matches!(key.as_str(), "$id" | "$schema" | "$defs") {
+                continue;
+            }
+            match field {
+                SchemaField::Literal(value) if key == "$ref" => {
+                    let Value::String(text) = value else {
+                        return Err("invalid ref field".into());
+                    };
+                    self.check(&self.target(id, text)?, stack, checked)?;
+                }
+                SchemaField::Literal(_) => {}
+                SchemaField::Node(child) => self.check(child, stack, checked)?,
+                SchemaField::Nodes(children) => {
+                    for child in children {
+                        self.check(child, stack, checked)?;
+                    }
+                }
+                SchemaField::Map(children) => {
+                    for child in children.values() {
+                        self.check(child, stack, checked)?;
+                    }
+                }
+            }
+        }
+        stack.remove(id);
+        checked.insert(id.clone());
+        Ok(())
     }
     fn project(
         &self,
@@ -396,6 +463,21 @@ impl ResolvedToolSchema {
         }
         Ok(())
     }
+}
+/// The number of JSON values in `raw`, itself included, counted without
+/// recursion.
+fn value_count(raw: &Value) -> usize {
+    let mut count = 0;
+    let mut pending = vec![raw];
+    while let Some(value) = pending.pop() {
+        count += 1;
+        match value {
+            Value::Object(fields) => pending.extend(fields.values()),
+            Value::Array(items) => pending.extend(items),
+            _ => {}
+        }
+    }
+    count
 }
 fn literal_text(value: &Value, role: TextRole, location: &str, output: &mut Vec<SchemaText>) {
     match value {

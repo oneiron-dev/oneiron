@@ -23,8 +23,10 @@ use crate::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackS
 
 mod ask_image;
 mod hooks_replay;
+mod local_pack_agent;
 pub use self::ask_image::*;
 pub use self::hooks_replay::*;
+pub use self::local_pack_agent::*;
 
 /// One file of a pack folder, its content an explicit choice: text, stored as
 /// its UTF-8 bytes, or any bytes (an image, a font, a Wasm module) as
