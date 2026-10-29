@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1191 facade rows, 4314 declarations.
-Inputs: 1120 of 1191 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1036 of 1191 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 119; unread shapes: 0.
+Census: 1196 facade rows, 4328 declarations.
+Inputs: 1124 of 1196 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1035 of 1196 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1203,6 +1203,44 @@ class ShapeApplyRequest(TypedDict):
     plan: ShapePlan
     approve: NotRequired[list[int]]
     conversation_learning: NotRequired[bool | None]
+ShapePlanCardItem = TypedDict("ShapePlanCardItem", {"seq": int, "line": str, "change": ShapeChange, "class": ShapeItemClass, "door": NotRequired[str | None], "state": NotRequired[ShapeItemState | None]})
+class ShapePlanCard(TypedDict):
+    frontier: str
+    seed_id: NotRequired[str | None]
+    resting: str
+    summary: ShapePlanSummary
+    reach_line: str
+    items: list[ShapePlanCardItem]
+    undeclared: int
+    run: NotRequired[ShapeApplyRun | None]
+class ShapePlanCardView(TypedDict):
+    plan: ShapePlan
+    card: ShapePlanCard
+    generated_ui: Any
+class ShapeItemReceiptRequest(TypedDict):
+    reference: str
+class ShapeItemReceipt(TypedDict):
+    reference: str
+    frontier: str
+    seq: int
+    run_id: str
+    attempt_id: NotRequired[str | None]
+    item: ShapeApplyItem
+class ShapeInboxMember(TypedDict):
+    attempt_id: str
+    item: ShapePlanItem
+    state: ShapeItemState
+class ShapeInboxGroup(TypedDict):
+    group_key: str
+    run_id: str
+    frontier: str
+    headline: str
+    created_at: int
+    members: list[ShapeInboxMember]
+InboxBulkVerb = Literal["accept_all", "reject_all", "review_each"]
+class ShapeGroupResolveRequest(TypedDict):
+    group_key: str
+    verb: InboxBulkVerb
 class MessagePersonRequest(TypedDict):
     pr: str
     text: str
@@ -4900,9 +4938,36 @@ class InboxGroup(TypedDict):
     new_claim_count: int
     update_count: int
     conflict_count: int
-class InboxGroupPage(TypedDict):
-    groups: list[InboxGroup]
+class UnifiedInboxGroupDreamer(TypedDict):
+    kind: Literal["dreamer"]
+    group: InboxGroup
+class UnifiedInboxGroupShape(TypedDict):
+    kind: Literal["shape"]
+    group: ShapeInboxGroup
+UnifiedInboxGroup = UnifiedInboxGroupDreamer | UnifiedInboxGroupShape
+class UnifiedInboxGroupPage(TypedDict):
+    groups: list[UnifiedInboxGroup]
     next: NotRequired[str | None]
+InboxGroupKind = Literal["dreamer", "shape"]
+class InboxGroupResolveRequest(TypedDict):
+    kind: InboxGroupKind
+    group_key: str
+    verb: InboxBulkVerb
+    verb_class: NotRequired[str | None]
+class InboxBundleResolution(TypedDict):
+    group_key: str
+    verb: InboxBulkVerb
+    bundle_ref: str
+    bundle_receipt: ReceiptRecord
+    item_receipts: NotRequired[list[ReceiptRecord]]
+    review_items: NotRequired[list[str]]
+class InboxGroupResolutionDreamer(TypedDict):
+    kind: Literal["dreamer"]
+    resolution: InboxBundleResolution
+class InboxGroupResolutionShape(TypedDict):
+    kind: Literal["shape"]
+    receipt: ShapeApplyReceipt
+InboxGroupResolution = InboxGroupResolutionDreamer | InboxGroupResolutionShape
 class HubPinSemver(TypedDict):
     type: Literal["semver"]
     value: str

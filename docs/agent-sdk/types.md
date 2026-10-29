@@ -1418,10 +1418,27 @@ class Oneiron:
     class _VaultShapeVerbs:
         def read(self, spec: Facade.EmptyRequest | None = None) -> Facade.ShapeRead:
             """The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read."""
-        def plan(self, spec: Facade.ShapePlanRequest) -> Facade.ShapePlan:
-            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
+        @property
+        def plan(self) -> "Oneiron._VaultShapePlanVerbs": ...
         def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."""
+        @property
+        def items(self) -> "Oneiron._VaultShapeItemsVerbs": ...
+        @property
+        def groups(self) -> "Oneiron._VaultShapeGroupsVerbs": ...
+    class _VaultShapePlanVerbs:
+        def __call__(self, spec: Facade.ShapePlanRequest) -> Facade.ShapePlan:
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
+        def card(self, spec: Facade.ShapePlanRequest) -> Facade.ShapePlanCardView:
+            """The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read."""
+    class _VaultShapeItemsVerbs:
+        def receipt(self, spec: Facade.ShapeItemReceiptRequest) -> Facade.ShapeItemReceipt | None:
+            """Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable."""
+    class _VaultShapeGroupsVerbs:
+        def __call__(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.ShapeInboxGroup]:
+            """Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof."""
+        def resolve(self, spec: Facade.ShapeGroupResolveRequest) -> Facade.ShapeApplyReceipt:
+            """The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged."""
     class _VaultCompanionsVerbs:
         @property
         def access_requests(self) -> "Oneiron._VaultCompanionsAccessRequestsVerbs": ...
@@ -1827,11 +1844,16 @@ class Oneiron:
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
         def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
-        def groups(self, spec: Facade.InboxRunGroupsRequest) -> Facade.InboxGroupPage:
-            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
+        @property
+        def groups(self) -> "Oneiron._VaultInboxGroupsVerbs": ...
     class _VaultInboxConcernsVerbs:
         def review(self, spec: Facade.EmptyRequest | None = None) -> Facade.DreamerAttemptRef:
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
+    class _VaultInboxGroupsVerbs:
+        def __call__(self, spec: Facade.InboxRunGroupsRequest) -> Facade.UnifiedInboxGroupPage:
+            """Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."""
+        def resolve(self, spec: Facade.InboxGroupResolveRequest) -> Facade.InboxGroupResolution:
+            """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
     class _VaultSkillsVerbs:
         def bootstrap(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.BootstrapSkillView]:
             """Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."""

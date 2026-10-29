@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1191 facade rows, 4306 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1143.
+// UniFFI census: 1196 facade rows, 4320 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1148.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -3822,6 +3822,133 @@ pub struct ShapeApplyRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub conversation_learning: Option<bool>,
+}
+
+/// `oneiron::genui::shape_plan::ShapePlanCardItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapePlanCardItem {
+    #[serde(rename = "seq")]
+    pub seq: u32,
+    #[serde(rename = "line")]
+    pub line: String,
+    #[serde(rename = "change")]
+    pub change: ShapeChange,
+    #[serde(rename = "class")]
+    pub class: ShapeItemClass,
+    #[serde(rename = "door", default, skip_serializing_if = "Option::is_none")]
+    pub door: Option<String>,
+    #[serde(rename = "state", default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<ShapeItemState>,
+}
+
+/// `oneiron::genui::shape_plan::ShapePlanCard`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapePlanCard {
+    #[serde(rename = "frontier")]
+    pub frontier: String,
+    #[serde(rename = "seed_id", default, skip_serializing_if = "Option::is_none")]
+    pub seed_id: Option<String>,
+    #[serde(rename = "resting")]
+    pub resting: String,
+    #[serde(rename = "summary")]
+    pub summary: ShapePlanSummary,
+    #[serde(rename = "reach_line")]
+    pub reach_line: String,
+    #[serde(rename = "items")]
+    pub items: Vec<ShapePlanCardItem>,
+    #[serde(rename = "undeclared")]
+    pub undeclared: u32,
+    #[serde(rename = "run", default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<ShapeApplyRun>,
+}
+
+/// `oneiron::memory::shape_card_doors::ShapePlanCardView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapePlanCardView {
+    #[serde(rename = "plan")]
+    pub plan: ShapePlan,
+    #[serde(rename = "card")]
+    pub card: ShapePlanCard,
+    #[serde(rename = "generated_ui")]
+    pub generated_ui: crate::WireJson,
+}
+
+/// `oneiron::memory::shape_card_doors::ShapeItemReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeItemReceiptRequest {
+    #[serde(rename = "reference")]
+    pub reference: String,
+}
+
+/// `oneiron::memory::shape_card_doors::ShapeItemReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeItemReceipt {
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "frontier")]
+    pub frontier: String,
+    #[serde(rename = "seq")]
+    pub seq: u32,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(
+        rename = "attempt_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attempt_id: Option<String>,
+    #[serde(rename = "item")]
+    pub item: ShapeApplyItem,
+}
+
+/// `oneiron::vault_shape::group::ShapeInboxMember`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeInboxMember {
+    #[serde(rename = "attempt_id")]
+    pub attempt_id: String,
+    #[serde(rename = "item")]
+    pub item: ShapePlanItem,
+    #[serde(rename = "state")]
+    pub state: ShapeItemState,
+}
+
+/// `oneiron::vault_shape::group::ShapeInboxGroup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ShapeInboxGroup {
+    #[serde(rename = "group_key")]
+    pub group_key: String,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "frontier")]
+    pub frontier: String,
+    #[serde(rename = "headline")]
+    pub headline: String,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "members")]
+    pub members: Vec<ShapeInboxMember>,
+}
+
+/// `oneiron::inbox::model::InboxBulkVerb`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum InboxBulkVerb {
+    #[serde(rename = "accept_all")]
+    AcceptAll,
+    #[serde(rename = "reject_all")]
+    RejectAll,
+    #[serde(rename = "review_each")]
+    ReviewEach,
+}
+
+/// `oneiron::memory::shape_card_doors::ShapeGroupResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShapeGroupResolveRequest {
+    #[serde(rename = "group_key")]
+    pub group_key: String,
+    #[serde(rename = "verb")]
+    pub verb: InboxBulkVerb,
 }
 
 /// `oneiron::memory::people_verbs::MessagePersonRequest`.
@@ -15153,13 +15280,97 @@ pub struct InboxGroup {
     pub conflict_count: u64,
 }
 
-/// `oneiron::inbox::model::InboxGroupPage`.
+/// `oneiron::inbox::unified::UnifiedInboxGroup`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum UnifiedInboxGroup {
+    #[serde(rename = "dreamer")]
+    Dreamer {
+        #[serde(rename = "group")]
+        group: InboxGroup,
+    },
+    #[serde(rename = "shape")]
+    Shape {
+        #[serde(rename = "group")]
+        group: ShapeInboxGroup,
+    },
+}
+
+/// `oneiron::inbox::unified::UnifiedInboxGroupPage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct InboxGroupPage {
+pub struct UnifiedInboxGroupPage {
     #[serde(rename = "groups")]
-    pub groups: Vec<InboxGroup>,
+    pub groups: Vec<UnifiedInboxGroup>,
     #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+}
+
+/// `oneiron::inbox::unified::InboxGroupKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum InboxGroupKind {
+    #[serde(rename = "dreamer")]
+    Dreamer,
+    #[serde(rename = "shape")]
+    Shape,
+}
+
+/// `oneiron::inbox::unified::InboxGroupResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct InboxGroupResolveRequest {
+    #[serde(rename = "kind")]
+    pub kind: InboxGroupKind,
+    #[serde(rename = "group_key")]
+    pub group_key: String,
+    #[serde(rename = "verb")]
+    pub verb: InboxBulkVerb,
+    #[serde(
+        rename = "verb_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verb_class: Option<String>,
+}
+
+/// `oneiron::inbox::model::InboxBundleResolution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct InboxBundleResolution {
+    #[serde(rename = "group_key")]
+    pub group_key: String,
+    #[serde(rename = "verb")]
+    pub verb: InboxBulkVerb,
+    #[serde(rename = "bundle_ref")]
+    pub bundle_ref: String,
+    #[serde(rename = "bundle_receipt")]
+    pub bundle_receipt: ReceiptRecord,
+    #[serde(
+        rename = "item_receipts",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub item_receipts: Option<Vec<ReceiptRecord>>,
+    #[serde(
+        rename = "review_items",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub review_items: Option<Vec<String>>,
+}
+
+/// `oneiron::inbox::unified::InboxGroupResolution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum InboxGroupResolution {
+    #[serde(rename = "dreamer")]
+    Dreamer {
+        #[serde(rename = "resolution")]
+        resolution: InboxBundleResolution,
+    },
+    #[serde(rename = "shape")]
+    Shape {
+        #[serde(rename = "receipt")]
+        receipt: ShapeApplyReceipt,
+    },
 }
 
 /// `oneiron::skill_hub::record::HubPin`.

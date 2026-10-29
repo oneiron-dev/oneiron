@@ -215,6 +215,26 @@ export_facade! {
     let output = client.vault_shape_apply(&input)?;
     crate::codec::lift_record("vault.shape.apply", &output)
 };
+"vault.shape.plan.card" => fn vault_shape_plan_card(&self, input: ShapePlanRequest) -> ShapePlanCardView = |client| {
+    let input: oneiron::vault_shape::ShapePlanRequest = crate::codec::lower_record("vault.shape.plan.card", input)?;
+    let output = client.vault_shape_plan_card(&input)?;
+    crate::codec::lift_record("vault.shape.plan.card", &output)
+};
+"vault.shape.items.receipt" => fn vault_shape_items_receipt(&self, input: ShapeItemReceiptRequest) -> Option<ShapeItemReceipt> = |client| {
+    let input: oneiron::memory::ShapeItemReceiptRequest = crate::codec::lower_record("vault.shape.items.receipt", input)?;
+    let output = client.vault_shape_items_receipt(&input)?;
+    crate::codec::lift_record("vault.shape.items.receipt", &output)
+};
+"vault.shape.groups" => fn vault_shape_groups(&self) -> Vec<ShapeInboxGroup> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shape.groups")?;
+    let output = client.vault_shape_groups(&input)?;
+    crate::codec::lift_record("vault.shape.groups", &output)
+};
+"vault.shape.groups.resolve" => fn vault_shape_groups_resolve(&self, input: ShapeGroupResolveRequest) -> ShapeApplyReceipt = |client| {
+    let input: oneiron::memory::ShapeGroupResolveRequest = crate::codec::lower_record("vault.shape.groups.resolve", input)?;
+    let output = client.vault_shape_groups_resolve(&input)?;
+    crate::codec::lift_record("vault.shape.groups.resolve", &output)
+};
 "self.message" => fn self_message(&self, input: MessagePersonRequest) -> MessagePersonReceipt = |client| {
     let input: oneiron::memory::MessagePersonRequest = crate::codec::lower_record("self.message", input)?;
     let output = client.self_message(&input)?;
@@ -991,10 +1011,15 @@ export_facade! {
     let output = client.vault_inbox_lens(&input)?;
     crate::codec::lift_record("vault.inbox.lens", &output)
 };
-"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> InboxGroupPage = |client| {
+"vault.inbox.groups" => fn vault_inbox_groups(&self, input: InboxRunGroupsRequest) -> UnifiedInboxGroupPage = |client| {
     let input: oneiron::agent_inbox_lens::InboxRunGroupsRequest = crate::codec::lower_record("vault.inbox.groups", input)?;
     let output = client.vault_inbox_groups(&input)?;
     crate::codec::lift_record("vault.inbox.groups", &output)
+};
+"vault.inbox.groups.resolve" => fn vault_inbox_groups_resolve(&self, input: InboxGroupResolveRequest) -> InboxGroupResolution = |client| {
+    let input: oneiron::inbox::InboxGroupResolveRequest = crate::codec::lower_record("vault.inbox.groups.resolve", input)?;
+    let output = client.vault_inbox_groups_resolve(&input)?;
+    crate::codec::lift_record("vault.inbox.groups.resolve", &output)
 };
 "vault.weave.digest.render" => fn vault_weave_digest_render(&self) -> Option<WeaveDigestRendered> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.digest.render")?;

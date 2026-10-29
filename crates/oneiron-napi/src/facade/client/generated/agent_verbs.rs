@@ -331,6 +331,39 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shape_plan_card(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.plan.card", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_items_receipt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.items.receipt", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_groups(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.groups", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_groups_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.groups.resolve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_message(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.message", js_json(input))
@@ -1734,6 +1767,15 @@ impl NativeClient {
     pub fn vault_inbox_groups(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.inbox.groups", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_inbox_groups_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.inbox.groups.resolve", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

@@ -77,6 +77,10 @@ vaultIdentityMention(input: unknown): unknown
 vaultShapeRead(input: unknown): unknown
 vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown
+vaultShapePlanCard(input: unknown): unknown
+vaultShapeItemsReceipt(input: unknown): unknown
+vaultShapeGroups(input: unknown): unknown
+vaultShapeGroupsResolve(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
@@ -233,6 +237,7 @@ vaultWeaveOwnerDigestRender(input: unknown): unknown
 vaultInboxConcernsReview(input: unknown): unknown
 vaultInboxLens(input: unknown): unknown
 vaultInboxGroups(input: unknown): unknown
+vaultInboxGroupsResolve(input: unknown): unknown
 vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
