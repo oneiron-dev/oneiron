@@ -419,47 +419,52 @@ impl ResolvedToolSchema {
         visited: &mut BTreeSet<(SchemaNodeId, bool)>,
         found: &mut Vec<SchemaText>,
     ) -> Result<(), String> {
-        if !visited.insert((id.clone(), parameter)) {
-            return Ok(());
-        }
-        let node = self.nodes.get(id).ok_or("missing schema node")?;
-        for (key, field) in &node.fields {
-            found.push(SchemaText {
-                role: TextRole::Text,
-                location: id.label(),
-                text: key.clone(),
-            });
-            match field {
-                SchemaField::Literal(value) => {
-                    let role = if key == "description" && parameter {
-                        TextRole::ParameterDescription
-                    } else {
-                        TextRole::Text
-                    };
-                    literal_text(value, role, &id.label(), found);
-                    if key == "$ref"
-                        && let Some(text) = value.as_str()
-                    {
-                        self.visit(&self.target(id, text)?, parameter, visited, found)?;
+        // A worklist, not recursion: a long `$ref` chain or deep nesting in a
+        // connector's schema never grows the thread's stack.
+        let mut pending = vec![(id.clone(), parameter)];
+        while let Some((id, parameter)) = pending.pop() {
+            if !visited.insert((id.clone(), parameter)) {
+                continue;
+            }
+            let node = self.nodes.get(&id).ok_or("missing schema node")?;
+            let mut next = Vec::new();
+            for (key, field) in &node.fields {
+                found.push(SchemaText {
+                    role: TextRole::Text,
+                    location: id.label(),
+                    text: key.clone(),
+                });
+                match field {
+                    SchemaField::Literal(value) => {
+                        let role = if key == "description" && parameter {
+                            TextRole::ParameterDescription
+                        } else {
+                            TextRole::Text
+                        };
+                        literal_text(value, role, &id.label(), found);
+                        if key == "$ref"
+                            && let Some(text) = value.as_str()
+                        {
+                            next.push((self.target(&id, text)?, parameter));
+                        }
                     }
-                }
-                SchemaField::Node(child) => self.visit(child, parameter, visited, found)?,
-                SchemaField::Nodes(children) => {
-                    for child in children {
-                        self.visit(child, parameter, visited, found)?;
+                    SchemaField::Node(child) => next.push((child.clone(), parameter)),
+                    SchemaField::Nodes(children) => {
+                        next.extend(children.iter().map(|child| (child.clone(), parameter)));
                     }
-                }
-                SchemaField::Map(children) => {
-                    for (name, child) in children {
-                        found.push(SchemaText {
-                            role: TextRole::Text,
-                            location: id.label(),
-                            text: name.clone(),
-                        });
-                        self.visit(child, parameter || key == "properties", visited, found)?;
+                    SchemaField::Map(children) => {
+                        for (name, child) in children {
+                            found.push(SchemaText {
+                                role: TextRole::Text,
+                                location: id.label(),
+                                text: name.clone(),
+                            });
+                            next.push((child.clone(), parameter || key == "properties"));
+                        }
                     }
                 }
             }
+            pending.extend(next.into_iter().rev());
         }
         Ok(())
     }
