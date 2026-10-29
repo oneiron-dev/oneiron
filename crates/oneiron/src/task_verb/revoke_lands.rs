@@ -423,6 +423,15 @@ pub(crate) fn restrictive(verb: &str, args: &Value) -> Option<&'static Row> {
     }
 }
 
+/// Whether a call of `verb` on the caller's own `args` is a restrictive one
+/// (an erase or a revoke), a polymorphic row's judged on what it carries: the
+/// one classification a transport asks before it admits the call, so its
+/// ingress, owner proof, hooks and door read the restriction-only clock as
+/// this boundary's run does (FIX 11201).
+pub fn is_restrictive_call(vault: &Vault, verb: &str, args: &Value) -> bool {
+    restrictive(verb, args).is_some() || payload::restrictive(vault, verb, args).is_some()
+}
+
 /// A restrictive call's landing: its verb, its pinned fields and its row's
 /// own check, the caller's own args, and what the owner's notice says about
 /// the hooks' changes.
