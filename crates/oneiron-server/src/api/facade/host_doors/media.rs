@@ -23,8 +23,8 @@ use super::support::{
     owner_grade, rendered,
 };
 use crate::api::ai::{
-    CallerOptions, MediaCallParts, MediaCallRefusal, VoiceRefusal, caller_options, line_options,
-    prepare_media_call,
+    CallerOptions, MediaCallParts, MediaCallRefusal, VoiceRefusal, caller_options,
+    granted_operations, line_options, prepare_media_call, video_granted_agent,
 };
 use crate::auth::CoreAuth;
 use crate::models::RungVoices;
@@ -98,7 +98,13 @@ pub(super) fn ai_options_answer(
             &inputs,
             |row_operation| row_operation != AiOperation::Text || auth.is_owner_grade(),
         ),
-        None => caller_options(server, auth.is_owner_grade(), operation, &inputs),
+        None => caller_options(
+            server,
+            auth.is_owner_grade(),
+            &granted_operations(server, auth),
+            operation,
+            &inputs,
+        ),
     };
     options_answer(listed)
 }
@@ -177,8 +183,9 @@ fn options_answer(listed: CallerOptions) -> MemoryResult<AiOptions> {
 /// spends on the run's line its dispatch bound, as its steps do (FIX 780):
 /// the credential's own binding and live gate admitted it there. Any other
 /// call is the owner's, on the media meter, and only an owner-grade
-/// credential reaches it. No room pays for it, so it bills the vault owner
-/// (FIX 805).
+/// credential reaches it, or an agent whose live Grant the owner minted
+/// names `operation` ([`owner_or_granted`]). No room pays for it, so it
+/// bills the vault owner (FIX 805).
 pub(super) async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -188,8 +195,24 @@ pub(super) async fn answered(
     if let Some(line) = calling_line() {
         return ai_media_for_run(server, &line, operation, input).await;
     }
-    owner_grade(auth, MEDIA_OWNERS)?;
+    owner_or_granted(server, auth, operation, MEDIA_OWNERS)?;
     ai_media_as_owner(server, operation, input).await
+}
+
+/// [`owner_grade`]'s check at the owner's door for `operation`, which also
+/// admits an agent whose live Grant the owner minted names the operation
+/// (FIX 3208): its call is then the owner's, as he minted it. Any other
+/// caller is refused with `message`, as before.
+fn owner_or_granted(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    operation: AiOperation,
+    message: &str,
+) -> MemoryResult<()> {
+    if granted_operations(server, auth).contains(&operation) {
+        return Ok(());
+    }
+    owner_grade(auth, message)
 }
 
 /// [`answered`] past its credential check, for a caller its own door proved
@@ -336,7 +359,7 @@ pub(super) async fn ai_video_answer(
     if let Some(line) = calling_line() {
         return ai_video_for_run(server, &line, input, auth.principal_entity()).await;
     }
-    owner_grade(auth, MEDIA_OWNERS)?;
+    owner_or_granted(server, auth, AiOperation::Video, MEDIA_OWNERS)?;
     ai_video_as_owner(server, input, auth.principal_entity()).await
 }
 
@@ -402,8 +425,9 @@ pub(crate) async fn ai_video_as_owner(
 /// `ai.video.poll`: where a video job stands; a finished one answers with
 /// its clip on every poll until `ai.video.cancel` deletes it. An owner-grade
 /// credential reaches every job; a code-mode run of any other credential
-/// reaches the jobs its own run submitted (FIX 780). Beside it, no row, as
-/// [`ai_video`] lists none.
+/// reaches the jobs its own run submitted (FIX 780), and an agent the
+/// owner's `ai.video` Grant admits the jobs it asked for (FIX 3208). Beside
+/// it, no row, as [`ai_video`] lists none.
 pub(crate) async fn ai_video_poll(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -420,17 +444,39 @@ pub(super) async fn ai_video_poll_answer(
     if !auth.is_owner_grade()
         && let Some(line) = calling_line()
     {
+        return ai_video_poll_for_run(server, &line, input).await;
+    }
+    if let Some(agent) = video_granted_agent(server, auth) {
         let state = server
             .ai
             .model_runtime()
             .media()
-            .poll_on_line(&line, &input.job)
+            .poll_asked_by(agent, &input.job)
             .await
             .map_err(|error| failure(AiOperation::Video, &error))?;
         return Ok(state.into());
     }
     owner_grade(auth, VIDEO_JOB_OWNERS)?;
     ai_video_poll_as_owner(server, input).await
+}
+
+/// [`ai_video_poll`] for a run that is not the owner's: a job its own run
+/// submitted on `run`, its line (FIX 780); any other job is no job of the
+/// run's. A pumped run's agent the owner's `ai.video` Grant names reaches
+/// its jobs so too (FIX 3208).
+pub(crate) async fn ai_video_poll_for_run(
+    server: &SyncServer,
+    run: &RunAdmission,
+    input: AiVideoJobRequest,
+) -> MemoryResult<AiVideoJob> {
+    let state = server
+        .ai
+        .model_runtime()
+        .media()
+        .poll_on_line(run, &input.job)
+        .await
+        .map_err(|error| failure(AiOperation::Video, &error))?;
+    Ok(state.into())
 }
 
 /// [`ai_video_poll`] past its credential check, for an owner's own program
@@ -467,17 +513,37 @@ pub(super) async fn ai_video_cancel_answer(
     if !auth.is_owner_grade()
         && let Some(line) = calling_line()
     {
+        return ai_video_cancel_for_run(server, &line, input).await;
+    }
+    if let Some(agent) = video_granted_agent(server, auth) {
         server
             .ai
             .model_runtime()
             .media()
-            .cancel_on_line(&line, &input.job)
+            .cancel_asked_by(agent, &input.job)
             .await
             .map_err(|error| failure(AiOperation::Video, &error))?;
         return Ok(AiVideoCancelled { job: input.job });
     }
     owner_grade(auth, VIDEO_JOB_OWNERS)?;
     ai_video_cancel_as_owner(server, input).await
+}
+
+/// [`ai_video_cancel`] for a run that is not the owner's, reaching a job as
+/// [`ai_video_poll_for_run`] does.
+pub(crate) async fn ai_video_cancel_for_run(
+    server: &SyncServer,
+    run: &RunAdmission,
+    input: AiVideoJobRequest,
+) -> MemoryResult<AiVideoCancelled> {
+    server
+        .ai
+        .model_runtime()
+        .media()
+        .cancel_on_line(run, &input.job)
+        .await
+        .map_err(|error| failure(AiOperation::Video, &error))?;
+    Ok(AiVideoCancelled { job: input.job })
 }
 
 /// [`ai_video_cancel`] past its credential check, for an owner's own

@@ -2994,6 +2994,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/ai_grant.rs",
+     "purpose": "The narrower `ai.*` inference Grant (FIX 3208; Engine 10-29 09:36 on L02's recommendation)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/ancestor_index.rs",
      "purpose": "Claimed authority-entry ancestry index for deterministic fold scheduling",
      "surface": {
@@ -80794,7 +80805,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 225,
+     "files": 226,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82266,7 +82277,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5489,
+   "source_files": 5490,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97706,7 +97717,7 @@
      "path": "src/ai_host/dreamer/pause.rs",
      "purpose": "The owner's own pause cause over the Dreamer (`POST /dreamer/pause`, `POST /dreamer/resume`), apart from the…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -98593,7 +98604,7 @@
      "path": "src/api/ai/options.rs",
      "purpose": "`ai.options` (OF-131, OF-140; FIX 2942): the model rows a caller could call now",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -100691,7 +100702,7 @@
      "path": "src/api/facade/host_doors/media.rs",
      "purpose": "The `ai.*` media doors past text: options, image, speech, transcription, embedding and video",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 29
      }
     },
     {
@@ -102821,7 +102832,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
@@ -110384,6 +110395,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/media/asked_jobs.rs",
+     "purpose": "The video jobs an agent asked for under the owner's `ai.video` Grant (FIX 3208)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/media/bindings.rs",
      "purpose": "Media voice bindings, clone queries and retry hints",
      "surface": {
@@ -111723,7 +111744,7 @@
      "path": "src/owner/mod.rs",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`",
      "surface": {
-      "crate-vis": 34
+      "crate-vis": 33
      }
     },
     {
@@ -112851,7 +112872,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/run_host_door/host_rows.rs",
@@ -114233,7 +114254,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 94,
+     "files": 95,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -114382,7 +114403,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1388,
+   "source_files": 1389,
    "test_files": 182
   },
   "oneiron-spawn": {

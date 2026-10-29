@@ -7,7 +7,8 @@
 //! vault's model registry holds it, beside the quote of the backend that
 //! serves it when the registry holds one (FIX 3206), and what the meter its
 //! call spends has left. Listing reserves nothing, and a call is judged again
-//! at its door.
+//! at its door. An agent the owner minted an `ai.*` Grant lists the rows of
+//! the operations it names (FIX 3208).
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::llm::media::{AiOperation, MediaRequest, Modality};
@@ -18,6 +19,7 @@ use oneiron::{
 };
 use serde::Serialize;
 
+use crate::auth::CoreAuth;
 use crate::models::MediaRow;
 use crate::server::{SyncServer, admit_media};
 
@@ -60,18 +62,63 @@ pub(crate) struct CallerOptions {
     pub(crate) media_units_left: Option<u64>,
 }
 
+/// The `ai.*` operations `auth`'s caller may call at the owner's doors
+/// though its credential is not owner-grade (FIX 3208): those a live Grant
+/// the owner minted the caller's agent names
+/// (`Vault::agent_ai_operations`). A call so admitted is the owner's, on his
+/// meter. Empty for an owner-grade caller, which reaches every operation
+/// already, for a credential that names no principal, and when the Grants
+/// cannot be read, which leaves the door's refusal as it was.
+pub(crate) fn granted_operations(server: &SyncServer, auth: &CoreAuth) -> BTreeSet<AiOperation> {
+    if auth.is_owner_grade() {
+        return BTreeSet::new();
+    }
+    let Some(agent) = auth.principal_entity() else {
+        return BTreeSet::new();
+    };
+    match server.vault.agent_ai_operations(agent) {
+        Ok(names) => names
+            .iter()
+            .filter_map(|name| AiOperation::parse(name))
+            .collect(),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "an agent's ai.* Grants were not read; its call stays refused"
+            );
+            BTreeSet::new()
+        }
+    }
+}
+
+/// The agent the owner's `ai.video` Grant admits at a video job's poll or
+/// cancel (FIX 3208): it reaches the jobs it asked for. `None` for an
+/// owner-grade caller and for any caller no such Grant names.
+pub(crate) fn video_granted_agent(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Option<oneiron::EntityId> {
+    granted_operations(server, auth)
+        .contains(&AiOperation::Video)
+        .then(|| auth.principal_entity())
+        .flatten()
+}
+
 /// The rows that serve `operation` (every one when `None`) over `inputs`
 /// that a caller could call now. Every `ai.*` call door is the owner's, so a
-/// caller that is not `owner_grade` could call none and gets none, with no
-/// meter. An owner-grade caller gets each live row the vault's inference
-/// policy admits, judged as its door judges a plain call of its operation.
+/// caller that is not `owner_grade` reaches only the operations in
+/// `granted`, the ones its agent's Grant names ([`granted_operations`]), and
+/// with none gets none, with no meter. Each row listed is a live row the
+/// vault's inference policy admits, judged as its door judges a plain call
+/// of its operation, with what the owner's meter its call spends has left.
 pub(crate) fn caller_options(
     server: &SyncServer,
     owner_grade: bool,
+    granted: &BTreeSet<AiOperation>,
     operation: Option<AiOperation>,
     inputs: &BTreeSet<Modality>,
 ) -> CallerOptions {
-    if !owner_grade {
+    if !owner_grade && granted.is_empty() {
         return CallerOptions {
             options: Vec::new(),
             media_units_left: None,
@@ -88,6 +135,7 @@ pub(crate) fn caller_options(
     let options = runtime
         .ai_options(operation, inputs)
         .into_iter()
+        .filter(|row| owner_grade || granted.contains(&row.operation))
         .filter(|row| policy_admits(server, row))
         .map(|row| {
             let units_left = if row.operation == AiOperation::Text {
