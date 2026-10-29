@@ -663,7 +663,14 @@ pub(crate) fn record_document(
     let h = head(store, txn, entity)?;
     let doc = load(store, txn, &h)?;
     match frontier {
-        Some(frontier) => doc.fork(frontier).map(Some),
+        Some(frontier) => {
+            // A read at the live frontier reads the live document: no fork.
+            if frontier == doc.frontier().as_slice() {
+                Ok(Some(doc))
+            } else {
+                doc.fork(frontier).map(Some)
+            }
+        }
         None => Ok(Some(doc)),
     }
 }
@@ -676,8 +683,13 @@ pub(crate) fn record_body_at(
     frontier: &[u8],
 ) -> Result<Vec<u8>> {
     let h = head(store, txn, entity)?;
-    let doc = load(store, txn, &h)?.fork(frontier)?;
-    body_with_document(&h.field, body, &doc)
+    let doc = load(store, txn, &h)?;
+    // A read at the live frontier reads the live document: no fork.
+    if frontier == doc.frontier().as_slice() {
+        return body_with_document(&h.field, body, &doc);
+    }
+    let version = doc.fork(frontier)?;
+    body_with_document(&h.field, body, &version)
 }
 
 /// A typed read projection of the body and metadata at one document version.

@@ -68,7 +68,7 @@ use crate::{
 };
 use change::Watch;
 use handles::Handles;
-use pages::{Base, Observations, Read, find_cursor, session_token, wait_cursor};
+use pages::{Base, Observations, Read, ReadAt, find_cursor, session_token, wait_cursor};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
@@ -145,6 +145,9 @@ pub(crate) struct CdpDriver {
     /// The last act's input was sent (FIX 8010): its effect stands even
     /// when settling or reading the page after it failed.
     sent: bool,
+    /// The last act's input failed after the browser was sent part of it
+    /// (FIX 10426): its outcome is unknown.
+    unknown: bool,
 }
 
 /// One page target the driver follows, with its session on it, and the
@@ -314,6 +317,12 @@ impl CdpDriver {
         std::mem::take(&mut self.sent)
     }
 
+    /// Whether the last act's input failed after the browser was sent part
+    /// of it, taken (FIX 10426).
+    pub(crate) fn take_unknown(&mut self) -> bool {
+        std::mem::take(&mut self.unknown)
+    }
+
     /// The page's URL and title as they are now.
     fn page_info(&self) -> Result<(String, String), BrowserError> {
         let info = self.pipe.call(
@@ -338,6 +347,9 @@ impl CdpDriver {
     /// no rows, cut by `browser_timeout`; the guest and the session stay,
     /// and the cut's `walk_next` reads the page again.
     fn observation(&mut self, base: &Base) -> Result<Observation, BrowserError> {
+        // The tab's document before the read: a recorder matches its acts
+        // only against a read of their own document (FIX 9412).
+        let commits = self.pipe.top_commits(&self.target);
         let capture = match self.capture() {
             Ok(capture) => capture,
             Err(BrowserError::Timeout(_) | BrowserError::CallTimeout(_)) => {
@@ -346,6 +358,11 @@ impl CdpDriver {
             Err(error) => return Err(error),
         };
         let (url, title) = self.page_info()?;
+        let at = ReadAt {
+            tab: self.target.clone(),
+            url: url.clone(),
+            commits,
+        };
         let (url, title) = self.shown_page(url, title);
         self.seq += 1;
         let read = Read {
@@ -356,6 +373,7 @@ impl CdpDriver {
             rows: capture.rows,
             no_tree: false,
             partial: None,
+            at: Some(at),
         };
         let mut observation = self.pages.observe(read, base);
         observation.dialogs = self.pipe.take_dialog_failures();
@@ -390,6 +408,7 @@ impl CdpDriver {
                 pending: 0,
                 walk_ms: u64::try_from(CALL.as_millis()).unwrap_or(u64::MAX),
             }),
+            at: None,
         };
         let mut observation = self.pages.observe(read, &Base::Whole);
         observation.dialogs = self.pipe.take_dialog_failures();
@@ -470,18 +489,25 @@ impl CdpDriver {
             json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
         )?;
         if let Some(error) = result.get("exceptionDetails") {
-            return Err(BrowserError::Protocol(
-                error
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("script error")
-                    .to_owned(),
-            ));
+            return Err(BrowserError::Protocol(self.thrown_text(error)));
         }
         Ok(result
             .pointer("/result/value")
             .cloned()
             .unwrap_or(Value::Null))
+    }
+
+    /// What a script the driver ran threw, as an error names it: the page
+    /// controls that text, so each secret the run's reads took shows its
+    /// handle there, as in a title or a URL (FIX 11581).
+    fn thrown_text(&self, error: &Value) -> String {
+        let text = error
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("script error");
+        self.secrets
+            .mask_known(text)
+            .unwrap_or_else(|| text.to_owned())
     }
 
     /// Waits until the front tab's document has loaded, up to `deadline`:

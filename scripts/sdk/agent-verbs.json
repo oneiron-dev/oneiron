@@ -1358,6 +1358,10 @@
         ]
       },
       "mcp_scope": "born",
+      "mcp_fields": {
+        "spec": "$",
+        "task_ref": "=task_ref"
+      },
       "section": true
     },
     {
@@ -14878,7 +14882,7 @@
     },
     {
       "name": "self.browser.switch_engine",
-      "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
+      "description": "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds.",
       "input": "crate::task_verb::sdk::BrowserSwitchEngineInput",
       "output": "crate::task_verb::sdk::BrowserSwitchEngineOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.switch_engine(input)?)",
@@ -14888,7 +14892,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>",
-        "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
+        "description": "Moves the run browser to the other engine when a page fails on this one (a click_no_effect); carries URL, cookies, storage and scroll, and records it; never by itself. Optional snapshot_bounds sets the storage snapshot bounds.",
         "host_door_caller": true,
         "openapi": true
       }

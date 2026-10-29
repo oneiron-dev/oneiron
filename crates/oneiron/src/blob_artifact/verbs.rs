@@ -1000,7 +1000,8 @@ impl Memory<'_> {
     /// bound paired/person readings — before the proposal is held, so a
     /// measurement no listed provider took, a duplicate provider, a
     /// reading of the answered question itself, a zero version or an
-    /// out-of-range probability is refused and mints no proposal.
+    /// out-of-range probability is refused and mints no proposal. It lists
+    /// the rows its reads picked, as an ask does (FIX 5455, FIX 5814).
     pub fn artifacts_admit_through(
         &self,
         input: &ArtifactAdmitSubmit,
@@ -1013,9 +1014,9 @@ impl Memory<'_> {
         let decider = AdmittedDecider {
             decisions: std::sync::Mutex::new(input.decisions.iter().cloned().collect()),
         };
-        // An admission lists the rows it listed before FIX 5455.
-        self.artifacts_ask_run(&input.ask, &decider, dial, policy)
-            .map(|(outcome, _)| outcome)
+        let (outcome, read) = self.artifacts_ask_run(&input.ask, &decider, dial, policy)?;
+        self.produced_from(read);
+        Ok(outcome)
     }
 
     /// `vault.artifacts.waits`: the organ calls held beside one artifact

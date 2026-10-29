@@ -94,6 +94,10 @@ impl BrowserDriver for DesktopSession {
         Ok(observation)
     }
 
+    fn view_fingerprint(&self) -> Option<[u8; 32]> {
+        self.view
+    }
+
     fn observe_hidden(&mut self) -> Result<Observation, BrowserError> {
         self.pages.hiding(true);
         let read = self.observe(ObserveInput {
