@@ -9,7 +9,51 @@ use crate::store::StoreRead;
 
 use super::builder::PipelineBuilder;
 use super::filters::claim_status_gate_allows;
-use super::types::{ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity};
+use super::types::{
+    CandidateFilter, ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig,
+    ScoredEntity, SnapshotCandidateFilter,
+};
+
+/// The candidate admission of one retrieval snapshot (FIX 11648): the run's
+/// candidate filter, then what its gate admits under the state it holds for
+/// the snapshot's transaction. Made beside that transaction
+/// ([`PipelineBuilder::snapshot_admission`]) and dropped before it, so what
+/// the gate holds never serves another one.
+pub(super) enum SnapshotAdmission<'t> {
+    Filter(Option<&'t CandidateFilter<'t>>),
+    Gated(Box<SnapshotCandidateFilter<'t>>),
+}
+
+impl SnapshotAdmission<'_> {
+    fn filter(&self) -> Option<&SnapshotCandidateFilter<'_>> {
+        match self {
+            Self::Filter(Some(filter)) => Some(*filter),
+            Self::Filter(None) => None,
+            Self::Gated(gated) => Some(&**gated),
+        }
+    }
+}
+
+impl PipelineBuilder<'_> {
+    /// This run's candidate admission for the snapshot read in `txn`.
+    pub(super) fn snapshot_admission<'t>(&'t self, txn: &'t RoTxn<'t>) -> SnapshotAdmission<'t> {
+        let filter = self.candidate_filter;
+        let Some(gate) = self.candidate_gate else {
+            return SnapshotAdmission::Filter(filter);
+        };
+        let gated = gate.in_txn(txn);
+        SnapshotAdmission::Gated(Box::new(
+            move |store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId| {
+                if let Some(filter) = filter
+                    && !filter(store, rtxn, id)?
+                {
+                    return Ok(false);
+                }
+                gated(store, rtxn, id)
+            },
+        ))
+    }
+}
 
 /// Canonical audience selection for one retrieval attempt. Construction rejects
 /// empty AnyOf before any candidate scan; every door borrows the same selection.
@@ -23,12 +67,13 @@ impl CorpusFilter {
     pub(super) fn config<'a>(
         &'a self,
         builder: &'a PipelineBuilder<'_>,
+        admission: &'a SnapshotAdmission<'_>,
         occurred_range: Option<(u64, u64)>,
         authority_filter: &'a crate::gate::ResolvedRetrievalFilter,
     ) -> PipelineFilterConfig<'a> {
         PipelineFilterConfig {
             authority_filter,
-            candidate_filter: builder.candidate_filter,
+            candidate_filter: admission.filter(),
             type_filter: builder.type_filter.as_deref(),
             criticality: builder.criticality,
             since_filter: builder.since_filter,

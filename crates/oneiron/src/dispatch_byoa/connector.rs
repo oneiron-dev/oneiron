@@ -330,6 +330,18 @@ impl ByoaConnectorSpec {
     }
 }
 
+/// Typed entity references a dev-runner job carries for erase reach (FIX 7621).
+/// Ids only: no diagnostic or evidence text rides this shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DevRunnerRefs {
+    /// The actor the job runs for.
+    pub actor: [u8; 16],
+    /// The admitted diagnostic rows its corpus cites.
+    pub diagnostics: Vec<[u8; 16]>,
+    /// The evidence rows its admitted corpus cites.
+    pub evidence: Vec<[u8; 16]>,
+}
+
 /// A request to dispatch one foreign agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchByoa {
@@ -338,6 +350,8 @@ pub struct DispatchByoa {
     pub user_login: bool,
     pub connector: ByoaConnectorSpec,
     pub task_ref: Option<EntityId>,
+    /// A dev-runner job's typed erase references; `None` for other work.
+    pub dev_refs: Option<DevRunnerRefs>,
     pub parent_attempt_id: Option<AttemptId>,
     pub run_id: Option<String>,
     pub dedupe_key: Option<String>,
@@ -383,6 +397,9 @@ pub struct ByoaAttemptPayload {
     /// The attempt that asked for this one, when there was one.
     #[serde(default)]
     pub parent_attempt: Option<[u8; 16]>,
+    /// A dev-runner job's typed erase references (FIX 7621).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev_refs: Option<DevRunnerRefs>,
     /// The official seat this attempt runs on, when it is one (OF-375).
     /// Labels and choices only; never credential material.
     #[serde(default)]

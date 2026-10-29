@@ -199,8 +199,11 @@ fn last_event(stream: &ByoaStream, kind: &str) -> Option<JsonValue> {
 
 /// Hands `visit` each JSON object `stream` holds one to a line, read whole
 /// from its start in order. A line that does not open with `{` past its
-/// leading blanks is passed over without being held, and one that does not
-/// parse is passed over. `None` when the stream cannot be read.
+/// leading ASCII blanks is passed over without being held; a line led by a
+/// non-ASCII byte is read into the scratch buffer, lossy-decoded and
+/// Unicode-trimmed, and parsed only when the trimmed line opens with `{`.
+/// A line that does not parse is passed over. `None` when the stream cannot
+/// be read.
 fn each_event(stream: &ByoaStream, mut visit: impl FnMut(JsonValue)) -> Option<()> {
     let mut reader = BufReader::new(stream.reader());
     let mut line = Vec::new();
@@ -221,8 +224,18 @@ fn each_event(stream: &ByoaStream, mut visit: impl FnMut(JsonValue)) -> Option<(
             if let Ok(event) = serde_json::from_slice(&line) {
                 visit(event);
             }
-        } else {
+        } else if first.is_ascii() {
             skip_line(&mut reader)?;
+        } else {
+            line.clear();
+            reader.read_until(b'\n', &mut line).ok()?;
+            let decoded = String::from_utf8_lossy(&line);
+            let trimmed = decoded.trim();
+            if trimmed.starts_with('{') {
+                if let Ok(event) = serde_json::from_str(trimmed) {
+                    visit(event);
+                }
+            }
         }
     }
 }

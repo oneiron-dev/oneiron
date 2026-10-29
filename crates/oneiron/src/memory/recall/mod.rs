@@ -778,7 +778,10 @@ impl Memory<'_> {
         // A scope that names TURN but not MESSAGE still finds a turn by its
         // messages' words: each message comes back as its turn or not at all.
         let turn_fold = kinds.turn_fold();
-        // Admission runs in each candidate's retrieval transaction before ranking.
+        // Admission runs in each candidate's retrieval transaction before ranking:
+        // the kinds here, then the actor gate under one authority per snapshot
+        // (FIX 11648).
+        let gate = lane.recall_candidate_gate(&plan_policy, &plan_filter);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 // Reject irrelevant kind/predicate rows before the actor gate.
@@ -798,7 +801,7 @@ impl Memory<'_> {
                         return Ok(false);
                     }
                 }
-                lane.recall_candidate_in(txn, &plan_policy, &plan_filter, id)
+                Ok(true)
             };
 
         // A door that stops waiting at the deadline answers then with the
@@ -914,7 +917,7 @@ impl Memory<'_> {
                 .retrieval_effort(effective, &seeds)
                 .authority_filter(plan_filter.clone())
                 .token_budget(budget);
-            builder = builder.filter_candidates(&admitted);
+            builder = builder.filter_candidates(&admitted).gate_candidates(&gate);
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing

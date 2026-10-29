@@ -30,7 +30,7 @@ use super::seat::{
     SkippedRunnerSeat, runner_task,
 };
 use super::seat_candidate::runner_seat_candidate;
-use super::seat_quota::seat_quotas_in_txn;
+use super::seat_quota::{seat_quota_id, seat_quotas_in_txn};
 use super::staged_input::{
     StagedInputPin, carry_staged_input, staged_input_readable_in_txn, staged_job_pointer,
 };
@@ -50,12 +50,14 @@ pub(super) struct HandOff {
 }
 
 impl HandOff {
-    /// `None` when `spent` carries neither a binding nor a CLI runner task:
-    /// an unbound endpoint or MCP seat's work parks, as before. A bound
-    /// work's task is `None` when its original request record is erased or
-    /// unreadable, or none was kept: its CLI seats are passed over. So it is
-    /// when the spent attempt is that record and an erase left it no task
-    /// (FIX 7502): the work goes on to its next seat, never parked for it.
+    /// `None` when `spent` is unbound with no CLI runner attempt to read a
+    /// task from: an unbound endpoint or MCP seat's work parks, as before.
+    /// An unbound CLI attempt whose argv names no task hands `task: None` to
+    /// the same search, as a bound erased work's. A bound work's task is
+    /// `None` when its original request record is erased or unreadable, or
+    /// none was kept: its CLI seats are passed over. So it is when the spent
+    /// attempt is that record and an erase left it no task (FIX 7502): the
+    /// work goes on to its next seat, never parked for it.
     pub(super) fn of(
         vault: &Vault,
         rtxn: &heed::RoTxn<'_>,
@@ -73,12 +75,10 @@ impl HandOff {
             // unless an erase took it.
             let own = runner_task(&ran).map(str::to_owned);
             let Some(work) = work else {
-                // Unbound work's task lives in the spent argv alone.
-                let Some(own) = own else {
-                    return Ok(None);
-                };
+                // Unbound work's task lives in the spent argv alone; none
+                // when an erase took it, as a bound erased work's.
                 return Ok(Some(Self {
-                    task: Some(own),
+                    task: own,
                     base: ran.checkout_id,
                     repo: repo_binding,
                     staged: ran.staged_input,
@@ -210,8 +210,11 @@ where
     /// and not yet back, a CLI seat when that record is erased or
     /// unreadable or none was kept, and a seat a hosted-only bound keeps off
     /// this runtime. The work parks when no seat is left, and when the
-    /// spent attempt is unbound and carries no CLI runner task (an endpoint
-    /// or MCP seat's).
+    /// spent attempt is unbound with no CLI runner attempt to read a task
+    /// from (an endpoint or MCP seat's). An unbound CLI attempt whose argv
+    /// names no task searches with `task: None`, as a bound erased work's:
+    /// its CLI seats are passed over, and an endpoint or MCP seat may take
+    /// the work.
     pub(super) fn next_seat_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -251,8 +254,9 @@ where
 
     /// The successor search of a spent attempt's work (OF-137): from
     /// `search.from` in the owner's order, the first seat this runtime may
-    /// run takes the work as a child of `spent`, on a fresh checkout claimed
-    /// from the work's custody, under a dedupe key of the spent attempt and
+    /// run takes the work as a child of `spent`, a CLI successor on a fresh
+    /// checkout claimed from the work's custody (an endpoint or MCP
+    /// successor claims none), under a dedupe key of the spent attempt and
     /// the seat, so a replay finds the child it dispatched. Passed over and
     /// named: a seat the quota view shows spent and not yet back, a CLI seat
     /// whose argv cannot carry the task (FIX 7505) or that has no readable
@@ -322,7 +326,9 @@ where
                 found.skipped.push(passed_over(index, next, reason));
                 continue;
             }
-            claim_successor_in_txn(vault, wtxn, hand.repo.as_ref(), checkout, now)?;
+            if matches!(connector, ByoaConnectorSpec::CliSandbox(_)) {
+                claim_successor_in_txn(vault, wtxn, hand.repo.as_ref(), checkout, now)?;
+            }
             let outcome = self.enqueue_in_txn(
                 wtxn,
                 ByoaEnqueue {
@@ -330,6 +336,7 @@ where
                     connector,
                     task_ref: spent.task_ref.clone(),
                     parent_attempt: Some(parent),
+                    dev_refs: None,
                     run_id: spent.run_id.clone(),
                     dedupe_key: Some(format!(
                         "{RUNNER_SEAT_DEDUPE_PREFIX}{}:{index}",
@@ -342,7 +349,17 @@ where
             )?;
             if let Some(work) = &hand.work {
                 let attempt = outcome.status().attempt.id;
-                note_next_hop_in_txn(vault, wtxn, work, spent.id, attempt, index, now)?;
+                note_next_hop_in_txn(
+                    vault,
+                    wtxn,
+                    work,
+                    spent.id,
+                    attempt,
+                    index,
+                    *seat_quota_id(next)?.as_bytes(),
+                    &found.skipped,
+                    now,
+                )?;
             }
             found.took = Some((index, outcome));
             return Ok(found);

@@ -141,6 +141,9 @@ impl ScopedRead<'_> {
     ) -> Result<super::ScopedDiaryCandidates> {
         let (_, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let mut admitted = HashSet::new();
+        // One relationship authority for every diary this snapshot checks,
+        // not one per note (FIX 11648).
+        let held = super::access_gate::HeldAuthority::default();
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.vault.store,
             txn,
@@ -161,7 +164,7 @@ impl ScopedRead<'_> {
             let body = std::borrow::Cow::Borrowed(raw.body.as_slice());
             if crate::note::decode_note_body_in_txn(&self.vault.store, txn, &body)
                 .is_ok_and(|note| note.kind == crate::note::NoteKind::Diary)
-                && self.is_entity_retrievable_with_policy_in(txn, &policy, requested, &id)?
+                && self.is_entity_retrievable_held_in(txn, &policy, requested, &id, &held)?
             {
                 admitted.insert(id);
             }

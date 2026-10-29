@@ -7,22 +7,31 @@ pub(crate) struct RetrievalVisibility<'read, 'vault> {
     scoped: &'read ScopedRead<'vault>,
     policy: PolicyManifestResolution,
     filter: ResolvedRetrievalFilter,
+    /// The walk's transaction: borrowed, so it outlives this value and no
+    /// other transaction can stand at its address while `held` is in use.
+    txn: &'read heed::RoTxn<'read>,
+    /// One relationship authority for every node the walk checks in `txn`,
+    /// so the grants and relationship claims load once per walk, not once
+    /// per node (FIX 11648).
+    held: HeldAuthority<'vault>,
 }
 
 impl<'vault> ScopedRead<'vault> {
     /// Conjoins retrieval constraints with the existing actor-read traversal
     /// gate. Resolve against the walk's transaction; an absent request inherits
     /// the actor's floor, never the unscoped owner's authority.
-    pub(crate) fn retrieval_visibility_in(
-        &self,
-        txn: &heed::RoTxn<'_>,
+    pub(crate) fn retrieval_visibility_in<'read>(
+        &'read self,
+        txn: &'read heed::RoTxn<'_>,
         requested: Option<&RetrievalFilter>,
-    ) -> Result<RetrievalVisibility<'_, 'vault>> {
+    ) -> Result<RetrievalVisibility<'read, 'vault>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, requested)?;
         Ok(RetrievalVisibility {
             scoped: self,
             policy,
             filter,
+            txn,
+            held: HeldAuthority::default(),
         })
     }
 
@@ -66,7 +75,7 @@ impl<'vault> ScopedRead<'vault> {
         if row.entity_type != crate::registry::ENTITY_TYPE_TURN {
             return Ok(true);
         }
-        self.turn_messages_readable_in(txn, policy, id)
+        self.turn_messages_readable_in(txn, policy, id, authority)
     }
 
     /// A TURN's text, and so its vector, is its messages' text
@@ -88,6 +97,7 @@ impl<'vault> ScopedRead<'vault> {
         txn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
         turn: &EntityId,
+        authority: &HeldAuthority<'vault>,
     ) -> Result<bool> {
         let floor = self.actor_retrieval_floor(policy)?;
         let parts = match self.session_view {
@@ -107,7 +117,7 @@ impl<'vault> ScopedRead<'vault> {
             if row.entity_type != crate::registry::ENTITY_TYPE_MESSAGE || row.body.is_empty() {
                 continue;
             }
-            if !self.is_entity_readable_with_filter_in(txn, policy, &message, &floor)? {
+            if !self.is_entity_readable_held_in(txn, policy, &message, &floor, authority)? {
                 return Ok(false);
             }
         }
@@ -117,6 +127,17 @@ impl<'vault> ScopedRead<'vault> {
 
 impl crate::ppr::PprNodeVisibility for RetrievalVisibility<'_, '_> {
     fn ppr_node_visible(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+        // The held authority is the walk's transaction's; a node checked in
+        // any other transaction loads its own.
+        if std::ptr::eq(txn, self.txn) {
+            return self.scoped.is_entity_retrievable_held_in(
+                txn,
+                &self.policy,
+                &self.filter,
+                id,
+                &self.held,
+            );
+        }
         self.scoped
             .is_entity_retrievable_with_policy_in(txn, &self.policy, &self.filter, id)
     }

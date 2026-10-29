@@ -192,12 +192,17 @@ pub(crate) fn build_prep_pack_scoped(
         });
     }
     let (filter, policy) = read.recall_plan()?;
-    let admitted = |_: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
-        read.recall_candidate_in(txn, &policy, &filter, id)
-    };
+    // Every candidate goes to the actor gate, under one authority per
+    // snapshot (FIX 11648).
+    let gate = read.recall_candidate_gate(&policy, &filter);
+    let admitted =
+        |_: &crate::store::StoreRead<'_>, _: &heed::RoTxn<'_>, _: &EntityId| -> Result<bool> {
+            Ok(true)
+        };
     let (scoped, _) = prep_context_builder(read.vault(), &request.event, request.fired_at)
         .authority_filter(filter.clone())
         .filter_candidates(&admitted)
+        .gate_candidates(&gate)
         .run_scoped_with_run_status(read)?;
     let mut candidates = scoped.value.results;
     candidates.extend(scoped.value.neighbors);
