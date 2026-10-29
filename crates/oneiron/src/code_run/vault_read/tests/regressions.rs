@@ -83,7 +83,6 @@ fn persistent_adapter_observes_grant_revocation_and_narrowing() {
             count_mode: CountMode::Estimate,
         };
         let batch = CoreBatchShortIdHydrateRequest {
-            task: None,
             refs: vec![reference.clone()],
             view: None,
         };
