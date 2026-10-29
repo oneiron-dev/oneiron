@@ -116,6 +116,8 @@ pub mod ports {
     };
 }
 
+mod active_write_txn;
+pub(crate) use active_write_txn::{active_write_txn_depth, active_write_txn_guard};
 mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
@@ -133,6 +135,8 @@ mod diagnostics;
 mod gate_decision;
 mod group_commit;
 mod handle;
+// FIX 7907, 7958: a federation grant's scope opening keys.
+pub(crate) mod grant_scope_custody;
 mod host_issuer_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
@@ -145,6 +149,7 @@ mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
 #[cfg(feature = "sync")]
 pub(crate) mod local_replica;
+mod notification_updates;
 mod open_gates;
 mod outbound_send_receipt;
 mod page_bound;
@@ -234,14 +239,15 @@ pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
+pub use key_custody::custody_container_path;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::sync_dir;
 pub(crate) use key_custody::{
     CUSTODY_COMPLETION_NEEDS_ANCHOR, CUSTODY_HEAD_WRAP_CONTEXT, CustodyBinding, CustodyKind,
     CustodyPlan, CustodyRecipients, CustodyRequirement, CustodyRoute, CustodySourceAt,
-    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, Publication,
-    PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
-    TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
+    CustodySubject, FileAnchor, FolderTarget, MemberProgress, OutboxTarget, PreparedTakeover,
+    Publication, PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
+    TakeoverRefusal, TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
 };
 // FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.

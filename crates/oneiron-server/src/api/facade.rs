@@ -47,6 +47,7 @@ mod channel_doors;
 mod checkout_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
+pub(crate) mod clock_ingress;
 mod clustering_doors;
 mod coach_offer_doors;
 mod code_doors;
@@ -55,6 +56,7 @@ mod code_run_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
+mod comm_widen_doors;
 mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;
@@ -157,6 +159,7 @@ mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;
+mod secret_custody_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
@@ -199,8 +202,8 @@ pub(crate) use export_transfer::ExportTransfers;
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
-    ai_media_as_owner, ai_video_as_owner, ai_video_cancel_as_owner, ai_video_poll_as_owner,
-    vault_hooks_replay_as_owner,
+    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
+    ai_video_cancel_as_owner, ai_video_for_run, ai_video_poll_as_owner, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
@@ -309,14 +312,21 @@ async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
 /// it, as its handler refused it before. Its answer meets one destination
 /// release before it is sent ([`released_reply`], FIX 8170). What its answer
 /// holds (a deck preview's renderer) is kept until the reply's body is
-/// encoded (FIX 8238).
+/// encoded (FIX 8238). The owner's clock repair the binding door left
+/// unjudged runs with its caller judged in its own writer (FIX 11190).
 async fn facade_route(
-    auth: CoreAuth,
+    caller: clock_ingress::FacadeCaller,
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
+    let auth = match caller {
+        clock_ingress::FacadeCaller::Credential(auth) => auth,
+        clock_ingress::FacadeCaller::ClockRepair(caller) => {
+            return clock_ingress::repair_reply(&server, caller, facade_json(payload)).await;
+        }
+    };
     super::answer_hold::until_encoded(async move {
         let call = FacadeCall::http(&server, &auth, &headers);
         let verb = uri.path().trim_start_matches('/');
@@ -401,6 +411,15 @@ struct FacadeErrorBody {
     /// source said (FIX 8190).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     resets_at: Vec<u64>,
+    /// The refusal's stable reason codes, in its producer's order, when it
+    /// named any (FIX 7398).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    reason_codes: Vec<String>,
+    /// A failed run's program type feedback (FIX 10389), beside the refusal
+    /// and never among its words: each item released whole, or withheld
+    /// with none of its text when its own release check holds it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    program_steps: Vec<oneiron::code_run::ProgramStepFeedbackRelease>,
 }
 
 /// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
@@ -432,4 +451,7 @@ pub(crate) struct MemoryErrorBodySchema {
     receipt_ref: Option<String>,
     retry_after: Option<u64>,
     resets_at: Option<Vec<u64>>,
+    reason_codes: Option<Vec<String>>,
+    #[schema(value_type = Option<Vec<Object>>)]
+    program_steps: Option<Vec<serde_json::Value>>,
 }

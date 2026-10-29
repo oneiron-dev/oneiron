@@ -360,7 +360,7 @@ impl Vault {
         let effect = apply(&mut txn, actor_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, None, None, now,
+            &mut txn, id, vault_id, None, actor_id, owners, effect, None, None, None, now,
         )?;
         txn.commit()?;
         Ok(receipt)
@@ -397,6 +397,7 @@ impl Vault {
             creator,
             BTreeSet::from([creator]),
             effect,
+            None,
             None,
             None,
             now,
@@ -556,6 +557,7 @@ impl Vault {
         authorization: &OwnerRecoveryAuthorization,
     ) -> Result<SharedActExecutionReceipt> {
         let proof = Some(authorization.note());
+        let authorizer = authorization.authorizer();
         let mut txn = self.store.env.write_txn()?;
         super::check_vault(self, &txn, vault_id)?;
         authorization.holds_in(self, &txn)?;
@@ -599,6 +601,7 @@ impl Vault {
                 from_keeps: None,
                 act: None,
                 proof: proof.map(|digest| crate::entity_id::bytes_to_hex_lower(&digest)),
+                authorizer,
                 receipt: id.clone(),
                 affected_grants,
                 retired_own_device_grants,
@@ -622,6 +625,7 @@ impl Vault {
             },
             None,
             Some(authority_entry),
+            authorizer,
             now,
         )?;
         txn.commit()?;

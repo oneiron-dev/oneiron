@@ -163,6 +163,15 @@ pub enum AuthorityOp {
     /// key of a live machine of the vault, in any role (FIX 5628). A
     /// main-log entry, so every machine the owner admits folds it.
     AgentGrantAct(AgentGrantActRecord),
+    /// One act on a vault setting (the dreamer's wake policy, the inference
+    /// defaults) or on an agent's free-time policy, signed by the install key
+    /// of a live machine of the vault, in any role (FIX 4624, FIX 5660). A
+    /// main-log entry, so every machine the owner admits folds it.
+    PolicySettingSet(PolicySettingSet),
+    /// One owner whole-vault export, signed by the install key of a live
+    /// machine of the vault, in any role, after the copy left (FIX 4624). A
+    /// main-log entry, so every machine the owner admits folds it.
+    ExportAct(ExportActRecord),
     /// The owner's enrollment of one of his devices' own owner signing keys
     /// on the roster (FIX 4920), signed by an existing live owner root and
     /// cosigned by the install key of the carrier of his act. A main-log
@@ -461,6 +470,8 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ConversationTrainingVaultSet(set) => set.validate(),
         AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
         AuthorityOp::AgentGrantAct(record) => record.validate(),
+        AuthorityOp::PolicySettingSet(set) => set.validate(),
+        AuthorityOp::ExportAct(record) => record.validate(),
         AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
         AuthorityOp::FrontierJoin(_) => Ok(()),
     }

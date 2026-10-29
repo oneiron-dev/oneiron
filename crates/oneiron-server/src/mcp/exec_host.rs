@@ -18,7 +18,6 @@ use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
 use oneiron::task_type::TaskTypeRef;
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelLocality, Vault, WriteActor};
-use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -26,8 +25,10 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod active_run;
 mod description_route;
 mod off_record_run;
+use self::active_run::ActiveRuns;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
 
 /// The ONE place an MCP-derived durable id is minted (ONE-1704 M3).
@@ -136,8 +137,6 @@ impl fmt::Debug for McpCodeExecutionRequest<'_> {
 pub enum McpCodeExecutionError {
     #[error("no execute_code host is bound on this server")]
     HostUnbound,
-    #[error("execute_code run is already active; retry the same run_ref")]
-    RunBusy,
     #[error(
         "execute_code waited past limits.queue_wait_timeout_ms for a run's turn; no run was started; retry"
     )]
@@ -161,7 +160,6 @@ impl McpCodeExecutionError {
     pub const fn error_code(&self) -> &'static str {
         match self {
             Self::HostUnbound => super::MCP_CODE_HOST_UNBOUND_CODE,
-            Self::RunBusy => "code_run_busy",
             Self::RunWaitedOut => "code_run_waited_out",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
@@ -454,7 +452,9 @@ impl Default for CodeRunLimits {
 /// own durable executor.
 pub struct McpEngineNativeCodeHost {
     provider: Arc<dyn McpCodeModeProvider>,
-    active: Arc<Mutex<HashSet<EntityId>>>,
+    /// Each run's single flight: one entry at a time, the next in arrival
+    /// order (FIX 9505).
+    active: ActiveRuns,
     seats: Arc<Mutex<RunSeats>>,
     /// Keyed by the credential's stream connection, its registered
     /// fingerprint.
@@ -481,7 +481,7 @@ impl McpEngineNativeCodeHost {
     ) -> Self {
         Self {
             provider,
-            active: Arc::new(Mutex::new(HashSet::new())),
+            active: ActiveRuns::new(limits.wait),
             seats: Arc::default(),
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
             reader_seats: None,
@@ -525,7 +525,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     > {
         let vault = Arc::clone(&request.vault);
         let provider = Arc::clone(&self.provider);
-        let active = Arc::clone(&self.active);
+        let active = &self.active;
         let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
@@ -541,7 +541,9 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             if request.run_id != mcp_code_run_id(request.run_ref, request.actor) {
                 return Err(changed());
             }
-            let guard = ActiveRun::acquire(active, request.run_id)?;
+            // A second entry of a run still running waits behind it, in
+            // arrival order, holding no permit while it waits (FIX 9505).
+            let guard = active.acquire(request.run_id).await?;
             // The run spends under no scope, so its children spend on the
             // host's meter, as its own calls do, on a clock one window from
             // its first spawn.
@@ -1066,35 +1068,6 @@ fn enter_on(
     reactor
         .block_on(executor.run(&routed_config))
         .map_err(EngineRunError::Run)
-}
-
-/// A disconnected caller cannot release single-flight while its worker writes.
-struct ActiveRun {
-    active: Arc<Mutex<HashSet<EntityId>>>,
-    run_id: EntityId,
-}
-impl ActiveRun {
-    fn acquire(
-        active: Arc<Mutex<HashSet<EntityId>>>,
-        run_id: EntityId,
-    ) -> Result<Self, McpCodeExecutionError> {
-        {
-            let mut runs = active
-                .lock()
-                .map_err(|_| McpCodeExecutionError::RunBinding("run registry poisoned".into()))?;
-            if !runs.insert(run_id) {
-                return Err(McpCodeExecutionError::RunBusy);
-            }
-        }
-        Ok(Self { active, run_id })
-    }
-}
-impl Drop for ActiveRun {
-    fn drop(&mut self) {
-        if let Ok(mut runs) = self.active.lock() {
-            runs.remove(&self.run_id);
-        }
-    }
 }
 
 static MCP_CODE_EXECUTION_HOST: OnceLock<Arc<dyn McpCodeExecutionHost>> = OnceLock::new();

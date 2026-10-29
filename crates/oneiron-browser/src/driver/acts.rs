@@ -1,5 +1,18 @@
 use super::*;
 
+/// Whether an act's input whose call failed, after the browser was sent
+/// one of its calls, has an unknown outcome (`unknown_outcome_policy`,
+/// CALLS row, FIX 10426): its call ran out of time, the guest went, or the
+/// browser answered an error, so the input may have taken effect, wholly
+/// or in part. The driver's own refusals (a cover, a missing option) are
+/// answers about the page, and land no receipt.
+fn unknown_outcome_policy(error: &BrowserError) -> bool {
+    matches!(
+        error,
+        BrowserError::CallTimeout(_) | BrowserError::GuestLost | BrowserError::Protocol(_)
+    )
+}
+
 impl CdpDriver {
     /// The row `target` names on the page as it is now, and its DOM node,
     /// for one act to classify, press, act on and receipt. A live handle
@@ -270,9 +283,15 @@ impl CdpDriver {
         // tab goes; the tab it gave way to is then the act's result.
         let set = setup(self);
         let mark = if set.is_ok() { self.mark(watch) } else { None };
+        let written = crate::cdp::written_here();
         let acted = set.and_then(|()| act(self));
         // Sent: a failure from here on leaves the effect standing (FIX 8010).
         self.sent = acted.is_ok();
+        // A call of the input failed once the browser was sent part of it:
+        // the effect may stand, its outcome unknown (FIX 10426).
+        self.unknown = acted.as_ref().is_err_and(|error| {
+            unknown_outcome_policy(error) && crate::cdp::written_here() > written
+        });
         let fact = match (&acted, mark) {
             (Ok(()), Some(mark)) => self.no_effect(&mark, watch, Instant::now()),
             _ => None,

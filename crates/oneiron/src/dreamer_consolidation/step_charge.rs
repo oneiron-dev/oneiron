@@ -164,7 +164,7 @@ impl StepChargeTally {
 }
 
 /// The units one call's `usage` charges.
-fn usage_units(usage: &LlmUsage) -> u64 {
+pub(crate) fn usage_units(usage: &LlmUsage) -> u64 {
     usage.input.total.saturating_add(usage.output.total)
 }
 

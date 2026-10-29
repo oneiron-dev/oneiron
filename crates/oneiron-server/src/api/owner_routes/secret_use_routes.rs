@@ -1,8 +1,9 @@
 //! `POST /v1/owner/secrets/bind`: the owner binds a secret to an effector, so
 //! an agent's `self.use` can hand it to that effector's operation (OF-560).
 //! A secret the mask on write found holds no binding, and `self.use` names
-//! this door when it refuses one. The reply names the handle and the
-//! bindings, never the value.
+//! this door when it refuses one. `POST /v1/owner/secrets/unbind` withdraws
+//! one binding, and every other stays (FIX 2620). Each reply names the
+//! handle and the bindings, never the value.
 
 use std::sync::Arc;
 
@@ -11,18 +12,20 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::post;
-use oneiron::secret_custody::{CustodyTier, RevealTarget, SecretBindRequest, SecretBound};
-use serde::{Deserialize, Serialize};
+use oneiron::secret_custody::SecretBindRequest;
+use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
-use crate::owner::secrets::CustodyReply;
-use crate::owner::{OwnerError, OwnerResult};
+use crate::owner::OwnerResult;
+use crate::owner::secret_bindings::{self, BoundView};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/secrets/bind", post(bind))
+    Router::new()
+        .route("/secrets/bind", post(bind))
+        .route("/secrets/unbind", post(unbind))
 }
 
 /// The secret by exactly one of its handle or its name, the effector, and
@@ -44,46 +47,16 @@ struct BindBody {
     scopes: Option<Vec<String>>,
 }
 
-#[derive(Debug, Serialize)]
-struct BindingView {
+/// The secret by exactly one of its handle or its name, and the effector
+/// whose binding is withdrawn.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnbindBody {
+    #[serde(default)]
+    handle: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
     effector: String,
-    tier_ceiling: u8,
-    scopes: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct BoundView {
-    secret_id: String,
-    handle: String,
-    name: String,
-    bindings: Vec<BindingView>,
-    /// The Gate record that keeps the binding, `gate:<hex>`.
-    receipt_ref: String,
-    /// The custody rewrap that carries the binding to the owner's other
-    /// machines, as a register's or a rotation's reply does, or why it
-    /// stayed here.
-    custody: CustodyReply,
-}
-
-impl From<SecretBound> for BoundView {
-    fn from(bound: SecretBound) -> Self {
-        Self {
-            secret_id: bound.secret_id.to_hex(),
-            handle: bound.handle,
-            name: bound.name,
-            bindings: bound
-                .bindings
-                .into_iter()
-                .map(|binding| BindingView {
-                    effector: binding.effector,
-                    tier_ceiling: binding.tier_ceiling.as_u8(),
-                    scopes: binding.scopes,
-                })
-                .collect(),
-            receipt_ref: format!("gate:{}", bound.receipt.to_hex()),
-            custody: bound.custody.into(),
-        }
-    }
 }
 
 /// `POST /v1/owner/secrets/bind` with `{"handle"}` or `{"name"}`,
@@ -100,36 +73,37 @@ async fn bind(
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
     let body = payload.read(&server).await?;
     let bound = blocking(move || -> OwnerResult<BoundView> {
-        let target = match (body.handle, body.name) {
-            (Some(handle), None) => RevealTarget::Handle(handle),
-            (None, Some(name)) => RevealTarget::Name(name),
-            _ => {
-                return Err(OwnerError::Invalid(
-                    "name the secret by exactly one of handle or name".to_owned(),
-                ));
-            }
-        };
-        let tier_ceiling = match body.tier_ceiling {
-            None => CustodyTier::T0Doored,
-            Some(grade) => CustodyTier::from_u8(grade).ok_or_else(|| {
-                OwnerError::Invalid(
-                    "a rung is 0 (doored), 1 (leased) or 2 (local-registered)".to_owned(),
-                )
-            })?,
-        };
         let request = SecretBindRequest {
-            target,
+            target: secret_bindings::target(body.handle, body.name)?,
             effector: body.effector,
-            tier_ceiling,
+            tier_ceiling: secret_bindings::rung(body.tier_ceiling)?,
             scopes: body
                 .scopes
                 .unwrap_or_else(SecretBindRequest::default_scopes),
         };
-        let vault = server.vault();
-        Ok(vault
-            .bind_secret_as_owner(&owner, surface, &request, vault.now_recorded_at())?
-            .into())
+        secret_bindings::bind(server.vault(), &owner, surface, &request)
     })
     .await?;
     Ok(Json(bound))
+}
+
+/// `POST /v1/owner/secrets/unbind` with `{"handle"}` or `{"name"}` and
+/// `"effector"`: the owner's withdrawal of that one binding. The reply is
+/// the bind's, with the bindings the record still holds; the rewrap records
+/// where the request reached this install, audit only.
+async fn unbind(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<UnbindBody>,
+) -> OwnerReply<BoundView> {
+    let owner = owner(&auth, &server)?;
+    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
+    let body = payload.read(&server).await?;
+    let unbound = blocking(move || -> OwnerResult<BoundView> {
+        let target = secret_bindings::target(body.handle, body.name)?;
+        secret_bindings::unbind(server.vault(), &owner, surface, &target, &body.effector)
+    })
+    .await?;
+    Ok(Json(unbound))
 }

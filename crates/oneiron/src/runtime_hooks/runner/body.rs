@@ -6,8 +6,10 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
-use crate::runtime_hooks::body::{HookBodyRun, HookBodyUsage, HookBudgetOverrun, HookVerdict};
-use crate::runtime_hooks::filter;
+use crate::runtime_hooks::body::{
+    HookBodyRun, HookBodyUsage, HookBudgetOverrun, HookPreparation, HookRunContext,
+    HookSettledCallRef, HookVerdict, HookVerdictContext, HookVerdictReply,
+};
 use crate::runtime_hooks::grant::HookGrant;
 use crate::runtime_hooks::lineage::HookCheckReason;
 use crate::runtime_hooks::outcome::{HookOutcome, kind_token};
@@ -15,42 +17,68 @@ use crate::runtime_hooks::store::{self, HookReadPin, HookRunRecord, HookRunState
 use crate::skill_hub::pack_catalog::{HookPhase, HookRenderClass, PackHookBinding};
 use crate::{EntityId, Result};
 
-use super::{MAX_OUTCOME_BYTES, MAX_PINNED_INPUT, Run, bounded};
+use super::{MAX_PINNED_INPUT, Run, bounded};
 
 /// The most bytes of `ai.verdict` requests and replies one memo row pins.
 const MAX_PINNED_VERDICT_BYTES: usize = 256 * 1024;
 
-/// One `ai.verdict` of a fact hook, answered as the live runner answers it:
-/// only a generative hook asks, of `host`, for its grant's reader, the
-/// identity whose reach the hook reads with. Beside it, the rows its
-/// evidence resolved to ([`HookVerdict::verdict`]); a refusal here reads none.
-pub(in crate::runtime_hooks) fn ask_verdict(
+/// The trusted context of a run's `ordinal`-th verdict: the binding, its
+/// pack and author, the grant the run reads under, and the run, by `key`
+/// (FIX 10068, 10075). Nothing in it comes from the request.
+pub(in crate::runtime_hooks) fn verdict_context(
+    binding_id: EntityId,
     binding: &PackHookBinding,
     grant: &HookGrant,
-    host: Option<&dyn HookVerdict>,
-    request: &str,
+    key: &[u8],
+    ordinal: u32,
     deadline: Instant,
-) -> (std::result::Result<String, String>, Option<Vec<EntityId>>) {
+) -> HookVerdictContext {
+    HookVerdictContext {
+        grant: grant.clone(),
+        binding: binding_id,
+        source: binding.source,
+        pack: binding.pack.clone(),
+        hook: binding.hook.clone(),
+        author: binding.author_id(),
+        author_class: binding.author_class(),
+        run: hex_lower(key),
+        ordinal,
+        deadline,
+    }
+}
+
+/// One `ai.verdict` of a fact hook, answered as the live runner answers it:
+/// only a generative hook asks, of `host`, in `context`: its grant's reader
+/// reads, its grant bounds the evidence, and its pack line pays. Beside the
+/// reply, the rows its evidence resolved to and the calls it settled
+/// ([`HookVerdict::verdict`]); a refusal here reads and settles none.
+pub(in crate::runtime_hooks) fn ask_verdict(
+    binding: &PackHookBinding,
+    host: Option<&dyn HookVerdict>,
+    context: &HookVerdictContext,
+    request: &str,
+) -> HookVerdictReply {
     let refused = match (binding.selector.render_class, host) {
-        (HookRenderClass::Generative, Some(host)) => {
-            let class = filter::edge_class(grant.reader_class);
-            return host.verdict(grant.reader, class, request, deadline);
-        }
+        (HookRenderClass::Generative, Some(host)) => return host.verdict(context, request),
         (HookRenderClass::Generative, None) => "no verdict host serves this run",
         (HookRenderClass::DeterministicEager, _) => {
             "a deterministic hook calls no model: declare render_class: generative"
         }
     };
-    (Err(refused.to_owned()), Some(Vec::new()))
+    HookVerdictReply::refused(refused)
 }
 
 /// The verdicts one run heard, pinned in order while their requests and
 /// replies fit [`MAX_PINNED_VERDICT_BYTES`]; the first that does not ends
-/// the pins.
+/// the pins. The calls each verdict settled are kept whole beside them,
+/// whether or not its pin fit (FIX 10075).
 pub(super) struct VerdictPins {
     pins: Vec<HookVerdictPin>,
     bytes: usize,
     complete: bool,
+    /// Verdicts heard so far, pinned or not.
+    heard: u32,
+    calls: Vec<HookSettledCallRef>,
 }
 
 impl VerdictPins {
@@ -59,16 +87,25 @@ impl VerdictPins {
             pins: Vec::new(),
             bytes: 0,
             complete: true,
+            heard: 0,
+            calls: Vec::new(),
         }
     }
 
-    pub(super) fn push(
-        &mut self,
-        request: &str,
-        reply: &std::result::Result<String, String>,
-        evidence: Option<Vec<EntityId>>,
-    ) {
-        let (Ok(text) | Err(text)) = reply;
+    /// The verdicts heard so far: the next one's ordinal.
+    pub(super) const fn heard(&self) -> u32 {
+        self.heard
+    }
+
+    pub(super) fn push(&mut self, request: &str, answer: HookVerdictReply) {
+        let HookVerdictReply {
+            reply,
+            evidence,
+            calls,
+        } = answer;
+        self.heard = self.heard.saturating_add(1);
+        self.calls.extend(calls);
+        let (Ok(text) | Err(text)) = &reply;
         // Each evidence row pins as its 32-hex id.
         let rows = evidence.as_ref().map_or(0, Vec::len).saturating_mul(32);
         let bytes = self
@@ -83,7 +120,7 @@ impl VerdictPins {
         self.bytes = bytes;
         self.pins.push(HookVerdictPin {
             request_json: request.to_owned(),
-            reply: reply.clone(),
+            reply,
             evidence,
         });
     }
@@ -103,19 +140,25 @@ pub(in crate::runtime_hooks) struct Verdict {
     /// The run ended past its `budget_ms`: a measured fact beside the
     /// outcome, never part of the judgement (FIX 8842).
     pub(in crate::runtime_hooks) budget_overrun: Option<HookBudgetOverrun>,
+    /// How the body was prepared before it ran, on success and failure
+    /// alike (FIX 9208).
+    pub(in crate::runtime_hooks) preparation: Option<HookPreparation>,
 }
 
 /// A body that failed or trapped is `failed`, with what it used as its run's
-/// context holds it (`usage`, FIX 9332). An outcome that does not parse, is
-/// not a kind of the binding's phase, is not one the binding allows, or has
-/// the wrong shape is `refused`. Time is not judged: a run past its budget
-/// keeps whichever of these it is, with `overrun` beside it.
+/// `context` holds it (FIX 9332). An outcome that does not parse, is not a
+/// kind of the binding's phase, is not one the binding allows, or has the
+/// wrong shape is `refused`. Time is not judged: a run past its budget keeps
+/// whichever of these it is, with `overrun` beside it. Each keeps the
+/// body's preparation as the context holds it (FIX 9208).
 pub(in crate::runtime_hooks) fn judge(
     binding: &PackHookBinding,
     result: Result<HookBodyRun>,
     overrun: Option<HookBudgetOverrun>,
-    usage: HookBodyUsage,
+    context: &HookRunContext,
 ) -> Verdict {
+    let usage = context.usage();
+    let preparation = context.preparation().cloned();
     let run = match result {
         Ok(run) => run,
         Err(error) => {
@@ -127,6 +170,7 @@ pub(in crate::runtime_hooks) fn judge(
                 reason: Some(bounded(&error.to_string())),
                 usage,
                 budget_overrun: overrun,
+                preparation,
             };
         }
     };
@@ -143,23 +187,24 @@ pub(in crate::runtime_hooks) fn judge(
             reason: None,
             usage,
             budget_overrun: overrun,
+            preparation,
         },
         Err(reason) => Verdict {
             state: HookRunState::Refused,
             token: "refused".to_owned(),
             outcome: None,
-            outcome_json: (run.outcome_json.len() <= MAX_OUTCOME_BYTES).then_some(run.outcome_json),
+            outcome_json: Some(run.outcome_json),
             reason: Some(reason),
             usage,
             budget_overrun: overrun,
+            preparation,
         },
     }
 }
 
+/// The whole outcome, however large, parsed and checked (FIX 10074): no
+/// size of it refuses it.
 fn accept(binding: &PackHookBinding, json: &str) -> std::result::Result<HookOutcome, String> {
-    if json.len() > MAX_OUTCOME_BYTES {
-        return Err("the outcome is too large".to_owned());
-    }
     let outcome: HookOutcome =
         serde_json::from_str(json).map_err(|_| "the outcome does not parse".to_owned())?;
     let kind = outcome.kind();
@@ -205,6 +250,8 @@ pub(super) fn record(
         reads,
         verdicts: verdicts.pins,
         verdicts_complete: verdicts.complete,
+        verdict_calls: verdicts.calls,
+        preparation: verdict.preparation.clone(),
         outcome_json: verdict.outcome_json.clone(),
         outcome: verdict.token.clone(),
         reason: verdict.reason.clone(),

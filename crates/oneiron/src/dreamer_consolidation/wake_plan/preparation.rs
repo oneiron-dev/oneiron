@@ -57,6 +57,7 @@ pub(super) fn collect_queued(
     records: Vec<AttemptRecord>,
     left: &BTreeSet<[u8; 16]>,
     policy: &PolicyManifestResolution,
+    preempt: Option<&super::PreparationPreempt<'_>>,
 ) -> Result<QueuedPreparation> {
     let WakeQuery {
         scope,
@@ -72,6 +73,11 @@ pub(super) fn collect_queued(
     // Each attempt's projection round, by its kind and dedupe key.
     let mut rounds = BTreeMap::new();
     for attempt in records {
+        // A paused, stopped or expired pass stops collecting: what it left
+        // waits for the next pass.
+        if preempt.is_some_and(|preempt| preempt.preempted()) {
+            break;
+        }
         if attempt.kind != scope.attempt_kind()
             || attempt.state.is_terminal()
             || only_attempt.is_some_and(|id| id != attempt.id)
@@ -221,6 +227,7 @@ pub(super) fn finish_preparations(
     preparations: &mut BTreeMap<[u8; 16], AttemptPreparation>,
     sources: &mut BTreeMap<EntityId, (u8, u64, Vec<u8>)>,
     owed: &mut Vec<chunks::WakePreparationChunks>,
+    preempt: Option<&super::PreparationPreempt<'_>>,
 ) -> Result<()> {
     let Frozen {
         texts,
@@ -231,6 +238,11 @@ pub(super) fn finish_preparations(
     } = frozen;
     let mut known_rows = BTreeMap::new();
     for outcome in preparations.values_mut() {
+        // A paused, stopped or expired pass leaves its plans unfinished:
+        // the caller drops the partial wake.
+        if preempt.is_some_and(|preempt| preempt.preempted()) {
+            return Ok(());
+        }
         let AttemptPreparation::Ready(plan) = outcome else {
             continue;
         };

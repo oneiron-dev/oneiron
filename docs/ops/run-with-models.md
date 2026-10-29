@@ -1809,6 +1809,18 @@ rungs = ["voxcpm2:voxcpm2", "cartesia:sonic-3.6"]
 tiers = { "tts-live" = "voxcpm2:voxcpm2" }
 ```
 
+The engine can run that worker itself (FIX 8318). A `[models.workers]` row
+with `kind = "vox_cpm2"` on the `voxcpm2` provider installs the pinned
+weights, builds the worker's environment from the row's `env_lock`, starts
+it on the provider's `base_url`, counts it ready after one real render,
+restarts it after a crash and, when `idle_stop_secs` asks, stops it when
+idle. A row with `kind = "asr"` on a `local-openai-compat` provider does the
+same for the local Whisper worker, from an operator's weights manifest. A
+call to a managed worker's rung waits while it starts and holds it through
+its renders or its transcription; the worker runs one inference at a time.
+`deploy/voxcpm2/README.md` and `deploy/asr/README.md` give the rows. A
+provider with no worker row is called as it always was.
+
 The two-way voice cascade speaks and hears on these seats too. Bind voice
 tiers to rungs on the speech and transcribe seats:
 
@@ -2778,6 +2790,30 @@ renderer, the door then renders that slide from the head itself, on local CPU
 and unmetered, and saves the host renderer's name on the judgment. Without the
 renderer, or when the render fails, the unit is read for its structure only
 and abstains. It is never refused. A unit that names both images is refused.
+
+### The owner policy notices (`[policy]`)
+
+The owner plane's policy notices (a human hold, a reword, a trusted-contact check-in) use the
+engine's generic words unless the host words them. `[policy]` sets them at each `serve` start,
+plain or managed. Every key is optional; an absent key keeps the engine's default, and with no
+`[policy]` the server runs as before:
+
+```toml
+[policy]
+owner_hold_notice = "A person reviews this before it goes out."
+owner_reword_notice = "Say it another way and send it again."
+trusted_contact_notified_notice = "Your trusted contact has your check-in."
+trusted_contact_ask_notice = "May we reach your trusted contact?"
+help_message = "Help is here if you want it."
+help_resources = [{ label = "Find help", target = "https://example.org/help" }]
+owner_setting_change_offer = { label = "Change this setting", target = "app://settings/policy" }
+owner_classifier_mode = "classify_all"   # or "pattern_gated"
+```
+
+The same words reach the content-policy doors, the trusted-contact doors, the voice loop's
+sentence safeguards and the anonymous chat. `[policy]` never sets a hosted relay's policy. A
+host that embeds the server and calls `SyncServer::with_owner_policy_config` after it is built
+keeps its own config.
 
 ## 14. Tagger tiers and the teacher's handoff
 

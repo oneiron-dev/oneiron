@@ -28,7 +28,9 @@ mod waves;
 // does, under one typed refusal (OF-410, FIX 779).
 pub(crate) use media::{MediaCallParts, MediaCallRefusal, VoiceRefusal, prepare_media_call};
 // Every `ai.options` door lists through one projection (FIX 2942).
-pub(crate) use options::{caller_options, run_options};
+pub(crate) use options::{CallerOptions, caller_options, line_options, run_options};
+// The facade's `ai.ask_image` door answers on this route's one path (FIX 679).
+pub(crate) use vision::asked as ask_image_answered;
 // The owner's `vault.voices.*` doors run the bank's provisioning and vendor
 // deletions as these routes do (DOOR-143); the OpenAPI document reads their
 // bodies.
@@ -192,6 +194,13 @@ async fn session(
         Ok(key) => key,
         Err(response) => return *response,
     };
+    if !server.ai.takes_session_hints() {
+        return refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "dreamer_unavailable",
+            "the Dreamer is not running",
+        );
+    }
     // The request carries no deadline, so none bounds the hint's wait.
     server.ai.session_hint(
         key,

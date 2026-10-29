@@ -53,7 +53,7 @@ pub(super) fn reclaim_replay(store: &JobStore, ticket: &str) {
 
 /// A fresh job's ticket: the server's own id, minted before its provider
 /// is asked, so a caller never names a provider's id.
-fn fresh_ticket() -> String {
+pub(super) fn fresh_ticket() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_nanos());
@@ -111,6 +111,7 @@ impl MediaRuntime {
             erased: false,
             replay_until_s: None,
             paid: false,
+            line: None,
         });
         // A row the vault refuses here is written again once the job is
         // known.
@@ -201,6 +202,7 @@ impl MediaRuntime {
             erased: false,
             replay_until_s: Some(now_s().saturating_add(MEDIA_REPLAY_KEEP_SECS)),
             paid: false,
+            line: None,
         };
         if let Err(error) = store.put(&id, row) {
             tracing::warn!(%error, "a media call's answer was not kept for its repeats");

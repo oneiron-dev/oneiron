@@ -32,10 +32,13 @@ mod entries;
 mod pad_sweep;
 mod publication;
 mod refill;
+mod relay_observation;
 mod sweep;
 mod turn;
 
 pub use self::access::PadAdmissionReport;
+pub(crate) use self::relay_observation::observe_sealed_bundle_relay;
+pub use self::relay_observation::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
 
 use std::sync::Arc;
 
@@ -147,6 +150,10 @@ pub struct SealedBundleRelay {
     /// Erased worlds and keys held back, unswept, while a kept pad object
     /// opens with no key here.
     pub pending_erases: usize,
+    /// The relay reached the home; one that did not counted nothing (FIX 4953).
+    pub reached: bool,
+    /// Erase's sweep ran, so the two pending counts were counted (FIX 4953).
+    pub swept: bool,
 }
 
 /// The entry a commit's reply names: what the home acknowledged.
@@ -272,8 +279,10 @@ impl SyncClient {
             Ok(None) => return Err(TransportError::Storage("home node offline".into())),
             Err(error) => return Err(error),
         };
+        relay.reached = true;
         if home_holds_sealed_bundle(vault, rpc.home).map_err(storage)? {
             sweep::sweep_erased(vault, &mut rpc, owed, slots, Some(seed), &mut relay).await?;
+            relay.swept = true;
         }
         Ok(relay)
     }
@@ -331,6 +340,7 @@ pub(crate) async fn relay_sealed_bundle(
         Ok(None) => return Err(TransportError::Storage("home node offline".into())),
         Err(error) => return Err(error),
     };
+    relay.reached = true;
     // The admissions first: an old reader with no erase or slot work still
     // grants (FIX 4271). A home that refuses them still takes the rest.
     match access::serve_admissions(vault, &mut rpc).await {
@@ -355,6 +365,7 @@ pub(crate) async fn relay_sealed_bundle(
     if !owed.is_empty() {
         let slots = (now_slot, now_slot);
         sweep::sweep_erased(vault, &mut rpc, owed, slots, None, &mut relay).await?;
+        relay.swept = true;
     }
     if slot_due {
         let slot = SlotRelay {

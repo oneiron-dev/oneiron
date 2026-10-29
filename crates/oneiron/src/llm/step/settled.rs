@@ -8,7 +8,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
-use super::super::{LlmResponse, ModelId};
+use super::super::{LlmResponse, LlmUsage, ModelId};
 use super::codec::decode_hash_hex;
 use super::step_claim::{
     DecodedStepClaim, STEP_INDEX_FORWARD, StepIndexKey, decode_step_claim_value,
@@ -173,6 +173,33 @@ pub(crate) fn settled_step_for_caller(
             response,
         },
     ))))
+}
+
+/// The stored response's `usage` of the terminal claim that records exactly
+/// this step, read in the given txn with no lane gate (FIX 11450): the spend
+/// a crash left unsettled. `None` when no terminal claim records this step.
+/// A write txn passes as `&*wtxn`.
+pub(crate) fn settled_step_usage_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    step_hash: &[u8; 32],
+) -> MemoryResult<Option<LlmUsage>> {
+    let Some(claim_id) = step_index_lookup_in_txn(vault, txn, attempt, step_hash)? else {
+        return Ok(None);
+    };
+    let Some(body) = vault.get_claim_in_txn(txn, &claim_id)? else {
+        return Ok(None);
+    };
+    let Some((bound_attempt, bound_hash, _)) = terminal_step_identity(&body) else {
+        return Ok(None);
+    };
+    if bound_attempt != attempt || bound_hash != *step_hash {
+        return Ok(None);
+    }
+    let decoded = decode_step_claim_value(&body.value)?;
+    let response = load_step_response_in_txn(vault, txn, &decoded).map_err(step_error)?;
+    Ok(Some(response.usage))
 }
 
 /// One page of `attempt`'s committed steps in the caller's snapshot: its

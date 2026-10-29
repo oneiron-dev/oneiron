@@ -567,6 +567,7 @@ impl Vault {
             existed: true,
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
+            turn_program_details: Vec::new(),
         })
     }
 }

@@ -592,7 +592,9 @@ pub(crate) struct AnchorSigned {
 /// owner's kit is his authority; the install carries no act. The engine
 /// takes it only from an install with no live machine profile; any other
 /// rewraps the secret as its holder. The record keeps its generation,
-/// status and value. No route takes a kit; the seed is the caller's to wipe.
+/// status and value. `oneiron secrets anchor-sign` reads the kit on a
+/// stopped vault, and `POST /v1/owner/secrets/anchor-sign` takes it in its
+/// one call (FIX 1956); the seed is the caller's to wipe.
 pub(crate) fn sign_with_anchor(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,

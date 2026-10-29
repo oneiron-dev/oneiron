@@ -16,6 +16,7 @@
 //! box; it parks only on a host that lends no Dreamer model.
 
 use super::confession::{confession_ask, parse_confession};
+use super::request_sources::{CallBackend, SourcedBackend};
 use super::step_charge::StepChargeTally;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::{
@@ -64,6 +65,9 @@ pub struct TaskRealizeModel<'a> {
     /// The host's wording of the confession ask (FIX 8696), after the
     /// brief's objectives.
     pub confession: &'a str,
+    /// `backend` bound per call to the rows its input was read from, when
+    /// the host lends that (FIX 6998).
+    pub sourced: Option<&'a dyn SourcedBackend>,
 }
 
 fn invalid(reason: &str) -> Error {
@@ -109,12 +113,18 @@ pub async fn run_task_realize(
         return Err(invalid("not a TASK realization"));
     }
     if record.result_ref.is_some() {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     let Some((task, brief)) =
         crate::task_verb::highway_runner::runner_task_brief(ctx.vault, record)?
     else {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     let spec =
         serde_json::to_string_pretty(&crate::msgpack_value_to_json(&attempt.status.payload.input))
@@ -193,9 +203,11 @@ pub async fn run_task_realize(
         now_ms: ctx.now_ms,
     };
     let mut charges = StepChargeTally::default();
+    // The spec and brief are the TASK's own: the call sends under its row.
+    let backend = CallBackend::new(model.backend, model.sourced, Some(vec![task]));
     let response = match call_as_step_checked(
         &step_ctx,
-        model.backend,
+        backend.get(),
         model.guard,
         request,
         &check_realize_reply,
@@ -235,7 +247,13 @@ pub async fn run_task_realize(
             return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
+        // A failed call's paid usage has no terminal step: it is handed
+        // to the driver's settlement with the park (FIX 11554).
         Err(other) => {
+            if let DurableStepError::SpentLlm { usage, .. } = &other {
+                charges.record_usage(usage);
+            }
+            ctx.note_spend_before_error(charges.units, &charges.step_hashes);
             return Ok(DreamerAttemptExecution::Park {
                 reason: other.to_string(),
                 cause: DreamerParkCause::of_step(&other),
@@ -249,20 +267,28 @@ pub async fn run_task_realize(
         Ok(answer) => answer,
         // Only a memo stored before the check can be empty: it goes, and the
         // Retry asks again (FIX 7431, OF-193a).
-        Err(reason) => return charges.park_refused_reply(ctx.vault, record.id, step_hash, reason),
+        Err(reason) => {
+            return match charges.park_refused_reply(ctx.vault, record.id, step_hash, reason) {
+                Ok(parked) => Ok(parked),
+                Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+            };
+        }
     };
     // The NOTE parts and the row's result commit together, under ids the
     // attempt derives, so a replay never writes a second NOTE (FIX 1334).
-    landing::land_answer(
+    if let Err(error) = landing::land_answer(
         ctx.vault,
         record,
         model.actor,
         RESULT_NOTE_KIND,
         &super::note_parts::parts(&answer, crate::note::MAX_NOTE_BYTES),
         ctx.now_ms / 1_000,
-    )?;
+    ) {
+        return super::residency::spent_or_deferred(error, ctx, &charges);
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }
 

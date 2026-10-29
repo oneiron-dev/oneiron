@@ -336,7 +336,10 @@ pub(crate) async fn build_server(
                     .map(zeroize::Zeroizing::new),
             }
         }))
-        .with_feedback_triage(config.feedback.triage.clone());
+        .with_feedback_triage(config.feedback.triage.clone())
+        // The `[policy]` section's owner-plane wording and settings (FIX
+        // 5042); an embedding host may set its own after this.
+        .with_owner_policy_config(config.policy.owner_policy_config());
     // Its browser readiness starts from the `[browser]` section and its
     // runtime binding, with no supervisor's runtime fact (FIX 7670).
     sync_server

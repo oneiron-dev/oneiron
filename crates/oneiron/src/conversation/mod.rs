@@ -40,7 +40,8 @@ pub use session::{SessionMode, SessionPresence};
 pub use speaker_handoff::{SpeakerHandoff, SpeakerHandoffBoundary, SpeakerHandoffReceipt};
 pub use turn_actions::{
     TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
-    TurnActionContext, TurnActionLine, TurnActionReceipt, TurnActionRequest,
+    TurnActionContext, TurnActionLine, TurnActionRebindReceipt, TurnActionRebindRequest,
+    TurnActionReceipt, TurnActionRequest,
 };
 pub(crate) use visibility::{
     AudienceCache, conversation_summary_covers, private_thread_word_turns_in,

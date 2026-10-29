@@ -24,6 +24,7 @@ use oneiron::{ModelId, Vault};
 use serde::{Deserialize, Serialize};
 
 use super::job_lifecycle::JobWrite;
+use super::run_line::JobLine;
 use crate::models::ladder::PendingReceipt;
 
 mod custody;
@@ -83,6 +84,11 @@ pub(super) struct JobRow {
     /// settles it with no charge.
     #[serde(default)]
     pub(super) paid: bool,
+    /// The run line its submit spent on when a program's run submitted it
+    /// (FIX 780, 6083): a job taken up again settles on that run's line,
+    /// never the media meter. `None` is the media meter's.
+    #[serde(default)]
+    pub(super) line: Option<JobLine>,
 }
 
 /// A kept job as its row reads (FIX 9390): the row, or the erased marker of

@@ -8,8 +8,8 @@ use crate::attempt_queue::{
     SpendAttemptLandingReserve,
 };
 use crate::dreamer_runner::{
-    AbortDreamerBudgetReservation, CompleteDreamerAttempt, DREAMER_MILESTONE_PREDICATE,
-    DREAMER_MILESTONE_VALUE_SCHEMA_VERSION, DreamerAdmittedAttempt, DreamerMilestoneClaim,
+    CompleteDreamerAttempt, DREAMER_MILESTONE_PREDICATE, DREAMER_MILESTONE_VALUE_SCHEMA_VERSION,
+    DreamerAdmittedAttempt, DreamerBudgetSettlementOutcome, DreamerMilestoneClaim,
     DreamerMilestoneKind, DreamerParkCause, DreamerTryLease, ParkDreamerAttempt,
     SettleDreamerBudget,
 };
@@ -334,15 +334,16 @@ impl DreamerWakeDriver<'_> {
     }
 
     /// Settles a failed or plainly parked attempt's reservation on `line`
-    /// with what its run line charged (SCAN C012), pinning in that writer the
-    /// paid receipts of the terminal steps the charge covers (FIX 6100). A
-    /// settlement that refuses the receipts settles without them, as before;
-    /// one the counter refuses (more than the reservation and the counter's
-    /// remaining units) falls back to the zero abort this path always made,
-    /// so the attempt still parks or fails exactly as before. The static
-    /// code says which of those it did, for the attempt's outcome line
-    /// (FIX 7271).
-    pub(super) fn settle_charged_or_abort(
+    /// with what it charged (SCAN C012): its run line's charge and what its
+    /// executor's tally spent before an error (FIX 7432), pinning in that
+    /// writer the paid receipts of the terminal steps the charge covers
+    /// (FIX 6100). Incurred spend is never refused (FIX 8702). A nonzero
+    /// charge whose settlement fails is never refunded at zero: it stays
+    /// owed on the reservation, which its next settlement or abort charges
+    /// (FIX 8728), and the attempt still parks or fails as before. The
+    /// static code says which of those it did, for the attempt's outcome
+    /// line (FIX 7271).
+    pub(super) fn settle_metered_charge(
         &self,
         line: &str,
         attempt_id: AttemptId,
@@ -356,35 +357,27 @@ impl DreamerWakeDriver<'_> {
             actual_units: charged,
             now,
         };
-        let receipts = meter.step_receipts_within(charged);
-        if !receipts.is_empty() {
-            match self
-                .store
-                .settle_budget_with_step_receipts(settlement.clone(), &receipts)
-            {
-                Ok(_) => return Ok("charged_with_receipts"),
-                Err(error) => tracing::warn!(
-                    kind = ?error.kind(),
-                    attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
-                    "the paid-step receipts were refused; the charge settles without them"
-                ),
-            }
-        }
-        if let Err(error) = self.store.settle_budget(settlement) {
-            tracing::warn!(
-                kind = ?error.kind(),
-                attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
-                "the charged settlement was refused; the reservation is aborted at zero"
-            );
-            self.store
-                .abort_budget_reservation(AbortDreamerBudgetReservation {
-                    budget_id: line.to_owned(),
-                    child_attempt: attempt_id,
-                    now,
-                })?;
-            return Ok("aborted_at_zero");
-        }
-        Ok(if charged == 0 { "refunded" } else { "charged" })
+        let receipts = meter.step_receipts();
+        let error = match self
+            .store
+            .settle_budget_with_step_receipts(settlement.clone(), &receipts)
+        {
+            Ok(DreamerBudgetSettlementOutcome::NoReservation) => return Ok("no_reservation"),
+            Ok(_) if charged == 0 => return Ok("refunded"),
+            Ok(_) if receipts.is_empty() => return Ok("charged"),
+            Ok(_) => return Ok("charged_with_receipts"),
+            // Nothing was spent: that settlement was the zero abort itself.
+            Err(error) if charged == 0 => return Err(error),
+            Err(error) => error,
+        };
+        tracing::warn!(
+            kind = ?error.kind(),
+            attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
+            charged,
+            "the measured charge did not settle; it stays owed on the reservation"
+        );
+        self.store.owe_unsettled_charge(&settlement)?;
+        Ok("charge_owed")
     }
 
     // The Result is only fallible on the sync progress lane.

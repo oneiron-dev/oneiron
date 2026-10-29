@@ -132,6 +132,9 @@ pub(crate) use self::facade::{
     call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
     connector_call_listing_as, invocation_body, self_use_as,
 };
+// FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
+// authority clock floor.
+pub(crate) use self::facade::clock_ingress;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
@@ -167,10 +170,11 @@ mod owner_origin;
 mod owner_routes;
 pub(crate) use owner_routes::owner;
 // FIX 5911: an owner's own program proves its waking person the live
-// recorded owner, and takes the owner's media and hook-replay doors.
+// recorded owner, and takes the owner's media and hook-replay doors; its
+// media spends on its run's line (FIX 6083).
 pub(crate) use self::facade::{
-    ai_media_as_owner, ai_video_as_owner, ai_video_cancel_as_owner, ai_video_poll_as_owner,
-    vault_hooks_replay_as_owner,
+    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
+    ai_video_cancel_as_owner, ai_video_for_run, ai_video_poll_as_owner, vault_hooks_replay_as_owner,
 };
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
@@ -191,6 +195,9 @@ mod saved_query;
 mod scoped_auth;
 mod search;
 mod surface_events;
+// FIX 10389: one step's type feedback released apart from its answer, for
+// the MCP gateway and the HTTP facade alike.
+mod type_feedback_release;
 mod vad;
 pub(crate) mod write_facet;
 

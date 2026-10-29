@@ -101,4 +101,7 @@ impl<T: TickSource> TickSource for WakePolicyTicks<'_, T> {
     fn note_armed(&mut self, lane: ArmedLane, at_ms: Option<u64>) {
         self.inner.note_armed(lane, at_ms);
     }
+    fn rest_deadlines(&mut self, until: Option<tokio::time::Instant>) -> bool {
+        self.inner.rest_deadlines(until)
+    }
 }

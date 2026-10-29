@@ -23,6 +23,7 @@ use oneiron::task_verb::sdk::{
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 use serde_json::Value;
 
+use super::clock_ingress;
 use super::host_doors::support::internal;
 use super::live_run_doors::hold_live_run;
 use crate::auth::CoreAuth;
@@ -35,18 +36,31 @@ fn run_connection(run_id: EntityId) -> StreamConnectionId {
 
 /// One board verb on the attached run, answered as the verb's wire value
 /// and the writer it ran as. The hook blocks the answer shows are spent
-/// once it clears, as a pumped run's own board row spends them.
+/// once it clears, as a pumped run's own board row spends them. The board's
+/// SCRATCHPAD is the live pad of `session`, the session the attached agent's
+/// own call names (its session header, or its MCP connector's off-record
+/// session; FIX 2340); a call that names none renders no pad. The run is
+/// held as before, whatever session the call names.
 async fn on_run_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    session: Option<EntityId>,
     live_run: String,
     call: BoardVerbCall,
 ) -> MemoryResult<(WriteActor, StreamConnectionId, Value)> {
     let (writer, run, held) = hold_live_run(server, auth, None, &live_run).await?;
     let connection = run_connection(run.run_id());
     let mut hooks = None;
-    let (value, _rows) =
-        crate::api::execute_run_board_verb(server, writer, &connection, call, &mut hooks).await?;
+    let session = session.map(|session| session.to_hex());
+    let (value, _rows) = crate::api::execute_run_board_verb_in_session(
+        server,
+        writer,
+        &connection,
+        session.as_deref(),
+        call,
+        &mut hooks,
+    )
+    .await?;
     if let Some(hooks) = hooks {
         crate::api::deliver_run_board_hooks(server, hooks).await?;
     }
@@ -57,6 +71,7 @@ async fn on_run_board(
 pub(crate) async fn self_focus_refresh(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    session: Option<EntityId>,
     _caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: LiveRunRequest<BoardRefreshRequest>,
@@ -64,6 +79,7 @@ pub(crate) async fn self_focus_refresh(
     let (_, _, value) = on_run_board(
         server,
         auth,
+        session,
         input.live_run,
         BoardVerbCall::Refresh {
             frame_epoch: input.spec.frame_epoch,
@@ -81,6 +97,7 @@ pub(crate) async fn self_focus_refresh(
 async fn subscription(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    session: Option<EntityId>,
     verb: &'static str,
     input: LiveRunRequest<BoardSubscriptionRequest>,
     subscribe: bool,
@@ -91,7 +108,7 @@ async fn subscription(
     } else {
         BoardVerbCall::Unsubscribe { scopes }
     };
-    let (_, connection, value) = on_run_board(server, auth, input.live_run, call).await?;
+    let (_, connection, value) = on_run_board(server, auth, session, input.live_run, call).await?;
     let active = value.get("active").cloned().ok_or_else(|| internal(verb))?;
     let active = serde_json::from_value(active).map_err(|_| internal(verb))?;
     Ok(BoardSubscriptionReply {
@@ -103,21 +120,31 @@ async fn subscription(
 pub(crate) async fn self_focus_subscribe(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    session: Option<EntityId>,
     _caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: LiveRunRequest<BoardSubscriptionRequest>,
 ) -> MemoryResult<BoardSubscriptionReply> {
-    subscription(server, auth, "self.focus.subscribe", input, true).await
+    subscription(server, auth, session, "self.focus.subscribe", input, true).await
 }
 
 pub(crate) async fn self_focus_unsubscribe(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    session: Option<EntityId>,
     _caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: LiveRunRequest<BoardSubscriptionRequest>,
 ) -> MemoryResult<BoardSubscriptionReply> {
-    subscription(server, auth, "self.focus.unsubscribe", input, false).await
+    subscription(
+        server,
+        auth,
+        session,
+        "self.focus.unsubscribe",
+        input,
+        false,
+    )
+    .await
 }
 
 /// The subscription scope one wake was minted under, from its envelope id
@@ -161,7 +188,7 @@ pub(crate) async fn self_focus_wakes(
     // and under this credential, and a wake whose scope the connection no
     // longer holds, or whose TASK either no longer reads, is dropped.
     let (server, auth) = (Arc::clone(server), auth.clone());
-    let wakes = tokio::task::spawn_blocking(move || -> MemoryResult<Vec<WakeEnvelope>> {
+    let wakes = clock_ingress::run_blocking(move || -> MemoryResult<Vec<WakeEnvelope>> {
         let memory = crate::api::credential_memory(
             server.vault(),
             Some(&auth),

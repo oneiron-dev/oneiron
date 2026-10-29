@@ -149,6 +149,7 @@ impl BrowserSession {
         }
         let url = self.live()?.url()?;
         let uncovered = self.driver.record_start()?;
+        let shown = self.driver.url_shown(&url);
         let label = input
             .label
             .map(|label| label.trim().to_owned())
@@ -157,22 +158,23 @@ impl BrowserSession {
             .into_iter()
             .map(|target| RecordingGapKind::Uncovered { target })
             .collect();
-        Ok(self.recording_open(DemonstrationSource::Agent, label, url, gaps))
+        let page = (origin_of(&url), shown);
+        Ok(self.recording_open(DemonstrationSource::Agent, label, page, gaps))
     }
 
-    /// Starts the one recording, from `source`, on `url`, naming `gaps`
-    /// from its start: the agent's start and a person's take (CUA E9b)
-    /// each come here past their own gate.
+    /// Starts the one recording, from `source`, on `page` (its origin, and
+    /// its URL as an observation shows it, FIX 10331), naming `gaps` from
+    /// its start: the agent's start and a person's take (CUA E9b) each come
+    /// here past their own gate.
     fn recording_open(
         &mut self,
         source: DemonstrationSource,
         label: Option<String>,
-        url: String,
+        page: (Option<String>, String),
         gaps: Vec<RecordingGapKind>,
     ) -> DemonstrationStarted {
         self.demos.last += 1;
         let id = format!("dm{}", self.demos.last);
-        let page = (origin_of(&url), url);
         let mut recording = Recording::new(id, source, label, super::now_ms(), page);
         for gap in gaps {
             recording.gap(None, None, gap);
@@ -210,7 +212,8 @@ impl BrowserSession {
                 refusal: refused.to_string(),
             }],
         };
-        let started = self.recording_open(DemonstrationSource::Takeover, None, url, gaps);
+        let page = (origin_of(&url), self.driver.url_shown(&url));
+        let started = self.recording_open(DemonstrationSource::Takeover, None, page, gaps);
         self.demos.takeover = Some(TakeoverSpan {
             id: started.id,
             reason,
@@ -390,12 +393,28 @@ impl BrowserSession {
             return;
         }
         let mut edited: Option<Edited> = last_edit(&cues);
+        // The tabs whose page sent its document by this drain; an own act
+        // that loaded another page in a tab whose document had not is
+        // followed by that document later (FIX 10429).
+        let loaded: Vec<&str> = cues
+            .iter()
+            .filter(|cue| cue.k == "doc" && cue.top)
+            .map(|cue| cue.tab.as_str())
+            .collect();
         for step in own {
             let typed = matches!(
                 step.action,
                 Some(ReplayAction::Type { .. } | ReplayAction::Fill { .. })
             );
+            let moved = step.verb == "open" || step.result_url != step.source_url;
+            let late = step
+                .result_tab
+                .clone()
+                .filter(|tab| moved && !loaded.contains(&tab.as_str()));
             recording.own(step, if typed { edited.take() } else { None });
+            if let Some(tab) = late {
+                recording.awaits_document(tab);
+            }
         }
     }
 

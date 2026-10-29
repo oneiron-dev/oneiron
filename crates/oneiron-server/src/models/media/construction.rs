@@ -8,8 +8,8 @@ use super::{
     LlmResult, LlmStreamResult, LoggedReceipts, MEDIA_RUN, MediaHttp, MediaRow, MediaRuntime,
     MediaSeat, MediaSend, ModelHostBudgets, ModelsConfig, Mutex, NoChat, OfferCooldowns,
     OfferLadder, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
-    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture, RunReceiptSink,
-    RungStatus, SeatScope, SeatState, SeatStatus, SingleRouteBackend, SingleSend,
+    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture, ProgramLine,
+    RunReceiptSink, RungStatus, SeatScope, SeatState, SeatStatus, SingleRouteBackend, SingleSend,
     VoiceReferenceUploadGuard, Wire, ladder_locality, media_backends, media_rung, media_seat_model,
     soniox, transport, voice_cloners,
 };
@@ -92,6 +92,7 @@ impl MediaRuntime {
             cloners: BTreeMap::new(),
             live_asr: BTreeMap::new(),
             voice_refs: VoiceReferenceUploadGuard::default(),
+            program_line: ProgramLine::default(),
         }
     }
 

@@ -99,15 +99,23 @@ impl InFlightCounts {
 
 /// The freeze and the writes in flight, under one lock.
 struct Gate {
-    /// The current epoch of the freeze: `true` while frozen.
-    frozen: watch::Sender<bool>,
+    /// The managed reap freeze: `true` while frozen. Alone it refuses
+    /// writes; with the owner's cause it reads as the one epoch.
+    managed: bool,
+    /// The owner's own Dreamer pause (`POST /dreamer/pause`): never refuses
+    /// a write, only holds the Dreamer's passes with the freeze.
+    owner: bool,
+    /// The current epoch both causes read as: `managed || owner`.
+    epoch: watch::Sender<bool>,
     in_flight: InFlightCounts,
 }
 
 impl Default for Gate {
     fn default() -> Self {
         Self {
-            frozen: watch::channel(false).0,
+            managed: false,
+            owner: false,
+            epoch: watch::channel(false).0,
             in_flight: InFlightCounts::default(),
         }
     }
@@ -155,32 +163,48 @@ impl Admission {
         self.gate.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The managed reap freeze now (not the owner's own pause cause).
     pub(super) fn is_frozen(&self) -> bool {
-        *self.gate().frozen.borrow()
+        self.gate().managed
     }
 
     /// Freezes: no write is admitted after, and the epoch's passes read
     /// their pause. Returns the writes in flight at that moment, read in the
     /// same hold.
     pub(super) fn freeze(&self) -> InFlightCounts {
-        let gate = self.gate();
-        gate.frozen.send_replace(true);
+        let mut gate = self.gate();
+        gate.managed = true;
+        gate.epoch.send_replace(true);
         gate.in_flight
     }
 
-    /// Lifts the freeze with a fresh epoch. The last one keeps its `true`
-    /// and closes. Unfrozen, nothing changes.
+    /// Lifts the freeze with a fresh epoch seeded by the owner's cause. The
+    /// last one keeps its `true` and closes. Unfrozen, nothing changes.
     pub(super) fn thaw(&self) {
         let mut gate = self.gate();
-        let frozen = *gate.frozen.borrow();
-        if frozen {
-            gate.frozen = watch::channel(false).0;
+        if gate.managed {
+            gate.managed = false;
+            gate.epoch = watch::channel(gate.owner).0;
         }
+    }
+
+    /// Sets the owner's own Dreamer pause cause: no new pass starts, and the
+    /// running attempt parks at its next boundary. The epoch reads both
+    /// causes as one, so a resume never lifts a managed freeze.
+    pub(super) fn set_owner_paused(&self, paused: bool) {
+        let mut gate = self.gate();
+        gate.owner = paused;
+        gate.epoch.send_replace(gate.managed || gate.owner);
+    }
+
+    /// The owner's own pause cause now (not the managed freeze).
+    pub(super) fn owner_paused(&self) -> bool {
+        self.gate().owner
     }
 
     /// The freeze's current epoch, as a Dreamer pass reads its pause.
     pub(super) fn pass_pause(&self) -> watch::Receiver<bool> {
-        self.gate().frozen.subscribe()
+        self.gate().epoch.subscribe()
     }
 
     /// The writes in flight now.
@@ -197,7 +221,7 @@ impl Admission {
     /// nothing is counted.
     fn admit(self: &Arc<Self>, kind: WriteKind) -> Option<Admitted> {
         let mut gate = self.gate();
-        if *gate.frozen.borrow() {
+        if gate.managed {
             return None;
         }
         *gate.in_flight.of(kind) += 1;
@@ -228,9 +252,13 @@ pub(super) fn dreamer_control(
 ) -> DreamerControl {
     let state = Arc::clone(state);
     let epochs = Arc::clone(admission);
+    let setter = Arc::clone(admission);
+    let getter = Arc::clone(admission);
     DreamerControl {
         admission: Arc::new(move || state.get()?.admit_background(WriteKind::Dreamer)),
         pause: Arc::new(move || epochs.pass_pause()),
+        set_owner_pause: Arc::new(move |paused| setter.set_owner_paused(paused)),
+        read_owner_pause: Arc::new(move || getter.owner_paused()),
     }
 }
 

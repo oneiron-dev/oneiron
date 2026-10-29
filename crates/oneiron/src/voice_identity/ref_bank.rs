@@ -990,7 +990,8 @@ pub use actor::{VoiceBankActor, VoiceCreator};
 pub(crate) use checkpoint_response::{voice_bank_owners, voice_bank_row, voice_bank_scan};
 pub use owner_acts::{
     VoiceBankInspection, VoiceBankView, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
-    VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
+    VoiceReferenceFenceView, VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
+    VoiceTargetRender,
 };
 use render_history::{RenderEventKey, read_render_consent, record_render_consent_in};
 pub use render_history::{

@@ -366,8 +366,8 @@ side_tables! {
     /// Key: string (setting key "\0" mode).
     LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw
         => crate::learning_setting::erase_setting_actor_in_txn;
-    /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
-    /// (setting key).
+    /// A `learning.setting` fit, cached beside its claim for hot readers. Key: string (setting key,
+    /// then its project, subject and type node as they apply); a project's erase deletes its keys.
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
     /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
     /// deletion receipt completes (OF-470 C4). Key: id16 (record).
@@ -474,6 +474,8 @@ side_tables! {
     /// The loaded native Oneironer bundle's receipt at its bind: stack and
     /// checkpoint, label count and per-artifact hashes. Key: string (slot).
     LLM_ONEIRONER_BUNDLE_RECEIPT: VaultMeta b"llm:oneironer_bundle_receipt:v1:" Named;
+    /// A non-holder's inert inference-defaults replacement (FIX 8211). Key: id16(proposal).
+    LLM_PURPOSE_DEFAULT_PROPOSAL: VaultMeta b"llm:purpose_default_proposal:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model

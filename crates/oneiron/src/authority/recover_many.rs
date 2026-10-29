@@ -90,7 +90,7 @@ pub fn recover_vaults(steps: Vec<VaultRecoveryStep<'_>>) -> Vec<VaultRecoveryOut
                     confirm,
                 } => step
                     .vault
-                    .restore_world_keys(owner, super::EditOrigin::ThisMachine, seed, confirm)
+                    .restore_world_keys(owner, seed, confirm)
                     .map(VaultRecovered::KeysRestored),
                 VaultRecoveryProof::HostReRoot { current, next } => step
                     .vault

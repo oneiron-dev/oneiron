@@ -61,12 +61,15 @@ mod jobs;
 mod options;
 // FIX 465, 2248, 2962: a submit kept before it is sent, and keyed replays.
 mod replay;
+// FIX 780, 6083: a program's media jobs on its run's line.
+mod run_line;
 // FIX 1816: a video job charged by its length.
 mod video_length;
 // FIX 9517: every reference upload under the bank's current reference.
 mod voice_reference;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
+use run_line::{JobLine, ProgramLine};
 pub(in crate::models) use video_length::requested_video_ms;
 pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
 
@@ -307,6 +310,9 @@ pub struct MediaRuntime {
     /// The guard each reference-rendering backend asks before an upload,
     /// bound to the runtime's vault (FIX 9517).
     voice_refs: VoiceReferenceUploadGuard,
+    /// The line a program's run spends its media calls on (FIX 780, 6083),
+    /// which its jobs are taken up on again after a restart.
+    program_line: ProgramLine,
 }
 
 impl MediaRuntime {
@@ -463,8 +469,9 @@ impl MediaRuntime {
     /// submit. It carries the served receipt it went out with, and its end
     /// counts toward its offer's health as a sent request's does: a
     /// recovering offer's one probation request when that slot is free. It
-    /// bills the payer its submit bound, whoever polls it. A job whose rung
-    /// left the config cannot be taken up.
+    /// bills the payer its submit bound, whoever polls it, on the line its
+    /// submit spent on: a program's run's, else the media meter (FIX 780,
+    /// 6083). A job whose rung left the config cannot be taken up.
     fn take_up(&self, row: &JobRow) -> LlmResult<HeldJob> {
         let rung = self
             .job_rungs
@@ -478,8 +485,7 @@ impl MediaRuntime {
         let mut bound = row.request.clone();
         bound.model = rung.model.clone();
         bound.envelope.locality = rung.offer.binding.locality;
-        // A kept job's row names no sources: a restart knows none.
-        let run = self.media_run(row.payer.clone(), None)?;
+        let run = self.job_run(row)?;
         let selector = Some(row.request.model.as_str());
         let permit = run.admit_media(selector, &bound, &rung.offer.binding)?;
         let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);

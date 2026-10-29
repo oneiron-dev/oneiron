@@ -30,7 +30,7 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::voice_identity::ref_bank::{
     VoiceBankActor, VoiceRefOrigin, VoiceRefPack, VoiceRefSubjectKind, VoiceRegisterClip,
-    VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord,
+    VoiceRenderConsentWrite, VoiceRenderDecision, VoiceTargetRecord, VoiceTargetRender,
 };
 use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{EntityId, ModelLocality};
@@ -114,7 +114,14 @@ pub(super) async fn view(
     if let Err(refused) = owner_only(&server, &auth) {
         return refused;
     }
-    let targets = server.ai.model_runtime().media().clone_targets();
+    let targets: Vec<_> = server
+        .ai
+        .model_runtime()
+        .media()
+        .clone_targets()
+        .into_iter()
+        .map(|(target, locality)| (target, VoiceTargetRender::HostedClone { locality }))
+        .collect();
     match server
         .vault
         .voice_bank_view(&voice_id, &targets, query.include_generated)

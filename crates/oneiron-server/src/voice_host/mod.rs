@@ -45,6 +45,7 @@ pub use wire::VoiceWireBindings;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oneiron::llm::{BudgetGuard, LlmBackend, LlmError};
+use oneiron::policy_model::PolicyModelConfig;
 use oneiron::speculative::{SpeculativeSessionConfig, SpeculativeThreads};
 use oneiron::voice_cascade::{
     AsrEvent, AsrEventKind, AsrUpdate, OutputStop, PreparedAsr, UtteranceHandle,
@@ -74,6 +75,9 @@ pub struct VoiceHostBindings {
     pub extraction_prompt: String,
     pub session: VoiceSessionConfig,
     pub shutdown: ManagedShutdown,
+    /// The host's owner-plane policy config each sentence's safeguard
+    /// enforces under (FIX 5043): its notice wording and dial.
+    pub owner_policy: PolicyModelConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -116,9 +120,10 @@ pub struct VoiceHost {
     /// The call's speculative passes that missed their deadline and run on:
     /// joined before the call's write admission drops (FIX 3814).
     speculative: SpeculativeThreads,
-    /// The policy safeguard's configuration each sentence's safeguard runs
-    /// under (FIX 1201): the engine's default until the host sets its own.
-    policy: Arc<oneiron::policy_model::PolicyModelConfig>,
+    /// The host's owner-plane policy config, captured when the host is
+    /// built; every sentence's safeguard shares it (FIX 5043), its ladder's
+    /// paired question lent (FIX 1201).
+    owner_policy: Arc<PolicyModelConfig>,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -186,7 +191,6 @@ impl VoiceHost {
             container,
             roster,
             speculative: SpeculativeThreads::default(),
-            policy: Arc::default(),
             state: Arc::new(Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,
@@ -194,25 +198,8 @@ impl VoiceHost {
             })),
             extractor,
             shutdown: bindings.shutdown,
+            owner_policy: Arc::new(bindings.owner_policy),
         })
-    }
-
-    /// This host with each sentence's safeguard run under `policy`, the
-    /// serving host's own (FIX 1201).
-    #[must_use]
-    pub fn with_policy_config(
-        mut self,
-        policy: Arc<oneiron::policy_model::PolicyModelConfig>,
-    ) -> Self {
-        self.policy = policy;
-        self
-    }
-
-    /// The policy safeguard's configuration each sentence's safeguard runs
-    /// under.
-    #[must_use]
-    pub fn policy_config(&self) -> &Arc<oneiron::policy_model::PolicyModelConfig> {
-        &self.policy
     }
 
     /// The injected backend allocation, not a new adapter.
@@ -225,6 +212,12 @@ impl VoiceHost {
     #[must_use]
     pub fn budget(&self) -> &BudgetGuard {
         &self.extractor.budget
+    }
+
+    /// The host's owner-plane policy config its sentence safeguards enforce.
+    #[must_use]
+    pub fn owner_policy(&self) -> &Arc<PolicyModelConfig> {
+        &self.owner_policy
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, SessionState>, HostError> {

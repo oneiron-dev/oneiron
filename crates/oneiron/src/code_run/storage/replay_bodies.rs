@@ -58,7 +58,7 @@ pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
     }
     for call in &mut record.bridge_calls {
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
-            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.rows),
+            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.released_rows()),
             Ok(_) => None,
             Err(_) => Some(None),
         };
@@ -142,7 +142,7 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
         // not decode names none it is known to be served from.
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
             Ok(outcome) if !outcome_holds_reply(&outcome) => continue,
-            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.rows),
+            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.released_rows()),
             Ok(_) => None,
             Err(_) => Some(None),
         };

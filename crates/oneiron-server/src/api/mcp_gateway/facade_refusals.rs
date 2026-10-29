@@ -3,10 +3,19 @@
 //! The engine's `MemoryError` (`oneiron::memory`) is the record forwarded here.
 
 use super::McpGatewayError;
-use super::tasks_response::{MCP_HOST_ACTION_REFUSED, mcp_hook_stop};
+use super::tasks_response::{MCP_HOST_ACTION_REFUSED, MCP_OWNER_BINDING_REQUIRED, mcp_hook_stop};
 
-/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
-pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
+/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary,
+/// its reason codes kept whatever its kind (FIX 7398).
+pub(crate) fn mcp_facade_error(mut error: oneiron::MemoryError) -> McpGatewayError {
+    let reason_codes = std::mem::take(&mut error.reason_codes);
+    McpGatewayError {
+        reason_codes,
+        ..mcp_facade_refusal(error)
+    }
+}
+
+fn mcp_facade_refusal(error: oneiron::MemoryError) -> McpGatewayError {
     if let Some(stop) = error.hook {
         return mcp_hook_stop(*stop);
     }
@@ -27,6 +36,7 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
         | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
         | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
+        | oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE
         | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
         // A row's world setting, a frozen vault and a render that met its
         // deadline or a machine floor are typed refusals too, never an
@@ -46,6 +56,8 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // FIX 2222: one stable kind for the typed host refusal, whichever
         // door reported it.
         oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
+        // FIX 11434: the owner binding refusal keeps one stable kind too.
+        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => Some(MCP_OWNER_BINDING_REQUIRED),
         // WILL-PLAN L13 row 03: the room's audience gave no consent to this
         // management; an agent reads the name, not the sentence.
         oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
@@ -55,6 +67,10 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
         // floor; the agent reads the name, not the sentence.
         oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
             Some("sandbox_proposal_disk_floor")
+        }
+        // FIX 10011: an owner model pin no offered seat serves.
+        oneiron_contracts::memory::MEMORY_CODE_MODEL_PIN_UNAVAILABLE => {
+            Some("model_pin_unavailable")
         }
         // FIX 6547: an agent thread's walk-in its room's audience does not
         // admit, named as the facade's 409 names it.
@@ -85,11 +101,13 @@ pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
 
 /// The stable kind of a typed refusal whose code the gateway names in its
 /// own spelling, each a -32020 refusal: the owner's world read setting
-/// (FIX 7562), a hosted vault paused for its reap (FIX 5325), and a deck
-/// render past its deadline or at a machine floor (FIX 8242). `None` for
-/// any other code.
+/// (FIX 7562), a hosted vault paused for its reap (FIX 5325), a deck render
+/// past its deadline or at a machine floor (FIX 8242), and a damaged
+/// authority clock floor, which the owner's repair answers (FIX 11190).
+/// `None` for any other code.
 fn refusal_kind(code: &str) -> Option<&'static str> {
     Some(match code {
+        oneiron_contracts::memory::MEMORY_CODE_AUTHORITY_CLOCK_CORRUPT => "authority_clock_corrupt",
         oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT => "world_recipient_limit",
         oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
             "world_placement_unverifiable"

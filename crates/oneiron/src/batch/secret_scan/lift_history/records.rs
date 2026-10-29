@@ -187,9 +187,10 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     let raw = vault.materialized_row_in_txn(txn, &id, raw)?;
-    // A record a writer has cleaned since the census read it is done.
+    // A record a writer has cleaned since the census read it is done; a
+    // file still settles a known-value hit (FIX 8647).
     let Some(reason) = hit(vault, txn, &id, &raw)? else {
-        return Ok(Done::Clean);
+        return remark(vault, txn, key);
     };
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("lift sweep entity header"))?;

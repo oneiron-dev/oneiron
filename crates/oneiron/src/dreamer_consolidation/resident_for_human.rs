@@ -359,14 +359,20 @@ pub async fn run_free_time_for_human(
     let FreeTimeItemRun::Run(binding) =
         crate::dreamer_runner::free_time_item_to_run(ctx.vault, attempt_id, resident_id)?
     else {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     if !ctx
         .vault
         .get_agent_definition(&resident_id)?
         .is_some_and(|definition| definition.enabled)
     {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     let window = model
         .window_tokens
@@ -528,5 +534,6 @@ pub async fn run_free_time_for_human(
     )?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }

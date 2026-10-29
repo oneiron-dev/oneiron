@@ -42,6 +42,7 @@ use oneiron::task_verb::sdk::{
     SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
+use super::clock_ingress;
 use super::host_doors::support::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -72,6 +73,12 @@ pub(super) fn person(
             &["Present your own verified human credential."],
         )
     };
+    // A managed member with no slip of his own and no owner attestation,
+    // whom his supervisor signed this request for at a member door (FIX
+    // 1302 stage 1): that person's proof, judged as any other's.
+    if let Some(person) = managed_person_proof(server, auth, verb) {
+        return person.map_err(|_| refused());
+    }
     // A managed vault's forwarded person comes on his own slip (FIX 5122),
     // judged as on any other install.
     let slip = auth
@@ -97,6 +104,28 @@ pub(super) fn person(
         .vault()
         .bind_request_credential(person, slip.clone())
         .map_err(|_| refused())
+}
+
+/// The proof of the person a supervisor-signed person action names for
+/// this request (FIX 1302 stage 1, `auth::managed_person`), at a member door
+/// it serves (`auth::MANAGED_PERSON_DOORS`): a live human person, as a slip
+/// holder's proof is, with no slip to bind, so the proof is this request's
+/// alone. The engine's roster, role and Grant checks then judge that person
+/// in the acting writer. `None` for any other caller or door, which keeps
+/// [`person`]'s own path.
+fn managed_person_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> Option<oneiron::Result<AuthenticatedOwner>> {
+    let holder = auth
+        .managed_person()
+        .filter(|_| crate::auth::MANAGED_PERSON_DOORS.contains(&verb))?;
+    Some(
+        server
+            .vault()
+            .authenticate_owner(holder, &holder.to_hex(), true, GateDecisionId::now()),
+    )
 }
 
 /// The vault owner's proof, as `/v1/owner` takes it from the request.
@@ -126,7 +155,7 @@ async fn off_runtime<T: Send + 'static>(
     act: impl FnOnce(&Arc<SyncServer>) -> MemoryResult<T> + Send + 'static,
 ) -> MemoryResult<T> {
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(&server))
+    clock_ingress::run_blocking(move || act(&server))
         .await
         .map_err(|_| internal(verb))?
 }

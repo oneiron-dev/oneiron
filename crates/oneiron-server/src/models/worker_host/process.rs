@@ -1,15 +1,18 @@
 //! One running worker process in its supervisor's custody: started in a
 //! process group of its own, reaped by one task, checked for liveness on its
-//! health route, asked what it holds on its native socket when it has one,
-//! asked there to drain and shut down before it is stopped, and stopped by
-//! signals to that group alone. An abort kills that group at once and
-//! waits for its reaper, asking the worker nothing.
+//! health route, asked what it holds on its native socket when it has one
+//! (a media worker on its bearer `/stats`), asked there to drain and shut
+//! down before it is stopped, and stopped by signals to that group alone.
+//! An abort kills that group at once and waits for its reaper, asking the
+//! worker nothing.
 use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron_driver::{LauncherFuture, RunningWorker, WorkerActivity, WorkerExit};
 use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::sync::watch;
+
+use super::media_worker::StatsRoute;
 
 /// How long one liveness check may take before it counts as not live yet.
 /// It only paces the next check; no worker is stopped for it.
@@ -24,6 +27,8 @@ pub(super) struct ProcessWorker {
     client: reqwest::Client,
     /// The worker's native socket, where its stats are read (FIX 9190).
     native: Option<PathBuf>,
+    /// A media worker's stats route (FIX 8318).
+    stats: Option<StatsRoute>,
 }
 
 impl ProcessWorker {
@@ -35,6 +40,7 @@ impl ProcessWorker {
         mut command: tokio::process::Command,
         health: String,
         native: Option<PathBuf>,
+        stats: Option<StatsRoute>,
     ) -> std::io::Result<Self> {
         command.process_group(0).kill_on_drop(false);
         #[cfg(target_os = "linux")]
@@ -73,6 +79,7 @@ impl ProcessWorker {
             health,
             client,
             native,
+            stats,
         })
     }
 
@@ -115,11 +122,13 @@ impl RunningWorker for ProcessWorker {
     fn activity(&self) -> LauncherFuture<'_, Option<WorkerActivity>> {
         // An EXL3 worker reports its queue, its open calls and its allocator
         // reservation on its native socket (a cheap `stats`, never a walk of
-        // its tensors); a worker without one reports nothing.
+        // its tensors), a media worker the same on its bearer `/stats`; a
+        // worker with neither reports nothing.
         Box::pin(async move {
-            match &self.native {
-                Some(socket) => super::super::native_exl3::activity(socket).await,
-                None => None,
+            match (&self.native, &self.stats) {
+                (Some(socket), _) => super::super::native_exl3::activity(socket).await,
+                (None, Some(stats)) => super::media_worker::activity(stats).await,
+                (None, None) => None,
             }
         })
     }

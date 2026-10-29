@@ -134,6 +134,46 @@ pub(crate) fn run_options(
     }
 }
 
+/// The rows a program's run could call now on its own line (FIX 780, FIX
+/// 6083): each live row over `inputs` of an operation its doors call
+/// (`callable`) that the vault's inference policy admits. A media row
+/// carries what the line its call spends on has left (`run_left`); a text
+/// row, for a caller whose credential reaches the raw routes, what their
+/// meter has left, as [`caller_options`] lists it.
+pub(crate) fn line_options(
+    server: &SyncServer,
+    run_left: Option<u64>,
+    operation: Option<AiOperation>,
+    inputs: &BTreeSet<Modality>,
+    callable: impl Fn(AiOperation) -> bool,
+) -> CallerOptions {
+    // An uncapped raw meter reports none (FIX 10593).
+    let raw_left = server
+        .llm
+        .as_ref()
+        .and_then(|raw| raw.meter().read().capped_remaining_units());
+    let options = server
+        .ai
+        .model_runtime()
+        .ai_options(operation, inputs)
+        .into_iter()
+        .filter(|row| callable(row.operation))
+        .filter(|row| policy_admits(server, row))
+        .map(|row| {
+            let units_left = if row.operation == AiOperation::Text {
+                raw_left
+            } else {
+                run_left
+            };
+            OptionRow::priced(server, row, units_left)
+        })
+        .collect();
+    CallerOptions {
+        options,
+        media_units_left: run_left,
+    }
+}
+
 /// `row`'s model as the vault's model registry holds it.
 fn registered_row(server: &SyncServer, row: &MediaRow) -> Option<ModelRegistryRow> {
     ModelId::new(row.model.clone())

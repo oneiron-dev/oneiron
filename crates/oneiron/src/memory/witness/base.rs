@@ -210,7 +210,7 @@ impl Memory<'_> {
             WitnessDoor::Guest,
             before_txn,
             prepare,
-            effect,
+            |txn, _| effect(txn),
         )
     }
 
@@ -676,6 +676,9 @@ impl Memory<'_> {
             message_short_ids,
             receipt_ref: format!("witness:{}", plan.turn_id.to_hex()),
             messages,
+            // The wake this turn owes is judged after the receipt is read,
+            // in the same writer (`run_witness_as`).
+            wake_outcome: None,
         })
     }
 

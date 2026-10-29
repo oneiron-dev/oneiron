@@ -102,7 +102,7 @@ pub(crate) fn ground_actor_claim(
                 }
             }
         }
-        ActorClaimLane::Amendment { receipts } => {
+        ActorClaimLane::Amendment { receipts, .. } => {
             for receipt in receipts {
                 // The Δ side-ledger IS the resolution: a receipt with a
                 // recorded Δ is one this engine measured an amendment on. A

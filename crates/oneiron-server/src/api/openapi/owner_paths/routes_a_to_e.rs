@@ -89,6 +89,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/bundles/publications",
+        summary: "Records the owner's ask that the vault's sealed bundle be published to one linked home, ids only; the receipt is recorded and awaiting a holder, polled at /v1/owner/owner-work/{request}, or says why nothing was recorded.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/checkpoint-policy",
         summary: "The checkpoint root policy in force, the revision a surface presents back as seen, the owner's choice in force, every live choice and any conflict among them.",
@@ -626,6 +632,18 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/dreamer/maintenance/revert",
         summary: "The owner's revert of one applied write.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/dreamer/pause",
+        summary: "Sets the owner's own Dreamer pause: no new pass starts, and the running attempt parks at its next boundary. Answers the pause and the owner's cause of it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/dreamer/resume",
+        summary: "Clears the owner's own Dreamer pause; a managed freeze still holds it. Answers the pause and the owner's cause of it.",
         row: None,
     },
     OwnerRoute {

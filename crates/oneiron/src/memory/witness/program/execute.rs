@@ -40,14 +40,18 @@ impl Memory<'_> {
             door,
             before_txn,
             |txn| prepare(txn).map(|()| None),
-            effect,
+            |txn, _| effect(txn),
         )
     }
 
     /// [`Self::run_witness`] through the write door `callback` names: an
     /// `effect` that runs host code is [`crate::store::Callback::Opaque`].
     /// Its `prepare` may prove a Retry's room regeneration permit, which the
-    /// room guard admits the witness under (FIX 3149).
+    /// room guard admits the witness under (FIX 3149). A base landing hands
+    /// `effect` the receipt it just read in the transaction, with the TURN
+    /// and MESSAGE ids the turn actually stored (FIX 8533); an overlay
+    /// landing's receipt exists only after its segment commits, so it hands
+    /// none.
     #[expect(
         clippy::too_many_arguments,
         reason = "the write door joins the witness program's inputs"
@@ -60,7 +64,7 @@ impl Memory<'_> {
         door: WitnessDoor,
         before_txn: impl FnOnce(),
         prepare: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<Option<RoomRegenerationPermit>>,
-        effect: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        effect: impl FnOnce(&mut heed::RwTxn<'_>, Option<&WitnessReceipt>) -> MemoryResult<()>,
     ) -> MemoryResult<WitnessReceipt> {
         validate_witness_origin(turn, door.is_host())?;
         if turn.messages.is_empty() {
@@ -329,7 +333,7 @@ impl Memory<'_> {
             if lands_nothing {
                 unproven.take();
             }
-            let landed = match &sink {
+            let mut landed = match &sink {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(
                         &plan,
@@ -406,7 +410,13 @@ impl Memory<'_> {
                     Landed::Overlay { segment, aliases }
                 }
             };
-            effect(wtxn)?;
+            effect(
+                wtxn,
+                match &landed {
+                    Landed::Base(receipt) => Some(receipt),
+                    _ => None,
+                },
+            )?;
             // FIX 10260: a reply born whole keeps the set its turn asserted,
             // as admitted above, beside each MESSAGE this write landed new; a
             // streamed birth's receipt, which `effect` saved, keeps it there.
@@ -437,14 +447,19 @@ impl Memory<'_> {
             // its actor armed a wake, recorded in this commit so a crash after
             // it cannot lose one. An import is a source's words and a host
             // door's turn the engine's own: neither wakes a program. The
-            // record never fails the turn; one it cannot write is logged.
+            // record never fails the turn; one it cannot write is logged, and
+            // the turn's receipt says what the wake came to (FIX 9970).
             if matches!(&sink, WitnessSink::Base(_))
                 && plan.imported.is_none()
                 && !door.is_host()
                 && (matches!(admission.turn, AdmittedTurn::Mint { .. })
                     || admission.has_new_messages())
             {
-                self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
+                let outcome =
+                    self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
+                if let Landed::Base(receipt) = &mut landed {
+                    receipt.wake_outcome = Some(outcome);
+                }
             }
             if let Some(project) = leader_project {
                 let message_ids = plan.message_ids();

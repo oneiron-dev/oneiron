@@ -20,7 +20,11 @@ impl ConsolidationExecutor<'_> {
         // (FIX 3861), as one away at preparation does.
         let resources = match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
             Err(error) if super::super::residency::waits_on_residency(&error) => {
-                return Ok(super::super::residency::residency_deferral(ctx.now_ms, 0));
+                return Ok(super::super::residency::residency_deferral(
+                    ctx.now_ms,
+                    0,
+                    Vec::new(),
+                ));
             }
             resources => resources?,
         };
@@ -37,11 +41,15 @@ impl ConsolidationExecutor<'_> {
             )
             .await
         {
-            Ok(PartitionRun::Completed { .. } | PartitionRun::Held { .. })
-                if ctx.deadline.expired() =>
-            {
+            // A finished partition lands while its landing window is still
+            // open, even past the pass ceiling (FIX 11570): its model steps
+            // are done, so there is nothing left to checkpoint for. It
+            // checkpoints only once that window has closed.
+            Ok(PartitionRun::Completed { .. }) if ctx.deadline.landing_closed() => {
                 Ok(charges.checkpoint())
             }
+            // A held partition still checkpoints past the ceiling, as today.
+            Ok(PartitionRun::Held { .. }) if ctx.deadline.expired() => Ok(charges.checkpoint()),
             Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
             // A refused extraction, a refused citation (FIX 7274) among
             // them, retries as the same try after its retry delay (FIX 7218,
@@ -56,14 +64,11 @@ impl ConsolidationExecutor<'_> {
                     .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                     .await
                 {
-                    return super::super::residency::spent_or_deferred(
-                        error,
-                        ctx.now_ms,
-                        charges.units,
-                    );
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
                 Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 })
             }
             Ok(PartitionRun::Held {
@@ -74,15 +79,12 @@ impl ConsolidationExecutor<'_> {
                     .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                     .await
                 {
-                    return super::super::residency::spent_or_deferred(
-                        error,
-                        ctx.now_ms,
-                        charges.units,
-                    );
+                    return super::super::residency::spent_or_deferred(error, ctx, &charges);
                 }
                 Ok(DreamerAttemptExecution::Deferred {
                     completed_units: charges.units,
                     retry_at: retry_at_ms.div_ceil(1_000),
+                    step_hashes: charges.step_hashes.clone(),
                 })
             }
             // The step layer already parked the trapped attempt; Park it for resume
@@ -90,8 +92,10 @@ impl ConsolidationExecutor<'_> {
             Ok(PartitionRun::Trapped) => {
                 Ok(charges.park_for("durable step trapped for resume", DreamerParkCause::Signal))
             }
+            // The error leaves as it is; what the partition already spent
+            // settles with it (FIX 7432).
             Err(crate::llm::DurableStepError::Engine(error)) => {
-                super::super::residency::spent_or_deferred(error, ctx.now_ms, charges.units)
+                super::super::residency::spent_or_deferred(error, ctx, &charges)
             }
             // Every other failure parks with what the attempt spent, a
             // refused conflict read's paid usage included (FIX 414).

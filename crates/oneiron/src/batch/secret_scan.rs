@@ -11,10 +11,11 @@ mod whole_read;
 mod wordlist;
 
 use heed::{RoTxn, RwTxn};
+use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container, is_sealed,
-    masked_copy, scan_members as scan_container_members,
+    masked_copy, served_masked_copy,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -159,11 +160,12 @@ pub(super) fn scan_batch_ops(
                 if *entity_type == ENTITY_TYPE_ASSET && is_sealed(data) {
                     continue;
                 }
-                let _secrets_nulled = scan_payload(data)?;
                 // A file's members are read too: a key in a compressed
                 // member is no text in the file's stored bytes.
                 if *entity_type == ENTITY_TYPE_ASSET {
-                    scan_container_members(data)?;
+                    scan_write_tree(data)?;
+                } else {
+                    let _secrets_nulled = scan_payload(data)?;
                 }
             }
             BatchOp::ClaimCandidate {
@@ -198,17 +200,32 @@ pub(super) fn scan_batch_ops(
 /// Scans bytes with the serve/export reading of the shared detector, without
 /// exposing values. Snapshot custody, pack screening and every release door
 /// use this; none of them follows the owner's ingest switch. A container's
-/// members are read by the same rules, and a container the walk cannot read
-/// whole reads as a hit (see `container`).
+/// members and the bytes no reader shows (FIX 2470) are read by the same
+/// rules, and a container the walk cannot read whole reads as a hit (see
+/// `container`). Text that only starts like a container reads as text (FIX
+/// 2474).
 pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
     release_hit(bytes).or_else(|| container::release_members_hit(bytes))
+}
+
+/// `data` as text: borrowed when it is valid UTF-8, else its lossy copy,
+/// held in `wiped` so it is wiped on drop (FIX 6668).
+fn wiped_lossy<'a>(data: &'a [u8], wiped: &'a mut Option<Zeroizing<String>>) -> &'a str {
+    match std::str::from_utf8(data) {
+        Ok(text) => text,
+        Err(_) => wiped
+            .insert(Zeroizing::new(String::from_utf8_lossy(data).into_owned()))
+            .as_str(),
+    }
 }
 
 /// The release rules over one run of bytes: its text, and a known framed
 /// carrier's body.
 fn release_hit(bytes: &[u8]) -> Option<&'static str> {
-    let haystack = String::from_utf8_lossy(bytes);
-    detect(&haystack, Door::Release).or_else(|| {
+    // A lossy copy is wiped on drop (FIX 6668).
+    let mut wiped = None::<Zeroizing<String>>;
+    let haystack = wiped_lossy(bytes, &mut wiped);
+    detect(haystack, Door::Release).or_else(|| {
         let payload = framed_payload(bytes)?;
         let Some(mut value) = decode_members(payload) else {
             return nested_past_decoder(payload);
@@ -380,7 +397,9 @@ pub(crate) struct BlocklistStream(Vec<u8>);
 impl BlocklistStream {
     pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         self.0.extend_from_slice(bytes);
-        if shapes::blocklisted(&String::from_utf8_lossy(&self.0)) {
+        // A lossy copy is wiped on drop (FIX 6668).
+        let mut wiped = None::<Zeroizing<String>>;
+        if shapes::blocklisted(wiped_lossy(&self.0, &mut wiped)) {
             return Err(secret_scan_error("gate.secret_scan.blocklist"));
         }
         // What an entry the next part ends could start in.
@@ -454,8 +473,25 @@ pub(crate) fn scan_joined_text(text: &str) -> Option<&'static str> {
 /// what that door would refuse without staging a write. It does not read the
 /// owner's switch; the caller does.
 pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
+    scan_write_tree(data)
+}
+
+/// The write door over one payload and over each member of a container in
+/// it, each read as the door reads a body (FIX 2312, 2477): every door that
+/// takes bytes in reads a key in a compressed member, never only the
+/// payload's own bytes. A container the walk reads no further is read as
+/// far as it reads.
+pub(crate) fn scan_write_tree(data: &[u8]) -> Result<()> {
     let _secrets_nulled = scan_payload(data)?;
-    Ok(())
+    container::scan_readable_members(data)
+}
+
+/// The write door's rules over `bytes`, each member of a container in it
+/// and the bytes no reader shows (FIX 2470, 2480): the first hit's reason,
+/// or why the walk read no further. A serving door reads a masked copy, and
+/// a container no mark covers, by the rules of the door that accepted it.
+pub(crate) fn write_tree_hit(bytes: &[u8]) -> Option<&'static str> {
+    write_payload_hit(bytes).or_else(|| container::write_members_hit(bytes))
 }
 
 /// [`scan_write_payload`] for a reader that marks a hit rather than refusing a
@@ -481,8 +517,7 @@ pub(crate) fn scan_staged_payload(store: &Store, data: &[u8]) -> Result<()> {
     if mode == SecretScanMode::Off {
         return Ok(());
     }
-    let _secrets_nulled = scan_payload(data)?;
-    Ok(())
+    scan_write_tree(data)
 }
 
 /// Whether the write door's scan finds a secret in `data`, whatever the
@@ -493,10 +528,11 @@ pub(crate) fn payload_carries_secret(data: &[u8]) -> bool {
 }
 
 fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
-    let haystack = String::from_utf8_lossy(data);
-    let secrets_nulled =
-        ExportSecretsNulledManifest::from_redacted(has_redaction_marker(&haystack));
-    if let Some(reason) = detect(&haystack, Door::Write) {
+    // A lossy copy is wiped on drop (FIX 6668).
+    let mut wiped = None::<Zeroizing<String>>;
+    let haystack = wiped_lossy(data, &mut wiped);
+    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(has_redaction_marker(haystack));
+    if let Some(reason) = detect(haystack, Door::Write) {
         return Err(secret_scan_error(reason));
     }
     // Every member is read, a repeated JSON key and every map key included,
@@ -761,7 +797,9 @@ fn messagepack_has_secret(value: &rmpv::Value, door: Door) -> bool {
 }
 
 fn detect_bytes(bytes: &[u8], door: Door) -> bool {
-    detect(&String::from_utf8_lossy(bytes), door).is_some()
+    // A lossy copy is wiped on drop (FIX 6668).
+    let mut wiped = None::<Zeroizing<String>>;
+    detect(wiped_lossy(bytes, &mut wiped), door).is_some()
 }
 
 /// Where [`detect`]'s provider rules read a key in `text`: each whole token

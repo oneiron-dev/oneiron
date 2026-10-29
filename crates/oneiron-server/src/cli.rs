@@ -21,6 +21,8 @@ pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
+mod secret_control_args;
+mod vault_unlock_args;
 mod vm_args;
 pub use vm_args::HostVmArgs;
 mod seat_args;
@@ -57,10 +59,13 @@ pub use owner_args::{
     VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
 };
 pub use recovery_kit_args::{
-    KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
-    RecoveryKitRestoreArgs, RecoveryKitStatusArgs,
+    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs,
+    RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
+    RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
 pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
+pub use secret_control_args::{SecretBindArgs, SecretPendingArgs, SecretRefArgs, SecretUnbindArgs};
+pub use vault_unlock_args::{RestoreWrapArgs, RestoreWrapKind, VaultUnlockArgs};
 pub use wake_args::{WakeArgs, WakeCommand};
 pub use widen_proposal_args::{
     WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand,
@@ -378,6 +383,9 @@ pub enum TokenCommand {
     /// Mint a scoped credential for one named agent (Claude Code, Codex) on
     /// the stopped vault, for `oneiron mcp`.
     Agent(Box<TokenAgentArgs>),
+    /// Mint the host operator's own credential on the stopped self-hosted
+    /// vault: the operator's doors without the host's root (FIX 1814).
+    Operator(Box<commands::TokenOperatorArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
@@ -993,6 +1001,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
         Command::Token(TokenCommand::Agent(args)) => commands::token_agent(*args),
+        Command::Token(TokenCommand::Operator(args)) => commands::token_operator(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         // Blocking: the enrolment is redeemed over blocking HTTP.
         Command::Device(DeviceCommand::Enrol(args)) => {

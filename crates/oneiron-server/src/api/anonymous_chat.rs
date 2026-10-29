@@ -164,8 +164,8 @@ pub(crate) async fn ai_anonymous_chat(
             &responder,
             &policy_backend,
             &policy_budget,
-            // The serving host's policy config, its decision ladder's paired
-            // question lent (FIX 1201).
+            // The host's owner-plane wording and dial (FIX 5043), its
+            // decision ladder's paired question lent (FIX 1201).
             &server
                 .decision_host()
                 .policy_model_config(&server.policy_doors.owner),

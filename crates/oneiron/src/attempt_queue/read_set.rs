@@ -39,6 +39,27 @@ impl ReadSetProducer {
     /// served (FIX 7017).
     pub const TOOL_ANSWERS: Self = Self("resident.tool_answers");
 
+    /// A Dreamer weave recipe's evidence: the one row its draft reads
+    /// (FIX 7019).
+    pub const DREAMER_RECIPE_EVIDENCE: Self = Self("dreamer.recipe_evidence");
+
+    /// A Dreamer weave lens render's period: the rows its stored report's
+    /// items were read from (FIX 7019).
+    pub const DREAMER_WEAVE_REPORT: Self = Self("dreamer.weave_report");
+
+    /// A Dreamer consolidation branch's extraction: each slice's TURNs,
+    /// conversations, projected MESSAGEs and the listed rows its page
+    /// shows, and every row its branch pinned (FIX 7019).
+    pub const DREAMER_EXTRACTION: Self = Self("dreamer.extraction");
+
+    /// The Coach's eval-authoring pass: the inventory it read and the
+    /// authoring skill's body (FIX 7019).
+    pub const COACH_EVAL_AUTHORING: Self = Self("coach.eval_authoring");
+
+    /// A workflow model step's input: its agent definition row, the memory
+    /// and chat rows its context render read and its planner craft (FIX 6934).
+    pub const WORKFLOW_STEP_INPUT: Self = Self("workflow.step_input");
+
     /// The key the record keeps.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

@@ -5,6 +5,12 @@
 use super::*;
 
 impl AiHandle {
+    /// The control the Dreamer's passes read their pause through, when this
+    /// host attached under one: `None` where no owner pause can hold a pass.
+    pub(crate) fn dreamer_control(&self) -> Option<DreamerControl> {
+        self.dreamer_control.clone()
+    }
+
     pub(crate) fn host_compaction(
         &self,
     ) -> Option<(
@@ -61,6 +67,7 @@ impl AiHandle {
             device: false,
             writer_compaction: Arc::default(),
             confession: confession_wording::of(models),
+            dreamer_control: None,
         }
     }
 
@@ -226,6 +233,11 @@ impl AiHandle {
     #[must_use]
     pub(crate) fn model_runtime(&self) -> &ModelRuntime {
         &self.runtime
+    }
+
+    /// Whether a running Dreamer takes session hints.
+    pub(crate) fn takes_session_hints(&self) -> bool {
+        self.hints.is_some()
     }
 
     /// Tells the Dreamer's session policy what the app saw, in arrival order

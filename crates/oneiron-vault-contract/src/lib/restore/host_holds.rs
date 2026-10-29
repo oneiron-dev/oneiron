@@ -81,19 +81,43 @@ impl std::fmt::Debug for HostHoldsBytes {
     }
 }
 
-/// The source's host-order family on the input pipe
+/// Where a family on the input pipe came from (FIX 6817): the live source's
+/// export under its freeze, or the host-private member of the artifact the
+/// plan names, opened by the host's restore worker. The artifact's tag names
+/// the member: the snapshot id its artifact's commitment signs, the host
+/// recipient's id and epoch, and BLAKE3 of the member's bytes; the engine
+/// installs that family only when the artifact it opens carries that very
+/// member, and otherwise goes on not knowing (`host_holds_unknown`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HostHoldsOrigin {
+    LiveSource,
+    CheckpointArtifact {
+        #[serde(with = "super::hex::array")]
+        snapshot_id: [u8; 32],
+        #[serde(with = "super::hex::array")]
+        recipient_id: [u8; 32],
+        recipient_epoch: u64,
+        #[serde(with = "super::hex::array")]
+        member_blake3: [u8; 32],
+    },
+}
+
+/// A host-order family on the input pipe
 /// ([`ManagedRestoreInput::host_holds`](super::ManagedRestoreInput::host_holds)):
-/// the whole family `host_order_holds` exported, reassembled, for the
-/// attempt `identity` names (the plan's own) from the source `source` names
-/// (the plan's `source.engine_vault_id` and `source.registry_id`).
-/// `family_id` is BLAKE3 of `family`'s exact bytes. The engine refuses one
-/// that names another attempt or source, whose bytes are not its id's, or
-/// that is not one family, as an invalid input.
+/// the whole family `host_order_holds` exported, reassembled, or the one
+/// the artifact's member held (`origin`), for the attempt `identity` names
+/// (the plan's own) from the source `source` names (the plan's
+/// `source.engine_vault_id` and `source.registry_id`). `family_id` is
+/// BLAKE3 of `family`'s exact bytes. The engine refuses one that names
+/// another attempt or source, whose bytes are not its id's, or that is not
+/// one family of host-order rows, as an invalid input.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedRestoreHostHolds {
     pub identity: ManagedRestoreIdentity,
     pub source: HostHoldsSource,
+    pub origin: HostHoldsOrigin,
     #[serde(with = "super::hex::array")]
     pub family_id: [u8; 32],
     pub family: HostHoldsBytes,

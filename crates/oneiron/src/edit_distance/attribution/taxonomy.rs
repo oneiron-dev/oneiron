@@ -1,7 +1,7 @@
 //! Amendment taxonomy: classes, causes, evidence and judgment types.
 
 use crate::claim::{PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST};
-use crate::edit_distance::delta::delta_from_reconstructed;
+use crate::edit_distance::myers::myers_line_diff;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::skill_attribution::{
@@ -207,6 +207,9 @@ pub struct AmendmentJudgment {
     pub evidence_receipts: Vec<String>,
     /// ED-01's measured edit mass for this amendment.
     pub d_norm: f32,
+    /// The measurement engine version `d_norm` was measured under
+    /// (ARCH-0056 §2 `engine_ver`): folds never average across two.
+    pub engine_ver: String,
     pub at: u64,
     /// Each changed hunk the host cut, in text order, as judged (FIX 9808).
     /// Empty when the amendment was judged as one region.
@@ -328,11 +331,7 @@ pub(super) fn classify_amendment_traced(
 ) -> Result<(Option<AttributionSplit>, JudgeTrace)> {
     let masses: Vec<f64> = hunks
         .iter()
-        .map(|hunk| {
-            delta_from_reconstructed(hunk.before, hunk.after)
-                .ops_summary
-                .edit_mass()
-        })
+        .map(|hunk| myers_line_diff(hunk.before, hunk.after).ops.edit_mass())
         .collect();
     let settled = match evidence.cause {
         None => {

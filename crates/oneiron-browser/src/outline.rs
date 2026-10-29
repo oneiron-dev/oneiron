@@ -54,7 +54,7 @@ const READS: &[&str] = &[
 ];
 
 /// Roles whose name, when they have one, joins the ref of every row inside.
-const SCOPES: &[&str] = &[
+pub(crate) const SCOPES: &[&str] = &[
     "dialog",
     "alertdialog",
     "form",
@@ -218,8 +218,16 @@ pub(crate) fn lines(nodes: &[Value], masks: &Masks) -> Vec<Line> {
             .map(|(secret, _)| (secret.as_str(), SECRET_MARK))
             .collect(),
     };
-    walk.visit(root, false, None);
+    walk.visit(root);
     walk.out
+}
+
+/// One step of an outline walk: a node to read, whether it is inside a
+/// control and the frame of the nearest node above that named one; or the
+/// end of a scope a node opened, once every node under it was read.
+enum Step<'a> {
+    Enter(&'a Value, bool, Option<&'a str>),
+    Leave,
 }
 
 struct Walk<'a> {
@@ -236,9 +244,35 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    /// Visits `raw` and the rows under it. `frame` is the frame of the
-    /// nearest node above that named one: a document's nodes are its frame's.
-    fn visit(&mut self, raw: &'a Value, in_control: bool, frame: Option<&'a str>) {
+    /// Visits `root` and the rows under it, in page order, with an explicit
+    /// stack (FIX 10330), so a deep tree reads as a shallow one does: each
+    /// node before its children, its children in order, and a scope it
+    /// opens closed once they were read. A node's frame is its own, else
+    /// the nearest one above that named one: a document's nodes are its
+    /// frame's.
+    fn visit(&mut self, root: &'a Value) {
+        let mut stack = vec![Step::Enter(root, false, None)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Step::Enter(raw, in_control, frame) => {
+                    self.enter(raw, in_control, frame, &mut stack);
+                }
+                Step::Leave => {
+                    self.scope.pop();
+                }
+            }
+        }
+    }
+
+    /// Reads `raw`, then puts its children on `stack`, the first on top,
+    /// under the end of the scope it opens.
+    fn enter(
+        &mut self,
+        raw: &'a Value,
+        in_control: bool,
+        frame: Option<&'a str>,
+        stack: &mut Vec<Step<'a>>,
+    ) {
         if let Some(id) = raw.get("nodeId").and_then(Value::as_str)
             && !self.visited.insert(id)
         {
@@ -254,7 +288,6 @@ impl<'a> Walk<'a> {
             label,
         };
         let control = CONTROLS.contains(&node.role);
-        let mut scoped = false;
         if !ignored {
             // A control's own text is already its name.
             let read = READS.contains(&node.role)
@@ -265,24 +298,26 @@ impl<'a> Walk<'a> {
             }
             if SCOPES.contains(&node.role) && !node.name.is_empty() {
                 self.scope.push(format!("{} \"{}\"", node.role, node.key()));
-                scoped = true;
+                stack.push(Step::Leave);
             }
         }
         // A closed menu, list or tree shows its own row and none of its items.
         if state(raw, "expanded").as_deref() != Some("false") {
-            for child in raw
+            let by_id = self.by_id;
+            let children: Vec<&'a Value> = raw
                 .get("childIds")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-            {
-                if let Some(child) = child.as_str().and_then(|id| self.by_id.get(id)) {
-                    self.visit(child, in_control || control, frame);
-                }
-            }
-        }
-        if scoped {
-            self.scope.pop();
+                .filter_map(|child| child.as_str().and_then(|id| by_id.get(id).copied()))
+                .collect();
+            let inside = in_control || control;
+            stack.extend(
+                children
+                    .into_iter()
+                    .rev()
+                    .map(|child| Step::Enter(child, inside, frame)),
+            );
         }
     }
 
@@ -299,16 +334,10 @@ impl<'a> Walk<'a> {
     }
 
     fn emit(&mut self, node: &Node<'_>, frame: Option<&str>) {
-        let mut key = self.scope.join(" > ");
-        key.push_str(&format!(" > {} \"{}\"", node.role, node.key()));
-        // Identical twins (same role, name and named ancestors) are told apart
-        // by their order among themselves alone.
+        let key = row_key(&self.scope, node.role, node.key());
         let twin = self.seen.entry(key.clone()).or_insert(0);
         *twin += 1;
-        if *twin > 1 {
-            key.push_str(&format!(" ~{twin}"));
-        }
-        let hash = blake3::hash(key.as_bytes()).to_hex();
+        let locator = locator_of(&key, *twin);
         let states = STATES
             .iter()
             .filter_map(|&name| match state(node.raw, name).as_deref() {
@@ -337,7 +366,7 @@ impl<'a> Walk<'a> {
         };
         let row = Row {
             target: String::new(),
-            locator: format!("e{}", &hash[..12]),
+            locator,
             role: node.role.to_owned(),
             name: node.name.clone(),
             value,
@@ -374,6 +403,26 @@ impl<'a> Walk<'a> {
             original,
         });
     }
+}
+
+/// A row's key: its named ancestors' scopes, each `role "name"`, outermost
+/// first, then its own role and name.
+pub(crate) fn row_key(scopes: &[String], role: &str, name: &str) -> String {
+    let mut key = scopes.join(" > ");
+    key.push_str(&format!(" > {role} \"{name}\""));
+    key
+}
+
+/// The locator of the row `key` names, at `twin` among its identical twins
+/// (same role, name and named ancestors) from 1: twins are told apart by
+/// their order among themselves alone.
+pub(crate) fn locator_of(key: &str, twin: u32) -> String {
+    let hash = if twin > 1 {
+        blake3::hash(format!("{key} ~{twin}").as_bytes())
+    } else {
+        blake3::hash(key.as_bytes())
+    };
+    format!("e{}", &hash.to_hex()[..12])
 }
 
 /// An accessibility node's `name`, `value`, `description` or `role` text,
