@@ -272,13 +272,9 @@ impl Vault {
         issuer: &HostSlipIssuer,
         grant_ref: EntityId,
     ) -> Result<GuestRevokeOutcome> {
-        let outcome = self.with_write_txn_grouped(|txn| {
+        self.with_write_txn_grouped(|txn| {
             self.revoke_guest_access_in_txn(txn, owner, issuer, grant_ref)
-        })?;
-        if !outcome.revoked_slips.is_empty() {
-            self.store.notify_credential_revocations();
-        }
-        Ok(outcome)
+        })
     }
 
     /// [`Self::revoke_guest_access`] in the caller's writer: the whole
