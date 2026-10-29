@@ -13,7 +13,9 @@ use crate::error::ErrorKind;
 pub(super) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
     matches!(
         kind,
-        ErrorKind::AuthorityRefused
+        // A host misconfiguration (bel 29 Oct: no Dreamer summary instruction) fails every pass the same way.
+        ErrorKind::InvalidConfig
+            | ErrorKind::AuthorityRefused
             | ErrorKind::ActorLacksClaimAuthority
             | ErrorKind::FamilyRequiresAutoGrant
             | ErrorKind::SourceNotTrustedForAuto
