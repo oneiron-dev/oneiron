@@ -169,7 +169,9 @@ pub struct AgentDefinitionRef {
     /// The AGENT_DEF entity.
     pub definition: String,
     pub agent_id: String,
-    /// Its version as it stands now; the runs may have used an earlier one.
+    /// The revision the failing runs were stamped with, where their pack
+    /// receipts pin one (FIX 11637); else its version as it stands now, and
+    /// the runs may have used an earlier one.
     pub version: String,
     /// The seeded `sys.*` id of a shipped definition.
     pub logical_id: Option<String>,
@@ -269,6 +271,7 @@ pub(super) fn packet_in_txn(
         actors.push(subject);
     }
     let mut receipts = Vec::new();
+    let mut definition_pins: Vec<(String, String)> = Vec::new();
     for row in failing.into_iter().skip(skip) {
         let evidence = EVIDENCE.get(&vault.store, txn, &row.receipt_id)?;
         let mut skill = (subject_kind == TriageSubject::Skill).then_some(subject);
@@ -289,6 +292,20 @@ pub(super) fn packet_in_txn(
             }
             None => None,
         };
+        // A run whose pack receipt pins no attribution field set names no
+        // definition revision; its packet ref falls back to the live row.
+        if let Some(attempt) = row.attempt_receipt.as_deref()
+            && let Some(receipt) =
+                crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
+            && let Ok(fields) = receipt.pack_attribution_fields()
+            && let Some(pin) = fields.agent_definition
+            && let Some((agent_id, version)) = pin.rsplit_once('@')
+        {
+            let pin = (agent_id.to_owned(), version.to_owned());
+            if !definition_pins.contains(&pin) {
+                definition_pins.push(pin);
+            }
+        }
         receipts.push(TriageReceipt {
             delta_ref: amendment_recorded_in_txn(vault, txn, &row.receipt_id)?
                 .then(|| row.receipt_id.clone()),
@@ -304,7 +321,12 @@ pub(super) fn packet_in_txn(
     }
     let mut agent_definitions = Vec::new();
     for actor in &actors {
-        agent_definitions.extend(agent_definition_in_txn(vault, txn, actor)?);
+        agent_definitions.extend(agent_definitions_in_txn(
+            vault,
+            txn,
+            actor,
+            &definition_pins,
+        )?);
     }
     let publisher = publisher_in_txn(vault, txn, subject, subject_kind, &agent_definitions)?;
     let mut skills: Vec<SkillAtVersion> = Vec::new();
@@ -477,27 +499,43 @@ fn skill_at_version_in_txn(
         .map(|record| at_version(record, false)))
 }
 
-/// `actor`'s AgentDefinition, when it is a live AGENT_DEF.
-fn agent_definition_in_txn(
+/// `actor`'s AgentDefinition at each revision the failing runs pinned for
+/// it (FIX 11637), or as it stands now when none of them pinned one; empty
+/// when `actor` is not a live AGENT_DEF.
+fn agent_definitions_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: &EntityId,
-) -> Result<Option<AgentDefinitionRef>> {
+    pins: &[(String, String)],
+) -> Result<Vec<AgentDefinitionRef>> {
     let LiveEntityRow::Live { entity_type, body } =
         live_entity_row_in_txn(&vault.store, txn, actor)?
     else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     if entity_type != ENTITY_TYPE_AGENT_DEF {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     let definition = crate::agent_def::decode_agent_definition(&body)?;
-    Ok(Some(AgentDefinitionRef {
+    let standing = AgentDefinitionRef {
         definition: actor.to_hex(),
         agent_id: definition.agent_id,
         version: definition.version,
         logical_id: definition.logical_id,
-    }))
+    };
+    let pinned: Vec<AgentDefinitionRef> = pins
+        .iter()
+        .filter(|(agent_id, _)| *agent_id == standing.agent_id)
+        .map(|(_, version)| AgentDefinitionRef {
+            version: version.clone(),
+            ..standing.clone()
+        })
+        .collect();
+    Ok(if pinned.is_empty() {
+        vec![standing]
+    } else {
+        pinned
+    })
 }
 
 /// Who published `subject`: an imported skill, or a seeded agent definition,

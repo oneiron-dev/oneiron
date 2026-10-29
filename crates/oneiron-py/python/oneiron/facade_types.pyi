@@ -10296,6 +10296,7 @@ class CreditOptions(TypedDict):
 class PackAttributionFields(TypedDict):
     typeRef: CellTypeRef
     executor: str
+    agent_definition: NotRequired[str | None]
     judge: NotRequired[str | None]
     pattern: EntityId
     team_shape: list[str]

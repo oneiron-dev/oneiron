@@ -4125,7 +4125,7 @@ export type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: 
 /** `oneiron::receipt::pack_attribution::CreditOptions` */
 export type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean }
 /** `oneiron::receipt::pack_attribution::PackAttributionFields` */
-export type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions }
+export type PackAttributionFields = { typeRef: CellTypeRef; executor: string; agent_definition?: string | null; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions }
 /** `oneiron::receipt::pack_attribution::PackLearningContext` */
 export type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields }
 /** `oneiron::learning::evidence::EvidenceRow` */
