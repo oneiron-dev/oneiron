@@ -337,7 +337,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let row =
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
-        let call = row.binding.pending.connector_call();
+        let call = row
+            .binding
+            .pending
+            .connector_call()
+            .ok_or(Error::EntityNotFound)?;
         let choices = offered_choices(&row.binding)
             .into_iter()
             .map(|choice| choice.as_str().replace('_', " "))
@@ -468,8 +472,11 @@ impl Vault {
             let row = read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(
                 IntentLedgerError::InvalidInput("no code consent wait by that id"),
             )?;
-            row.approved_unsettled()
-                .then(|| row.binding.pending.connector_call().call_ref)
+            row.binding
+                .pending
+                .connector_call()
+                .filter(|_| row.approved_unsettled())
+                .map(|call| call.call_ref)
         };
         if let Some(call_ref) = call_ref {
             let pending = {
