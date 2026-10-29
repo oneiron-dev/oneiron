@@ -65,7 +65,7 @@ impl Vault {
                     hub,
                     grant_ref: grant,
                 }),
-                HookAuthor::Owner => None,
+                HookAuthor::Owner | HookAuthor::Agent { .. } => None,
             };
             if let Some(publisher) = &publisher {
                 self.check_publisher_in_txn(&*txn, publisher)?;
