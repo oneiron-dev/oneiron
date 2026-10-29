@@ -61,8 +61,7 @@ pub(crate) fn principal_reach_ids_in(
             crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
         );
     }
-    crate::ports::EntityStoreRead::port_entity_ids_by_type(&vault.store, txn, kind, None)?
-        .collect()
+    crate::ports::EntityStoreRead::port_entity_ids_by_type(&vault.store, txn, kind, None)?.collect()
 }
 
 impl<'v> AccessContext<'v> {

@@ -175,15 +175,15 @@ impl<'v> ScopedRead<'v> {
         let mut claims_suppressed = 0;
         let mut suppressed = 0;
         for mut entity in entities {
-            let admission =
-                self.admit_in(rtxn, &entity.id, || {
-                    Ok((self
-                        .is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, held)?
+            let admission = self.admit_in(rtxn, &entity.id, || {
+                Ok(
+                    (self.is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, held)?
                         && self.context_entity_revision_is_readable_in(
                             rtxn, policy, filter, &entity,
                         )?)
-                    .then_some(()))
-                })?;
+                    .then_some(()),
+                )
+            })?;
             suppressed += admission.suppression();
             if admission.suppression() > 0 && entity.entity_type == ENTITY_TYPE_CLAIM {
                 claims_suppressed += 1;
