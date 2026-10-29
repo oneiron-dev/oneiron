@@ -63,10 +63,9 @@ pub(crate) fn erase_attribution_judgment_skill_in_txn(
             continue;
         }
         match judgment.verdict {
-            AttributionVerdict::SkillDefect | AttributionVerdict::Discovery => {
-                JUDGMENT.delete(&vault.store, wtxn, &sequence)?;
-            }
-            AttributionVerdict::ExecutionLapse => {
+            AttributionVerdict::SkillDefect
+            | AttributionVerdict::Discovery
+            | AttributionVerdict::ExecutionLapse => {
                 judgment.subject = None;
                 JUDGMENT.put(&vault.store, wtxn, &sequence, &judgment)?;
             }
