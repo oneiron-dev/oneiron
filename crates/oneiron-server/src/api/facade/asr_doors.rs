@@ -3,7 +3,7 @@
 //! Signature changes, fire counts and warm reuse remain OF-108 decisions.
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::speculative::{
@@ -18,6 +18,10 @@ use super::host_doors::support::{Listed, credential_listing, hex_rows, internal,
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
+/// How long an utterance without a request lives: an entry idle past this
+/// goes, its threads joined as a close joins them.
+const ASR_UTTERANCE_IDLE_EXPIRY: Duration = Duration::from_secs(30 * 60);
+
 #[derive(Default)]
 pub(crate) struct AsrSessions {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
@@ -26,6 +30,8 @@ pub(crate) struct AsrSessions {
 struct Entry {
     auth: CoreAuth,
     state: Mutex<Utterance>,
+    /// When a request last reached the entry, through open or `get`.
+    last_used: Mutex<Instant>,
 }
 
 struct Utterance {
@@ -45,13 +51,19 @@ fn missing() -> MemoryError {
 
 impl AsrSessions {
     fn get(&self, auth: &CoreAuth, handle: &str) -> MemoryResult<Arc<Entry>> {
-        self.entries
+        self.sweep_expired();
+        let entry = self
+            .entries
             .lock()
             .map_err(|_| internal("ai.voice.asr"))?
             .get(handle)
             .filter(|entry| entry.auth.same_authority(auth))
             .cloned()
-            .ok_or_else(missing)
+            .ok_or_else(missing)?;
+        if let Ok(mut at) = entry.last_used.lock() {
+            *at = Instant::now();
+        }
+        Ok(entry)
     }
 
     fn remove(&self, handle: &str) -> MemoryResult<()> {
@@ -60,6 +72,38 @@ impl AsrSessions {
             .map_err(|_| internal("ai.voice.asr"))?
             .remove(handle);
         Ok(())
+    }
+
+    /// Removes every entry idle past [`ASR_UTTERANCE_IDLE_EXPIRY`], joining
+    /// its threads as a close does. A lock that will not open leaves its
+    /// entries for the next open or `get`.
+    fn sweep_expired(&self) {
+        let expired = {
+            let Ok(mut entries) = self.entries.lock() else {
+                return;
+            };
+            let mut idle = Vec::new();
+            for (handle, entry) in entries.iter() {
+                let past = entry
+                    .last_used
+                    .lock()
+                    .ok()
+                    .is_some_and(|at| at.elapsed() >= ASR_UTTERANCE_IDLE_EXPIRY);
+                if past {
+                    idle.push(handle.clone());
+                }
+            }
+            idle.into_iter()
+                .filter_map(|handle| entries.remove(&handle))
+                .collect::<Vec<_>>()
+        };
+        for entry in expired {
+            let Ok(mut state) = entry.state.lock() else {
+                continue;
+            };
+            state.core.take();
+            state.threads.join();
+        }
     }
 }
 
@@ -133,6 +177,7 @@ pub(crate) async fn ai_voice_asr_open(
             deadline_ms: u64::try_from(deadline.as_millis()).map_err(|_| internal(verb))?,
             narrowing: core.scoped_read_receipt()?,
         };
+        server.asr_sessions.sweep_expired();
         server
             .asr_sessions
             .entries
@@ -149,6 +194,7 @@ pub(crate) async fn ai_voice_asr_open(
                         revision: None,
                         last_fire_receipt: None,
                     }),
+                    last_used: Mutex::new(Instant::now()),
                 }),
             );
         Ok(opened)
