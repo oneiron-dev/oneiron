@@ -39,6 +39,12 @@ pub mod enrollment;
 /// the enrollment leg's envelope. Vault methods only — no rows of its own.
 pub mod step_body;
 
+/// FIX 11513's campaign channel sender: the enrollment leg's frozen
+/// envelope decoded strictly, the filed step body pre-checked, and the
+/// send executed on the served sink. Slack and LINE only; email rides
+/// FIX 11641/11642.
+pub mod sender;
+
 /// CA-06's compliance pack: the versioned, vault-resident legal rule rows, the
 /// hydrated-evidence dispatch evaluator the external-effect gate enforces, and
 /// the tighten-auto / loosen-owner-stamp amendment transaction. Law lives in
