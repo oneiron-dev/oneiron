@@ -292,7 +292,8 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
-        if let Some(previous) = claims.alpns.remove(alpn) {
+        let previous = claims.alpns.remove(alpn);
+        if let Some(previous) = previous {
             self.append_slip_op_in_txn(
                 &mut txn,
                 issuer,
@@ -345,6 +346,9 @@ impl Vault {
         super::super::measure_authority_work(&self.store.limit_watch, claims.alpns.len());
         self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
+        if previous.is_some() {
+            self.store.notify_credential_revocations();
+        }
         Ok(())
     }
 
@@ -384,9 +388,13 @@ impl Vault {
         for id in claims.alpns.values() {
             self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id: *id })?;
         }
+        let revoked = !claims.alpns.is_empty();
         claims.alpns.clear();
         self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
+        if revoked {
+            self.store.notify_credential_revocations();
+        }
         Ok(())
     }
 }

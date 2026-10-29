@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 
 use oneiron::posterior::Posterior;
-use oneiron::receipt::{ReceiptKind, ReceiptQuery};
+use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptScanPosition};
 use oneiron::skill::SkillRecord;
 use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
@@ -164,50 +164,36 @@ impl GoalAxisBandit for ServeAxisBandit<'_> {
         let vault = &self.judge.vault;
         let since = now().saturating_sub(LIVE_WINDOW_SECS);
         let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
-        // Eligible, untaken arm receipts first: page newest-first until one is
-        // found or the window ends (FIX 9532). The limit is a page size, never
-        // exhaustion; the scan's completeness proves the end.
-        let mut seen: BTreeSet<String> = BTreeSet::new();
-        let mut end_at: Option<u64> = None;
+        // Eligible, untaken arm receipts first: page newest-first, each page
+        // after the last receipt read (FIX 9532, 11297), until one is found
+        // or the window ends. The limit is a page size, never exhaustion; the
+        // scan's completeness proves the end.
+        let mut after: Option<ReceiptScanPosition> = None;
         let run = loop {
-            let scan = vault.scan_receipts(
-                ReceiptQuery::new(LIVE_SCAN_LIMIT)
-                    .with_kind(ReceiptKind::Outbound)
-                    .with_time_bounds(Some(since), end_at),
-            )?;
-            let complete = scan.complete;
-            let mut records = scan.records;
-            records.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
-            let page_len = records.len();
-            if records.is_empty() {
-                break None;
+            let mut query = ReceiptQuery::new(LIVE_SCAN_LIMIT)
+                .with_kind(ReceiptKind::Outbound)
+                .with_time_bounds(Some(since), None);
+            if let Some(position) = after.take() {
+                query = query.with_after(position);
             }
-            let mut fresh = 0;
-            let mut floor = u64::MAX;
-            let mut found = None;
-            for receipt in records {
-                floor = floor.min(receipt.occurred_at);
-                if !seen.insert(receipt.receipt_id.clone()) {
-                    continue;
-                }
-                fresh += 1;
-                if receipt.receipt_id.starts_with(ATTEMPT_RECEIPT)
+            let scan = vault.scan_receipts(query)?;
+            let complete = scan.complete;
+            let records = scan.records;
+            let page_len = records.len();
+            after = records.last().map(ReceiptScanPosition::of);
+            let found = records.into_iter().find(|receipt| {
+                receipt.receipt_id.starts_with(ATTEMPT_RECEIPT)
                     && !taken.contains(&(axis.to_owned(), receipt.receipt_id.clone()))
                     && receipt
                         .pack_manifest_skills()
                         .is_some_and(|skills| skills.contains(&arm.loaded))
-                {
-                    found = Some(receipt);
-                    break;
-                }
-            }
+            });
             if let Some(run) = found {
                 break Some(run);
             }
-            if complete || page_len < LIVE_SCAN_LIMIT || fresh == 0 {
+            if complete || page_len < LIVE_SCAN_LIMIT || after.is_none() {
                 break None;
             }
-            end_at = Some(floor);
         };
         let run =
             run.ok_or_else(|| invalid(format!("no live run of {} is left to pull", arm.loaded)))?;
