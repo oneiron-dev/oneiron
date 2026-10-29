@@ -118,9 +118,7 @@ impl Memory<'_> {
             credential: self.read_proof.as_ref(),
         };
         let visible = &mut |id: &EntityId| read.is_entity_readable(id);
-        let (receipt, rows) = self
-            .vault
-            .apply_shape_listing(applier, input, now, visible);
+        let (receipt, rows) = self.vault.apply_shape_listing(applier, input, now, visible);
         (receipt.map_err(MemoryError::from), rows)
     }
 }
