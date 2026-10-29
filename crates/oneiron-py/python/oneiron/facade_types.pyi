@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1180 facade rows, 4268 declarations.
+Census: 1180 facade rows, 4271 declarations.
 Inputs: 1111 of 1180 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1051 of 1180 fully typed, 129 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 115; unread shapes: 0.
@@ -11654,6 +11654,7 @@ class CodeWaitResolveRequest(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
+CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
@@ -11683,6 +11684,7 @@ class CodeWaitReceiptView(TypedDict):
     verb: str
     connector: str
     tool: str
+    browser: NotRequired[CodeWaitBrowserAction | None]
     hold_reasons: list[str]
     ask_ref: NotRequired[EntityId | None]
     allowed_answers: list[CodeWaitChoice]
@@ -21471,8 +21473,7 @@ class SessionManifest(TypedDict):
     generation: str
     fence_proof: NotRequired[SessionFenceProof | None]
     fence_unproven: NotRequired[bool]
-BrowserAnswerItem = dict[str, Any]
-BrowserAnswer = BrowserAnswerItem
+PressOutcome = Literal["delivered", "refused", "delivery_unknown"]
 class RowSplice(TypedDict):
     start: int
     delete_count: int
@@ -21667,6 +21668,14 @@ class VerbsObservation(TypedDict):
     site_skill_notes: NotRequired[list[SiteSkillError]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
+class PressAnswer(TypedDict):
+    wait: str
+    outcome: PressOutcome
+    reasons: NotRequired[list[str]]
+    step: NotRequired[ObservationPage | None]
+    receipt: NotRequired[EffectReceipt | None]
+BrowserAnswerItem = dict[str, Any]
+BrowserAnswer = BrowserAnswerItem
 BrowserObservationPage = BrowserAnswer
 class ObservationBase(TypedDict):
     scope: str

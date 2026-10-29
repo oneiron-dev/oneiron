@@ -549,14 +549,17 @@ impl RunGuests {
             verb: call.verb,
             input: hooks.args.clone(),
         };
+        self.begin_press_call();
         let answer =
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
                 Err(refused) => {
+                    let refused = self.bound_refusal(call.verb, origin, memory, refused);
                     self.refused.keep(Some(&refused));
                     return Ok(Err(AgentVerbRefusal { code: refused.code }));
                 }
             };
+        let held = self.take_held_press();
         let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         });
@@ -564,6 +567,7 @@ impl RunGuests {
         match post {
             Ok(mut output) => {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
+                self.hold_stopped_batch(call.verb, origin, memory, held, &output);
                 Ok(Ok(AgentVerbAnswer::new(output, answer.rows)))
             }
             Err(error) => refused(super::mcp_facade_error(error)),
@@ -699,29 +703,9 @@ impl RunGuests {
         verb: AgentVerb,
         server: &SyncServer,
     ) -> Result<(), AgentVerbRefusal> {
-        // The browser runs as its connector pack: no installed pack, no browser.
-        if server
-            .vault
-            .require_builtin_channel_pack("browser")
-            .is_err()
-        {
-            return Err(AgentVerbRefusal {
-                code: "browser_pack_not_installed".to_owned(),
-            });
-        }
         // A desktop row drives the run's desktop; every other row its browser.
         let desktop = verb.as_str().starts_with("self.desktop.");
-        // The browser guest runs only once its setup connection is checked.
-        if !desktop
-            && server
-                .vault
-                .require_pack_connection_verified("oneiron.browser", "browser-guest")
-                .is_err()
-        {
-            return Err(AgentVerbRefusal {
-                code: "browser_connection_unchecked".to_owned(),
-            });
-        }
+        Self::guest_admits(&server.vault, desktop)?;
         let run_id = if desktop {
             self.desktop.as_ref().map(|desktop| desktop.run_id)
         } else {
