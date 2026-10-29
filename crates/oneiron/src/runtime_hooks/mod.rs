@@ -59,6 +59,7 @@ pub(crate) use scope::HookScope;
     reason = "the gate's settlement doors call it once their seam lands"
 )]
 pub(crate) use source::record_settlement_in_txn;
+pub(crate) use source::record_timeout_demotion_in_txn;
 pub use source::{
     ClaimChangelogPosition, FactKind, FactPosition, FactPositionHex, FactSource, SettledFact,
     SettledOutcome, SettlementKind, SettlementPosition,

@@ -237,7 +237,8 @@ impl Vault {
 
     /// Applies the folded answer in the caller's writer. An owner ceremony
     /// supplies its revalidated person for the settlement fact; replay uses
-    /// the signing key's existing actor binding.
+    /// the signing key's existing actor binding. A timeout demotion records
+    /// a `Demoted` settlement, settled by the engine (FIX 1093).
     pub(crate) fn settle_critical_write_confirm_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -320,6 +321,7 @@ impl Vault {
         }
         let Some(state) = fold.critical_write_confirms.get(&confirm_id) else {
             return Ok(Ok(if expired && !deferred {
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 CriticalWriteConfirmResolution::DemotedToProposed
             } else {
                 CriticalWriteConfirmResolution::AlreadySettled
@@ -330,6 +332,7 @@ impl Vault {
             .contains(&confirm_id)
         {
             return Ok(Ok(if expired && !deferred {
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 CriticalWriteConfirmResolution::DemotedToProposed
             } else {
                 CriticalWriteConfirmResolution::AlreadySettled
@@ -339,6 +342,7 @@ impl Vault {
             return Ok(Ok(if deferred {
                 CriticalWriteConfirmResolution::AlreadySettled
             } else {
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 CriticalWriteConfirmResolution::DemotedToProposed
             }));
         }
@@ -503,6 +507,8 @@ impl Vault {
         Ok(self.expire_critical_write_confirms_impl(Some(now))?.demoted)
     }
 
+    /// Demotes every expired confirm the page reaches, recording each
+    /// demotion as a `Demoted` settlement settled by the engine (FIX 1093).
     fn expire_critical_write_confirms_impl(&self, at: Option<u64>) -> Result<ConfirmExpiryPage> {
         self.with_write_txn_grouped(|wtxn| {
             let now = at.unwrap_or_else(|| self.store.clock.now_recorded_at());
@@ -565,6 +571,7 @@ impl Vault {
                 timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
                 self.store
                     .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 demoted += 1;
             }
             Ok(ConfirmExpiryPage {
