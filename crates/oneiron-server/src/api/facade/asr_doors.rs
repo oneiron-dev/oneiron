@@ -22,9 +22,31 @@ use crate::server::SyncServer;
 /// goes, its threads joined as a close joins them.
 const ASR_UTTERANCE_IDLE_EXPIRY: Duration = Duration::from_secs(30 * 60);
 
-#[derive(Default)]
 pub(crate) struct AsrSessions {
     entries: Mutex<HashMap<String, Arc<Entry>>>,
+    tombstones: Mutex<HashMap<String, Instant>>,
+    idle_expiry: Duration,
+}
+
+impl Default for AsrSessions {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::default(),
+            tombstones: Mutex::default(),
+            idle_expiry: idle_expiry_from_env(),
+        }
+    }
+}
+
+/// The idle expiry `AsrSessions` starts with: `ONEIRON_ASR_UTTERANCE_IDLE_EXPIRY_SECS`
+/// when it names seconds, else [`ASR_UTTERANCE_IDLE_EXPIRY`].
+fn idle_expiry_from_env() -> Duration {
+    std::env::var("ONEIRON_ASR_UTTERANCE_IDLE_EXPIRY_SECS")
+        .ok()
+        .and_then(|secs| secs.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(ASR_UTTERANCE_IDLE_EXPIRY)
 }
 
 struct Entry {
@@ -49,6 +71,14 @@ fn missing() -> MemoryError {
     MemoryError::not_found("no ASR utterance belongs to this credential")
 }
 
+fn expired() -> MemoryError {
+    MemoryError::new(
+        "asr_utterance_expired",
+        "the ASR utterance expired after its idle time",
+        &["Open a new utterance and send its audio again."],
+    )
+}
+
 impl AsrSessions {
     fn get(&self, auth: &CoreAuth, handle: &str) -> MemoryResult<Arc<Entry>> {
         self.sweep_expired();
@@ -58,12 +88,22 @@ impl AsrSessions {
             .map_err(|_| internal("ai.voice.asr"))?
             .get(handle)
             .filter(|entry| entry.auth.same_authority(auth))
-            .cloned()
-            .ok_or_else(missing)?;
-        if let Ok(mut at) = entry.last_used.lock() {
-            *at = Instant::now();
+            .cloned();
+        if let Some(entry) = entry {
+            if let Ok(mut at) = entry.last_used.lock() {
+                *at = Instant::now();
+            }
+            return Ok(entry);
         }
-        Ok(entry)
+        if self
+            .tombstones
+            .lock()
+            .map(|held| held.contains_key(handle))
+            .unwrap_or(false)
+        {
+            return Err(expired());
+        }
+        Err(missing())
     }
 
     fn remove(&self, handle: &str) -> MemoryResult<()> {
@@ -74,9 +114,10 @@ impl AsrSessions {
         Ok(())
     }
 
-    /// Removes every entry idle past [`ASR_UTTERANCE_IDLE_EXPIRY`], joining
-    /// its threads as a close does. A lock that will not open leaves its
-    /// entries for the next open or `get`.
+    /// Removes every entry idle past its [`Self::idle_expiry`], keeping a
+    /// tombstone for each, and drops tombstones a further expiry old, joining
+    /// each entry's threads as a close does. A lock that will not open leaves
+    /// its entries for the next open or `get`.
     fn sweep_expired(&self) {
         let expired = {
             let Ok(mut entries) = self.entries.lock() else {
@@ -88,16 +129,24 @@ impl AsrSessions {
                     .last_used
                     .lock()
                     .ok()
-                    .is_some_and(|at| at.elapsed() >= ASR_UTTERANCE_IDLE_EXPIRY);
+                    .is_some_and(|at| at.elapsed() >= self.idle_expiry);
                 if past {
                     idle.push(handle.clone());
                 }
             }
+            let Ok(mut tombstones) = self.tombstones.lock() else {
+                return;
+            };
+            let now = Instant::now();
+            for handle in &idle {
+                tombstones.insert(handle.clone(), now);
+            }
+            tombstones.retain(|_, at| at.elapsed() < self.idle_expiry);
             idle.into_iter()
-                .filter_map(|handle| entries.remove(&handle))
+                .filter_map(|handle| entries.remove(&handle).map(|entry| (handle, entry)))
                 .collect::<Vec<_>>()
         };
-        for entry in expired {
+        for (_, entry) in expired {
             let Ok(mut state) = entry.state.lock() else {
                 continue;
             };
