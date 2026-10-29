@@ -16,6 +16,7 @@
 //! box; it parks only on a host that lends no Dreamer model.
 
 use super::confession::{confession_ask, parse_confession};
+use super::request_sources::{CallBackend, SourcedBackend};
 use super::step_charge::StepChargeTally;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::{
@@ -64,6 +65,9 @@ pub struct TaskRealizeModel<'a> {
     /// The host's wording of the confession ask (FIX 8696), after the
     /// brief's objectives.
     pub confession: &'a str,
+    /// `backend` bound per call to the rows its input was read from, when
+    /// the host lends that (FIX 6998).
+    pub sourced: Option<&'a dyn SourcedBackend>,
 }
 
 fn invalid(reason: &str) -> Error {
@@ -193,9 +197,11 @@ pub async fn run_task_realize(
         now_ms: ctx.now_ms,
     };
     let mut charges = StepChargeTally::default();
+    // The spec and brief are the TASK's own: the call sends under its row.
+    let backend = CallBackend::new(model.backend, model.sourced, Some(vec![task]));
     let response = match call_as_step_checked(
         &step_ctx,
-        model.backend,
+        backend.get(),
         model.guard,
         request,
         &check_realize_reply,
