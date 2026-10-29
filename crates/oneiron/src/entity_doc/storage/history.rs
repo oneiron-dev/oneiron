@@ -107,7 +107,7 @@ fn read_with_scratch(
 ) -> Option<Vec<u8>> {
     let at = decode_frontier(frontier).ok()?;
     if scratch.is_none() {
-        *scratch = EntityDoc::from_loro(doc.doc.fork()).ok()?;
+        *scratch = Some(EntityDoc::from_loro(doc.doc.fork()).ok()?);
     }
     let scratch = scratch.as_ref()?;
     scratch.doc.checkout(&at).ok()?;
