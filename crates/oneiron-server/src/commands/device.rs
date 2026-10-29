@@ -50,8 +50,10 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
         "pass the pairing link on stdin: `oneiron token pair --machine yours` prints it on the \
          home"
     );
-    let record = crate::device_sync::enrol(&vault, &files, &link)?;
+    // Read before the enrolment, as it reads it: nothing that can fail runs
+    // after the link is spent.
     let (request_code, enrolment) = shown_request(&vault)?;
+    let record = crate::device_sync::enrol(&vault, &files, &link)?;
     super::owner::emit(&Enrolled {
         home_machine: record.home_machine,
         home_node_id: record.home_node_id,
@@ -64,14 +66,17 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
     })
 }
 
-/// This machine's enrolment request for its vault, the one `enrol` sent, and
-/// the code it shows for it (`RequestCode::to_text`).
+/// This machine's enrolment request for its vault, the one `enrol` sends
+/// (the same request: its proof is a deterministic signature), and the code
+/// it shows for it (`RequestCode::to_text`).
 fn shown_request(vault: &oneiron::Vault) -> anyhow::Result<(String, serde_json::Value)> {
     use crate::owner::vault_key::hex;
-    let vault_id = vault
-        .authority_fold()?
-        .vault_id
-        .ok_or_else(|| anyhow::anyhow!("this vault has no authority root yet"))?;
+    let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "this vault has no authority root yet, so it is not the home's vault; a device \
+                 enrols a copy of its home's vault"
+        )
+    })?;
     let request =
         vault.machine_enrolment_request(vault_id, vault.machine_encryption_key(vault_id)?)?;
     let enrolment = serde_json::json!({
