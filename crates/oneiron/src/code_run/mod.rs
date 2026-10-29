@@ -114,9 +114,8 @@ pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCaptu
 pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
-    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
-    read_result_in, refusal as result_refusal, resolve as resolve_result, result_cards_in,
-    unknown_handle,
+    Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card, read_result_in,
+    refusal as result_refusal, resolve as resolve_result, result_cards_in, unknown_handle,
 };
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::undecodable_step_capsule_in_txn;
