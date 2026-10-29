@@ -4,11 +4,14 @@
 //! each lists only what its caller's own call doors would admit: no row for
 //! a caller those doors refuse, only rows the vault's inference policy
 //! admits, and only rungs live now. Each row carries its price as the
-//! vault's model registry holds it, and what the meter its call spends has
-//! left. Listing reserves nothing, and a call is judged again at its door.
+//! vault's model registry holds it, beside the quote of the backend that
+//! serves it when the registry holds one (FIX 3206), and what the meter its
+//! call spends has left. Listing reserves nothing, and a call is judged again
+//! at its door.
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron::llm::media::{AiOperation, MediaRequest, Modality};
+use oneiron::llm::registry::{ModelRegistryRow, PricedModelBackend};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext, LlmCatalogCost};
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
@@ -20,14 +23,34 @@ use crate::server::{SyncServer, admit_media};
 
 /// One row a caller could call now: the model row, its price per million
 /// tokens as the vault's model registry holds it (`None` when no
-/// registered row prices it), and what the meter a call of it spends has
-/// left, in token units (`None` when that meter is not built).
+/// registered row prices it), the serving backend's own quote (`None` when
+/// the registry holds none for the backend the row is served by), and what
+/// the meter a call of it spends has left, in token units (`None` when that
+/// meter is not built).
 #[derive(Debug, Serialize)]
 pub(crate) struct OptionRow {
     #[serde(flatten)]
     row: MediaRow,
     cost: Option<LlmCatalogCost>,
+    backend_quote: Option<PricedModelBackend>,
     units_left: Option<u64>,
+}
+
+impl OptionRow {
+    /// `row` with its registered price and its serving backend's quote, and
+    /// `units_left` on its meter.
+    fn priced(server: &SyncServer, row: MediaRow, units_left: Option<u64>) -> Self {
+        let registered = registered_row(server, &row);
+        let backend_quote = registered
+            .as_ref()
+            .and_then(|registered| backend_quote(registered, &row));
+        Self {
+            cost: registered.and_then(|registered| registered.catalog.cost),
+            backend_quote,
+            row,
+            units_left,
+        }
+    }
 }
 
 /// The rows a caller could call now, and what the media meter has left for
@@ -72,12 +95,7 @@ pub(crate) fn caller_options(
             } else {
                 media_left
             };
-            let cost = registered_cost(server, &row);
-            OptionRow {
-                row,
-                cost,
-                units_left,
-            }
+            OptionRow::priced(server, row, units_left)
         })
         .collect();
     CallerOptions {
@@ -108,11 +126,7 @@ pub(crate) fn run_options(
         .ai_options(Some(AiOperation::Speech), inputs)
         .into_iter()
         .filter(|row| policy_admits(server, row))
-        .map(|row| OptionRow {
-            cost: registered_cost(server, &row),
-            row,
-            units_left: run_left,
-        })
+        .map(|row| OptionRow::priced(server, row, run_left))
         .collect();
     CallerOptions {
         options,
@@ -120,12 +134,22 @@ pub(crate) fn run_options(
     }
 }
 
-/// `row`'s price as the vault's model registry holds it.
-fn registered_cost(server: &SyncServer, row: &MediaRow) -> Option<LlmCatalogCost> {
+/// `row`'s model as the vault's model registry holds it.
+fn registered_row(server: &SyncServer, row: &MediaRow) -> Option<ModelRegistryRow> {
     ModelId::new(row.model.clone())
         .ok()
         .and_then(|model| server.vault.model_registry_row(&model).ok().flatten())
-        .and_then(|registered| registered.catalog.cost)
+}
+
+/// The quote `registered` holds for the backend `row` is served by: the
+/// backend row its configured provider names. A registry whose backends do
+/// not read gives none, never another backend's price.
+fn backend_quote(registered: &ModelRegistryRow, row: &MediaRow) -> Option<PricedModelBackend> {
+    registered
+        .backends()
+        .ok()?
+        .into_iter()
+        .find(|backend| backend.pin.backend == row.provider)
 }
 
 /// Whether the vault's inference policy admits a plain call of `row`'s
