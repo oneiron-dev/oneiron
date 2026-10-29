@@ -74162,7 +74162,7 @@
      "purpose": "The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host…",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 12
      }
     },
@@ -86389,15 +86389,17 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ErasedHoldTarget",
       "RecordError",
       "RoomLiveSpeakersHold"
      ],
      "path": "src/error/record.rs",
      "purpose": "Record-domain errors: body validation and identity-collision refusals for the stored record families —…",
      "surface": {
-      "const": 1,
-      "crate-vis": 1,
-      "enum": 1,
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -101433,6 +101435,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openapi/owner_rest_paths.rs",
+     "purpose": "The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289): each body and answer is read…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openapi/security.rs",
      "purpose": "Security-scheme wiring and schema property-description helper",
      "surface": {
@@ -101506,7 +101518,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -101916,7 +101928,7 @@
      "path": "src/api/owner_routes/owner_work_routes.rs",
      "purpose": "`/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -104661,7 +104673,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 15,
-      "re-export": 26
+      "re-export": 27
      }
     },
     {
@@ -104983,6 +104995,20 @@
      "purpose": "A sealed vault's page seal from this device's keystore (moved out of `server_config` whole)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PolicyConfig"
+     ],
+     "path": "src/config/policy.rs",
+     "purpose": "The `[policy]` section: the host's wording and settings for the owner plane's policy notices (FIX 5042)…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -111727,7 +111753,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "re-export": 5,
       "struct": 5
      }
@@ -112321,7 +112347,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 592,
+     "files": 593,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -112405,7 +112431,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 62,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -112813,7 +112839,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1353,
+   "source_files": 1355,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -113181,6 +113207,7 @@
       "ArtifactExportRequest",
       "ArtifactKind",
       "ArtifactLinkToken",
+      "ArtifactPin",
       "ArtifactPointer",
       "ArtifactPointerChannel",
       "ArtifactPointerRequest",
@@ -113283,6 +113310,10 @@
       "BatchStep",
       "BatchStopCause",
       "BeginMessageStreamRequest",
+      "BindingMoveLink",
+      "BindingMoveState",
+      "BindingNotApplied",
+      "BindingSource",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -113423,6 +113454,7 @@
       "CalendarSel",
       "CalendarSyncOutcome",
       "CalibrationPair",
+      "CalibrationResult",
       "CallAttemptRef",
       "CallClass",
       "CallEnvelope",
@@ -113563,6 +113595,8 @@
       "CheckoutTakeoverInput",
       "CheckoutTeardownInput",
       "CheckoutTornDown",
+      "CheckpointFileKind",
+      "CheckpointFilePin",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
@@ -114419,6 +114453,7 @@
       "ExplainScoreEvidence",
       "ExportAnswer",
       "ExportChannel",
+      "ExportCheck",
       "ExportDiaryRead",
       "ExportTransfer",
       "ExternalImportDoor",
@@ -114695,6 +114730,7 @@
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
+      "HeldOutResult",
       "HeldOutSelection",
       "HolderKind",
       "HookActorClass",
@@ -115587,6 +115623,7 @@
       "PendingActMatured",
       "PendingActStarted",
       "PendingAuthorityAct",
+      "PendingEmbedderBinding",
       "PendingProposalKind",
       "PendingProposalView",
       "PeopleListRequest",
@@ -115605,6 +115642,7 @@
       "PersonaSnapshotPreviewRequest",
       "PersonaSnapshotPreviewRow",
       "PersonaSnapshotTextEdit",
+      "PinnedCheckpoint",
       "PinnedPack",
       "PinnedRef",
       "PixelRegion",
@@ -115811,6 +115849,7 @@
       "QuestionDefinitionDecisionQuestion",
       "QuestionDefinitionDecisionQuestionInput",
       "QuestionEditRequest",
+      "QuestionExportCheck",
       "QuestionMedia",
       "QuestionOutcomes",
       "QuestionOutcomesProjectRequest",
@@ -116131,6 +116170,7 @@
       "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
+      "RoleSwapReceipt",
       "RoomClaimOutcome",
       "RoomClaimReceipt",
       "RoomClaimRequest",
@@ -116643,6 +116683,7 @@
       "SnapshotSecretLiftProposal",
       "SourceConflict",
       "SourceFamily",
+      "SourcePin",
       "SourceSpan",
       "SourceTrust",
       "SourceTrustRow",
@@ -116761,6 +116802,7 @@
       "SupportGrantView",
       "SupportHolderClass",
       "SurfaceBand",
+      "SwapChoice",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -117180,8 +117222,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1027,
-      "struct": 3138
+      "enum": 1032,
+      "struct": 3149
      }
     },
     {
