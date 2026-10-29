@@ -345,7 +345,7 @@ pub struct QuestionPaused {
 /// question's backfill. From `at` (now when absent) the question pump
 /// answers, once, each covered unit with no answer at `expected_version`.
 /// A later schedule replaces it and an edit retires it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionBackfillRequest {
     pub id: EntityId,
@@ -354,6 +354,11 @@ pub struct QuestionBackfillRequest {
     /// When the backfill falls due, in unix seconds.
     #[serde(default)]
     pub at: Option<u64>,
+    /// An explicit recipe for a graph question: each unit and the exact
+    /// sources its answer is shown, in place of the unit's neighbours
+    /// (FIX 2383). Absent or empty: the default neighbourhood recipe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joins: Vec<crate::llm::decision::questions::GraphQuestionInput>,
 }
 
 /// `vault.questions.read`'s input: one of the caller's standing questions,
