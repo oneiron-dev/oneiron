@@ -38,8 +38,6 @@ pub(super) const PROPOSALS: SideTable<EntityId, LensProposalRecord, Named> =
 /// The owner's selected revision per pack/skill slot. Key: [`slot_key`].
 pub(super) const SLOTS: SideTable<String, LensSlotRecord, Named> =
     SideTable::new(&side_table::LENS_SLOT);
-/// The largest frozen tree a proposal stores, as canonical JSON.
-pub const LENS_PROPOSAL_MAX_BYTES: usize = 1024 * 1024;
 /// The most rows one `vault.lenses.list` page returns.
 pub const LENS_LIST_MAX_PAGE: usize = 200;
 
@@ -241,13 +239,10 @@ impl Memory<'_> {
                 "compiled must target this vault's lens atom kit and apps contract",
             ));
         }
+        // The tree is stored whole, whatever its size: its author holds it
+        // and sent it whole (FIX 11257).
         let compiled_json = serde_json::to_string(&compiled)
             .map_err(|_| Error::InvalidConfig("lens tree did not encode".into()))?;
-        if compiled_json.len() > LENS_PROPOSAL_MAX_BYTES {
-            return Err(MemoryError::bad_request(format!(
-                "compiled is at most {LENS_PROPOSAL_MAX_BYTES} bytes"
-            )));
-        }
         let intent = LensIntentRecord::new(input.intent_prompt)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         // An axis the credential's binding leaves open is declared only by an

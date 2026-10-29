@@ -36,7 +36,8 @@ pub use crate::claim::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
 pub use guest::{
-    LENS_GUEST_MEMORY_BYTES, LENS_GUEST_STEP_FUEL, LensExecutionRuntime, LensGuestPolicy,
+    LENS_GUEST_COMPONENT_BYTES, LENS_GUEST_MEMORY_BYTES, LENS_GUEST_STEP_FUEL,
+    LensExecutionRuntime, LensGuestPolicy,
 };
 pub use inspection::{
     INSPECTION_HANDLE_LEN, INSPECTION_HANDLE_VERSION, InspectionHandle, InspectionResolveRequest,
@@ -60,8 +61,8 @@ pub use activation::{
     LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
 };
 pub use proposal::{
-    LENS_LIST_MAX_PAGE, LENS_PROPOSAL_MAX_BYTES, LensListPage, LensListRequest, LensListRow,
-    LensProposalState, LensProposeRequest, LensSlot,
+    LENS_LIST_MAX_PAGE, LensListPage, LensListRequest, LensListRow, LensProposalState,
+    LensProposeRequest, LensSlot,
 };
 pub use regen::{
     LensRegenDecision, LensRegenEnactment, enact_lens_regeneration_embedded,

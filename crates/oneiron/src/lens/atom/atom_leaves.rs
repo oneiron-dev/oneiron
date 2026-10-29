@@ -139,11 +139,42 @@ impl<'de> Deserialize<'de> for TextBlockAtom {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct TextBlockAtomWire {
-            spans: Vec<LensTextSpan>,
+            spans: Vec<SpanWire>,
         }
 
+        /// A span as it arrives: a literal of any length, framed below.
+        #[derive(Deserialize)]
+        #[serde(
+            tag = "type",
+            content = "value",
+            rename_all = "snake_case",
+            deny_unknown_fields
+        )]
+        enum SpanWire {
+            Literal(String),
+            Interpolation {
+                key: LensHandleName,
+                fallback: LensText,
+            },
+        }
+
+        // A literal past one lens text's bound is carried whole as framed
+        // spans in order, never refused for its length (FIX 11257).
         let wire = TextBlockAtomWire::deserialize(deserializer)?;
-        let atom = Self { spans: wire.spans };
+        let spans = wire
+            .spans
+            .into_iter()
+            .flat_map(|span| match span {
+                SpanWire::Literal(text) => LensText::frames(&text)
+                    .into_iter()
+                    .map(LensTextSpan::Literal)
+                    .collect::<Vec<_>>(),
+                SpanWire::Interpolation { key, fallback } => {
+                    vec![LensTextSpan::Interpolation { key, fallback }]
+                }
+            })
+            .collect();
+        let atom = Self { spans };
         atom.validate().map_err(de::Error::custom)?;
         Ok(atom)
     }
