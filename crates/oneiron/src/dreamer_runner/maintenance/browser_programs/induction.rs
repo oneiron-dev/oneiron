@@ -187,6 +187,7 @@ pub(super) fn induce(
         replay_args,
         supersedes: predecessor.map(|program| program.id.clone()),
         seed: None,
+        candidate: None,
     };
     let program = WorkflowProgram {
         subgoal: proposal.subgoal.clone(),
