@@ -225,14 +225,14 @@ const ACTS: SideTable<u64, PolicySettingActReceipt, Named> =
 /// mandatory one; `None` where a revision or the value did not read. With
 /// no `surface`, the host named none, so nothing is recorded and the write
 /// stands as it is.
-pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
+pub(crate) fn record_policy_setting_act_in_txn<P: Serialize, V: Serialize>(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     setting: PolicySetting,
     owner: EntityId,
     surface: Option<ActSurface>,
-    prior: &T,
-    value: &T,
+    prior: &P,
+    value: &V,
 ) -> Result<Option<PolicySettingAct>> {
     let Some(surface) = surface else {
         return Ok(None);
