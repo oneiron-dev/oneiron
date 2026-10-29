@@ -251,7 +251,9 @@ pub(super) fn outcomes_in_txn(
 /// magnitude, or a count-only row's category.
 fn outcome_label(row: EvidenceRow) -> Option<String> {
     match (row.outcome_label, row.observation) {
-        (Some(label), _) | (None, Observation::Category(label)) => Some(label),
+        (Some(label), _) | (None, Observation::Category(label) | Observation::CountOnly(label)) => {
+            Some(label)
+        }
         (None, Observation::Success(_) | Observation::Magnitude(_)) => None,
     }
 }
