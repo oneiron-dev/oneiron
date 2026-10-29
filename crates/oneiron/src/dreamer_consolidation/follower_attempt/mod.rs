@@ -288,6 +288,9 @@ impl ConsolidationExecutor<'_> {
                 if let Err(error) =
                     charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
                 {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
                     return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
                 }
                 if failure_policy.is_some() {
@@ -464,6 +467,9 @@ impl ConsolidationExecutor<'_> {
                 if let Err(error) =
                     charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
                 {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
                     return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
                 }
                 if failure_policy.is_some() {

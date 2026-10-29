@@ -291,12 +291,16 @@ impl ConsolidationExecutor<'_> {
         {
             Ok(StepOutcome::Finished {
                 response,
+                memoized,
                 failure_policy,
                 ..
             }) => {
                 if let Err(error) =
                     charges.record_terminal(ctx.vault, run.attempt_id, hash, &response.usage)
                 {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
                     return spent_or_deferred(error, ctx, charges).map(Some);
                 }
                 // A fallback reply is no review: the NOTE stays unseen, so

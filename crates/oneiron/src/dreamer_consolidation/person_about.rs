@@ -654,10 +654,15 @@ impl<E> PersonAboutExecutor<'_, E> {
             )
             .await
             {
-                Ok(StepOutcome::Finished { response, .. }) => {
+                Ok(StepOutcome::Finished {
+                    response, memoized, ..
+                }) => {
                     if let Err(error) =
                         charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
                     {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
                         return spent_or_deferred(error, ctx, &charges);
                     }
                     response

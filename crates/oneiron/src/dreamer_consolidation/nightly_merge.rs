@@ -360,6 +360,7 @@ impl ConsolidationExecutor<'_> {
             {
                 Ok(StepOutcome::Finished {
                     response,
+                    memoized,
                     failure_policy,
                     ..
                 }) => {
@@ -369,6 +370,9 @@ impl ConsolidationExecutor<'_> {
                         hash,
                         &response.usage,
                     ) {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
                         return super::residency::spent_or_deferred(error, ctx, &charges);
                     }
                     if failure_policy.is_some() {

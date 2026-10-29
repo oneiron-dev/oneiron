@@ -139,6 +139,13 @@ impl BranchResources<'_> {
         }
     }
 
+    /// Every row id this branch pinned: each part's conversation, even one
+    /// whose part is empty, each queued TURN and each admitted prior head,
+    /// even one the listing does not show (FIX 7019).
+    pub(in crate::dreamer_consolidation) fn pinned_source_ids(&self) -> Vec<EntityId> {
+        self.sources.keys().copied().collect()
+    }
+
     /// [`Self::pins`] owned, with every pinned TURN text verification could
     /// cite.
     pub(in crate::dreamer_consolidation) fn owned_pins(&self) -> OwnedPins {

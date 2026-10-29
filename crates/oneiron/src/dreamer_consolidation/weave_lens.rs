@@ -92,13 +92,18 @@ async fn lens_step(
     };
     Ok(
         match call_as_step(step_ctx, backend, model.guard, request).await {
-            Ok(StepOutcome::Finished { response, .. }) => {
+            Ok(StepOutcome::Finished {
+                response, memoized, ..
+            }) => {
                 if let Err(error) = charges.record_terminal(
                     step_ctx.vault,
                     step_ctx.attempt_id,
                     step_hash,
                     &response.usage,
                 ) {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
                     return spent_or_deferred(error, ctx, charges).map(LensStep::Exit);
                 }
                 LensStep::Answer(response)

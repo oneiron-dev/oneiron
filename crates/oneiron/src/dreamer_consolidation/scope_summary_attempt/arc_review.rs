@@ -380,6 +380,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                     step_hash,
                     &response.usage,
                 ) {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
                     return Ok(Called::Exit(charges.park_on_error(&error)));
                 }
                 response
