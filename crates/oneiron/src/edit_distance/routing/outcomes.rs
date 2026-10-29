@@ -32,18 +32,7 @@ pub(super) fn run_outcome_in_txn(
     txn: &heed::RoTxn<'_>,
     judgment: &AmendmentJudgment,
 ) -> Result<Option<String>> {
-    let Some(attempt) = judgment.attempt_receipt.as_deref() else {
-        return Ok(None);
-    };
-    let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
-    else {
-        return Ok(None);
-    };
-    let Some(task) = receipt
-        .trigger_ref
-        .as_deref()
-        .and_then(|hex| EntityId::from_hex(hex).ok())
-    else {
+    let Some(task) = task_of_run_in_txn(vault, txn, judgment)? else {
         return Ok(None);
     };
     let Some(settled) = crate::task_verb::settled_receipt_in(vault, txn, task)? else {
@@ -58,4 +47,29 @@ pub(super) fn run_outcome_in_txn(
     };
     let anchored = crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &settler)?;
     Ok(anchored.then_some(settled.outcome))
+}
+
+/// The TASK the run behind `judgment` worked: the judgment's attempt, joined
+/// through its pack receipt's trigger ref. `None` when the judgment names no
+/// attempt or the attempt names no TASK.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn task_of_run_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    judgment: &AmendmentJudgment,
+) -> Result<Option<EntityId>> {
+    let Some(attempt) = judgment.attempt_receipt.as_deref() else {
+        return Ok(None);
+    };
+    let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, attempt)?
+    else {
+        return Ok(None);
+    };
+    Ok(receipt
+        .trigger_ref
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok()))
 }

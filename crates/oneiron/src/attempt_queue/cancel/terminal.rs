@@ -44,6 +44,11 @@ impl AttemptQueue<'_> {
         let outcome = self.finish_landing_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        // FIX 11482: a landed row's job notice commits here, outside any
+        // owner scope, so this door sends the signal itself.
+        if matches!(outcome, FinishLandingOutcome::Landed(_)) {
+            self.store.notify_notification_updates();
+        }
         Ok(outcome)
     }
 
@@ -199,6 +204,11 @@ impl AttemptQueue<'_> {
         let outcome = self.force_cancel_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        // FIX 11482: a cancelled row's job notice commits here, outside
+        // any owner scope, so this door sends the signal itself.
+        if matches!(outcome, ForceCancelOutcome::Cancelled(_)) {
+            self.store.notify_notification_updates();
+        }
         // Committed: the step its lease was running stops (FIX 600).
         if let ForceCancelOutcome::Cancelled(record) = &outcome {
             crate::engine_executor::stop_attempt_step(self.vault, record.id, record.attempt_count);
