@@ -291,7 +291,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/comm_widen_doors.rs` | src | s | 1 crate-vis | — | The owner's revoke of a recorded stop-asking choice (FIX 11104): `vault.tasks.comm_widen.revoke`, over the… |
 | `src/api/facade/commitment_doors.rs` | src | s | 7 crate-vis | — | Owner-bound projections of the typed commitment lifecycle |
 | `src/api/facade/compliance_doors.rs` | src | s | 4 crate-vis | — | Compliance owner decisions use the request's owner proof and its own Memory |
-| `src/api/facade/connector_call_doors.rs` | src | s | 6 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
+| `src/api/facade/connector_call_doors.rs` | src | s | 5 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/connector_pack_doors.rs` | src | m | 7 crate-vis | — | Source-bound connector packs over the existing owner, probe and slate doors |
 | `src/api/facade/connector_revision_doors.rs` | src | s | 5 crate-vis | — | FIX 988: the owner's doors onto proposed connector slate revisions, shared by HTTP, SDK and MCP: his ruling… |
 | `src/api/facade/connector_slate_doors.rs` | src | s | 2 crate-vis | — | FIX 987: the owner's slate re-draft and a key holder's own narrow, shared by HTTP, SDK and MCP |
@@ -551,7 +551,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/openapi/owner_paths/routes_a_to_e.rs` | src | m | 1 crate-vis | — | The `/v1/owner` routes from `/agent-grants` through `/embedding-spaces`, in path order: one table of… |
 | `src/api/openapi/owner_paths/routes_f_to_packs.rs` | src | m | 1 crate-vis | — | The `/v1/owner` routes from `/federation` through `/packs`, in path order: one table of… |
 | `src/api/openapi/owner_paths/routes_pads_to_w.rs` | src | m | 1 crate-vis | — | The `/v1/owner` routes from `/pads` through `/worlds`, in path order: one table of… |
-| `src/api/openapi/owner_rest_paths.rs` | src | s | 1 crate-vis | — | The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289): each body and answer is read… |
+| `src/api/openapi/owner_rest_paths.rs` | src | m | 1 crate-vis | — | The REST shapes of owner routes that mirror no SDK row (FIX 4782, FIX 10289, FIX 11103, FIX 11611): each… |
 | `src/api/openapi/security.rs` | src | s | 2 crate-vis | — | Security-scheme wiring and schema property-description helper |
 | `src/api/openapi/signing_paths.rs` | src | m | 2 crate-vis | — | The public signing ceremony routes (`/sign/*`, DOOR-117): their payload and answer schemas are the verb… |
 | `src/api/openapi/voice_bank_paths.rs` | src | s | 1 crate-vis | — | The voice bank's `/v1/ai/voices` routes in the OpenAPI document (DOOR-143) |
@@ -559,62 +559,65 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/operator_routes.rs` | src | s | 1 crate-vis | — | `/v1/operator`: the host operator's own acts |
 | `src/api/org_admin.rs` | src | s | 2 crate-vis | — | Owner-only setup and the Console's closed organization action list |
 | `src/api/owner_origin.rs` | src | s | 1 crate-vis | — | `/v1/owner/origin-authority`: the owner's origin cutover (ARCH-0068 RA7) |
-| `src/api/owner_routes.rs` | src | L | 12 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
+| `src/api/owner_routes.rs` | src | L | 35 crate-vis | — | `/v1/owner`: the vault owner's own actions over HTTP |
 | `src/api/owner_routes/account_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/cloud-registration`: the owner links this vault to the Oneiron cloud account and manages that… |
 | `src/api/owner_routes/agent_grant_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/agent-grants`: the owner grants a named agent (the seeded Coach included) an explicit verb list… |
 | `src/api/owner_routes/authority_clock_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/authority/clock/repair`: the owner's repair of a damaged authority clock floor (FIX 10106)… |
 | `src/api/owner_routes/backup_setting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/settings/backup`: the owner's backup setting (FIX 5621), whether this server takes backups on its… |
-| `src/api/owner_routes/browser_takeover_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/browsers*`: the owner takes a run's browser over (CUA-001), to sign in or pay inside the same… |
+| `src/api/owner_routes/browser_takeover_routes.rs` | src | m | 7 crate-vis | — | `/v1/owner/browsers*`: the owner takes a run's browser over (CUA-001), to sign in or pay inside the same… |
 | `src/api/owner_routes/budget_hold_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/runs/hold`: the owner reads a run its budget held (OF-541, ARCH-0079 #budget) and resumes it |
-| `src/api/owner_routes/checkpoint_policy_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/checkpoint-policy`: the owner selects which roots attest his authority checkpoint images, and how… |
+| `src/api/owner_routes/checkpoint_policy_routes.rs` | src | m | 4 crate-vis | — | `/v1/owner/checkpoint-policy`: the owner selects which roots attest his authority checkpoint images, and how… |
 | `src/api/owner_routes/cleanup_decide.rs` | src | s | 2 crate-vis | — | `/v1/owner/cleanup/review` and `/v1/owner/cleanup/decide`: one open cleanup proposal reviewed slot by slot… |
 | `src/api/owner_routes/commitment_routes.rs` | src | s | 1 crate-vis | — | Owner doors for where commitment reminders go (OF-187) |
-| `src/api/owner_routes/concern_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health cards (OF-568) with its run-tree… |
-| `src/api/owner_routes/conflict_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
-| `src/api/owner_routes/connector_admission_routes.rs` | src | L | 9 crate-vis | — | `/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a… |
-| `src/api/owner_routes/connector_consent_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/connectors/consent`: the owner's one act that lets an actor call a catalog connector's tools… |
+| `src/api/owner_routes/concern_routes.rs` | src | s | 9 crate-vis | — | `/v1/owner/inbox/concern`: the owner reads one of the Coach's agent-health cards (OF-568) with its run-tree… |
+| `src/api/owner_routes/conflict_routes.rs` | src | m | 8 crate-vis | — | `/v1/owner/conflicts`: the contradictions the vault holds open, and the owner's settlement of one (OF-023… |
+| `src/api/owner_routes/connector_admission_routes.rs` | src | L | 10 crate-vis | — | `/v1/owner/connectors/register`, `/setup`, `/slate/accept` and `/qualify`: the owner's first admission of a… |
+| `src/api/owner_routes/connector_admission_routes/schema.rs` | src | s | 9 crate-vis | — | The OpenAPI schemas of the connector admission writes (FIX 11611): `POST /v1/owner/connectors/register`… |
+| `src/api/owner_routes/connector_consent_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/connectors/consent`: the owner's one act that lets an actor call a catalog connector's tools… |
 | `src/api/owner_routes/connector_slate_routes.rs` | src | s | 2 crate-vis | — | `/v1/owner/connectors/slate/redraft` (FIX 987): the owner asks the host's configured drafter to re-draft one… |
-| `src/api/owner_routes/connector_subscription_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/connectors/subscriptions`: the owner's door that lets an agent answer a built-in channel (OF-519) |
-| `src/api/owner_routes/conversation_learning_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/conversation-learning`: the vault's "Learn from my conversations" setting, and each person's own… |
-| `src/api/owner_routes/courtesy_delete_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route |
-| `src/api/owner_routes/craft_candidate_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/craft-candidates`: the owner lists the craft notes residents' dreaming proposed about themselves… |
+| `src/api/owner_routes/connector_subscription_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/connectors/subscriptions`: the owner's door that lets an agent answer a built-in channel (OF-519) |
+| `src/api/owner_routes/conversation_learning_routes.rs` | src | m | 5 crate-vis | — | `/v1/owner/conversation-learning`: the vault's "Learn from my conversations" setting, and each person's own… |
+| `src/api/owner_routes/courtesy_delete_routes.rs` | src | s | 9 crate-vis | — | `/v1/owner/courtesy-delete`: courtesy unsend (OF-273), behind the same owner door as every other owner route |
+| `src/api/owner_routes/craft_candidate_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/craft-candidates`: the owner lists the craft notes residents' dreaming proposed about themselves… |
 | `src/api/owner_routes/decision_ask_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/decisions/asks`: the typed decisions the host's ladder asked the vault owner (ARCH-0076, its last… |
-| `src/api/owner_routes/desktop_takeover_routes.rs` | src | m | 2 crate-vis | — | `/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001) |
-| `src/api/owner_routes/diary_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8) |
+| `src/api/owner_routes/desktop_takeover_routes.rs` | src | m | 7 crate-vis | — | `/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001) |
+| `src/api/owner_routes/diary_routes.rs` | src | s | 7 crate-vis | — | `/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8) |
 | `src/api/owner_routes/disclosure_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/disclosure`: the owner's doors to contact disclosure (OF-365, the ILDF2 consent channel) |
-| `src/api/owner_routes/dreamer_maintenance_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: "autoapply + revert rather than holdout"): the… |
-| `src/api/owner_routes/dreamer_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner… |
-| `src/api/owner_routes/embedding_space_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/embedding-spaces`: the owner declares embedding spaces, binds kind slots and moves a slot to a… |
+| `src/api/owner_routes/dreamer_maintenance_routes.rs` | src | m | 5 crate-vis | — | `/v1/owner/dreamer/maintenance` (OF-023, owner ruling 10-18: "autoapply + revert rather than holdout"): the… |
+| `src/api/owner_routes/dreamer_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/dreamer`: the Dreamer's own changes, and the owner's revert of any one of them (OF-023, owner… |
+| `src/api/owner_routes/embedding_space_routes.rs` | src | m | 3 crate-vis | — | `/v1/owner/embedding-spaces`: the owner declares embedding spaces, binds kind slots and moves a slot to a… |
 | `src/api/owner_routes/export_audit_routes.rs` | src | s | 1 crate-vis | — | `GET /v1/owner/exports`: the vault's export audit (FIX 6427, owner ruling RT-EXPORT 2026-10-20) |
-| `src/api/owner_routes/federation_connect_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the… |
+| `src/api/owner_routes/federation_connect_routes.rs` | src | s | 7 crate-vis | — | `/v1/owner/federation/connect`: the owner's Connect (ARCH-0043 #relationship-lifecycle, FIX 323), behind the… |
 | `src/api/owner_routes/feedback_triage_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/feedback/triage`: the owner runs the Coach's feedback triage now, reads one run's status, and… |
 | `src/api/owner_routes/free_time_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/free-time`: one agent's free-time policy, its cycles and one cycle's sheet (FIX 4453), behind the… |
 | `src/api/owner_routes/guest_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/guests/revoke`: the owner withdraws one guest's access (an ask guest's or a Connect peer's) at… |
 | `src/api/owner_routes/handoff_alarm_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/authority/handoff-alarms`: the saved fork alarms a held root handoff left (OF-166 = A) |
-| `src/api/owner_routes/history_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner… |
+| `src/api/owner_routes/history_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/history`: the owner's erase history (ARCH-0038), behind the same owner door as every other owner… |
 | `src/api/owner_routes/house_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/workspace/finish`: the owner finishes a stored workspace and its house mind takes the root… |
 | `src/api/owner_routes/inbox_routes.rs` | src | s | 1 crate-vis | — | The owner's cross-identity inbox lens, shared with the typed facade |
-| `src/api/owner_routes/intent_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/intents`: the owner states an intent in his own words (FIX 8949) |
+| `src/api/owner_routes/intent_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/intents`: the owner states an intent in his own words (FIX 8949) |
 | `src/api/owner_routes/learning_setting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/settings/learning`: the owner reads the learned-setting catalog and its own rows, and lays or… |
 | `src/api/owner_routes/legal_hold_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/legal-holds`: the owner's legal holds (OF-470), behind the same owner door as every other owner… |
 | `src/api/owner_routes/machine_routes.rs` | src | s | 4 crate-vis | — | `/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b) |
-| `src/api/owner_routes/model_setting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/settings/models`: the owner's model settings |
+| `src/api/owner_routes/model_setting_routes.rs` | src | s | 2 crate-vis | — | `/v1/owner/settings/models`: the owner's model settings |
 | `src/api/owner_routes/owner_key_enrollment_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/owner-signing-keys`: the owner enrols a device's own Ed25519 owner signing key on the vault's… |
 | `src/api/owner_routes/owner_work_routes.rs` | src | m | 6 crate-vis | — | `/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736) |
 | `src/api/owner_routes/pack_preview_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/packs/preview` (FIX 5493): the owner's look at a pack folder before `POST /v1/owner/packs`… |
 | `src/api/owner_routes/pack_routes.rs` | src | L | 2 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
 | `src/api/owner_routes/pack_routes/line_chats.rs` | src | s | 1 crate-vis | — | `/v1/owner/packs/line/chats`: the LINE groups and rooms the served bot was seen in, as optional offers to… |
 | `src/api/owner_routes/pad_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/pads/read`: the owner reads an agent's sealed scratchpads, stating a reason the agent sees in its… |
-| `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
-| `src/api/owner_routes/proactivity_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
+| `src/api/owner_routes/peer_confidence_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/federation/peer-confidence`: how far this vault believes each federation peer (OF-149) |
+| `src/api/owner_routes/proactivity_routes.rs` | src | L | 2 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
+| `src/api/owner_routes/proactivity_routes/schema.rs` | src | s | 2 crate-vis | — | The OpenAPI schemas of `POST /v1/owner/identity/asks/answer` (FIX 11611) |
 | `src/api/owner_routes/proactivity_routes/training_runs.rs` | src | s | 3 crate-vis | — | `/v1/owner/coach/training-offers/{prepare,authorize,training}` (OF-577): the owner's setup of a Train… |
-| `src/api/owner_routes/recovery_kit_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173) |
+| `src/api/owner_routes/recovery_kit_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173) |
 | `src/api/owner_routes/recovery_kit_target_routes.rs` | src | m | 3 crate-vis | — | The target install's own kit calls (FIX 4736, 4530, 4564, 4955): the material a root change or a late… |
 | `src/api/owner_routes/recovery_kit_target_routes/pad_access.rs` | src | m | 1 crate-vis | — | A late joiner's pad access by the owner's kit, and what the sealed bundle upkeep last moved (FIX 4564, 4953… |
 | `src/api/owner_routes/recovery_kit_target_routes/root_doors.rs` | src | s | 1 crate-vis | — | The root ceremonies made directly on this install while its server runs (FIX 4955): where the owner is… |
 | `src/api/owner_routes/recovery_kit_target_routes/secret_anchor.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/secrets/anchor-sign` (FIX 1956): the owner's recovery kit pushes a portable secret's current… |
 | `src/api/owner_routes/room_thread_setting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/settings/room-threads`: the owner's two switches over Admins and private room threads (owner… |
 | `src/api/owner_routes/root_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/roots/requests`: the owner decides a change to one install's recovery root from any surface he is… |
+| `src/api/owner_routes/schema.rs` | src | s | 14 crate-vis | — | The OpenAPI schemas of the owner routes handled in [`super`] itself (FIX 11611): `POST… |
 | `src/api/owner_routes/secret_control_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/secrets/*`: the owner's custody doors over HTTP (OF-422, WILL L04 row 04) |
 | `src/api/owner_routes/secret_control_routes/pending.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/custody/pending`: the owner's card over a restore's credentials pending on their source's… |
 | `src/api/owner_routes/secret_control_routes/sealed_spool.rs` | src | s | 2 crate-vis | — | The sealed custody change's body, spooled and decoded (FIX 5674, FIX 7917, Rule 5) |
@@ -622,7 +625,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/secret_lift_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/lift*`: the owner's side of the historical lift sweep's proposals (OF-067) |
 | `src/api/owner_routes/secret_reveal_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check) |
 | `src/api/owner_routes/secret_use_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/secrets/bind`: the owner binds a secret to an effector, so an agent's `self.use` can hand it… |
-| `src/api/owner_routes/shared_training_setup_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/conversation-learning/setup`: a shared vault's one training question, asked once at setup (OF-420… |
+| `src/api/owner_routes/shared_training_setup_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/conversation-learning/setup`: a shared vault's one training question, asked once at setup (OF-420… |
 | `src/api/owner_routes/skill_judge_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/skills/judge`: the serve skill judge (OF-495) |
 | `src/api/owner_routes/space_posting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/space-posting`: the per-space ghost-mode dial (ARCH-0063 R10, INB-08) |
 | `src/api/owner_routes/steer_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/steer`: the vault owner's nudge to any live run in the vault, whoever spawned it (FIX 783, Engine… |
@@ -633,7 +636,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/vault_key_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/vault-key`: the vault data key's wraps on a running server (OF-570 E1), the host half of the… |
 | `src/api/owner_routes/weave_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/weave`: the owner's doors to the weave lens (OF-499) |
 | `src/api/owner_routes/widen_proposal_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/widen-proposals`: the owner lists the context-widen proposals agents raised, and approves or… |
-| `src/api/owner_routes/wire_health_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
+| `src/api/owner_routes/wire_health_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
 | `src/api/owner_routes/world_privacy_routes.rs` | src | m | 2 crate-vis | — | `/v1/owner/worlds/privacy`: a holder answers the world-privacy requests agents raised (FIX 4480) |
 | `src/api/owner_routes/world_privacy_work_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/worlds/privacy/settings` and `/reassert`: a holder changes a world's settings, or re-asserts them… |
 | `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
