@@ -467,8 +467,7 @@ fn accept_member_with_amendment_in_txn(
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
     let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
-    // The Δ's proposed end is the claim's revision as reviewed (FIX 7819); a
-    // failed read is the capture's, never the accept's.
+    // Proposed end: the claim as reviewed (FIX 7819); a failed read fails only the capture.
     let reviewed_end = if amended_approval {
         Some((
             live_revision_in_txn(&vault.store, wtxn, *id),
@@ -632,8 +631,7 @@ pub(super) fn captured_amendment_delta(
     }
 }
 
-/// Both ends as their refs name them, the landed body read back from the
-/// write; `None` when either revision is not retained.
+/// Both ends by their refs, the landed body read back; `None` if either is gone.
 fn measured_amendment_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
