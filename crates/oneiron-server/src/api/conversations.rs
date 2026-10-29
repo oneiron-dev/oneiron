@@ -544,6 +544,7 @@ pub(crate) async fn get_core_turn(
         item["reply_strip"] = strip.map_or(Value::Null, |strip| {
             serde_json::json!({
                 "record": strip.record.to_hex(), "revision": strip.revision,
+                "target": strip.target,
                 "text": strip.text, "stale": strip.stale, "withheld": strip.withheld,
             })
         });

@@ -37,9 +37,9 @@ use crate::write_envelope::WriteActor;
 
 mod execute;
 mod planning;
-mod validation;
+mod provenance;
 
-use self::validation::*;
+use self::provenance::*;
 use super::assertions::unproven_creations_in;
 
 // A model stream's continuation terminal judges its reply's records through

@@ -10762,7 +10762,11 @@ pub fn mcp_arguments_schema_from_input(
                 return None;
             }
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
-            &["spec"]
+            properties.insert(
+                "task_ref".to_owned(),
+                schema.pointer("/properties/task_ref")?.clone(),
+            );
+            &["spec", "task_ref"]
         }
         "vault.commit_message" => {
             if schema == &serde_json::Value::Bool(false) {

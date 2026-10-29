@@ -25,12 +25,10 @@
 //!    The refold reads the LEDGER for the first family rather than its receipt
 //!    projection: `identity_topology_events_in_txn` is documented as the one
 //!    enumeration surface "the fold, the receipt projection, and any rebuild
-//!    share", and unlike the public receipt query it is not truncated to the
-//!    newest `MAX_RECEIPT_QUERY_SCAN` rows — a bounded rebuild would delete a
-//!    complete projection and refold a suffix of it, silently erasing trust
-//!    older scopes had earned. Suppression matches the receipt projection's
-//!    exactly: a resolution the fold rejects as a duplicate ruling is not an
-//!    outcome anywhere.
+//!    share", so the rebuild folds the same events the live fold did, with
+//!    no receipt projection between them. Suppression matches the receipt
+//!    projection's exactly: a resolution the fold rejects as a duplicate
+//!    ruling is not an outcome anywhere.
 //! 2. **Graduation** (offer → owner tap → standing grant) is GATED by
 //!    [`op_kind_is_ramp_eligible`]. Identity-topology ops (merge/split/facet/…)
 //!    ride their own consent axis — `IdentityOpWrite::approval`, chosen per

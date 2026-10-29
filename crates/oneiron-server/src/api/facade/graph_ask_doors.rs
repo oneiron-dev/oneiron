@@ -710,16 +710,19 @@ fn asker_lane<'a>(
 }
 
 /// A standing question's dial, checked inside the host's own: the dial the
-/// host's other decisions take, from its first filled rung up to `big`
-/// (`DecisionHost::dial`). A dial that starts below that rung, climbs past
-/// `big` or sets a band that is not a valid band inside the host's is
-/// refused, never stored.
+/// host's other decisions take, from its first filled rung up to the
+/// question's own ceiling past `big` (`DecisionHost::dial`), so a `human`
+/// ceiling stays human and asks the next authorised role (FIX 11232). A dial
+/// that starts below that rung or sets a band that is not a valid band
+/// inside the host's is refused, never stored.
 fn inside_host_dial(
     server: &SyncServer,
     dial: DecisionDial,
     verb: &str,
 ) -> MemoryResult<DecisionDial> {
-    let host = server.decision_host().dial(DecisionRung::Big);
+    let host = server
+        .decision_host()
+        .dial(dial.ceiling.max(DecisionRung::Big));
     host.narrow(dial).map_err(|_| {
         let first = serde_json::to_value(host.first)
             .ok()
@@ -727,11 +730,11 @@ fn inside_host_dial(
             .unwrap_or_default();
         MemoryError::bad_request_with(
             format!(
-                "{verb}'s dial widens the host's: start at or above {first}, end at big or below, \
+                "{verb}'s dial widens the host's: start at or above {first}, end at human or below, \
                  and set a band with low below high inside {}..{}",
                 host.band.low, host.band.high
             ),
-            &["Start the dial at or above the host's first rung, end it at big or below, and keep its band inside the host's."],
+            &["Start the dial at or above the host's first rung, end it at human or below, and keep its band inside the host's."],
         )
     })
 }

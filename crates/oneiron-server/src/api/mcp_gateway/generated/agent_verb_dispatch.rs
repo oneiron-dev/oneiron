@@ -222,7 +222,14 @@ pub(crate) fn mcp_agent_verb_input(
             }
             Ok(input)
         }
-        "tasks.redo" => a.spec.clone().ok_or_else(invalid),
+        "tasks.redo" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.task_ref.as_deref() != map.get("task_ref").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.commit_message" => a.spec.clone().ok_or_else(invalid),
         "vault.begin_message_stream" => a.spec.clone().ok_or_else(invalid),
         "vault.append_to_stream" => a.spec.clone().ok_or_else(invalid),
@@ -1759,6 +1766,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         }
         "tasks.redo" => {
             arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("task_ref") {
+                arguments.insert("task_ref".to_owned(), value.clone());
+            }
         }
         "vault.commit_message" => {
             arguments.insert("spec".to_owned(), input.clone());
