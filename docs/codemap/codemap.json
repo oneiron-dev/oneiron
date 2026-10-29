@@ -409,14 +409,24 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/affect/consolidation.rs",
      "purpose": "Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/affect/consolidation/entity_vad.rs",
+     "purpose": "The turn and message VAD annotation door: write, guard and read one entity's annotation",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -1314,7 +1324,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 2
      }
     },
@@ -13711,7 +13721,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 8,
       "struct": 2
@@ -25103,7 +25113,7 @@
      "purpose": "A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 3
      }
@@ -25135,7 +25145,7 @@
      "path": "src/dreamer_consolidation/resident_dream/reply.rs",
      "purpose": "What a resident's dreaming reply must hold to land: a diary entry",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -26506,7 +26516,7 @@
      "path": "src/dreamer_runner/free_time/cycle.rs",
      "purpose": "A free-time cycle (FIX 4453): its owner-set clock, its opening on the elected home, and its end",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 2,
       "struct": 3
@@ -81231,9 +81241,9 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…"
     },
     "affect": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
@@ -82771,9 +82781,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 115,
+   "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5528,
+   "source_files": 5529,
    "test_files": 902
   },
   "oneiron-android": {
@@ -100729,7 +100739,7 @@
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -101259,7 +101269,7 @@
      "path": "src/api/facade/host_doors/media.rs",
      "purpose": "The `ai.*` media doors past text: options, image, speech, transcription, embedding and video",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -114290,6 +114300,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/web_connector/charge.rs",
+     "purpose": "The charge of a web call on the deploy's backend key (FIX 11604, ARCH-0053 §10a): the call is admitted as a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/web_connector/keys.rs",
      "purpose": "The provider key for one web call",
      "surface": {
@@ -115265,7 +115285,7 @@
      "purpose": "Endpoint discovery and browser access for an external shared web client"
     },
     "web_connector": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -115288,7 +115308,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1422,
+   "source_files": 1423,
    "test_files": 182
   },
   "oneiron-spawn": {

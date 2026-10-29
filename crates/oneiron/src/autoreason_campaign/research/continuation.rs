@@ -498,7 +498,7 @@ fn run_spend_units(vault: &Vault, run: AttemptId, reserved: u64) -> Result<u64> 
 }
 
 /// The text of a finished agent run's answer: the observation its result
-/// TURN names (`attach_resident_run_result`), read from the run's own rows.
+/// TURN names (`attach_agent_run_result`), read from the run's own rows.
 /// `None` when the run left no answer.
 fn run_answer_text(vault: &Vault, record: &AttemptRecord) -> Result<Option<String>> {
     let Some(turn) = record
@@ -514,7 +514,7 @@ fn run_answer_text(vault: &Vault, record: &AttemptRecord) -> Result<Option<Strin
     let Ok(artifact) = rmpv::decode::read_value(&mut bytes.as_slice()) else {
         return Ok(None);
     };
-    if field(&artifact, "kind").and_then(rmpv::Value::as_str) != Some("resident.run_result") {
+    if field(&artifact, "kind").and_then(rmpv::Value::as_str) != Some("agent.run_result") {
         return Ok(None);
     }
     let run = field(&artifact, "run_ref")
