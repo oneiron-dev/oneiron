@@ -113,21 +113,20 @@ impl CampaignProgramStep {
     }
 }
 
-/// Persists a campaign program row.
+/// Persists a campaign program row, raw.
 ///
-/// This is the one door that writes programs, so an audience is validated
-/// here: the query and the campaign share an owner, the campaign is active,
-/// and the entry step is one of this program's own steps. Any number of
-/// programs may enroll from one query; only a second program of the SAME
-/// campaign on the same query is refused (`audience_taken_by`). That check
-/// shares the write's transaction.
+/// An audience is validated here: the query and the campaign share an
+/// owner, the campaign is active, and the entry step is one of this
+/// program's own steps. Any number of programs may enroll from one query;
+/// only a second program of the SAME campaign on the same query is refused
+/// (`audience_taken_by`). That check shares the write's transaction.
 ///
 /// # Errors
 ///
 /// [`Error::EntityNotFound`] when the audience's query does not exist;
 /// [`Error::InvalidConfig`] for an audience the rules above refuse; storage
 /// errors propagate.
-pub fn put_campaign_program(vault: &Vault, program: &CampaignProgram) -> Result<()> {
+pub(crate) fn put_campaign_program(vault: &Vault, program: &CampaignProgram) -> Result<()> {
     if let Some(audience) = &program.audience {
         validate_audience(vault, program, audience)?;
     }
@@ -246,7 +245,7 @@ fn validate_audience(
 /// # Errors
 ///
 /// Storage errors propagate.
-pub fn put_campaign_program_step(vault: &Vault, step: &CampaignProgramStep) -> Result<()> {
+pub(crate) fn put_campaign_program_step(vault: &Vault, step: &CampaignProgramStep) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
         PROGRAM_STEP.put(
             &vault.store,

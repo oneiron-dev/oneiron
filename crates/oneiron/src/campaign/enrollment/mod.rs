@@ -66,8 +66,9 @@ pub use self::program::{
 };
 pub use self::program::{
     CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, campaign_program,
-    campaign_program_step, put_campaign_program, put_campaign_program_step,
+    campaign_program_step,
 };
+pub(crate) use self::program::{put_campaign_program, put_campaign_program_step};
 pub use self::program::{CampaignProgramAudience, campaign_programs_for_query};
 pub use self::runner::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner,
