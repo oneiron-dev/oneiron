@@ -262,6 +262,17 @@ pub(super) async fn slack_manifest(
 pub(super) struct SlackInstallRequest {
     #[serde(default)]
     source: Option<String>,
+    /// `custody-portable`, `custody-device-bound` or `cross-vault`; the
+    /// install's usual portable one when absent.
+    #[serde(default)]
+    class: Option<String>,
+    /// Whether the bot token stays on this device; it replicates when absent.
+    #[serde(default)]
+    device_only: Option<bool>,
+    /// The custody ladder's rung: 0 doored, 1 leased, 2 local-registered;
+    /// the install's usual doored one when absent.
+    #[serde(default)]
+    rung: Option<u8>,
 }
 
 /// `POST /v1/owner/packs/slack/install`: one link that installs the Slack
@@ -279,7 +290,17 @@ pub(super) async fn slack_install(
     let surface =
         super::super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = payload.read(&server).await?;
-    let link =
-        blocking(move || start_slack_install(&server, owner, surface, request.source)).await?;
+    let link = blocking(move || {
+        start_slack_install(
+            &server,
+            owner,
+            surface,
+            request.source,
+            request.class,
+            request.device_only,
+            request.rung,
+        )
+    })
+    .await?;
     Ok(Json(link))
 }

@@ -30,10 +30,6 @@ use crate::{EntityId, Vault, error::Result};
 /// hash and principal digest.
 const PACK_SETUP: SideTable<String, PackSetupSession, Named> =
     SideTable::new(&side_table::SKILL_HUB_PACK_SETUP);
-/// The Candidate catalog a by-name lookup reads before it gives up.
-const MAX_CANDIDATE_SCAN: usize = 4096;
-/// Most sessions one exact source may hold, one per owner principal.
-const MAX_SOURCE_SESSIONS: usize = 64;
 /// The setup skill text a session serves, at most.
 const MAX_INSTRUCTIONS_BYTES: usize = 16 * 1024;
 
@@ -387,10 +383,7 @@ impl Vault {
                 .ok_or_else(|| invalid("no source of this pack has that content hash"));
         }
         let mut found = None;
-        for (seen, entry) in PACK_CANDIDATE.iter_from(&self.store, txn, &[])?.enumerate() {
-            if seen >= MAX_CANDIDATE_SCAN {
-                return Err(invalid("candidate pack catalog exceeds bound"));
-            }
+        for entry in PACK_CANDIDATE.iter_from(&self.store, txn, &[])? {
             let (_, receipt) = entry?;
             if receipt.pack_name == pack && found.replace(receipt).is_some() {
                 return Err(invalid(
@@ -439,9 +432,6 @@ impl Vault {
         let prefix = format!("{pack}/{content_hash}/");
         let mut sessions = Vec::new();
         for entry in PACK_SETUP.iter_from(&self.store, txn, prefix.as_bytes())? {
-            if sessions.len() >= MAX_SOURCE_SESSIONS {
-                return Err(invalid("pack setup sessions exceed bound"));
-            }
             sessions.push(entry?.1);
         }
         Ok(sessions)
@@ -465,9 +455,6 @@ impl Vault {
         let prefix = format!("{pack}/{content_hash}/");
         let mut ended = Vec::new();
         for entry in PACK_SETUP.iter_from(&self.store, &*txn, prefix.as_bytes())? {
-            if ended.len() >= MAX_SOURCE_SESSIONS {
-                return Err(invalid("pack setup sessions exceed bound"));
-            }
             ended.push(entry?);
         }
         for (key, session) in ended {
