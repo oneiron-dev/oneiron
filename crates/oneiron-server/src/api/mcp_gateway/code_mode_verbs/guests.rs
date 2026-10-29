@@ -354,8 +354,9 @@ impl RunBrowser {
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
         // CUA E8a: what the call solved is kept while its seat is held,
         // before the run's planner hears how it ended.
+        let mut solved_capture = None;
         if let Some((capture, mark, input)) = asked {
-            capture.after_call(driver, verb, &input, &output, mark);
+            solved_capture = capture.after_call(driver, verb, &input, &output, mark);
         }
         self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut() {
@@ -382,6 +383,11 @@ impl RunBrowser {
                     serde_json::to_value(ended)
                         .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
                 );
+            }
+            // Its solved-run capture's failure, when it failed (FIX
+            // 10509): a note, never the call's answer refused.
+            if let Some(note) = solved_capture {
+                object.insert("solved_capture".into(), Value::from(note));
             }
         }
         Ok(output)
