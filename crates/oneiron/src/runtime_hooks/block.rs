@@ -124,7 +124,7 @@ impl HookBlock {
         let Some(target) = &self.activation_turn else {
             return true;
         };
-        let Ok(Some(record)) = vault.get_code_run_replay_record(target.run) else {
+        let Ok(Some(record)) = vault.get_code_run_replay_record(&target.run) else {
             return false;
         };
         let completed = u64::try_from(record.step_checkpoints.len()).unwrap_or(u64::MAX);

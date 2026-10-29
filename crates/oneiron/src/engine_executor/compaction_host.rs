@@ -189,6 +189,7 @@ impl EngineNativeExecutor<'_> {
                     folds,
                     hooks,
                     live,
+                    pending: None,
                 })
             },
         );

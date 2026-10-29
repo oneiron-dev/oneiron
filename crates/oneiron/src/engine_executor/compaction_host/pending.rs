@@ -49,8 +49,8 @@ impl EngineNativeExecutor<'_> {
         let mut pin_lines = 0_u64;
         let mut input = None;
         for seq in start..=watermark {
-            let message = super::compaction::window_message(
-                super::compaction::step_message_id(run_id, seq),
+            let message = crate::engine_executor::compaction::window_message(
+                crate::engine_executor::compaction::step_message_id(run_id, seq),
                 turn_id,
                 seq,
                 load_context_output(&self.storage, record, &script_output_path(seq))?,
@@ -62,8 +62,8 @@ impl EngineNativeExecutor<'_> {
                 )?,
             );
             // A line several steps fail with is one pin, kept once.
-            let pin =
-                super::compaction::failure_pin(&message.content).filter(|pin| !pins.contains(pin));
+            let pin = crate::engine_executor::compaction::failure_pin(&message.content)
+                .filter(|pin| !pins.contains(pin));
             let mut added = crate::compaction::compaction_step_input_tokens(&message);
             if let Some(pin) = &pin {
                 pin_lines = pin_lines.saturating_add(count_context_pack_tokens(pin) as u64 + 1);
@@ -129,7 +129,7 @@ impl EngineNativeExecutor<'_> {
             if window.is_empty() {
                 return Err(oversized().into());
             }
-            pins = super::compaction::window_pins(&window);
+            pins = crate::engine_executor::compaction::window_pins(&window);
         }
         let fits = |pins: &[String]| {
             count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
@@ -143,7 +143,7 @@ impl EngineNativeExecutor<'_> {
                     ) <= room
                 })
         };
-        super::compaction::add_profile_pins(
+        crate::engine_executor::compaction::add_profile_pins(
             &mut pins,
             &window,
             &driver.memory_profile().verbatim_pins,
@@ -180,7 +180,7 @@ impl EngineNativeExecutor<'_> {
         // The host's own words: the run's speech since the newest epoch, and
         // that epoch, which its requests rendered.
         let mut host = vec![turn_id];
-        for order in super::compaction::speech_orders(calls) {
+        for order in crate::engine_executor::compaction::speech_orders(calls) {
             host.push(crate::code_run::executor_speech_message_id_in_run(
                 run_ref, run_id, order,
             )?);
@@ -190,7 +190,12 @@ impl EngineNativeExecutor<'_> {
             crate::code_run::ExecutorStorage::Canonical(vault) => {
                 let rtxn = vault.store.env.read_txn().map_err(crate::Error::from)?;
                 (
-                    super::compaction::served_sources(&vault.store, &rtxn, calls, host)?,
+                    crate::engine_executor::compaction::served_sources(
+                        &vault.store,
+                        &rtxn,
+                        calls,
+                        host,
+                    )?,
                     vault.store.clock.entity_id()?,
                 )
             }
@@ -198,7 +203,7 @@ impl EngineNativeExecutor<'_> {
                 let view = binding.session.read_view()?;
                 let rtxn = view.read().base().env.read_txn()?;
                 Ok((
-                    super::compaction::served_sources(&view, &rtxn, calls, host)?,
+                    crate::engine_executor::compaction::served_sources(&view, &rtxn, calls, host)?,
                     crate::store::ManifestDbs::clock(&view).entity_id()?,
                 ))
             })?,
