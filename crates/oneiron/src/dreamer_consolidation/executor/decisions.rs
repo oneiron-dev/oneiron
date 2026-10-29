@@ -266,6 +266,7 @@ impl ConsolidationExecutor<'_> {
                     evidence,
                     state,
                     ceiling: VERDICT_CEILING,
+                    sources: None,
                 },
                 questions,
                 labels,

@@ -323,6 +323,7 @@ impl ConsolidationExecutor<'_> {
                     transcript: &slice.transcript,
                     labels: &slice.labels,
                     scope: &slice.scope,
+                    sources: &slice.sources,
                 }],
                 namespace: pass.namespace,
                 rules: pass.rules,
