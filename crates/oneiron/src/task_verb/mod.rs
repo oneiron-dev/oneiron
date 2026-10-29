@@ -14,6 +14,7 @@ mod ask_preflight;
 mod ask_record;
 mod ask_settlement;
 mod ask_soft_confirm;
+mod session_ask;
 pub(crate) use ask_soft_confirm::validate_dispatch as validate_ask_soft_confirm_dispatch;
 mod ask_soft_confirm_delivery;
 mod ask_soft_confirm_types;
@@ -433,6 +434,7 @@ pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
 pub(crate) use lifecycle_facade::deliver_task_result_in_txn;
+pub(crate) use session_ask::{SessionAskParts, SessionAskRecord};
 
 pub(crate) use ask_effect::ProjectWidenRoute;
 pub use ask_option_link::{TaskAskOptionLink, TaskAskOptionLinkView};

@@ -273,7 +273,8 @@ async fn durable_step(
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
-            return budget_trap(ctx, step_hash).inspect(|_| step_budget_hit(ctx, guard, &request));
+            return budget_trap(ctx, step_hash, BUDGET_PARK_REASON)
+                .inspect(|_| step_budget_hit(ctx, guard, &request));
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -386,7 +387,11 @@ async fn durable_step(
             denied @ (BudgetDenied::Exhausted | BudgetDenied::HostCheck),
         ))) if !answered => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
-            return budget_trap(ctx, step_hash).inspect(|_| {
+            let reason = match denied {
+                BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
+                _ => BUDGET_PARK_REASON,
+            };
+            return budget_trap(ctx, step_hash, reason).inspect(|_| {
                 if denied == BudgetDenied::Exhausted {
                     step_budget_hit(ctx, guard, &request);
                 }
@@ -592,13 +597,21 @@ fn failure_policy(
     Ok(Some(resolve_failure_policy(vault, class)?))
 }
 
-/// A spent budget parks the step's attempt behind a budget trap. The trap
-/// and its park land in one transaction: an open trap over an unparked
-/// attempt reads as plain leased work, which boot recovery requeues and a
-/// fresh budget runs without the signal.
+/// The park reason of a step whose budget is spent.
+const BUDGET_PARK_REASON: &str = "durable step budget exhausted";
+/// The park reason of a step a host check holds: the account owner's
+/// question, never a spent budget (FIX 11227).
+const HOST_CHECK_PARK_REASON: &str = "durable step held by a host check";
+
+/// A spent budget, or a host check, parks the step's attempt behind a budget
+/// trap that records `reason`. The trap and its park land in one
+/// transaction: an open trap over an unparked attempt reads as plain leased
+/// work, which boot recovery requeues and a fresh budget runs without the
+/// signal.
 fn budget_trap(
     ctx: &DurableStepContext<'_>,
     step_hash: [u8; 32],
+    reason: &str,
 ) -> DurableStepResult<StepOutcome> {
     let failure_policy =
         resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
@@ -610,14 +623,14 @@ fn budget_trap(
             ctx,
             DreamerTrapKind::Budget,
             step_hash,
-            "durable step budget exhausted",
+            reason,
             TrapBindingScope::Attempt,
         )?;
         store.park_attempt_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
                 attempt_id: ctx.attempt_id,
-                reason: "durable step budget exhausted".to_owned(),
+                reason: reason.to_owned(),
                 cause: crate::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
                 carried_spend: None,

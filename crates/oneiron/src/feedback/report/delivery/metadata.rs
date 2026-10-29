@@ -123,14 +123,14 @@ impl Vault {
 }
 
 /// The version text as a `u32`, only when it is exactly that number.
-fn exact_u32(text: &str) -> Option<u32> {
+pub(super) fn exact_u32(text: &str) -> Option<u32> {
     let value: u32 = text.parse().ok()?;
     (value.to_string() == text).then_some(value)
 }
 
 /// The one compiled model stack whose models include `executor`, pinned
 /// as `id@revision`.
-fn compiled_stack(executor: &str) -> Option<String> {
+pub(super) fn compiled_stack(executor: &str) -> Option<String> {
     let registry = default_model_stack_registry();
     let mut serving = registry.stacks.values().filter(|stack| {
         stack
@@ -148,7 +148,7 @@ fn compiled_stack(executor: &str) -> Option<String> {
 /// `model` as the id of its one-model stack: the model id itself, spelled in
 /// a stack id's alphabet (`_` as `__`, `/` as `_.`, `@` as `_-`), so it reads
 /// back to exactly that model and to nothing else.
-fn host_stack_id(model: &ModelId) -> String {
+pub(super) fn host_stack_id(model: &ModelId) -> String {
     let mut id = String::with_capacity(model.as_str().len() + 4);
     for character in model.as_str().chars() {
         match character {
