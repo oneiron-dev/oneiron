@@ -32,10 +32,13 @@ mod entries;
 mod pad_sweep;
 mod publication;
 mod refill;
+mod relay_observation;
 mod sweep;
 mod turn;
 
 pub use self::access::PadAdmissionReport;
+pub(crate) use self::relay_observation::observe_sealed_bundle_relay;
+pub use self::relay_observation::{SealedBundleRelayObservation, sealed_bundle_relay_observation};
 
 use std::sync::Arc;
 
