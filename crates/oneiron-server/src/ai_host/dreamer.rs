@@ -646,7 +646,10 @@ impl ObservedFactory {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
         if let Some(host) = host {
-            factory = factory.with_decisions(host.consolidation_decisions()?);
+            factory = factory.with_decisions(
+                host.consolidation_decisions()?
+                    .with_checker(host.auto_checker().cloned()),
+            );
         }
         // A subscribed Slack or LINE message wakes the agent it addressed,
         // which answers on the chat seat through the served sink (OF-519).
