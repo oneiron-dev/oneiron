@@ -301,6 +301,16 @@ pub fn request_turn_wake(
     Ok(Some(outcome))
 }
 
+/// Which test a turn wake's window is due on.
+#[derive(Clone, Copy)]
+enum TurnWakeTest {
+    /// A landed turn's: each window ordinal on the grain or the agent's cadence
+    /// dial, and the agent's signals.
+    Turn,
+    /// A surprising save's: the agent's signals alone, at no ordinal.
+    Surprise,
+}
+
 /// Whether any of `ordinals` is due on the per-vault wake grain, or on the
 /// agent's stored cadence dial on top of it, read in the caller's transaction.
 fn turn_wake_due_in_txn(
@@ -395,6 +405,30 @@ impl Vault {
     /// watermark steps over both up to the first live turn left unplanned.
     /// Returns whether a wake was queued.
     pub fn wake_dreamer_on_turn(&self, subject: WakeTurnSubject, now: u64) -> Result<bool> {
+        self.wake_dreamer_tested(subject, now, TurnWakeTest::Turn)
+    }
+
+    /// [`Self::wake_dreamer_on_turn`] for `agent` at a save whose surprise
+    /// reached the wake policy's floor (FIX 11410): the window is due on the
+    /// surprise test alone, the agent's role admitting a surprise wake, so no
+    /// cadence ordinal fires at a save.
+    pub(crate) fn wake_dreamer_on_surprise(&self, agent: EntityId, now: u64) -> Result<bool> {
+        let subject = WakeTurnSubject::Agent {
+            id: agent,
+            signals: AgentWakeSignals {
+                surprise: true,
+                ..AgentWakeSignals::default()
+            },
+        };
+        self.wake_dreamer_tested(subject, now, TurnWakeTest::Surprise)
+    }
+
+    fn wake_dreamer_tested(
+        &self,
+        subject: WakeTurnSubject,
+        now: u64,
+        test: TurnWakeTest,
+    ) -> Result<bool> {
         use crate::dreamer_consolidation::{
             advance_watermark_in_txn, collect_dirty_turn_ids_in_txn,
             enqueue_partition_plans_in_txn, read_partition_turns_in_txn, read_watermark_in_txn,
@@ -425,8 +459,12 @@ impl Vault {
             }
             let subject =
                 measured_surprise_in_txn(self, txn, subject, window.iter().map(|t| t.turn_id))?;
-            let due = !window.is_empty()
-                && turn_wake_due_in_txn(self, txn, subject, 1..=window.len() as u64)?;
+            // A surprise test reads ordinal 0 alone, which no cadence dial is due on.
+            let ordinals = match test {
+                TurnWakeTest::Turn => 1..=window.len() as u64,
+                TurnWakeTest::Surprise => 0..=0,
+            };
+            let due = !window.is_empty() && turn_wake_due_in_txn(self, txn, subject, ordinals)?;
             // The watermark settles every turn up to where it moves, so an
             // undue wake stops it before the first live turn it leaves.
             let first_live = window.iter().map(|turn| turn.learned_at).min();
