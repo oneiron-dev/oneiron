@@ -493,6 +493,11 @@ pub enum EngineLimit {
     /// it the row asks and the whole batch is accounted, one transaction
     /// chunk after another.
     ConnectorDispatchBatch,
+    /// Tools one connector manifest under admission declares, and the
+    /// permissions or triggers one of its tools declares (FIX 8684, 8758).
+    /// The vault policy's admission quota asks first when it is lower. Past
+    /// it the row asks and the whole manifest is admitted.
+    ConnectorManifestEntries,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
