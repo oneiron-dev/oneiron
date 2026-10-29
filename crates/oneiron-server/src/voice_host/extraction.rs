@@ -90,6 +90,7 @@ impl TinyExtractor {
                     }),
                 },
                 locality: self.locality,
+                host_keyless: false,
             },
             messages: vec![
                 LlmMessage {

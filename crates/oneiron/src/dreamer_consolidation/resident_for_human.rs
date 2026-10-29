@@ -434,6 +434,7 @@ pub async fn run_free_time_for_human(
             ),
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: false,
         }
         .with_purpose_defaults(),
         messages: vec![

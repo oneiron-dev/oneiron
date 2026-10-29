@@ -86,6 +86,7 @@ impl ConsolidationExecutor<'_> {
                 // the claim fields. The reply meets the contract here instead.
                 response_format: ResponseFormat::Text,
                 locality,
+                host_keyless: false,
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),

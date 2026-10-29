@@ -306,6 +306,7 @@ fn bind_target(
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: false,
         },
         messages: Vec::new(),
         tools: Vec::new(),

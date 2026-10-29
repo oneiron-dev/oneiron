@@ -451,6 +451,7 @@ impl ConsolidationExecutor<'_> {
                 },
                 locality: call.inference.selected_locality().ok_or_else(||
                     crate::Error::InvalidConfig("consolidation host binding needs locality".into()))?,
+                host_keyless: false,
             }.with_purpose_defaults(),
             messages: vec![
                 LlmMessage {

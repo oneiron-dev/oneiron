@@ -351,6 +351,7 @@ async fn read_rung(rung: SieveRungCall<'_>) -> SieveRungRead {
             ),
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: false,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {

@@ -92,6 +92,7 @@ impl ModelRuntime {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality: backend.locality,
+                host_keyless: false,
                 seat_effort: None,
             },
             operation,

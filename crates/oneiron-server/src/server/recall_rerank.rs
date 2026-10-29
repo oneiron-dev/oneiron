@@ -123,7 +123,15 @@ impl SyncServer {
         )?;
         // Taken for the rerank purpose, as each rung's permit is, so a policy
         // row that funds that purpose funds this check too.
-        let purpose = rerank_request("", &[], ModelLocality::OwnServer);
+        let mut purpose = rerank_request("", &[], ModelLocality::OwnServer);
+        // FIX 10592: the seat's whole ladder is the only custody source
+        // before `admit_role` picks the serving route; a manifest that would
+        // narrow to a keyless rung still reads the seat. A missing, mixed or
+        // keyed ladder stays paid, today's behavior.
+        purpose.envelope.host_keyless = self
+            .ai
+            .seat(ModelRole::Reranker)
+            .is_some_and(|seat| seat.ladder.all_keyless_own_server());
         let lease = meter
             .admit_for_request(&purpose)
             .inspect_err(|denied| {

@@ -144,6 +144,7 @@ impl ConsolidationExecutor<'_> {
                 ),
                 response_format: ResponseFormat::Text,
                 locality,
+                host_keyless: false,
             }
             .with_purpose_defaults(),
             messages: vec![

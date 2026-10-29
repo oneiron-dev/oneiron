@@ -466,6 +466,7 @@ fn with_evaluator<T>(
         class: CallClass::BestEffort,
         response_format: ResponseFormat::Text,
         locality,
+        host_keyless: false,
     };
     let decisions = server.decision_host().membership_decisions()?;
     let evaluator = SavedQueryEvaluator {

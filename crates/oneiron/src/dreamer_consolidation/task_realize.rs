@@ -158,6 +158,7 @@ pub async fn run_task_realize(
             ),
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: false,
         }
         .with_purpose_defaults(),
         messages: vec![

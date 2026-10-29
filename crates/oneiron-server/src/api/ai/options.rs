@@ -263,6 +263,7 @@ fn policy_admits(server: &SyncServer, row: &MediaRow) -> bool {
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: row.locality,
+            host_keyless: false,
             seat_effort: None,
         },
         operation: row.operation,

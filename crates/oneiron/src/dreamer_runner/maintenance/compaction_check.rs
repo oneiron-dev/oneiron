@@ -615,6 +615,7 @@ fn judge_shell(
             ),
             response_format: ResponseFormat::Json { schema },
             locality,
+            host_keyless: false,
         }
         .with_purpose_defaults(),
         messages: vec![LlmMessage {

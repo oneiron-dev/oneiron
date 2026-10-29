@@ -173,6 +173,7 @@ fn lens_request(
                 schema: crate::claim::weave_lens_plan_schema()?,
             },
             locality,
+            host_keyless: false,
         }
         .with_purpose_defaults(),
         messages: vec![
