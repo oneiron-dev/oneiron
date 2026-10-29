@@ -416,6 +416,9 @@ impl DecisionHost {
         let Some(settings) = settings else {
             return self;
         };
+        // The house read's paired question, read jointly where the route
+        // reports token scores (FIX 1557).
+        let paired = self.ladder.paired.clone();
         let bound = crate::big_rung::BigModel::bind(
             settings,
             Arc::clone(models),
@@ -423,7 +426,7 @@ impl DecisionHost {
             default_units,
             runtime,
         )
-        .map(Arc::new)
+        .map(|model| Arc::new(model.with_paired(paired)))
         .and_then(|model| {
             let pin = model.pin();
             let provider = ModelDecisionProvider::new(pin, Arc::clone(&model) as _)

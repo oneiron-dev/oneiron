@@ -48030,6 +48030,8 @@ pub enum LlmCapability {
     AudioInput,
     #[serde(rename = "reasoning_content_history")]
     ReasoningContentHistory,
+    #[serde(rename = "token_logprobs")]
+    TokenLogprobs,
 }
 
 /// `oneiron_model::llm::error::UnsupportedCapability`.
