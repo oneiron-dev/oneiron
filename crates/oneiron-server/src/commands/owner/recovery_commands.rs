@@ -33,6 +33,9 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
 
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
+    if args.wrap.wrap_to.is_some() {
+        refuse_wrap_elsewhere(&args, &config)?;
+    }
     if let Some(previous) = &args.activate {
         // The archive keeps its own tier and opens with its own mirror; the
         // vault that replaced it reads with its own (OF-570).
@@ -61,8 +64,11 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     // A backup opens with this install's keystore, as configured, unless the
     // owner names another unlock and the signers to trust.
     let keystore = config.keystore.open(&config.vault_path)?;
+    // The durable wrap the owner names is read first: reading the unlock
+    // may release a registry capsule's recipient (FIX 2558).
+    let wrap = vault_key::RestoreWrap::read(&args.wrap)?;
     let unlock = vault_key::HostUnlock::read(&args, backup)?;
-    let restored = restore_unlocked(&args, &config, backup, keystore, &unlock);
+    let restored = restore_unlocked(&args, &config, backup, keystore, &unlock, wrap.as_ref());
     // A registry capsule's recipient secret was released into this process,
     // whether or not the restore went through (CROSS-ARCH-0022
     // #ov-custody-backend).
@@ -70,6 +76,27 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
         eprintln!("{note}");
     }
     restored
+}
+
+/// `--wrap-to` adds a wrap to a restore where no vault is yet (FIX 2558): a
+/// vault a restore runs over, rehearses or activates keeps its own wraps.
+/// Its secret and the unlock's are never both read from stdin.
+fn refuse_wrap_elsewhere(args: &RestoreArgs, config: &ServeConfig) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.activate.is_none()
+            && !args.inspect
+            && !args.rehearse
+            && !args.open_pads
+            && !config.vault_path.join("data.mdb").exists(),
+        "--wrap-to adds a wrap to a restore where no vault is yet; a vault that is there keeps \
+         its own wraps (`oneiron vault-key set-password --unlock ...` adds one)"
+    );
+    vault_key::refuse_two_stdin_secrets(
+        &vault_key::UnlockRequest::restore(args),
+        vault_key::RestoreWrap::reads_stdin(&args.wrap),
+        "the new wrap's secret",
+        "--wrap-secret-file",
+    )
 }
 
 /// The restore once its unlock is read: a new vault where none is, else a
@@ -80,6 +107,7 @@ fn restore_unlocked(
     backup: &Path,
     keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
     unlock: &vault_key::HostUnlock,
+    wrap: Option<&vault_key::RestoreWrap>,
 ) -> anyhow::Result<()> {
     let pins = args
         .trust
@@ -97,7 +125,7 @@ fn restore_unlocked(
         // named, read before the new vault is made (FIX 5788).
         let anchor = CustodyAnchorCredentials::handed(args.serve.custody_anchor_credentials_fd)?;
         return emit(&vault_key::restore_fresh(
-            backup, config, keystore, unlock, pins, anchor,
+            backup, config, keystore, unlock, wrap, pins, anchor,
         )?);
     }
     let key = vault_key::backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)?;

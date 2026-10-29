@@ -22,12 +22,14 @@ use oneiron::sync::client::fetch_sealed_bundle_with_kit;
 use oneiron::sync::residence::{RecoveryCheckpointTrust, sealed_generation_from_hex};
 use oneiron::world_keys::{
     KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads, SealedVaultBundle,
-    VaultKeyStatus, WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
+    WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
 };
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::vault_key::{HostUnlock, read_secret};
+use super::vault_key::{
+    HostUnlock, KeyNeed, UnlockRequest, open_with_unlock, read_secret, refuse_two_stdin_secrets,
+};
 use super::{emit, open_stopped_vault};
 use crate::cli::{
     KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitRestoreArgs, RestoreArgs,
@@ -202,6 +204,13 @@ struct Confirmed {
 }
 
 fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
+    let unlock = UnlockRequest::of(&args.unlock);
+    refuse_two_stdin_secrets(
+        &unlock,
+        args.kit.secret_file.is_none() && args.kit.pieces.len() == 1,
+        "the kit passphrase",
+        "--secret-file",
+    )?;
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let carry = args
         .carry
@@ -211,18 +220,13 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
                 .map_err(|_| anyhow::anyhow!("--carry {id}: a machine is its 32-hex id"))
         })
         .collect::<anyhow::Result<BTreeSet<_>>>()?;
-    let vault = open(&args.serve)?;
-    let owner = local_owner(&vault)?;
     // Confirm replaces the vault key's world-kit wrap, so a vault with a key
-    // needs it held: this device's wrap opens it, or nothing is confirmed. A
-    // vault with no key gets no wrap.
-    if vault.vault_key_status()? == VaultKeyStatus::Locked {
-        vault.unlock_vault_key().map_err(|error| {
-            anyhow::anyhow!(
-                "the vault key stays locked, and confirm must replace its world-kit wrap: {error}"
-            )
-        })?;
-    }
+    // needs it held: this device's wrap opens it, or the unlock `--unlock`
+    // names (FIX 2201), or nothing is confirmed. A vault with no key gets no
+    // wrap.
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
+    let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let confirmed = vault.confirm_world_kit(
         &owner,
