@@ -177,7 +177,11 @@ impl OffRecordResultCards {
             run_ref,
             run_id: run_id.to_hex(),
             count: page.count,
-            cards: page.cards.into_iter().map(decode).collect::<MemoryResult<_>>()?,
+            cards: page
+                .cards
+                .into_iter()
+                .map(decode::<ResultCard>)
+                .collect::<MemoryResult<_>>()?,
             next_offset: page.next_offset,
             withheld: page.withheld,
         })

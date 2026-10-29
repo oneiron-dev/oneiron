@@ -102,7 +102,10 @@ impl Memory<'_> {
     /// A `lens_ref` that is not 32 hex; no lens by it; a reader narrowed to
     /// some worlds or facets ([`LENS_LIST_NARROWED_CARRIES_COMPILED`]); a
     /// share receipt that does not write while born-with text travels.
-    pub fn lenses_export_pack(&self, input: &LensPackExportRequest) -> MemoryResult<LensPackExport> {
+    pub fn lenses_export_pack(
+        &self,
+        input: &LensPackExportRequest,
+    ) -> MemoryResult<LensPackExport> {
         let lens_ref = EntityId::from_hex(&input.lens_ref)
             .map_err(|_| MemoryError::bad_request("lens_ref is a 32-hex lens ref"))?;
         let read = self.read_lane(ClaimReadStatus::Recorded)?;
