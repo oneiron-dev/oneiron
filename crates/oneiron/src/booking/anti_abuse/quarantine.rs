@@ -194,6 +194,7 @@ fn quarantine_borderline_submission_in_txn(
         read_frontier_hash,
         reason_codes,
         dreamer_run_id: Some(run_id),
+        predicate: Some(body.predicate.clone()),
     };
     vault
         .store

@@ -162,6 +162,7 @@ fn restage_claim(
             read_frontier_hash: fresh.read_frontier_hash,
             reason_codes: reasons,
             dreamer_run_id: pending.dreamer_run_id.clone(),
+            predicate: Some(body.predicate.clone()),
         },
     )?;
     Ok(Some(same))
