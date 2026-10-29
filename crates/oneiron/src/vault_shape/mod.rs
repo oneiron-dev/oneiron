@@ -36,6 +36,7 @@ mod seed;
 mod shared_setup;
 mod skill;
 mod visibility;
+mod wire;
 mod world_facet;
 
 pub use apply::{
@@ -195,7 +196,8 @@ pub enum ShapeRow {
         json: Option<serde_json::Value>,
     },
     /// A sync declaration: whether one entity kind is on the wire. A shape
-    /// can propose a federation; it never effects one.
+    /// can propose a federation; it never effects one. Apply records it as
+    /// the kind's wire declaration (FIX 2300).
     Sync { entity_kind: String, on_wire: bool },
     /// Removal, stated: the named structure leaves. Always a widening,
     /// receipted and stamped, never automatic.

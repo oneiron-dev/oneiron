@@ -906,6 +906,15 @@ impl Vault {
                 }
                 Ok(installed)
             }
+            // A kind's wire is declared, never effected (FIX 2300).
+            (
+                ShapeChange::Create | ShapeChange::Update,
+                ShapeTarget::Sync { entity_kind },
+                Some(ShapeRow::Sync { on_wire, .. }),
+            ) => self.declare_shape_wire(owner, entity_kind, *on_wire, now),
+            (ShapeChange::Retire, ShapeTarget::Sync { entity_kind }, _) => {
+                self.withdraw_shape_wire(owner, entity_kind)
+            }
             (ShapeChange::Retire, ShapeTarget::Manifest { .. }, _) => {
                 // A manifest is never deleted. Retiring one quarantines its
                 // exact bytes, so it stops counting and stays stored.

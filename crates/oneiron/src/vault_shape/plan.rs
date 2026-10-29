@@ -253,6 +253,10 @@ fn door(
         (ShapeChange::Retire, ShapeTarget::Manifest { .. }) => {
             Some("quarantine_manifest_contribution")
         }
+        (ShapeChange::Create | ShapeChange::Update, ShapeTarget::Sync { .. }) => {
+            Some("declare_sync_wire")
+        }
+        (ShapeChange::Retire, ShapeTarget::Sync { .. }) => Some("withdraw_sync_wire"),
         _ => None,
     }
 }
@@ -393,8 +397,6 @@ impl Vault {
                 (ShapeRow::Retire { .. }, None) => continue,
                 (ShapeRow::Retire { .. }, Some(live)) if live.retired() => continue,
                 (ShapeRow::Retire { .. }, Some(_)) => (ShapeChange::Retire, None),
-                // No sync declaration is stored yet, so every one is open.
-                (ShapeRow::Sync { .. }, _) => (ShapeChange::Create, Some(row)),
                 (_, None) => (ShapeChange::Create, Some(row)),
                 (_, Some(live)) if row.satisfied_by(live) => continue,
                 (_, Some(_)) => (ShapeChange::Update, Some(row)),

@@ -216,7 +216,8 @@ impl Vault {
     /// folds, every roster actor, each sending identity with its fact heads,
     /// every connector key and standing outbound grant the join reads).
     /// Standing consent grants, the shared vault and its
-    /// members are authority state, so they list no row of their own.
+    /// members are authority state, and a kind's wire declaration is a
+    /// setting, so they list no row of their own.
     pub(super) fn read_live_shape_into(
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
@@ -425,6 +426,16 @@ impl Vault {
                     ShapeRow::Grant {
                         grant_ref: grant.bound().digest().to_hex(),
                         bound: ShapeGrantBound::of(grant.bound()),
+                    },
+                    None,
+                ));
+            }
+            // A kind's declared wire is a setting no entity backs (FIX 2300).
+            for (entity_kind, on_wire) in self.shape_wire_in_txn(&txn)? {
+                rows.push((
+                    ShapeRow::Sync {
+                        entity_kind,
+                        on_wire,
                     },
                     None,
                 ));
