@@ -10,7 +10,7 @@
 //! as given.
 
 use super::document::invalid;
-use super::{NoteChange, NoteEdit, NoteOperation};
+use super::{NoteChange, NoteOperation, NoteScalarEdit};
 use crate::Vault;
 use crate::batch::secret_scan::{Lifted, Part};
 use crate::entity_id::EntityId;
@@ -126,7 +126,7 @@ impl Stretch {
 /// past an admitted insert moves by what that insert gained or lost; a range
 /// edge inside one moves out to its edge, and an insert inside one to its
 /// end, so no edit splits a handle (C-NOTE-COMMAND).
-fn moved(given: &[NoteEdit], edits: &mut [NoteEdit]) -> Result<()> {
+fn moved(given: &[NoteScalarEdit], edits: &mut [NoteScalarEdit]) -> Result<()> {
     let mut stretches = Vec::<Stretch>::new();
     for (given, edit) in given.iter().zip(edits.iter_mut()) {
         let (start, len) = (given.start, given.insert.chars().count());

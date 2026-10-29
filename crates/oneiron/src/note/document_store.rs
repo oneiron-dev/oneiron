@@ -1,8 +1,8 @@
 //! Actor-bound NOTE editor verbs and atomic entity-document persistence.
 
 use super::document::{
-    NoteDocument, NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution,
-    frontier, invalid,
+    NoteDocument, NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome,
+    NoteSpanResolution, frontier, invalid,
 };
 use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
 use super::side_keys::HexHexHash;
@@ -415,7 +415,7 @@ impl Memory<'_> {
         &self,
         note: EntityId,
         title: impl Into<String>,
-    ) -> MemoryResult<NoteEditOutcome> {
+    ) -> MemoryResult<NoteScalarEditOutcome> {
         Ok(self
             .apply_local_note_operation(
                 note,
@@ -434,8 +434,8 @@ impl Memory<'_> {
         &self,
         note: EntityId,
         base: &[u8],
-        edits: &[NoteEdit],
-    ) -> MemoryResult<NoteEditOutcome> {
+        edits: &[NoteScalarEdit],
+    ) -> MemoryResult<NoteScalarEditOutcome> {
         Ok(self
             .apply_local_note_operation(
                 note,
