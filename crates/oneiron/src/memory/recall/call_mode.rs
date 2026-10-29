@@ -18,7 +18,7 @@ use crate::memory::MemoryResult;
 pub const DEFAULT_CALL_MODE_DEADLINE: Duration = Duration::from_millis(100);
 
 /// Light recall's default deadline when the caller sets none (FIX 11572).
-pub const LIGHT_RECALL_DEFAULT_DEADLINE_MS: u64 = 5_000;
+pub(super) const LIGHT_RECALL_DEFAULT_DEADLINE_MS: u64 = 5_000;
 
 /// Where a recall request sets the one effort dial: one of the five effort
 /// levels, or `call`, the call mode for live calls. Call mode is a position
