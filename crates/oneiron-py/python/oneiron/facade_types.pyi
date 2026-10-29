@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1191 facade rows, 4314 declarations.
-Inputs: 1120 of 1191 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1036 of 1191 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1192 facade rows, 4315 declarations.
+Inputs: 1121 of 1192 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1037 of 1192 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
 """
 
@@ -3576,6 +3576,10 @@ class CredentialAttenuationRequest(TypedDict):
 class CredentialAttenuated(TypedDict):
     token: str
     binding_key: list[int]
+class SelfActorRefs(TypedDict):
+    actor_ref: str
+    actor_class: str
+    person_ref: NotRequired[str | None]
 class RecordPositionRequest(TypedDict):
     record_ref: str
 class RecordPosition(TypedDict):

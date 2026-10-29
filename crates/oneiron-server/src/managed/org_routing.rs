@@ -205,6 +205,29 @@ impl OrgVaultRouter {
             .values()
             .filter(move |route| route.binding.tenancy().organization() == Some(organization))
     }
+
+    /// Withdraws `vault_name`'s route: every later `resolve` of it is
+    /// `NotFound`, and `vaults` lists it no more. The withdrawn route, or
+    /// `None` when there was none.
+    pub fn withdraw(&mut self, vault_name: &str) -> Option<OrgVaultRoute> {
+        self.routes.remove(vault_name)
+    }
+
+    /// Withdraws `vault_name`'s route once `vault`, the vault it selects,
+    /// carries its Owners' deletion marker (OF-163, FIX 1931): the host
+    /// routes nothing more to a deleted vault. The withdrawn route, or
+    /// `None` while the vault stands or no route names it. A marker read
+    /// that fails is the error, and the route stays.
+    pub fn withdraw_deleted(
+        &mut self,
+        vault_name: &str,
+        vault: &oneiron::Vault,
+    ) -> oneiron::Result<Option<OrgVaultRoute>> {
+        if vault.shared_vault_deletion()?.is_none() {
+            return Ok(None);
+        }
+        Ok(self.withdraw(vault_name))
+    }
 }
 
 impl ManagedArgs {

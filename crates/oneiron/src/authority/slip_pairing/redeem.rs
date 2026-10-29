@@ -5,6 +5,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 
 use super::code::pairing_row_key;
 use super::principal::canonical_id;
+use super::re_pairing::re_paired_standing;
 use super::*;
 use crate::authority::machine_answers::AnswerAct;
 use crate::authority::slip_vault::{random_slip_id, require_host};
@@ -39,7 +40,7 @@ impl Vault {
         binding_key: [u8; 32],
         signature: &[u8],
     ) -> Result<CapabilitySlip> {
-        self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, None)
+        self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, None, None)
             .map(|redeemed| redeemed.slip)
     }
     /// Redeems any link, a machine's with its `request`, and returns the
@@ -54,7 +55,43 @@ impl Vault {
         signature: &[u8],
         request: Option<&MachineEnrolmentRequest>,
     ) -> Result<PairingRedeemed> {
-        self.redeem_pairing_link_in(issuer, code, holder_ref, binding_key, signature, request)
+        self.redeem_pairing_link_in(
+            issuer,
+            code,
+            holder_ref,
+            binding_key,
+            signature,
+            request,
+            None,
+        )
+    }
+    /// Redeems any link as [`Self::redeem_pairing_link_pinned`] does, with
+    /// `possession`, the machine key's signature over this redemption
+    /// ([`machine_possession_transcript`]), beside a machine's `request`. A
+    /// machine the roster already holds live in the request's class and the
+    /// role the link answers pairs again here, credential only (FIX 8636):
+    /// its identity, profile and standing stay as they are, and the reply
+    /// names them with the new slip. Any other request enrols as before.
+    #[allow(clippy::too_many_arguments)]
+    pub fn redeem_pairing_link_with_possession(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+        holder_ref: &str,
+        binding_key: [u8; 32],
+        signature: &[u8],
+        request: Option<&MachineEnrolmentRequest>,
+        possession: Option<&[u8; 64]>,
+    ) -> Result<PairingRedeemed> {
+        self.redeem_pairing_link_in(
+            issuer,
+            code,
+            holder_ref,
+            binding_key,
+            signature,
+            request,
+            possession,
+        )
     }
     /// Redeems a link that adds a machine: the slip and the owner's profile
     /// for `request` land in one transaction, under the answer the owner gave
@@ -75,12 +112,14 @@ impl Vault {
             binding_key,
             signature,
             Some(request),
+            None,
         )?;
         Ok((
             redeemed.slip,
             redeemed.machine.ok_or_else(invalid_authority)?,
         ))
     }
+    #[allow(clippy::too_many_arguments)]
     fn redeem_pairing_link_in(
         &self,
         issuer: &HostSlipIssuer,
@@ -89,6 +128,7 @@ impl Vault {
         binding_key: [u8; 32],
         signature: &[u8],
         request: Option<&MachineEnrolmentRequest>,
+        possession: Option<&[u8; 64]>,
     ) -> Result<PairingRedeemed> {
         let key = VerifyingKey::from_bytes(&binding_key).map_err(|_| invalid_authority())?;
         let signature = Signature::from_slice(signature).map_err(|_| invalid_authority())?;
@@ -102,11 +142,9 @@ impl Vault {
         // The connection key signs the challenge and pin digest the link kept,
         // so a redeemer handed another link's pin cannot spend this one.
         let pin_ref = pending.pin.as_ref().map(PairingPinRef::of).transpose()?;
-        key.verify_strict(
-            &pairing_binding_transcript_pinned(code, &binding_key, holder_ref, pin_ref.as_ref())?,
-            &signature,
-        )
-        .map_err(|_| invalid_authority())?;
+        let transcript =
+            pairing_binding_transcript_pinned(code, &binding_key, holder_ref, pin_ref.as_ref())?;
+        key.verify_strict(&transcript, &signature).map_err(|_| invalid_authority())?;
         if now >= pending.expires_at
             || pending.host_key != issuer.binding_key()
             || pending.machine.is_some() != request.is_some()
@@ -178,24 +216,34 @@ impl Vault {
                 &facet,
             )?;
         }
-        let machine = match (pending.machine, request) {
+        let (machine, re_paired) = match (pending.machine, request) {
             (Some(answer), Some(request)) => {
                 // The owner who answered must still own the vault at redemption.
                 if !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &answer.owner)? {
                     return Err(invalid_authority());
                 }
-                Some(self.redeem_machine_answer_in_txn(&mut txn, issuer, answer, request)?)
+                let possession = possession.map(|proof| (proof, transcript.as_slice()));
+                let (machine, re_paired) = self.redeem_machine_answer_in_txn(
+                    &mut txn,
+                    issuer,
+                    answer,
+                    request,
+                    possession,
+                )?;
+                (Some(machine), re_paired)
             }
-            _ => None,
+            _ => (None, false),
         };
         PAIRING_PENDING.delete(&self.store, &mut txn, &row_key)?;
         txn.commit()?;
         // A machine admitted here changed the roster: seal the portable
         // credentials again, as `enroll_machine` does. The redemption stands
         // whatever happens, since the link is spent and its slip exists only
-        // in this reply; the sync lane's upkeep re-seal retries a failure.
+        // in this reply; the sync lane's upkeep re-seal retries a failure. A
+        // credential-only re-pairing changed no roster and seals nothing.
         #[cfg(feature = "sync")]
         if machine.is_some()
+            && !re_paired
             && let Err(error) = self.reseal_after_machine_admission()
         {
             tracing::warn!(
@@ -208,6 +256,7 @@ impl Vault {
             machine,
             pin: pending.pin,
             link_owner: pending.owner,
+            re_paired,
         })
     }
     /// Enrols the machine a link adds under the approval it kept (C2): this
@@ -218,20 +267,34 @@ impl Vault {
     /// self-host first install): the host root signs the owner's answer with
     /// no act, as it always has, and the fold judges the root's custody, so a
     /// hosted root never answers for the owner there. Any other install that
-    /// cannot carry refuses, and nothing is written.
+    /// cannot carry refuses, and nothing is written. A machine the roster
+    /// already holds, pairing again under its own identity and class with
+    /// its machine key's `possession` proof over this redemption's binding
+    /// transcript, takes its credential alone first (FIX 8636). The flag is
+    /// `true` for that re-pairing, which changed no roster.
     fn redeem_machine_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
         answer: PendingMachine,
         request: &MachineEnrolmentRequest,
-    ) -> Result<FoldedMachine> {
+        possession: Option<(&[u8; 64], &[u8])>,
+    ) -> Result<(FoldedMachine, bool)> {
         let role = MachineRole::Owned(answer.ownership);
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        // A credential-only re-pairing writes no revision, so it needs no
+        // carrier, and no arm below enrols the machine again.
+        if let Some((proof, transcript)) = possession
+            && let Some(standing) = re_paired_standing(&fold, request, role, proof, transcript)?
+        {
+            return Ok((standing, true));
+        }
         // The never-profiled path first: an unanswered serving install also
         // carries, and it keeps pairing exactly as it did before its profile.
         if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
-            return self.enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role);
+            return self
+                .enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role)
+                .map(|machine| (machine, false));
         }
         if self.carrier_in_txn(txn, &fold).is_ok() {
             let act = AnswerAct {
@@ -241,7 +304,9 @@ impl Vault {
                 kind: answer.kind,
                 seen: None,
             };
-            return self.enroll_machine_in_txn(txn, act, request, role);
+            return self
+                .enroll_machine_in_txn(txn, act, request, role)
+                .map(|machine| (machine, false));
         }
         Err(crate::authority::machine_answers::no_carrier())
     }
