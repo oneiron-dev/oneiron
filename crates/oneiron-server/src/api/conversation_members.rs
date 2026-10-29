@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     auth::{CoreAuth, CoreScope},
-    error::{ApiError, ApiErrorDetails, EnvelopedApiError},
+    error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, EnvelopedApiError},
     server::SyncServer,
 };
 use axum::{
@@ -71,6 +71,22 @@ pub(super) struct MemberWrite {
 pub(super) struct MemberQuery {
     at: Option<u64>,
 }
+/// Join, leave or set history visibility for one room member.
+#[utoipa::path(
+    post,
+    path = "/v1/core/conversations/{conversation_id}/members",
+    params(("conversation_id" = String, Path, description = "Hex conversation id.")),
+    request_body(content = Object, description = "`MemberWrite`: `person_id` (32 hex), `action` (`join`, `leave` or `history`), an optional `actor` (32 hex), `at`, `history` (`inherit`, `share` or `none`), `from`, and a join's `intent_key`.", content_type = "application/json"),
+    responses(
+        (status = 200, description = "The room's member ids, and a join's decision.", body = Object, content_type = "application/json"),
+        (status = 400, description = "Malformed conversation id or request body, or a join without its key.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write, or the join is refused.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "Room was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "Membership update failed.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
 pub(super) async fn write_member(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

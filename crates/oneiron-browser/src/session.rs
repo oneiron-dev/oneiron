@@ -197,6 +197,9 @@ pub struct BrowserSession {
     /// The act the last refused press held, and the one press an owner's
     /// answer armed (FIX 10423).
     held: held::Holds,
+    /// The history seq the last granted press began after (FIX 10511): a
+    /// solved capture ends its span there, before that press.
+    pre_press: Option<u64>,
     /// The grants' policy as last read, the person's approved batches and
     /// the sends batch presses paid (FIX 4613, 4615).
     presses: PressBook,

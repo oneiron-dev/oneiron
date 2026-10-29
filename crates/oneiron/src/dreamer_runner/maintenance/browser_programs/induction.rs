@@ -188,6 +188,8 @@ pub(super) fn induce(
         supersedes: predecessor.map(|program| program.id.clone()),
         seed: None,
         candidate: None,
+        secret_args: BTreeMap::new(),
+        snapshot_bounds: None,
     };
     let program = WorkflowProgram {
         subgoal: proposal.subgoal.clone(),

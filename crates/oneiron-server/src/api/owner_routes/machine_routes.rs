@@ -113,7 +113,7 @@ struct MachineQuery {
     machine: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetAnswer {
     /// The MACHINE row, as 32 hex.
@@ -127,7 +127,7 @@ struct SetAnswer {
     seen: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RemoveMachine {
     /// The MACHINE row, as 32 hex.
@@ -137,7 +137,7 @@ struct RemoveMachine {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct MachineAnswer {
     machine: String,
     /// The roster chain's role: `yours`, `work_school`, `rented`,
@@ -194,6 +194,21 @@ async fn get_answer(
     })
     .await?;
     Ok(Json(answer))
+}
+
+/// The OpenAPI schema of `POST /v1/owner/machines/answer`'s body (FIX 11617): [`SetAnswer`].
+pub(crate) fn set_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetAnswer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/machines/remove`'s body (FIX 11617): [`RemoveMachine`].
+pub(crate) fn remove_machine_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RemoveMachine>()
+}
+
+/// The OpenAPI schema of the machines answer/remove answers (FIX 11617): [`MachineAnswer`].
+pub(crate) fn machine_answer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<MachineAnswer>()
 }
 
 /// `POST /v1/owner/machines/answer`: the owner marks or re-marks one of his

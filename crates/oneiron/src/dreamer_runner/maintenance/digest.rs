@@ -149,10 +149,11 @@ pub struct ProactivityPolicyProposal {
     pub request: ProactivityPolicyRequest,
     pub revision: [u8; 32],
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestProposal {
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub claim_ref: EntityId,
     pub revision: [u8; 32],
     pub summary: String,
@@ -168,10 +169,11 @@ pub struct DigestProposal {
     pub unverified: bool,
 }
 /// One pending training offer the digest carries to the owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestOffer {
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub offer: EntityId,
     /// The offer digest the owner's answer binds.
     pub digest: String,
@@ -180,7 +182,7 @@ pub struct DigestOffer {
 /// The cleanup cron's after-notice (ARCH-0073 §5): what it archived since
 /// the last digest that carried it, and the proposals that wait for the
 /// owner. Counts come from recorded decisions, never from the archive's size.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestCleanup {
     /// The cleanup decisions this line reports, by id.
@@ -212,7 +214,7 @@ impl DigestCleanup {
 }
 /// The NOTE tombstone review's open proposals no digest carried yet. The
 /// line only points at them; the owner accepts or declines each at the view.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestNoteTombstones {
     /// The proposals this line reports, as `<note>:<proposed_at>`: a NOTE

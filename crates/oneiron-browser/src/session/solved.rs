@@ -77,6 +77,17 @@ impl BrowserSession {
         })
     }
 
+    /// The end a solved capture whose span starts after `after_seq`
+    /// takes at the last granted press (FIX 10511): the history seq that
+    /// press began after, so the span ends before it. None where no
+    /// press was granted in this span, or its mark is the span's own
+    /// start.
+    #[must_use]
+    pub fn pre_press_through(&self, after_seq: Option<u64>) -> Option<u64> {
+        self.pre_press
+            .filter(|through| *through > after_seq.unwrap_or(0))
+    }
+
     /// Reads `input`'s checks on the open page and drafts the span of the
     /// history that reached it, as solved-run evidence keeps it (CUA E8a).
     /// The draft never goes past a press ([`SOLVED_PAST_PRESS`]).

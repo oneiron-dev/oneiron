@@ -178,6 +178,7 @@ impl DiagnosticEventClass {
 /// an agent-health body names exactly one, every other body none.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthSignal {
