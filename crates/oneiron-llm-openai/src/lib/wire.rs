@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 /// The top-level body field an own server that admits a call alone reads
 /// (the house EXL3 server, INF 1).
-const SOLO_FIELD: &str = "oneiron_solo";
+pub(crate) const SOLO_FIELD: &str = "oneiron_solo";
 
 pub fn build_openai_chat_request(
     config: &OpenAiCompatConfig,
