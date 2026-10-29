@@ -95,9 +95,6 @@ fn loaded_oneironer(
         .as_ref()
         .ok_or_else(|| unavailable("no oneironer slot is loaded"))?;
     let config = slot.config();
-    if !config.is_active() {
-        return Err(unavailable("the oneironer slot is disabled"));
-    }
     if config.provider != OneironerProvider::Local {
         return Err(unavailable("the oneironer slot is not provider local"));
     }
