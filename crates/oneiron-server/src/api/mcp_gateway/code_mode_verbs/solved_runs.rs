@@ -108,7 +108,7 @@ impl BrowserCapture<'_, '_> {
             secret_slots: snapshot.secret_slots,
             replay_ready: snapshot.replay_ready,
             source: span.source,
-            captured_at_ms: self.vault.now_recorded_at().saturating_mul(1000),
+            captured_at_ms: self.vault.now_recorded_ms(),
         };
         let receipt = self
             .memory
