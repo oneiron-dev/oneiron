@@ -4123,6 +4123,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/machine_write/history_anchor.rs",
+     "purpose": "The host history handoff's causal anchor (FIX 11241, ported from the bel build: 9f46db33fa, then…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/machine_write/successor.rs",
      "purpose": "Re-signing a MACHINE claim's successor with its writer's retained signer",
      "surface": {
@@ -24897,7 +24907,7 @@
      "path": "src/dreamer_consolidation/partition.rs",
      "purpose": "Partition planning: cuts dirty turns into consolidation partitions",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
       "fn": 6,
       "re-export": 1,
       "struct": 3
@@ -25929,8 +25939,9 @@
      "path": "src/dreamer_consolidation/watermark.rs",
      "purpose": "Dirty-TURN progress: the consolidation watermark and its working set",
      "surface": {
-      "crate-vis": 14,
-      "fn": 5,
+      "crate-vis": 17,
+      "fn": 4,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -25951,6 +25962,17 @@
      "path": "src/dreamer_consolidation/watermark/rescan_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/watermark/turn_body.rs",
+     "purpose": "The turn-body decoder and the entity-ref key validator",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
     },
     {
      "bucket": "m",
@@ -28163,7 +28185,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "fn": 1
      }
     },
@@ -28205,7 +28227,7 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 3
      }
     },
@@ -28374,6 +28396,16 @@
      "purpose": "The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/withdrawn.rs",
+     "purpose": "A turn program whose original authorization was positively withdrawn ends, never held (FIX 11593, ruling…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -28780,7 +28812,7 @@
      "path": "src/dreamer_wake/follower/mod.rs",
      "purpose": "The Dreamer's cheap arm as a follower session over the admitted log (ARCH-0026 #cheap-arm, FIX 7510)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -28827,7 +28859,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "mod": 1,
       "re-export": 15
      }
@@ -29046,6 +29078,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/read_phase.rs",
+     "purpose": "A Dreamer pass's read phase and its short write (FIX 11568)",
+     "surface": {
+      "crate-vis": 11,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -29121,7 +29164,7 @@
      "path": "src/dreamer_wake/scheduling.rs",
      "purpose": "The host-facing enqueue doors; the engine owns no timer",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5
      }
@@ -29298,6 +29341,16 @@
      "path": "src/dreamer_wake/sieve/tests.rs",
      "purpose": "The sieve against the packet's checks (gate 3, ARCH-0026 Continuous): a turn chunk with a date and a name…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/texts.rs",
+     "purpose": "The sieve pass's read phase (FIX 11568): its text reads, made in a read snapshot before its writer opens…",
+     "surface": {
+      "crate-vis": 10
+     }
     },
     {
      "bucket": "m",
@@ -66110,7 +66163,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "mod": 1,
       "re-export": 18
      }
@@ -66379,6 +66432,16 @@
      "purpose": "Indexed query validation is deliberately not whole-family validation",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/replay_only_commits.rs",
+     "purpose": "The txn ids of recent commits that wrote only request-replay rows (a slip's nonce and proof clock) or the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -80731,7 +80794,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 224,
+     "files": 225,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81144,7 +81207,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 147,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81172,7 +81235,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81186,7 +81249,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 64,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -81970,7 +82033,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 174,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82203,7 +82266,7 @@
    },
    "over_bar": 115,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5483,
+   "source_files": 5489,
    "test_files": 902
   },
   "oneiron-android": {
