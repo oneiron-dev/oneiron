@@ -343,11 +343,11 @@ pub(crate) fn spawn(
     spawn_with_pause(server, admit, || None)
 }
 
-/// [`spawn`] under a host's pause (FIX 7376): each admitted pass reads
-/// `epoch_source` once, after its admission and before it pumps, and starts
-/// no next stage or unit once that epoch holds the pause. The unit in
-/// flight finishes, the pass returns what it did and drops its admission,
-/// and the pump sleeps as after any pass. An epoch of `None` never pauses.
+/// [`spawn`] under a host's pause (FIX 7376): each loop reads `epoch_source` once, and
+/// an admitted pass starts no next stage or unit once that epoch holds the pause. The
+/// unit in flight finishes, the pass returns what it did and drops its admission, and
+/// the pump sleeps as after any pass, woken at once by a thaw on that same epoch (FIX
+/// 7581). An epoch of `None` never pauses.
 pub(crate) fn spawn_with_pause(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
@@ -361,13 +361,16 @@ pub(crate) fn spawn_with_pause(
             let Some(server) = weak.upgrade() else {
                 break;
             };
+            // Read before the gate, once a loop: the pass borrows it, so a freeze since
+            // shows there, and the sleep below waits on it, so a thaw wakes the loop.
+            let mut epoch = epoch_source();
             let next = match admit() {
                 Some(pass) => {
-                    // Read after the gate, once a pass: a freeze since then shows here.
-                    let epoch = epoch_source();
+                    let pass_epoch = epoch.clone();
                     tokio::task::spawn_blocking(move || {
                         let _pass = pass;
-                        let mut may_start = || epoch.as_ref().is_none_or(|held| !*held.borrow());
+                        let mut may_start =
+                            || pass_epoch.as_ref().is_none_or(|held| !*held.borrow());
                         pump_due_while(&server, oneiron_vault_contract::now_ts(), &mut may_start)?;
                         let question = server.vault().next_question_refresh_at()?;
                         let wake = server.vault().next_answer_wake_at()?;
@@ -402,6 +405,18 @@ pub(crate) fn spawn_with_pause(
                         break;
                     }
                 }
+                // The pause epoch wakes the sleep as a change does: a thaw moves it or
+                // closes it for a fresh epoch, so the loop reads its due work at once
+                // instead of at the next change or sweep. A freeze wakes it for one
+                // refused pass. No epoch never wakes this branch.
+                _ = async {
+                    match epoch.as_mut() {
+                        Some(epoch) => {
+                            let _ = epoch.changed().await;
+                        }
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {}
             }
         }
     })
