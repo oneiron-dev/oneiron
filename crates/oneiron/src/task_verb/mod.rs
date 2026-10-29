@@ -54,6 +54,7 @@ mod decision_port;
 mod dormant_magistrate;
 mod entity_delta_facade;
 mod external_attempt;
+mod fact_link_wake;
 pub(crate) use external_attempt::decode as decode_external_task_attempt;
 mod fanout_check;
 mod fanout_launch;
@@ -433,6 +434,7 @@ pub(crate) use ask_record::{
 pub(crate) use ask_settlement::{
     AskStanding, ask_settlement_in, ask_standing_in, settle_ask_if_due,
 };
+pub(crate) use fact_link_wake::{scoped_to_sources, wake_linked_facts_in_txn};
 pub(crate) use lifecycle_facade::deliver_task_result_in_txn;
 pub(crate) use session_ask::{SessionAskParts, SessionAskRecord};
 
