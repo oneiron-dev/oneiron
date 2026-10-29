@@ -23,6 +23,7 @@ pub(super) mod admit;
 pub(super) mod carrier;
 mod file_plane;
 pub(super) mod known_marks;
+mod known_note;
 pub(super) mod retained_repo;
 pub(super) mod side_row;
 pub(super) mod spool;
@@ -43,7 +44,10 @@ use super::container::{
     walk_members,
 };
 use super::shapes::{self, Door, HANDLE_OPEN};
-use super::{REASON_PRIVATE_KEY, provider_token_spans, scan_batch_ops, secret_scan_error};
+use super::{
+    REASON_PRIVATE_KEY, SecretScanMode, provider_token_spans, scan_batch_ops, secret_scan_error,
+    secret_scan_mode_in_txn,
+};
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -131,6 +135,9 @@ pub(in crate::batch) fn mask_batch_ops(
     if known.is_none() && !kept.is_empty() && scan_screened(store, wtxn, &kept, ops).is_ok() {
         return Ok(MaskedFiles::default());
     }
+    // The owner's switch, read once: when it is off the plan places known
+    // values only and mints nothing (FIX 8644).
+    let known_only = secret_scan_mode_in_txn(store, &*wtxn)? == SecretScanMode::Off;
     // The plan's copy, and every value it finds, are wiped however the
     // plan ends (FIX 1101).
     let mut planned = PlanOps::of(ops);
@@ -139,6 +146,7 @@ pub(in crate::batch) fn mask_batch_ops(
         mints: masks,
         kept,
         known: known.clone(),
+        known_only,
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;
@@ -161,12 +169,16 @@ pub(in crate::batch) fn mask_batch_ops(
         text_index_trusted,
     };
     let minted = plan.mint(&write, wtxn, at)?;
+    // A known value in a file names that file in the found-key notice (FIX 2780).
+    known_note::note_known_file_keys_in_txn(store, wtxn, &files, at)?;
     put_file_marks_in_txn(store, wtxn, files, &minted, at)?;
+    // The minted pass places the same values the plan did (FIX 8644).
     Masker {
         handles: minted.map(|(handle, _)| handle),
         minted: true,
         kept,
         known,
+        known_only,
         ..Masker::default()
     }
     .mask_ops(ops)?;
@@ -313,6 +325,8 @@ fn offset(at: usize) -> Result<u64> {
 struct FoundFile {
     hash: [u8; 32],
     keys: Vec<FileKey>,
+    /// The ASSET put that carried it, for the found-key notice (FIX 2780).
+    record: EntityId,
 }
 
 /// One key a plan found in a file: the member that holds it (none for the
@@ -359,6 +373,8 @@ struct Masker {
     found: Vec<Found>,
     minted: bool,
     mints: bool,
+    /// The switch is off: place known values only, mint nothing (FIX 8644).
+    known_only: bool,
     /// Each file's key places by its bytes' hash: marked before, or by this
     /// plan.
     marked: HashMap<[u8; 32], KeyPlaces>,
@@ -443,7 +459,7 @@ impl Masker {
         let hash = *blake3::hash(data).as_bytes();
         if let Some(places) = self.marked.get(&hash).cloned() {
             self.file_ids.push(id);
-            let places = self.remark_known(data, hash, places)?;
+            let places = self.remark_known(data, hash, id, places)?;
             return masked_copy(data, &places).map(Some);
         }
         // A sealed file is stored as it is and left unmarked.
@@ -470,7 +486,7 @@ impl Masker {
         let copy = masked_copy(data, &places)?;
         self.marked.insert(hash, places);
         self.file_ids.push(id);
-        self.files.push(FoundFile { hash, keys });
+        self.files.push(FoundFile { hash, keys, record: id });
         Ok(Some(copy))
     }
 
@@ -482,6 +498,7 @@ impl Masker {
         &mut self,
         data: &[u8],
         hash: [u8; 32],
+        record: EntityId,
         places: KeyPlaces,
     ) -> Result<KeyPlaces> {
         let Some(known) = self.known.clone().filter(|_| self.mints) else {
@@ -514,7 +531,7 @@ impl Masker {
             }
         }
         self.marked.insert(hash, united.clone());
-        self.files.push(FoundFile { hash, keys });
+        self.files.push(FoundFile { hash, keys, record });
         Ok(united)
     }
 
@@ -534,23 +551,33 @@ impl Masker {
             None => Vec::new(),
         };
         let mut placed = Vec::new();
-        let mut spans = file_spans(leaf);
-        // A value a structured reading places (a credential field), wherever
-        // its bytes sit in the leaf.
-        let mut fields = Masker {
-            mints: true,
-            at: self.at.clone(),
-            ..Masker::default()
-        };
-        fields.mask_body(leaf)?;
-        for found in fields.found {
-            spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
+        // The switch is off: no shape span and no structured-field value are
+        // discovered, and nothing is minted (FIX 8644).
+        let mut spans = Vec::new();
+        if !self.known_only {
+            spans = file_spans(leaf);
+            // A value a structured reading places (a credential field), wherever
+            // its bytes sit in the leaf.
+            let mut fields = Masker {
+                mints: true,
+                at: self.at.clone(),
+                ..Masker::default()
+            };
+            fields.mask_body(leaf)?;
+            for found in fields.found {
+                spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
+            }
         }
         for (span, reason) in merged(spans) {
             if known
                 .iter()
                 .any(|(held, _)| held.start < span.end && span.start < held.end)
             {
+                continue;
+            }
+            // A value the owner ruled no secret in the record is left as
+            // written, whatever rule placed its span (FIX 8646).
+            if self.is_kept(&leaf[span.clone()]) {
                 continue;
             }
             let value = Zeroizing::new(
@@ -690,7 +717,13 @@ impl Masker {
         if self.is_kept(&secret) {
             return Ok(false);
         }
-        let handle = match self.known_whole(&secret) {
+        let known = self.known_whole(&secret);
+        // The switch is off: a structured-field value no record holds whole
+        // stays as written (FIX 8644).
+        if self.known_only && known.is_none() {
+            return Ok(false);
+        }
+        let handle = match known {
             Some(handle) => {
                 self.placed_known = true;
                 handle

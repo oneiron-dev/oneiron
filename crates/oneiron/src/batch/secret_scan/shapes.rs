@@ -488,8 +488,8 @@ fn placeholder(value: &str) -> bool {
 pub(super) const HANDLE_OPEN: &str = "[secret ";
 
 /// The handle a mask on write leaves where it lifted a secret into custody
-/// (ARCH-0069 #handles-in-fields): `sc12` as a whole value, or a value that
-/// starts with `[secret sc12]`. It names a custody record and holds no value.
+/// (ARCH-0069 #handles-in-fields): `sc12` as a whole value, or `[secret sc12]`
+/// as a whole value. It names a custody record and holds no value.
 fn custody_handle(value: &str) -> bool {
     let bare = |text: &str| {
         text.strip_prefix("sc").is_some_and(|digits| {
@@ -497,11 +497,13 @@ fn custody_handle(value: &str) -> bool {
         })
     };
     let value = trim_value(value);
+    // A bracket handle counts only as a whole value: trailing text past its
+    // closing bracket is no handle (FIX 8645).
     bare(value)
         || value
             .strip_prefix(HANDLE_OPEN)
             .and_then(|rest| rest.split_once(']'))
-            .is_some_and(|(handle, _)| bare(handle))
+            .is_some_and(|(handle, tail)| bare(handle) && tail.trim().is_empty())
 }
 
 /// Placeholder words a person writes in place of a secret.
