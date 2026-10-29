@@ -83,9 +83,15 @@ async fn ws_upgrade_handler(
             .map_err(|_| sync_upgrade_refused(&headers, &server))?,
     };
     // Full replication reads the whole vault, an owner act: a hosted
-    // operator's root is refused before the upgrade (FIX 2222).
-    crate::api::host_action::require_host_owner_act(&server, &auth)
-        .map_err(|_| StatusCode::FORBIDDEN.into_response())?;
+    // operator's root is refused before the upgrade (FIX 2222), with its
+    // typed body (FIX 6032). Every refusal stays this door's 403.
+    crate::api::host_action::require_host_owner_act(&server, &auth).map_err(|refused| {
+        if refused.status() == StatusCode::FORBIDDEN {
+            refused.into_response()
+        } else {
+            StatusCode::FORBIDDEN.into_response()
+        }
+    })?;
     let session_jti = auth.jti().map(str::to_owned);
     let owner = auth.managed_owner().is_some().then(|| auth.clone());
     // The socket's sync frames count under the actor its upgrade admitted,
