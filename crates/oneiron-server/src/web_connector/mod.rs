@@ -213,7 +213,10 @@ fn forward_to_hub(
 
 /// A page read through our own guarded reader (`web_fetch`), for a provider
 /// with no page-reading endpoint: no key and no fee.
-fn read_direct(server: &SyncServer, input: &WebFetchInput) -> Result<ProviderAnswer, ProviderError> {
+fn read_direct(
+    server: &SyncServer,
+    input: &WebFetchInput,
+) -> Result<ProviderAnswer, ProviderError> {
     let fetcher = server
         .web_fetcher()
         .map_err(|error| ProviderError::message(&error.to_string()))?;

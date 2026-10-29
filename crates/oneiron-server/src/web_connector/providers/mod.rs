@@ -166,21 +166,26 @@ fn with_key(
     auth: Auth,
     key: &str,
 ) -> Result<reqwest::blocking::RequestBuilder, ProviderError> {
-    let not_a_header = |_: reqwest::header::InvalidHeaderValue| ProviderError::message("the provider key is not a header value");
+    let not_a_header = |_: reqwest::header::InvalidHeaderValue| {
+        ProviderError::message("the provider key is not a header value")
+    };
     let (name, value) = match auth {
         Auth::Bearer => (
             reqwest::header::AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {key}")),
         ),
         Auth::Header(name) => (
-            HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| ProviderError::message("the provider key header is not a header name"))?,
+            HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                ProviderError::message("the provider key header is not a header name")
+            })?,
             HeaderValue::from_str(key),
         ),
     };
     let mut value = value.map_err(not_a_header)?;
     value.set_sensitive(true);
-    Ok(request.header(name, value).header(reqwest::header::ACCEPT, "application/json"))
+    Ok(request
+        .header(name, value)
+        .header(reqwest::header::ACCEPT, "application/json"))
 }
 
 fn send(request: reqwest::blocking::RequestBuilder) -> Result<Value, ProviderError> {
