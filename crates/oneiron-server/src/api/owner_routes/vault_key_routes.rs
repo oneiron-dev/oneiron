@@ -173,7 +173,10 @@ impl<'de> Visitor<'de> for KeySecretVisitor {
                     ));
                 }
                 if prf.is_some() {
-                    return Err(serde::de::Error::unknown_field("prf", &["method", "password"]));
+                    return Err(serde::de::Error::unknown_field(
+                        "prf",
+                        &["method", "password"],
+                    ));
                 }
                 let password =
                     password.ok_or_else(|| serde::de::Error::missing_field("password"))?;

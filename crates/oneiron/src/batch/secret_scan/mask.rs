@@ -511,7 +511,11 @@ impl Masker {
         let copy = masked_copy(data, &places)?;
         self.marked.insert(hash, places);
         self.file_ids.push(id);
-        self.files.push(FoundFile { hash, keys, record: id });
+        self.files.push(FoundFile {
+            hash,
+            keys,
+            record: id,
+        });
         Ok(Some(copy))
     }
 

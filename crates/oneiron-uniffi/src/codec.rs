@@ -360,7 +360,10 @@ impl Lift<engine::WitnessReceipt> for WitnessReceipt {
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
-            wake_outcome: value.wake_outcome.map(TurnProgramWakeOutcome::lift).transpose()?,
+            wake_outcome: value
+                .wake_outcome
+                .map(TurnProgramWakeOutcome::lift)
+                .transpose()?,
         })
     }
 }
@@ -374,7 +377,9 @@ impl Lift<engine::TurnProgramWakeOutcome> for TurnProgramWakeOutcome {
             }
             engine::TurnProgramWakeOutcome::Unpersisted { reason } => Self::Unpersisted {
                 reason: match reason {
-                    engine::UnpersistedWakeReason::NoAuthority => UnpersistedWakeReason::NoAuthority,
+                    engine::UnpersistedWakeReason::NoAuthority => {
+                        UnpersistedWakeReason::NoAuthority
+                    }
                     engine::UnpersistedWakeReason::StorageFailure => {
                         UnpersistedWakeReason::StorageFailure
                     }

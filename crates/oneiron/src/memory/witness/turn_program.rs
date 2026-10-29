@@ -9,10 +9,10 @@
 //! root acting as nobody), a code run's call and a machine-signed write seal
 //! nothing.
 
+use super::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason, keep_wake_label_in_txn};
 use crate::dreamer_runner::{
     ArmTurnProgram, LandedTurnRef, TurnProgramAuthority, TurnProgramRegistration,
 };
-use super::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason, keep_wake_label_in_txn};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
