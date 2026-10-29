@@ -1,4 +1,5 @@
 //! Manifest-derived safety pins bypass query relevance, never actor authority.
+use super::access_gate::HeldAuthority;
 use super::{ScopedRead, ScopedReadResult};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::decode_claim_body;
@@ -14,6 +15,8 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::new();
         let mut suppressed = 0;
+        // One relationship authority for every pinned row (FIX 11648).
+        let held = HeldAuthority::default();
         crate::claim::projection_index::for_each_pinned_claim_id_in_txn(
             &self.vault.store,
             &txn,
@@ -33,7 +36,7 @@ impl ScopedRead<'_> {
                 if !policy.pins_predicate(&body.predicate) {
                     return Ok(());
                 }
-                if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &id)? {
+                if !self.is_entity_retrievable_held_in(&txn, &policy, &filter, &id, &held)? {
                     suppressed += 1;
                     return Ok(());
                 }
