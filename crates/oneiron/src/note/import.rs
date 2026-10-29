@@ -80,6 +80,9 @@ pub struct ImportedNoteBatch {
     pub folder: String,
     pub notes: Vec<ImportedNote>,
     pub links: Vec<ImportedNoteLink>,
+    /// Files the host holds by name only, with the bytes the walk read
+    /// (FIX 11587): kept as their originals once the owner approves.
+    pub name_only: Vec<super::files::NameOnlyFile>,
 }
 
 /// An approved batch: what landed, under the digest the owner approved.
@@ -88,6 +91,11 @@ pub struct ImportedNoteBatchReceipt {
     pub approval_digest: String,
     pub note_ids: Vec<EntityId>,
     pub links: usize,
+    /// Name-only files whose original the approve kept (FIX 11587).
+    pub name_only_kept: usize,
+    /// Name-only files whose original could not be kept; the batch still
+    /// landed.
+    pub name_only_unkept: usize,
 }
 
 /// One file as the host read it, asked where it stands.
@@ -231,8 +239,8 @@ impl Vault {
     }
 
     /// The exact batch, described for one approve-once act of `owner`.
-    /// Changing any note, link, kind, title, time or the request changes the
-    /// digest.
+    /// Changing any note, link, name-only file, kind, title, time or the
+    /// request changes the digest.
     ///
     /// # Errors
     /// Refuses an empty batch, a repeated path or title, a blank or oversize
@@ -251,6 +259,7 @@ impl Vault {
                 format!("source:{NOTES_IMPORT_SOURCE}"),
                 format!("notes:{}", batch.notes.len()),
                 format!("links:{}", batch.links.len()),
+                format!("name_only:{}", batch.name_only.len()),
                 format!("content:{}", content_hash(batch)?.to_hex()),
             ])?,
         )?;
@@ -259,7 +268,8 @@ impl Vault {
 
     /// The owner's one act for the whole batch: the approve-once receipt,
     /// every note with its title and every link commit in one write
-    /// transaction, or none does.
+    /// transaction, or none does. The name-only originals are kept after,
+    /// each on its own; one that cannot be kept is counted in the receipt.
     ///
     /// # Errors
     /// [`GateError::ConsentApproveOnceSpent`](crate::error::GateError::ConsentApproveOnceSpent)
@@ -284,7 +294,7 @@ impl Vault {
             .iter()
             .map(|note| Self::imported_note_id(&batch.folder, &note.path))
             .collect::<Result<Vec<_>>>()?;
-        self.with_write_txn(|txn| {
+        let (approval_digest, note_ids, links) = self.with_write_txn(|txn| {
             let owner_actor = owner.revalidate_in_txn(self, txn)?;
             let receipt = self.approve_once_in_txn(txn, owner, digest)?;
             self.take_decision_slot_in_txn(txn, &slot, receipt.decision_id())?;
@@ -302,11 +312,27 @@ impl Vault {
                 crate::consent::approve_once_authorization_in_txn(&self.store, txn, &digest)?
                     .ok_or(Error::CorruptedIndex("consent approve-once marker"))?;
             crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
-            Ok(ImportedNoteBatchReceipt {
-                approval_digest: digest.to_hex(),
-                note_ids: ids.clone(),
-                links,
-            })
+            Ok((digest.to_hex(), ids.clone(), links))
+        })?;
+        // The name-only originals the owner approved with the batch, as the
+        // folder rescan keeps them (FIX 11587): one that cannot be kept is
+        // counted, and never takes back what landed.
+        let (mut name_only_kept, mut name_only_unkept) = (0, 0);
+        for file in &batch.name_only {
+            let Some(original) = &file.original else {
+                continue;
+            };
+            match self.keep_folder_file_original(owner, &batch.folder, &file.path, original) {
+                Ok(_) => name_only_kept += 1,
+                Err(_) => name_only_unkept += 1,
+            }
+        }
+        Ok(ImportedNoteBatchReceipt {
+            approval_digest,
+            note_ids,
+            links,
+            name_only_kept,
+            name_only_unkept,
         })
     }
 
@@ -580,7 +606,7 @@ pub(super) fn revision(folder: &str, path: &str, markdown: &str) -> [u8; 16] {
     out
 }
 
-/// Every note and link of the batch, hashed.
+/// Every note, link and name-only file of the batch, hashed.
 fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
     let notes = batch
         .notes
@@ -603,7 +629,21 @@ fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
         .iter()
         .map(|link| (&link.from, &link.to))
         .collect::<Vec<_>>();
-    let content = serde_json::to_vec(&(&batch.folder, notes, links))
+    let name_only = batch
+        .name_only
+        .iter()
+        .map(|file| {
+            (
+                &file.path,
+                file.why,
+                file.facts,
+                file.original
+                    .as_ref()
+                    .map(|original| (original.media_type.as_str(), original.content_hash())),
+            )
+        })
+        .collect::<Vec<_>>();
+    let content = serde_json::to_vec(&(&batch.folder, notes, links, name_only))
         .map_err(|_| Error::InvalidClaimBody("note import batch encoding failed"))?;
     Ok(blake3::hash(&content))
 }
@@ -615,6 +655,7 @@ fn decision_slot(batch: &ImportedNoteBatch) -> Result<[u8; 32]> {
         NOTES_IMPORT_SOURCE,
         batch.notes.len(),
         batch.links.len(),
+        batch.name_only.len(),
         content_hash(batch)?.to_hex().as_str(),
     ))
     .map_err(|_| Error::InvalidClaimBody("note import batch encoding failed"))?;
@@ -631,7 +672,7 @@ pub(super) fn validate_batch(batch: &ImportedNoteBatch) -> Result<()> {
     {
         return Err(invalid("the markdown import source is not registered"));
     }
-    if batch.notes.is_empty() {
+    if batch.notes.is_empty() && batch.name_only.is_empty() {
         return Err(invalid("empty note import batch"));
     }
     if batch.folder.trim().is_empty() {
@@ -655,6 +696,14 @@ pub(super) fn validate_batch(batch: &ImportedNoteBatch) -> Result<()> {
             if !titles.insert(super::title_index::normalized(title)) {
                 return Err(invalid("a title appears twice in the note import batch"));
             }
+        }
+    }
+    for file in &batch.name_only {
+        if file.path.is_empty() || file.path.len() > MAX_PATH_BYTES {
+            return Err(invalid("a name-only file's path is empty or too long"));
+        }
+        if !paths.insert(file.path.as_str()) {
+            return Err(invalid("a path appears twice in the note import batch"));
         }
     }
     let mut links = HashSet::new();

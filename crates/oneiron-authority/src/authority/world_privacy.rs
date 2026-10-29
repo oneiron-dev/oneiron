@@ -33,7 +33,17 @@ const WORLD_PRIVACY_KEYS: [&str; 8] = [
 
 /// Where a world's rows may be read.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 pub enum ReadLocation {
     /// Only on one machine, which must be one the owner marked "yours": his
@@ -47,7 +57,17 @@ pub enum ReadLocation {
 /// Where sealed copies of a world may rest. Declared strictest first, so the
 /// derived order is the stricter-wins order.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum SealedCopies {
@@ -68,6 +88,7 @@ pub enum SealedCopies {
     Default,
     serde::Serialize,
     serde::Deserialize,
+    schemars::JsonSchema,
 )]
 pub enum ModelOrder {
     /// The vault's own order.
@@ -78,7 +99,16 @@ pub enum ModelOrder {
 
 /// One world's settings, as one edit states them in full.
 #[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 pub struct WorldPrivacy {
     pub read: ReadLocation,

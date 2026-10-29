@@ -121,6 +121,10 @@ pub enum ConnectorCallOutcome {
         intent: Option<[u8; 32]>,
         result: Option<UntrustedToolResult>,
         result_absence: Option<ConnectorResultAbsence>,
+        /// The budget messages this send's charge fired on its key and
+        /// catalog pool (FIX 3759): the 80% plan and 95% land texts. Empty
+        /// when none fired, and on a replay.
+        budget_steering: Vec<String>,
     },
     /// Held for consent or governance. Nothing was sent. Once the hold may
     /// have cleared, [`crate::Vault::resume_connector_call`] re-enters it.
@@ -245,6 +249,11 @@ pub struct PendingConnectorCallRef {
     pub name: String,
     pub tool: String,
     pub settled: bool,
+    /// A full count-bound budget window paced the call (FIX 8686): `Some`
+    /// with `true` while its window is still shut on the engine's clock, so
+    /// no resume runs; `Some(false)` once it opened, so the next pass drives
+    /// it at once.
+    pub paced: Option<bool>,
 }
 
 /// One tool's approved input schema, on the governing key the caller's own
