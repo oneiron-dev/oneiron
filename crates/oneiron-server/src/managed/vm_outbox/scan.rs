@@ -211,9 +211,17 @@ impl Carrier {
             // removes it.
             let retires = class.origin == self.side || (class.peer_retires && !class.protected);
             let op = remove_op(&mut record, &member, retires, class.remove_rank);
-            // A gone file is a changed member: no source status stands.
+            // A gone file is a changed member: no source status stands, and
+            // no copy this end kept is left to answer for (FIX 11074).
             record.cached = None;
             record.source = None;
+            if record
+                .diverged
+                .as_ref()
+                .is_some_and(|diverged| diverged.held_by == self.side)
+            {
+                record.diverged = None;
+            }
             self.store.put(kind, &member, record)?;
             ops.extend(op.map(|op| (class.set, op)));
         }

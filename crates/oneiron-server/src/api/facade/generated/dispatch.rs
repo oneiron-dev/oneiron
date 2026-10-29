@@ -4543,6 +4543,35 @@ async fn self_credential_attenuate(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn self_actor(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.actor")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.actor", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.actor", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::self_actor(server, auth, facade_door_input(&mut hooks)?).await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_scope_position(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38395,6 +38424,7 @@ async fn call_verb_row(
         "vault.export.transfer.read" => vault_export_transfer_read(server, call, input).await,
         "vault.export.transfer.release" => vault_export_transfer_release(server, call, input).await,
         "self.credential.attenuate" => self_credential_attenuate(server, call, input).await,
+        "self.actor" => self_actor(server, call, input).await,
         "vault.scope.position" => vault_scope_position(server, call, input).await,
         "vault.scope.ceiling" => vault_scope_ceiling(server, call, input).await,
         "vault.export.scoped" => vault_export_scoped(server, call, input).await,

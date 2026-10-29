@@ -50,6 +50,10 @@ pub(crate) struct Rehearsal {
     /// (KS-6), by handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the restored copy did not carry of its source's current pad
+    /// objects (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// A directory on the live vault's path that another user could change,
@@ -217,6 +221,11 @@ fn rehearse_into(
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         credential_notes: report
             .credential_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        pad_object_notes: report
+            .pad_object_notes
             .iter()
             .map(ToString::to_string)
             .collect(),
