@@ -5,6 +5,7 @@
 //! it, and answers the same wire value a credential's call of the row does.
 
 use oneiron::claim::WeaveReportRequest;
+use oneiron::lens::WeaveLensRequest;
 
 use super::{
     AgentVerb, Arc, DescribeRequest, EntityId, HostWriteOrigin, InvocationId, MemoryResult,
@@ -63,7 +64,11 @@ pub(super) fn weave_lens_as_agent(
     let output = verb_hook_boundary::row(&memory, name, input, |input| {
         sdk::validate_input(name, &input)?;
         let owner = CardOwner::run_request(run, name, &input);
-        let request: WeaveReportRequest = decode(input)?;
+        let request: WeaveLensRequest = decode(input)?;
+        let surface = request.surface;
+        let request = WeaveReportRequest {
+            sections: request.sections,
+        };
         let caller = WeaveLensCaller::Run {
             actor: actor.entity_ref(),
             class: actor.actor_class(),
@@ -71,8 +76,9 @@ pub(super) fn weave_lens_as_agent(
             line: line.cloned(),
         };
         let handle = tokio::runtime::Handle::current();
-        let (card, listed) =
-            handle.block_on(render_live_weave_lens_for_run(server, caller, request, owner));
+        let (card, listed) = handle.block_on(render_live_weave_lens_for_run(
+            server, caller, request, owner, surface,
+        ));
         rows = listed;
         encode(card?)
     })?;
