@@ -272,7 +272,10 @@ async fn run_program(
             // Settled before its try closed: the result stands, and the
             // try completes on it without running again.
             repay(shared, &loan.lease, 0);
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         // A cut run resumes from its pinned entry as this same try, unless an
         // effect of it is not settled or its actor is gone (DOOR-141 PR3b).
@@ -485,6 +488,7 @@ fn settle(
             )?;
             Ok(DreamerAttemptExecution::Completed {
                 completed_units: used,
+                step_hashes: Vec::new(),
             })
         }
         EngineExecutorStatus::Complete => held(ProgramHold::Unfinished),

@@ -47,12 +47,18 @@ impl ConsolidationExecutor<'_> {
         if let Some(completed_units) =
             sieve::rung_result_units(ctx.vault, attempt.status.attempt.id)?
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units,
+                step_hashes: Vec::new(),
+            });
         }
         if sieve::rung_superseded(ctx.vault, &input)?
             || (!input.audit && input.span.owed.is_empty())
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let Some(evidence) = sieve::rung_evidence(ctx.vault, &input)? else {
             // The source may be withheld temporarily. Keep the job and queue
@@ -63,6 +69,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
+                step_hashes: Vec::new(),
             });
         };
         let mut charges = StepChargeTally::default();
@@ -264,6 +271,7 @@ impl ConsolidationExecutor<'_> {
         ) {
             Ok(true) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Ok(false) => Ok(DreamerAttemptExecution::Deferred {
                 completed_units: charges.units,
@@ -271,6 +279,7 @@ impl ConsolidationExecutor<'_> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(input.policy.rung_retry_secs),
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(error) => Ok(charges.park_on_error(&error)),
         }

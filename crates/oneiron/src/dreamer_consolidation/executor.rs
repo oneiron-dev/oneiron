@@ -507,7 +507,10 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         // A Timer wake's plan parent (FIX 336): its children and remainder
         // landed with it at enqueue, so running it only completes it.
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::PLAN_ATTEMPT {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
             return self.run_sieve_rungs(attempt, ctx).await;
@@ -577,7 +580,10 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 agent: self.actor,
             };
             crate::edit_distance::miner::run_substitution_miner(ctx.vault, &run)?;
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
 
         if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
@@ -656,6 +662,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                                 .now_ms
                                 .div_ceil(1_000)
                                 .saturating_add(super::RESIDENCY_RETRY_SECS),
+                            step_hashes: Vec::new(),
                         })
                     }
                     _ => Err(invalid_consolidation(
