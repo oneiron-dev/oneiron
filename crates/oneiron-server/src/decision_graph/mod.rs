@@ -234,6 +234,7 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
                     provider,
                     cost_per_thousand: decision.receipt.cost_per_thousand.unwrap_or(0.0),
                     paired: None,
+                    rule: decision.receipt.rule,
                 })
             }
             _ => None,

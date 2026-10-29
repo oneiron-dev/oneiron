@@ -9,7 +9,7 @@ use crate::claim::{
     ScopedReadActorKey,
 };
 use crate::llm::decision::{
-    DecisionAnswer, DecisionReceipt, PairedReading, ProviderPin, TypedDecision,
+    DecisionAnswer, DecisionReceipt, HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{
@@ -59,6 +59,9 @@ pub struct StandingAnswer {
     pub providers: Vec<ProviderPin>,
     /// Paired readings the providers measured with this answer; none means none was taken.
     pub paired: Vec<PairedReading>,
+    /// The host rule row the answer was read from, as id@revision (FIX 2974): its stored
+    /// receipt names it. None when no rule row answered.
+    pub rule: Option<HostRuleRef>,
     pub source_frontier: [u8; 32],
 }
 
@@ -439,6 +442,7 @@ pub(super) fn backfill_graph_answer(
             .map(|reading| reading.bind(prediction.provider))
             .into_iter()
             .collect(),
+        rule: prediction.rule,
         source_frontier: frontier,
     };
     backfill_answer(
@@ -483,6 +487,7 @@ pub(super) fn backfill_graph_decision(
             .collect(),
         providers: decision.receipt.providers.clone(),
         paired: decision.receipt.paired.clone(),
+        rule: decision.receipt.rule.clone(),
         source_frontier: frontier,
     };
     backfill_answer(
@@ -646,7 +651,7 @@ fn backfill_answer(
                     images: Vec::new(),
                     think_row: None,
                     person_row: None,
-                    rule: None,
+                    rule: input.rule,
                     asked: None,
                 },
                 human_ask: None,

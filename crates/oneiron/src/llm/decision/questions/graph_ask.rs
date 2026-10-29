@@ -12,8 +12,8 @@ use crate::claim::{
 };
 use crate::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
-    PairedAnswer, PairedReading, ProviderPin, TypedDecision,
+    DecisionRung, EvidenceVersion, HostRuleRef, MAX_DECISION_AUDIO_BYTES,
+    MAX_DECISION_IMAGE_BYTES, PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
@@ -58,6 +58,9 @@ pub struct GraphPrediction {
     pub cost_per_thousand: f64,
     /// The paired reading from the same measurement, when the provider takes one.
     pub paired: Option<PairedAnswer>,
+    /// The host rule row the prediction was read from, as id@revision (FIX 2974); none
+    /// when no rule row answered.
+    pub rule: Option<HostRuleRef>,
 }
 
 /// What an answerer returns for one unit: a bare prediction the engine wraps

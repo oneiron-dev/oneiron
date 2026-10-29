@@ -225,7 +225,7 @@ pub(super) fn refresh_with(
                         images: Vec::new(),
                         think_row: None,
                         person_row: None,
-                        rule: None,
+                        rule: proposal.rule.clone(),
                         asked: None,
                     },
                     human_ask: None,

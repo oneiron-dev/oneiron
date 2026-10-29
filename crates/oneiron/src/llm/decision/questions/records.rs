@@ -3,7 +3,7 @@
 use super::super::types::invalid;
 use super::super::{
     DecisionAnswer, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung,
-    PairedReading, ProviderPin, TypedDecision,
+    HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::learning_setting::SettingSpec;
 use crate::{EntityId, Result, Vault};
@@ -349,6 +349,9 @@ pub struct AnswerProposal {
     pub providers: Vec<ProviderPin>,
     /// Paired readings the providers measured with this answer; none means none was taken.
     pub paired: Vec<PairedReading>,
+    /// The host rule row the answer was read from, as id@revision (FIX 2974); none when no
+    /// rule row answered.
+    pub rule: Option<HostRuleRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
