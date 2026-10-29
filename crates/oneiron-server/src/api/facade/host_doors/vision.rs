@@ -12,6 +12,8 @@ use oneiron::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, MemoryError,
 };
 use oneiron::task_verb::sdk::{AskImageAnswer, AskImageRequest};
+use oneiron::{LlmError, RetryableLlmError};
+use serde::Deserialize as _;
 
 use super::support::Listed;
 use crate::auth::CoreAuth;
@@ -71,8 +73,8 @@ pub(crate) fn ask_image_refusal_status(code: &str) -> Option<StatusCode> {
 /// status stays the code, so the facade answers both alike; any other
 /// refusal (a read lane's, a credential's) takes the facade code its status
 /// maps back to, with its own code kept in the message. A provider failure's
-/// structured detail rides in the message as its JSON, as the sibling media
-/// doors carry it.
+/// retry hints keep their fields, and its whole detail rides in the message
+/// as its JSON, as the sibling media doors carry it.
 async fn refusal_error(refused: Response) -> MemoryError {
     let status = refused.status();
     let body = axum::body::to_bytes(refused.into_body(), REFUSAL_BODY_BYTES)
@@ -125,8 +127,36 @@ async fn refusal_error(refused: Response) -> MemoryError {
         ),
         _ => (MEMORY_CODE_INTERNAL, "This is an Oneiron server bug; please report it."),
     };
-    if ask_image_refusal_status(&reason) == Some(status) {
-        return MemoryError::new(&reason, format!("{VERB}: {words}"), &[suggestion]);
+    let mut refusal = if ask_image_refusal_status(&reason) == Some(status) {
+        MemoryError::new(&reason, format!("{VERB}: {words}"), &[suggestion])
+    } else {
+        MemoryError::new(code, format!("{VERB}: {reason}: {words}"), &[suggestion])
+    };
+    (refusal.retry_after, refusal.resets_at) = retry_hints(error.get("llm"));
+    refusal
+}
+
+/// When to call again, and each time the limit resets, as a provider
+/// failure's structured detail says them (`error.llm`); none for any other
+/// refusal.
+fn retry_hints(llm: Option<&serde_json::Value>) -> (Option<u64>, Vec<u64>) {
+    match llm.and_then(|llm| LlmError::deserialize(llm).ok()) {
+        Some(LlmError::Retryable(
+            RetryableLlmError::RateLimited {
+                retry_after,
+                resets_at,
+            }
+            | RetryableLlmError::QuotaSpent {
+                retry_after,
+                resets_at,
+                ..
+            }
+            | RetryableLlmError::KeptOnDevice {
+                retry_after,
+                resets_at,
+                ..
+            },
+        )) => (retry_after, resets_at),
+        _ => (None, Vec::new()),
     }
-    MemoryError::new(code, format!("{VERB}: {reason}: {words}"), &[suggestion])
 }
