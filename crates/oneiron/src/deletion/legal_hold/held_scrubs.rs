@@ -51,6 +51,9 @@ pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     if vault.store.gate_scrubs_owed_in_txn(txn, &sources)? {
         return Ok(true);
     }
+    if vault.store.staged_erases_owed_in_txn(txn, &sources)? {
+        return Ok(true);
+    }
     if crate::store::legal_hold::holds_in_txn(&vault.store, txn)?.is_empty() {
         return Ok(false);
     }

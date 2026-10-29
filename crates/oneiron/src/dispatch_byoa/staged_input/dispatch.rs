@@ -175,7 +175,6 @@ fn persist_staged_input_in_txn(
             now,
         )?
         .version;
-    super::erase::drop_owed_staged_erase_in_txn(&vault.store, wtxn, &digest)?;
     Ok(StagedInputPin {
         artifact: byoa_result_ref(&artifact_id, version)?.as_str().to_owned(),
         len: job.job.len() as u64,

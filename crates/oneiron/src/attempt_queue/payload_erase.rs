@@ -301,7 +301,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let jobs = byoa.erase_copies(store, txn, &mut rewrites)?;
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
-    crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs)?;
+    crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs, actors)?;
     crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
@@ -528,6 +528,69 @@ fn pins(payload: &ByoaAttemptPayload) -> impl Iterator<Item = &StagedInputPin> {
         .as_ref()
         .and_then(|work| work.staged_input.as_ref());
     cli.into_iter().chain(work)
+}
+
+impl Store {
+    /// Whether a live BYOA row still pins staged job `digest` (FIX 7612).
+    /// Pins on a hard-erased attempt, TASK, actor, diagnostic or evidence row
+    /// are not live. Only connector references and deletion markers are read,
+    /// never the staged job's text.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors from the attempt ledger or deletion-marker reads.
+    pub(crate) fn live_staged_input_pin_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        digest: &[u8; 32],
+    ) -> Result<bool> {
+        for row in self.attempt_records.iter(txn)? {
+            let (key, raw) = row?;
+            let Ok(id) = AttemptId::from_bytes(&key) else {
+                continue;
+            };
+            let Ok(record) = decode_record(&raw, id) else {
+                continue;
+            };
+            if record.kind != BYOA_ATTEMPT_KIND {
+                continue;
+            }
+            let Ok(payload) = decode_byoa_attempt_payload(&record.payload) else {
+                continue;
+            };
+            if !pins(&payload).any(|pin| pin.blake3 == *digest) {
+                continue;
+            }
+            let attempt = EntityId::from_bytes_unchecked(*record.id.as_bytes());
+            let mut live = !self.port_deletion_marked(txn, DeletionMarker::HardDelete, &attempt)?;
+            if live
+                && let Some(task) = record
+                    .task_ref
+                    .as_deref()
+                    .and_then(|task| EntityId::from_hex(task).ok())
+            {
+                live = !self.port_deletion_marked(txn, DeletionMarker::HardDelete, &task)?;
+            }
+            if live && let Some(refs) = payload.dev_refs.as_ref() {
+                for id in std::iter::once(&refs.actor)
+                    .chain(refs.diagnostics.iter())
+                    .chain(refs.evidence.iter())
+                {
+                    let Ok(id) = EntityId::from_bytes(*id) else {
+                        continue;
+                    };
+                    if self.port_deletion_marked(txn, DeletionMarker::HardDelete, &id)? {
+                        live = false;
+                        break;
+                    }
+                }
+            }
+            if live {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 /// Replaces an erased task's failure text with the fixed marker (FIX 7618):
