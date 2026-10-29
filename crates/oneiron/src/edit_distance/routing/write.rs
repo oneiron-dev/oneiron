@@ -105,7 +105,7 @@ pub(super) struct Fold {
     sound: f64,
     on_judge_model: bool,
     at: u64,
-    outcome: Option<String>,
+    pub(super) outcome: Option<String>,
 }
 
 /// What one judgment contributes, or `None` when it holds.
