@@ -140,6 +140,7 @@ mod stale_roster;
 mod support_admission;
 mod support_grant;
 mod support_receipt;
+mod support_repair;
 mod task_actor;
 mod vault_api;
 mod weave_admin;
@@ -182,13 +183,14 @@ pub use oneiron_authority::authority::{
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
-    SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
-    WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
-    authority_log_entity_id, authority_log_entity_id_from_hash, authority_transcript,
-    decode_authority_log_entry_body, effective_slip_comm, encode_authority_log_entry_body,
-    federation_pact_transcript, federation_scope_digest, genesis_vault_id,
-    machine_profile_proof_transcript, privacy_direction, sign_federation_pact_gesture,
-    validate_authority_log_entry_body_bytes, verify_authority_signature,
+    SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, SupportRepair,
+    WORLD_MODEL_ROUTE_MAX_BYTES, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
+    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
+    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
+    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04).
 pub use oneiron_authority::authority::{
