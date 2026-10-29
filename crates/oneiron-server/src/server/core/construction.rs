@@ -280,7 +280,7 @@ impl SyncServer {
             reassert_manager,
             _reactive_tee: reactive_tee,
             lifecycle_session_id: NEXT_LIFECYCLE_SESSION_ID.fetch_add(1, Ordering::Relaxed),
-            lifecycle_in_flight: Mutex::new(HashSet::new()),
+            lifecycle_in_flight: std::sync::Mutex::new(HashSet::new()),
             housekeeping_passes: Default::default(),
             standing_block_cache: Mutex::new(
                 oneiron::persona_snapshot::standing::StandingBlockCache::default(),
