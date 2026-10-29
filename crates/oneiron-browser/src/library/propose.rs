@@ -235,11 +235,18 @@ pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
     )?;
     // The proposal's typed secret arguments take the place of the same
     // names in both value sets (FIX 10427); the typed reading fills the
-    // checks and the replay, and the filed program keeps its slots.
+    // checks and the replay, and the filed program keeps its slots. An
+    // empty `replay_args` means the replay runs with `args`, so it takes
+    // no override: inserting one would leave a partial replay map that
+    // `validate_replay_args` refuses as held out (as `SlotBook::mint`
+    // guards its replay insert).
     let (overrides, text) = secret_slots::typed_values(&input.secret_args)?;
+    let separate_replay = !replay_args.is_empty();
     for (name, value) in overrides {
         args.insert(name.clone(), value.clone());
-        replay_args.insert(name, value);
+        if separate_replay {
+            replay_args.insert(name, value);
+        }
     }
     let typed = secret_slots::as_text(&program, &text);
     let site = program.site()?;
