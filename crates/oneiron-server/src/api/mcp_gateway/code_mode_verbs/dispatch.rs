@@ -168,10 +168,11 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         });
         // A live-run hold the verb makes names its attempt on the
         // `execute_code` call's receipt (FIX 10938).
-        self.runtime.spawn(crate::api::call_receipt::with_attempt_collector(
-            self.collector.clone(),
-            answered,
-        ));
+        self.runtime
+            .spawn(crate::api::call_receipt::with_attempt_collector(
+                self.collector.clone(),
+                answered,
+            ));
         let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: "engine_error".to_owned(),

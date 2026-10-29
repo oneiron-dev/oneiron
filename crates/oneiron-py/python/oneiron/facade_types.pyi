@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1202 facade rows, 4344 declarations.
-Inputs: 1130 of 1202 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1041 of 1202 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1204 facade rows, 4350 declarations.
+Inputs: 1132 of 1204 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1043 of 1204 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -1287,6 +1287,33 @@ class GrantAskReceipt(TypedDict):
     request: str
     asked: str
     status: str
+class GrantAskedRequest(TypedDict):
+    after: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class GrantRequestedScopeMessages(TypedDict):
+    kind: Literal["messages"]
+    space_ref: EntityId
+class GrantRequestedScopeSummaries(TypedDict):
+    kind: Literal["summaries"]
+    space_ref: EntityId
+class GrantRequestedScopeRelationshipClaims(TypedDict):
+    kind: Literal["relationship_claims"]
+    space_ref: EntityId
+class GrantRequestedScopeCompanionProfile(TypedDict):
+    kind: Literal["companion_profile"]
+    person_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+GrantRequestedScope = GrantRequestedScopeMessages | GrantRequestedScopeSummaries | GrantRequestedScopeRelationshipClaims | GrantRequestedScopeCompanionProfile
+class GrantAskedRow(TypedDict):
+    request: str
+    asker: str
+    capability: str
+    scope: GrantRequestedScope
+    created_at: int
+    expires_at: NotRequired[int | None]
+class GrantAskedPage(TypedDict):
+    requests: list[GrantAskedRow]
+    next_after: NotRequired[str | None]
 CompanionAccessRequestAnswer = Literal["approve", "deny"]
 class CompanionAccessRequestAnswerRequest(TypedDict):
     request: EntityId
@@ -1309,20 +1336,6 @@ GrantAnswer = Literal["approve", "deny"]
 class GrantAnswerRequest(TypedDict):
     request: EntityId
     answer: GrantAnswer
-class GrantRequestedScopeMessages(TypedDict):
-    kind: Literal["messages"]
-    space_ref: EntityId
-class GrantRequestedScopeSummaries(TypedDict):
-    kind: Literal["summaries"]
-    space_ref: EntityId
-class GrantRequestedScopeRelationshipClaims(TypedDict):
-    kind: Literal["relationship_claims"]
-    space_ref: EntityId
-class GrantRequestedScopeCompanionProfile(TypedDict):
-    kind: Literal["companion_profile"]
-    person_ref: EntityId
-    facet_ref: NotRequired[EntityId | None]
-GrantRequestedScope = GrantRequestedScopeMessages | GrantRequestedScopeSummaries | GrantRequestedScopeRelationshipClaims | GrantRequestedScopeCompanionProfile
 class GrantAnswered(TypedDict):
     request: EntityId
     principal_ref: EntityId
@@ -4163,6 +4176,14 @@ class TurnProgramRegistration(TypedDict):
     newly_armed: bool
 class DisarmTurnProgram(TypedDict):
     registration: EntityId
+class TurnProgramRebindRequest(TypedDict):
+    attempt: str
+class TurnProgramRebindReceipt(TypedDict):
+    attempt: str
+    admission: str
+    predecessor_slip: str
+    successor_slip: str
+    owner_work: bool
 class SavedQueryScopeSpec(TypedDict):
     worlds: NotRequired[list[EntityId]]
     facets: NotRequired[list[str]]
@@ -17025,12 +17046,19 @@ QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinitionInput
 QuestionAskerClass = Literal["human", "agent", "system"]
+class FrozenReadLane(TypedDict):
+    credential: NotRequired[list[int] | None]
+    authority: NotRequired[Scope | None]
+    records: NotRequired[list[str]]
+    worlds: NotRequired[ScopeAxis[ScopeId] | None]
+    room_facets: NotRequired[EntityId | None]
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
     definition: QuestionDefinition[DecisionQuestion]
     created_at: int
     asker_class: NotRequired[QuestionAskerClass | None]
+    read_lane: FrozenReadLane
 class QuestionEditRequest(TypedDict):
     id: EntityId
     expected_version: int

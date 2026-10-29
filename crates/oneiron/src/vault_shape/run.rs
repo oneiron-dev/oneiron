@@ -63,9 +63,7 @@ pub fn shape_item_ref(frontier: &str, seq: u32) -> String {
 /// reference.
 #[must_use]
 pub fn shape_item_ref_parts(reference: &str) -> Option<(&str, u32)> {
-    let (frontier, seq) = reference
-        .strip_prefix(SHAPE_RUN_PREFIX)?
-        .split_once('#')?;
+    let (frontier, seq) = reference.strip_prefix(SHAPE_RUN_PREFIX)?.split_once('#')?;
     Some((frontier, seq.parse().ok()?))
 }
 
