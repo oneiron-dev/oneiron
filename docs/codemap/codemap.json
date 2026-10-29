@@ -9901,10 +9901,10 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 5,
       "fn": 6,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 4
      }
     },
@@ -9935,6 +9935,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/browser_library/coverage.rs",
+     "purpose": "The Coach's coverage and seen reads (FIX 10841, 10513): the same reads the index keeps its rows for, in a…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/browser_library/erase.rs",
      "purpose": "Erasing an actor from the browser library (moved out of `browser_library` whole): the programs its run filed…",
      "surface": {
@@ -9954,16 +9965,17 @@
       "SolvedRunCapture",
       "SolvedRunEvidence",
       "SolvedRunScope",
-      "SolvedSource"
+      "SolvedSource",
+      "WorkflowFiling"
      ],
      "path": "src/browser_library/evidence.rs",
      "purpose": "Solved-run evidence (CUA E8a; DESIGN-2 \"The Coach\", row E8): a browser run's span whose checks met on the…",
      "surface": {
-      "const": 6,
+      "const": 8,
       "crate-vis": 1,
       "enum": 3,
-      "fn": 4,
-      "struct": 7
+      "fn": 7,
+      "struct": 8
      }
     },
     {
@@ -9981,7 +9993,7 @@
      "purpose": "The solved-run index (CUA E8a; DESIGN-2 \"The Coach\", row E8): group, coverage, failure, dirty and seen rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 17,
       "fn": 7,
       "struct": 6
      }
@@ -26597,7 +26609,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/free_time/handoff.rs",
@@ -39143,6 +39155,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning/conversion_chain.rs",
+     "purpose": "One judge-conversion chain, resolved whole: an old score follows the swap maps to the current judge, and a…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -43453,7 +43475,7 @@
      "path": "src/memory/browser_solved.rs",
      "purpose": "The browser's solved-run capture door (CUA E8a; DESIGN-2 \"The Coach\", row E8): a source caller's checked…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -54459,7 +54481,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Clock",
@@ -54469,7 +54491,7 @@
      "path": "src/ports/time.rs",
      "purpose": "Per-store clock and id source",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 17,
       "fn": 8,
       "struct": 1,
       "trait": 2
@@ -62405,7 +62427,7 @@
      "path": "src/skill_attribution/credit_join.rs",
      "purpose": "The one reconciler of an anchored outcome's late credit (FIX 3241, FIX 10108, OF-540)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 1,
       "struct": 1
      }
@@ -62503,7 +62525,7 @@
      "path": "src/skill_attribution/late_credit.rs",
      "purpose": "Late credit over the run's recorded, actually-used derived-from edges",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 2
      }
@@ -62515,7 +62537,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "re-export": 19
      }
     },
@@ -64922,7 +64944,17 @@
      "path": "src/skill_reliability/amended.rs",
      "purpose": "Amendment verdicts on an attempt's outcome row (ARCH-0056 §5): one record per attempt, and the later verdict…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/anchored_amendment.rs",
+     "purpose": "The join between a judged amendment's defect share and the native anchored pack outcome it revises (FIX 10148)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -73166,7 +73198,7 @@
      "path": "src/team/mod.rs",
      "purpose": "Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 10,
       "re-export": 11
      }
@@ -81415,7 +81447,7 @@
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
     "browser_library": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -82045,7 +82077,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "learning": {
-     "files": 16,
+     "files": 17,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82570,7 +82602,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82838,7 +82870,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5534,
+   "source_files": 5537,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85895,7 +85927,7 @@
      "path": "src/cdp/storage.rs",
      "purpose": "What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -86232,11 +86264,51 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FieldTextReason",
+      "TextProvenance",
+      "TextSource"
+     ],
+     "path": "src/field.rs",
+     "purpose": "A Fill step's text (CUA E6, DESIGN-2 §4 \"Field text = A\"): what one field takes, resolved in code before any…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 2,
+      "re-export": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/field/run.rs",
+     "purpose": "A Fill step running (moved out of `field` whole): its text resolved in order and typed, its generation, its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "FieldSpec",
-      "FieldTextReason",
+      "TextReference"
+     ],
+     "path": "src/field/spec.rs",
+     "purpose": "What a Fill step types (moved out of `field` whole): the step's text sources and their check before the…",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "FieldWrite",
       "FieldWriteError",
       "FieldWriter",
@@ -86244,19 +86316,14 @@
       "NoWriter",
       "TextCheck",
       "TextCheckReply",
-      "TextProvenance",
-      "TextReference",
-      "TextSource",
       "TextVerdict"
      ],
-     "path": "src/field.rs",
-     "purpose": "A Fill step's text (CUA E6, DESIGN-2 §4 \"Field text = A\"): what one field takes, resolved in code before any…",
+     "path": "src/field/write.rs",
+     "purpose": "The host's field writer (moved out of `field` whole): one model call that writes a field's text, and the…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
-      "enum": 4,
-      "fn": 2,
-      "struct": 8,
+      "enum": 2,
+      "struct": 5,
       "trait": 1
      }
     },
@@ -86277,28 +86344,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "LibraryRunInput",
-      "LibraryRunOutput",
-      "ProposeInput",
-      "ProposeOutput",
-      "SecretArg",
-      "WorkflowCheck",
-      "WorkflowLibrary",
-      "WorkflowProgram",
-      "WorkflowProof"
-     ],
+     "notable": [],
      "path": "src/library.rs",
      "purpose": "The replay library (OF-598; EIRI-ARCH-0002 \"The replay library\"): a solved browser run, kept as a…",
      "surface": {
-      "crate-vis": 12,
-      "enum": 2,
-      "fn": 4,
-      "re-export": 6,
-      "struct": 6,
-      "trait": 1
+      "crate-vis": 7,
+      "re-export": 9
      }
     },
     {
@@ -86379,16 +86432,51 @@
      "kind": "src",
      "notable": [
       "FiledWorkflow",
+      "LibraryRunInput",
       "LibraryRunMode",
-      "RunOutcome"
+      "LibraryRunOutput",
+      "RunOutcome",
+      "SecretArg"
      ],
      "path": "src/library/live_run.rs",
      "purpose": "A library run (CUA E2): strict, where only a rule answers its routine steps and a step only a model could…",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
+      "enum": 2,
       "fn": 4,
-      "struct": 2
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkflowLibrary",
+      "WorkflowProgram"
+     ],
+     "path": "src/library/program.rs",
+     "purpose": "A library program's shape and where programs are kept: the program itself, the [`WorkflowLibrary`] door, and…",
+     "surface": {
+      "fn": 4,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProposeInput",
+      "ProposeOutput",
+      "WorkflowCheck",
+      "WorkflowProof"
+     ],
+     "path": "src/library/propose.rs",
+     "purpose": "A proposal's checks (pure move out of `library`): the proposal and proof shapes, the solved-page check on…",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "struct": 3
      }
     },
     {
@@ -86400,7 +86488,7 @@
      "path": "src/library/secret_slots.rs",
      "purpose": "A program's secret slots (FIX 8028, OF-560; ARCH-0069 secret custody): a program never holds a secret, nor…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "struct": 1
      }
     },
@@ -86761,7 +86849,7 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -86972,14 +87060,14 @@
      "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…"
     },
     "field": {
-     "files": 1,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "A Fill step's text (CUA E6, DESIGN-2 §4 \"Field text = A\"): what one field takes, resolved in code before any…"
     },
     "library": {
-     "files": 8,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -87114,7 +87202,7 @@
    },
    "over_bar": 0,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 82,
+   "source_files": 87,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -98808,7 +98896,7 @@
      "path": "src/ai_host/stewardship/pace.rs",
      "purpose": "When a reach-out whose draft failed is drafted again (FIX 9465)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -107933,7 +108021,7 @@
      "path": "src/embedder/admitted.rs",
      "purpose": "An endpoint embedder's requests under run admission (ARCH-0053 `#run-admission`): the primary endpoint's and…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -107953,7 +108041,7 @@
      "path": "src/embedder/endpoint.rs",
      "purpose": "The `endpoint` provider: any OpenAI-compatible `/v1/embeddings` server",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 26
      }
     },
     {
@@ -107973,7 +108061,7 @@
      "path": "src/embedder/endpoint/destination.rs",
      "purpose": "Where one document batch goes, chosen before any of its rows is admitted (FIX 9486)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -111286,7 +111374,7 @@
      "path": "src/models/media/replay.rs",
      "purpose": "A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -112898,7 +112986,7 @@
      "path": "src/runtime/gpu_pool.rs",
      "purpose": "The serve host's owner of the per-region GPU registry",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 13,
       "struct": 5
      }
@@ -113701,7 +113789,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {

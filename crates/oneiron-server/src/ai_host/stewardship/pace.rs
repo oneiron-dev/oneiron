@@ -4,7 +4,7 @@
 //! no vault write needed to wake it. It is never given up on: it stays
 //! pending and owed. Any change of its inputs, or a draft that lands,
 //! resets its wait. The pace is kept in memory: a restart drafts each
-//! pending reach-out at once.
+//! pending reach-out at once. A provider recovery ends every wait at once.
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
@@ -80,6 +80,14 @@ impl Pace {
             },
         );
         wait
+    }
+
+    /// A provider recovery ends every wait at once; counts and inputs stay.
+    pub(super) fn wake_all(&mut self) {
+        let now = Instant::now();
+        for owed in self.0.values_mut() {
+            owed.due = now;
+        }
     }
 
     /// A reach-out drafted, or no longer asking for one: its wait goes.
