@@ -47,6 +47,7 @@ mod channel_doors;
 mod checkout_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
+pub(crate) mod clock_ingress;
 mod clustering_doors;
 mod coach_offer_doors;
 mod code_doors;
@@ -311,14 +312,21 @@ async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
 /// it, as its handler refused it before. Its answer meets one destination
 /// release before it is sent ([`released_reply`], FIX 8170). What its answer
 /// holds (a deck preview's renderer) is kept until the reply's body is
-/// encoded (FIX 8238).
+/// encoded (FIX 8238). The owner's clock repair the binding door left
+/// unjudged runs with its caller judged in its own writer (FIX 11190).
 async fn facade_route(
-    auth: CoreAuth,
+    caller: clock_ingress::FacadeCaller,
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Response {
+    let auth = match caller {
+        clock_ingress::FacadeCaller::Credential(auth) => auth,
+        clock_ingress::FacadeCaller::ClockRepair(caller) => {
+            return clock_ingress::repair_reply(&server, caller, facade_json(payload)).await;
+        }
+    };
     super::answer_hold::until_encoded(async move {
         let call = FacadeCall::http(&server, &auth, &headers);
         let verb = uri.path().trim_start_matches('/');

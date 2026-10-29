@@ -288,7 +288,7 @@ pub(super) fn invocation_owner(
 /// An attested owner's STREAM connection: one per person, derived from him
 /// alone under its own prefix, so it never names a connector registration
 /// or another person's stream, and does not spell the person's id.
-fn owner_stream_connection(owner: oneiron::EntityId) -> StreamConnectionId {
+pub(super) fn owner_stream_connection(owner: oneiron::EntityId) -> StreamConnectionId {
     let key = blake3::derive_key(MCP_OWNER_STREAM_CONTEXT, owner.as_bytes());
     StreamConnectionId(format!("mcp-owner:{}", blake3::Hash::from(key).to_hex()))
 }

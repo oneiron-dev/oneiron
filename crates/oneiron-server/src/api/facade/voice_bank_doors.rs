@@ -31,6 +31,7 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron::voice_identity::ref_bank::VoiceBankActor;
 
+use super::clock_ingress;
 use super::host_doors::support::{MaybeListed, internal};
 use super::shared_act_doors::{as_person_naming, person};
 use crate::api::ai::{VoiceBankRefusal, evict_answer, provision_clone, render_consent_answer};
@@ -163,7 +164,7 @@ pub(crate) async fn vault_voices_render_consent(
     };
     let named = acting(server, &actor);
     let held = Arc::clone(server);
-    let recorded = tokio::task::spawn_blocking(move || {
+    let recorded = clock_ingress::run_blocking(move || {
         sdk::record_voice_render_decision_as(held.vault(), &actor, input)
     })
     .await
@@ -221,7 +222,7 @@ pub(crate) async fn vault_voices_targets_evict(
     let named = acting(server, &actor);
     let (voice_id, target) = (input.voice_id.clone(), input.target.clone());
     let held = Arc::clone(server);
-    let evicted = tokio::task::spawn_blocking(move || {
+    let evicted = clock_ingress::run_blocking(move || {
         sdk::evict_own_voice_target(held.vault(), &actor, &input)
     })
     .await

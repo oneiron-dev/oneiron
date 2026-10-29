@@ -87,6 +87,39 @@ pub(super) fn restrictive(vault: &Vault, verb: &str, args: &Value) -> Option<Par
     }
 }
 
+/// Whether every part a polymorphic call of `verb` writes withdraws or
+/// erases (FIX 11201): a batch every put of which withdraws an access grant,
+/// or a shared act that deletes the vault, erases or removes an owner. A
+/// connector pack accept stamps the pack's consent, whatever rows it denies,
+/// so it is never one; nor is any other call.
+///
+/// # Errors
+/// The pending shared act's read failing.
+pub(super) fn wholly_restrictive(vault: &Vault, verb: &str, args: &Value) -> crate::Result<bool> {
+    Ok(match verb {
+        "vault.batch" => args
+            .get("entities")
+            .and_then(Value::as_array)
+            .is_some_and(|puts| !puts.is_empty() && puts.iter().all(withdraws_a_grant)),
+        "vault.shared.execute" => {
+            let Some(act) = args.get("act_id").and_then(Value::as_str) else {
+                return Ok(false);
+            };
+            vault.pending_authority_act(act)?.is_some_and(|saved| {
+                matches!(
+                    SharedActKind::parse(&saved.act),
+                    Some(
+                        SharedActKind::DeleteVault
+                            | SharedActKind::Erase
+                            | SharedActKind::RemoveOwner
+                    )
+                )
+            })
+        }
+        _ => false,
+    })
+}
+
 fn pinned(path: &[&str], parse: fn(&Value) -> bool) -> Pinned {
     Pinned {
         path: path.iter().map(|key| (*key).to_owned()).collect(),

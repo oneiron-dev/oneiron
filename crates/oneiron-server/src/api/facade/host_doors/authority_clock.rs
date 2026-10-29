@@ -1,13 +1,16 @@
 //! The owner's authority clock repair door (FIX 10106). The engine judges the
 //! owner's proof in the repair's own writer, against the floor it proves, so
-//! this door adds no read of the clock it repairs.
+//! this door adds no read of the clock it repairs: the caller its transport
+//! admitted reaches that writer as it is (FIX 11202), a managed vault's
+//! attested owner, a host root or the dev mode, and the owner's own slip,
+//! with no owner proof built first.
 
 use std::sync::Arc;
 
-use oneiron::task_verb::sdk::{self, AuthorityClockRepair, EmptyRequest};
+use oneiron::task_verb::sdk::{AuthorityClockRepair, EmptyRequest};
 
 use super::support::Listed;
-use crate::api::facade::legal_hold_doors::as_owner_naming;
+use crate::api::facade::clock_ingress;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -17,12 +20,9 @@ pub(crate) async fn vault_authority_clock_repair(
     auth: &CoreAuth,
     _input: EmptyRequest,
 ) -> Listed<AuthorityClockRepair> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.authority.clock.repair",
-        move |server, owner| sdk::repair_authority_clock_as_owner(server.vault(), owner),
-        |_| Vec::new(),
-    )
-    .await
+    let repaired = match clock_ingress::repair_caller_of(server, auth) {
+        Ok(caller) => clock_ingress::repair(server, caller).await,
+        Err(refusal) => Err(refusal),
+    };
+    (repaired, Vec::new())
 }

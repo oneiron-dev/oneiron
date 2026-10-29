@@ -77,3 +77,14 @@ pub fn repair_authority_clock_as_owner(
 ) -> MemoryResult<AuthorityClockRepair> {
     Ok(vault.repair_authority_clock(owner)?)
 }
+
+/// `vault.authority.clock.repair` for `caller` as its ingress took it (FIX
+/// 11190, FIX 11202): the caller is judged only in the repair's own writer,
+/// against the floor it stages, so a damaged floor never refuses the owner
+/// first.
+pub fn repair_authority_clock_as(
+    vault: &Vault,
+    caller: crate::authority::ClockRepairCaller,
+) -> MemoryResult<AuthorityClockRepair> {
+    Ok(vault.repair_authority_clock_for(caller)?)
+}

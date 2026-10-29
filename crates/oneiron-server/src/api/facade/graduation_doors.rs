@@ -7,6 +7,7 @@ use oneiron::consent_graduation::api::{self, *};
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::EmptyRequest;
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -22,7 +23,7 @@ async fn as_owner<T: Send + 'static>(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || act(server.vault(), &owner))
+    let answer = clock_ingress::run_blocking(move || act(server.vault(), &owner))
         .await
         .unwrap_or_else(|_| Err(internal(verb)));
     // The ramp, policy, answers and grants live in side tables, not entity rows.

@@ -83,6 +83,20 @@ pub(super) fn released_reply(
     (axum::Extension(kept), Json(sent))
 }
 
+/// The reply of a call no credential binds, whose answer derives from no row
+/// (the owner's clock repair judged in its own writer, FIX 11190): it goes
+/// out as it is.
+pub(super) fn unbound_reply(
+    value: serde_json::Value,
+) -> (axum::Extension<FacadeReleased>, Json<serde_json::Value>) {
+    let kept = FacadeReleased {
+        peer: PeerMachine::Unknown,
+        rows: Some(Vec::new()),
+        withheld: None,
+    };
+    (axum::Extension(kept), Json(value))
+}
+
 /// The answer a request that waited on another's run of the same call gets
 /// (FIX 8212): `release`, the first call's answer before its release, judged
 /// again for this waiter. A row its producers listed that this waiter's
