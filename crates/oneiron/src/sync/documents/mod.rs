@@ -343,9 +343,8 @@ impl EntityDocument {
 
     /// Edit a Unicode-scalar range as `actor`, authenticated by the caller,
     /// at `at` (FIX 8873): the canonical attributed edit, its prose admitted
-    /// and its commit stamped. A record with no document yet is born first,
-    /// in its own author's name. The update is durable before return or
-    /// notice.
+    /// and its commit stamped. A MESSAGE with no document yet is born first,
+    /// naming no one. The update is durable before return or notice.
     pub fn edit_text(
         &self,
         actor: WriteActor,

@@ -5,15 +5,14 @@
 //! and a local edit keep the head's counters, revisions, index and tagging
 //! duties as every other write does.
 //!
-//! A record with no document yet is born lazily by the writer that needs
+//! A MESSAGE with no document yet is born lazily by the writer that needs
 //! one, through the MESSAGE birth's own semantics: its canonical text, at its
-//! own time, in its author's name (no one when no author edge names one),
-//! never the later editor's. The birth's operations take a peer derived from
-//! the record, so two machines that birth the same row make the same
-//! operations and their documents join. A peer's whole document, its birth
-//! included, is carried here instead; one of another birth than the document
-//! held here stands apart, as a carried MESSAGE document of another
-//! incarnation does.
+//! own time, naming no one. The birth's operations take a peer derived from
+//! the record, so every machine's sync birth of the same row is the same
+//! operations and their documents join; the stream and quote births are the
+//! doors that name an author. A peer's whole document, its birth included,
+//! is carried here instead; one of another birth than the document held here
+//! stands apart, as a carried MESSAGE document of another incarnation does.
 //!
 //! A sync write is admitted whatever its text holds (FIX 8872, KEEP TODAY):
 //! the owner's scan runs as configured, a key the lift places goes to custody
@@ -32,23 +31,14 @@ use crate::batch::secret_scan::{
     CarrierText, Lifted, LiftedKeys, mark_carrier_text_in_txn, scan_content_in_txn,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::{Error, GateError, Result};
-use crate::ports::{
-    DocumentRowStore, DocumentSlot, EdgeDirection, EdgeStoreRead, EntityStoreMaintenance,
-    EntityStoreRead,
-};
-use crate::provenance::made_by::MadeByClass;
-use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
-};
+use crate::ports::{DocumentRowStore, DocumentSlot, EntityStoreMaintenance, EntityStoreRead};
+use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
 /// The domain a lazy birth's peer is derived in.
 const BIRTH_PEER_CONTEXT: &str = "oneiron.sync-text.birth-peer.v1";
-/// The door a lazy birth's row birth names.
-const BIRTH_DOOR: &str = "entity_doc.sync_text";
 /// The row a sync edit's prose links are receipted under.
 const SYNC_EDIT_ROW: &str = "sync.document.edit_text";
 /// The slot a sync edit's prose is read in.
@@ -268,16 +258,13 @@ fn content() -> TextField {
 /// The lazy birth of a record's text, before it is persisted.
 struct Born {
     doc: EntityDoc,
-    text: String,
-    author: Option<WriteActor>,
-    at: u64,
     /// The row's body with its text replaced by the document pointer.
     pointer: Vec<u8>,
 }
 
 /// The birth `entity`'s text takes when no document stands for it: an atomic
-/// MESSAGE's canonical content, born as a stream or quote births it. `None`
-/// for any other record.
+/// MESSAGE's canonical content at its own time, born as a stream or quote
+/// births it but naming no one. `None` for any other record.
 fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<Born>> {
     let Some(raw) = vault.store.port_entity_raw(txn, entity)? else {
         return Ok(None);
@@ -291,22 +278,8 @@ fn born_in(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Option<B
     let Some((text, pointer)) = split_content(&raw[ENTITY_METADATA_HEADER_LEN..], entity) else {
         return Ok(None);
     };
-    let at = header.occurred_start;
-    let author = author_in(vault, txn, entity)?;
-    let doc = seeded(entity)?;
-    let doc = match author {
-        Some(actor) => {
-            EntityDoc::open_initialized(doc, *entity, &text, actor, at, |_| Ok(()), None)?
-        }
-        None => unattributed(doc, entity, &text, at)?,
-    };
-    Ok(Some(Born {
-        doc,
-        text,
-        author,
-        at,
-        pointer,
-    }))
+    let doc = unattributed(seeded(entity)?, entity, &text, header.occurred_start)?;
+    Ok(Some(Born { doc, pointer }))
 }
 
 /// A canonical MESSAGE body's content, and the body with it replaced by the
@@ -330,49 +303,6 @@ fn split_content(body: &[u8], entity: &EntityId) -> Option<(String, Vec<u8>)> {
     let mut pointer = Vec::new();
     rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields)).ok()?;
     Some((text, pointer))
-}
-
-/// The author `message` names: its one AuthoredBy edge, in the class its
-/// quote birth reads (a stated row birth is a person's; else the author's
-/// kind). `None` when no single edge names one. Only replicated facts are
-/// read, so every machine reads the same author.
-fn author_in(vault: &Vault, txn: &RoTxn<'_>, message: &EntityId) -> Result<Option<WriteActor>> {
-    let mut authors = Vec::new();
-    for edge in vault.store.port_edges(
-        txn,
-        message,
-        EdgeDirection::Out,
-        Some(EdgeKind::AuthoredBy),
-        None,
-    )? {
-        authors.push(edge?.target);
-        if authors.len() > 1 {
-            break;
-        }
-    }
-    let [author] = authors[..] else {
-        return Ok(None);
-    };
-    let stated = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, message)?
-        .is_some_and(|birth| {
-            birth.made_by.process.actor == author
-                && birth.made_by.process.class == MadeByClass::Stated
-        });
-    if stated {
-        return Ok(Some(WriteActor::new(author, EdgeActorClass::Human)));
-    }
-    let kind = vault
-        .store
-        .port_entity_raw(txn, &author)?
-        .and_then(|raw| EntityMetadataHeader::parse(&raw))
-        .map(|header| header.entity_type);
-    Ok(match kind {
-        Some(ENTITY_TYPE_PERSON | ENTITY_TYPE_AGENT_DEF) => {
-            Some(WriteActor::new(author, EdgeActorClass::Agent))
-        }
-        Some(ENTITY_TYPE_MACHINE) => Some(WriteActor::new(author, EdgeActorClass::System)),
-        _ => None,
-    })
 }
 
 /// A fresh document whose peer is derived from `entity`.
@@ -404,17 +334,12 @@ fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<
 }
 
 /// Persists `entity`'s lazy birth in the caller's writer, as the MESSAGE
-/// birth persists it. An author live and active here binds the birth's peer,
-/// stamps the row's birth and pins its body quotes.
+/// birth persists it. A sync birth names no one, whoever is live here: every
+/// machine's sync birth of one row is then the same operations under the
+/// same peer, and the births join. Naming an author is the stream and quote
+/// births' work.
 fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<Head> {
     let born = born_in(vault, txn, entity)?.ok_or(invalid(NO_TEXT))?;
-    let author = match born.author {
-        Some(actor) if super::forks::validate_actor(vault, txn, actor).is_ok() => Some(actor),
-        _ => None,
-    };
-    if let Some(actor) = author {
-        super::forks::bind_actor(vault, txn, &born.doc, actor, born.at)?;
-    }
     vault
         .store
         .port_entity_document_pointer_put(txn, entity, &born.pointer)?;
@@ -427,15 +352,7 @@ fn birth_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result
         pending: 0,
         birth_frontier: Some(born.doc.frontier()),
     };
-    if let Some(actor) = author {
-        storage::stamp_document_birth(&vault.store, txn, entity, actor, born.at, BIRTH_DOOR)?;
-    }
     storage::persist_scanned(vault, txn, entity, &mut head, &born.doc, None, synced(None))?;
-    if let Some(actor) = author {
-        crate::conversation_dag::pin_body_quotes_at_message_birth_in_txn(
-            vault, txn, entity, &born.text, actor,
-        )?;
-    }
     Ok(head)
 }
 
