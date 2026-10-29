@@ -418,8 +418,11 @@ impl Worker {
         if jobs.next_due()?.is_some_and(|due| due <= now) {
             jobs.settle_due(now)?;
         }
+        // A child parked on its payer is queued again once the owners said
+        // yes (FIX 3740); while one waits, its session stays held.
+        let parked = crate::ai_host::payer_funding::resume_reader_payer_parks(vault, jobs, now);
         let queued = jobs.queued(QUEUED_PER_TICK)?;
-        let waiting = !queued.is_empty();
+        let waiting = !queued.is_empty() || parked > 0;
         let host = self.shared.host();
         if let Some(native) = host.as_ref().and_then(|host| host.engine_native()) {
             // Parents whose window is full, or whose scope has nothing left

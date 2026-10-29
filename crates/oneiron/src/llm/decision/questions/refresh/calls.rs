@@ -11,7 +11,9 @@ use crate::{ClaimCandidate, EntityId, Result, Vault};
 /// the unit and its eligible neighbours, as a one-off graph ask reads them,
 /// a neighbour no one answer can rest on beside the unit named as omitted.
 /// A unit no one answer can stay inside abstains before any model runs, as
-/// the answer would read wider than a source it rests on.
+/// the answer would read wider than a source it rests on. With `evidence`
+/// (a backfill join, FIX 2383) the unit is shown those sources instead of
+/// its neighbours, and abstains when one is out of reach.
 pub(super) fn graph_proposal(
     vault: &Vault,
     record: &QuestionRecord,
@@ -19,9 +21,14 @@ pub(super) fn graph_proposal(
     unit: EntityId,
     kind: u8,
     body: &[u8],
+    evidence: Option<&[EntityId]>,
 ) -> Result<Option<Answered>> {
     let lane = question_lane(vault, graph_ask::asker_reader(vault, record.principal)?);
-    let Some(context) = graph_ask::unit_context(&lane, unit, kind, body.to_vec())? else {
+    let context = match evidence {
+        Some(evidence) => graph_ask::recipe_context(&lane, unit, kind, body.to_vec(), evidence)?,
+        None => graph_ask::unit_context(&lane, unit, kind, body.to_vec())?,
+    };
+    let Some(context) = context else {
         return Ok(None);
     };
     {

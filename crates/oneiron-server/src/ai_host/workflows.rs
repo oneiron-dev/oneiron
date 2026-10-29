@@ -123,8 +123,10 @@ impl WorkflowPump {
                         return;
                     }
                 };
+                let recoveries = runner.models.recoveries();
                 pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed, stopped,
+                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
+                    stopped, recoveries,
                 );
             })?;
         Ok(Self {
@@ -168,6 +170,7 @@ fn pump(
     decisions: &OnceLock<DecisionHost>,
     ready: &Notify,
     mut stopped: watch::Receiver<bool>,
+    mut recoveries: watch::Receiver<u64>,
 ) {
     let mut signals = AttemptQueue::new(vault).subscribe();
     loop {
@@ -190,18 +193,35 @@ fn pump(
         let until_due = wake
             .due
             .map(|due| Duration::from_secs(due.saturating_sub(now_secs())));
+        let mut recovered = false;
         let woke = runtime.block_on(async {
             tokio::select! {
                 biased;
                 _ = stopped.wait_for(|stop| *stop) => false,
                 signal = signals.recv() => !matches!(signal, Err(broadcast::error::RecvError::Closed)),
                 () = ready.notified() => true,
+                // A model seat came back (FIX 1112): a step waiting on its
+                // backoff runs now. A gone runtime sends none, and the
+                // backoff runs out as before.
+                Ok(()) = recoveries.changed() => {
+                    recovered = true;
+                    true
+                }
                 () = tokio::time::sleep(until_due.unwrap_or_default()), if until_due.is_some() => true,
                 () = tokio::time::sleep(WAITING_RECHECK), if wake.recheck => true,
             }
         });
         if !woke {
             return;
+        }
+        if recovered {
+            match AgentDispatcher::new(vault).wake_workflow_retries(now_secs()) {
+                Ok(0) => {}
+                Ok(woke) => {
+                    tracing::info!(woke, "a provider recovered; waiting workflow steps run now")
+                }
+                Err(error) => tracing::warn!(%error, "workflow retries did not wake on a recovery"),
+            }
         }
         // Drain the burst our own commits (and any concurrent ones) caused.
         while let Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_)) = signals.try_recv() {}

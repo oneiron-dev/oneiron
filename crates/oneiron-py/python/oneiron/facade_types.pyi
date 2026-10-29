@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1191 facade rows, 4312 declarations.
+Census: 1191 facade rows, 4313 declarations.
 Inputs: 1120 of 1191 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1036 of 1191 fully typed, 155 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 119; unread shapes: 0.
@@ -16934,14 +16934,19 @@ class QuestionPauseRequest(TypedDict):
 class QuestionPaused(TypedDict):
     id: EntityId
     paused: bool
+class GraphQuestionInput(TypedDict):
+    unit: str
+    evidence: list[str]
 class QuestionBackfillRequest(TypedDict):
     id: EntityId
     expected_version: int
     at: NotRequired[int | None]
+    joins: NotRequired[list[GraphQuestionInput]]
 class ScheduledBackfill(TypedDict):
     question: str
     version: int
     due_at: int
+    joins: NotRequired[list[GraphQuestionInput]]
 class QuestionReadRequest(TypedDict):
     id: EntityId
     version: NotRequired[int | None]

@@ -18,12 +18,14 @@ pub struct GraphQuestionRef {
 /// The unit and the exact sources selected by the resident's recipe. Sources
 /// are required: a missing contact, variant or signal means abstain, not no.
 /// The same unit may occur with different evidence (for example, variants).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GraphQuestionInput {
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub unit: EntityId,
     #[serde(with = "super::super::codec::entities")]
+    #[schemars(with = "Vec<String>")]
     pub evidence: Vec<EntityId>,
 }
 

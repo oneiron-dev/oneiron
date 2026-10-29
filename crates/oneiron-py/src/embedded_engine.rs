@@ -106,7 +106,10 @@ impl NativeEngine {
     /// reopens the path. Once the engine closes, each refuses
     /// `ENGINE_CLOSED`; a call already running finishes.
     fn local_client(&self) -> PyResult<NativeClient> {
-        let vault = self.engine.vault().map_err(|error| raise(engine_memory_error(&error)))?;
+        let vault = self
+            .engine
+            .vault()
+            .map_err(|error| raise(engine_memory_error(&error)))?;
         let closed = Arc::clone(&self.closed);
         let host_open: oneiron_remote::HostOpenCheck = Arc::new(move || {
             if closed.load(Ordering::Acquire) {
