@@ -18,10 +18,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::compaction::ConversationTurnSpan;
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::entity_id::bytes_to_hex_lower;
-use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
     ENTITY_TYPE_TURN,
@@ -294,9 +294,9 @@ fn erase_craft_breakpoints_in_txn(
         .scan(store, &*txn)?
         .into_iter()
         .filter(|(_, seed)| {
-            seed.craft_entries.iter().any(|entry| {
-                entry.kind == ManifestKind::ActorClaim && entry.reference == reference
-            })
+            seed.craft_entries
+                .iter()
+                .any(|entry| entry.kind == ManifestKind::ActorClaim && entry.reference == reference)
         })
         .map(|(key, _)| key)
         .collect();

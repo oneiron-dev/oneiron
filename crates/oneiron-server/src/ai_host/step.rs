@@ -21,14 +21,15 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_actor};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::{
-    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    WriteActor,
 };
 
 use super::CHAT_ROLE;
@@ -36,8 +37,10 @@ use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::ModelRuntime;
 use crate::server::SyncServer;
 
+mod live_lease;
 mod secret_use;
 
+use live_lease::LiveLease;
 use secret_use::StepSecretUse;
 
 /// The purpose a workflow step's calls are metered and routed under.
@@ -75,10 +78,9 @@ pub(super) struct ModelStep<'a> {
     pub(super) actor: WriteActor,
     pub(super) purpose: &'a str,
     pub(super) messages: Vec<LlmMessage>,
-    /// Craft rows `messages` already carry beyond the step resident's own:
-    /// a wave plan's planner's (FIX 5912), stamped on `attempt` before the
-    /// call at the revision shown.
-    pub(super) craft_exposures: Vec<ManifestEntry>,
+    /// A wave plan's planner, whose craft it is shown beside the step
+    /// resident's own (FIX 5777); `None` for every other step.
+    pub(super) planner: Option<EntityId>,
     pub(super) response_format: ResponseFormat,
 }
 
@@ -262,7 +264,7 @@ impl StepRunner {
                 actor: agent_dispatch_actor(&step.input)?,
                 purpose: STEP_PURPOSE,
                 messages,
-                craft_exposures: Vec::new(),
+                planner: None,
                 response_format: ResponseFormat::Text,
             },
             payer_required,
@@ -308,29 +310,39 @@ impl StepRunner {
             actor,
             purpose,
             mut messages,
-            craft_exposures,
+            planner,
             response_format,
         } = input;
+        // FIX 5777: a wave plan speaks with its planner's instructions for
+        // its requester, so it is shown both crafts, each attributed: the
+        // planner's first, after the instructions, then the requester's.
+        // Each is read here, right before its call is built, so a note
+        // erased or no longer supported since the plan was asked for is
+        // never shown (FIX 8985). The rows the planner's shows are stamped
+        // under the requester's receipt (FIX 5912); a stamp that fails
+        // withholds nothing.
+        let now = super::unix_now();
+        if let Some(planner) = planner
+            && let Some(craft) =
+                super::resident_craft::planner_craft(vault, &planner, &actor.entity_ref(), now)
+        {
+            super::resident_craft::join_craft(&mut messages, craft.message);
+            if !craft.entries.is_empty() {
+                super::resident_craft::stamp_planner_craft_exposure(
+                    vault,
+                    attempt,
+                    &actor.entity_ref(),
+                    &craft.entries,
+                );
+            }
+        }
         // OF-490: the step speaks as its resident, so it is shown that
         // resident's craft after its instructions, each note loaded on its
         // own attempt. A replayed wave plan never calls here.
-        if let Some(craft) = super::resident_craft::queue_craft(
-            vault,
-            attempt.id,
-            &actor.entity_ref(),
-            super::unix_now(),
-        ) {
+        if let Some(craft) =
+            super::resident_craft::queue_craft(vault, attempt.id, &actor.entity_ref(), now)
+        {
             super::resident_craft::join_craft(&mut messages, craft);
-        }
-        // What else it is shown is stamped too, under its own receipt
-        // (FIX 5912); a stamp that fails withholds nothing.
-        if !craft_exposures.is_empty() {
-            super::resident_craft::stamp_planner_craft_exposure(
-                vault,
-                attempt,
-                &actor.entity_ref(),
-                &craft_exposures,
-            );
         }
         let seat = self
             .models
@@ -404,8 +416,9 @@ impl StepRunner {
         };
         // A step launched under a spend lease (OF-532) is bounded by it too:
         // beside its policy rows, this try may spend no more than the lease
-        // has left. Replayed charges are already on the lease, so they sit
-        // on top of that bound, not inside it.
+        // has left, read live as each call is admitted (FIX 1819). Replayed
+        // charges are already on the lease, so they sit on top of that
+        // bound, not inside it.
         let dispatcher = AgentDispatcher::new(vault);
         let lease = dispatcher.spend_scope_for_attempt(attempt.id)?;
         // OF-531: a room-paid step bills its root payer's own account, bound
@@ -438,7 +451,7 @@ impl StepRunner {
             Some(scope) => self.budget_units.min(
                 charged
                     .saturating_mul(reserve)
-                    .saturating_add(dispatcher.guard_for_scope(scope)?.read().remaining_units),
+                    .saturating_add(dispatcher.available_units(scope)?),
             ),
             None => self.budget_units,
         };
@@ -460,6 +473,10 @@ impl StepRunner {
             guard.settle_reserved(&spent).map_err(budget)?;
         }
         let replayed = guard.read().used_units;
+        // Each call of this try books its spend on the lease once it
+        // settled, and the next is admitted against what the lease has left
+        // then, its siblings' spend included (FIX 1819).
+        let live = LiveLease::new(vault, lease, guard.clone(), self.budget_units, replayed);
         let uses =
             offers_use.then(|| StepSecretUse::new(vault, attempt, actor, &run_id, &self.host));
         // The step is a run on that meter: each rung its call reaches is
@@ -478,16 +495,21 @@ impl StepRunner {
             actor,
             &request,
         );
+        let may_send = || {
+            live.book_and_revise();
+            true
+        };
         let generated = match &uses {
-            Some(uses) => uses.converse(runtime, &call.ladder, &run, request),
-            None => runtime.block_on(call.ladder.generate_served(&run, request, None)),
+            Some(uses) => uses.converse(runtime, &call.ladder, &run, &live, request),
+            None => runtime.block_on(
+                call.ladder
+                    .generate_served_while(&run, request, None, &may_send),
+            ),
         };
         oneiron::code_run::finalize_step_captures(vault);
-        // What this try spent goes on the lease whatever the call answered;
-        // the replayed tries recorded their own.
-        if let Some(scope) = &lease {
-            dispatcher.record_guard_spend(scope, run.read().used_units.saturating_sub(replayed))?;
-        }
+        // What this try spent and no call's look booked goes on the lease
+        // whatever the call answered; the replayed tries recorded their own.
+        live.book_rest()?;
         let response = match generated {
             // The rung that answered, fallback included, is the step's
             // executor: its leaf is attributed to it (OF-540). A refused

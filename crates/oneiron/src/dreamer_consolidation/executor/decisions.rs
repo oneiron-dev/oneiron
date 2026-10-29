@@ -9,6 +9,7 @@ use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::provenance::KeptDecision;
 use crate::dreamer_consolidation::settle::decision_pages::{json_len, split_pages};
 use crate::dreamer_wake::WakePassDeadline;
+use crate::llm::BoundedAutoChecker;
 use crate::llm::decision::{
     AnswerActor, AskAct, AskRole, AskTo, DecisionAsk, DecisionBand, DecisionBandPolicy,
     DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, HumanAskReason,
@@ -64,6 +65,9 @@ pub struct ConsolidationDecisions {
     /// Whether two claims different children of one night proposed state the
     /// same thing (OF-498d): same_as, no_link or unresolved.
     pub nightly_link_wording: String,
+    /// The host's write-gate auto check, when it runs one. `None` promotes
+    /// without a check, as before.
+    pub checker: Option<BoundedAutoChecker>,
 }
 
 impl ConsolidationDecisions {
@@ -88,7 +92,16 @@ impl ConsolidationDecisions {
             sieve_entity_wording: wording.sieve_entity,
             sieve_confidence_wording: wording.sieve_confidence,
             nightly_link_wording: wording.nightly_link,
+            checker: None,
         })
+    }
+
+    /// The decisions, each NOTE review promotion through `checker`'s auto
+    /// check.
+    #[must_use]
+    pub fn with_checker(mut self, checker: Option<BoundedAutoChecker>) -> Self {
+        self.checker = checker;
+        self
     }
 }
 
@@ -266,6 +279,7 @@ impl ConsolidationExecutor<'_> {
                     evidence,
                     state,
                     ceiling: VERDICT_CEILING,
+                    sources: None,
                 },
                 questions,
                 labels,

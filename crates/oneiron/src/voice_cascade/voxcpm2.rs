@@ -18,8 +18,8 @@ use crate::{
     error::{Error, Result},
     limit_ask::EngineLimit,
     llm::{
-        CacheIdentity, InferenceCallReceipt, ModelId, ModelLocality, WorkerBuildEvidence,
-        WorkerDescriptor, WorkerKind,
+        CacheEpoch, CacheIdentity, InferenceCallReceipt, ModelId, ModelLocality,
+        WorkerBuildEvidence, WorkerDescriptor, WorkerKind,
     },
     voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip},
 };
@@ -60,15 +60,21 @@ impl WarmTarget {
     }
 
     /// The worker this target names, as far as `/ready` proves it (FIX 8314,
-    /// INFERENCE R1): a VoxCPM2 worker. Its checkpoint is a configured
-    /// revision and its boot id a process's, neither a digest of what it
-    /// loaded or runs, so the identity names nothing and the build is
-    /// unknown. Not readiness: a render matching a pinned build is.
+    /// INFERENCE R1): a VoxCPM2 worker, and the incarnation that answered.
+    /// Its boot id, minted once per process as 32 hex digits, is the
+    /// identity's `backend_epoch` (FIX 8898); a boot id of another shape
+    /// names no epoch. Its checkpoint is a configured revision, not a digest
+    /// of what it loaded or runs, so no other identity field is named and
+    /// the build is unknown. Not readiness: a render matching a pinned build
+    /// is.
     #[must_use]
     pub fn worker(&self) -> WorkerDescriptor {
         WorkerDescriptor {
             kind: WorkerKind::VoxCpm2,
-            identity: CacheIdentity::default(),
+            identity: CacheIdentity {
+                backend_epoch: CacheEpoch::new(self.boot_id.clone()).ok(),
+                ..CacheIdentity::default()
+            },
             build_evidence: WorkerBuildEvidence::Unknown,
         }
     }
@@ -506,7 +512,7 @@ impl Vault {
 pub mod http;
 mod pcm;
 use pcm::PCM_WINDOW_BYTES;
-pub use pcm::VoxCpm2PcmBody;
+pub use pcm::{PcmSpool, VoxCpm2PcmBody};
 
 #[cfg(test)]
 mod tests;

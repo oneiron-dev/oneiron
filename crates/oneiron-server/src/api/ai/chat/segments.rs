@@ -10,11 +10,14 @@
 //! are not all known, names no conversation: its manifest keys no session.
 //! Nothing here changes what the call sends.
 //!
-//! A snapshot of the turn's successor is kept, and restored for a later
-//! call, only under the read's scope and a dependency set known whole (a
-//! self-chat with no fold summary and no craft note); every other turn's
-//! state stays cold (V2-R3). The turn's own authority is recorded for its
-//! call before the call goes out, so a restore rechecks under it.
+//! A snapshot of a self-chat turn's successor is kept, and restored for a
+//! later call, only under the read's scope and a dependency set known
+//! whole: the rows the path was read from, each craft note and fold summary
+//! with the turns a summary folds, and the world and author of each, read
+//! once the reply commits. A set any of them does not read for is not
+//! precise, and the turn's state stays cold (V2-R3). The turn's own
+//! authority is recorded for its call before the call goes out, so a
+//! restore rechecks under it.
 use std::sync::Arc;
 
 use oneiron::attempt_queue::ManifestEntry;
@@ -89,8 +92,8 @@ pub(super) struct Assembled<'a> {
 pub(super) struct TurnSegments {
     pub(super) manifest: Arc<SegmentManifest>,
     authority: Option<(ScopedReadActorKey, Vec<EntityId>)>,
-    /// Who wrote the canonical path, when known whole ([`authors`]).
-    authors: Option<Vec<EntityId>>,
+    /// What the canonical path was read and derived from, for a self-chat.
+    path: Option<PathDependencies>,
     /// The vault's authority generation the turn was admitted at; `None`
     /// when it did not read.
     revocation: Option<u64>,
@@ -207,7 +210,7 @@ pub(super) fn admitted(
         return None;
     }
     let manifest = Arc::new(manifest);
-    let authors = authors(reader, &assembled);
+    let path = PathDependencies::of(reader, &assembled);
     let turn = match (manifest.anchor(), &read_key, &sources) {
         (Some(anchor), Some(key), Some(rows)) => {
             let turn: Arc<dyn CheckpointAuthority> = Arc::new(ChatAuthority {
@@ -219,7 +222,7 @@ pub(super) fn admitted(
                 read_key: key.clone(),
                 sources: rows.clone(),
                 at: Some((anchor.head, anchor.fold_epoch)),
-                authors: authors.clone(),
+                path: path.clone(),
                 revocation,
             });
             turn_admitted(&manifest, &turn);
@@ -230,23 +233,105 @@ pub(super) fn admitted(
     Some(TurnSegments {
         manifest,
         authority: read_key.zip(sources),
-        authors,
+        path,
         revocation,
         _turn: turn,
     })
 }
 
-/// Who wrote the canonical path, known whole only for a self-chat whose log
-/// holds no fold summary and whose turn showed no craft note: the reader
-/// and the answering agent. `None` otherwise: a summary or a note derives
-/// from rows its own id does not name.
-fn authors(reader: &Reader, assembled: &Assembled<'_>) -> Option<Vec<EntityId>> {
-    let log = assembled.self_chat?.log();
-    let craft = assembled.craft.is_some_and(|craft| !craft.is_empty());
-    if craft || !log.summaries.is_empty() {
-        return None;
+/// What a self-chat turn's canonical path was read and derived from, as its
+/// admission names it: who wrote its retained rows (the reader and the
+/// answering agent), the craft notes it showed, the fold summaries standing
+/// in its log, and the rows its board recalled. The worlds, authors and
+/// folded turns of the notes and summaries are read once the reply commits
+/// ([`Self::read`]).
+#[derive(Clone)]
+struct PathDependencies {
+    authors: Vec<EntityId>,
+    notes: Vec<EntityId>,
+    summaries: Vec<EntityId>,
+    /// The memory rows and skills the board showed: the reply derives from
+    /// them, and their bytes ride only in the ephemeral tail.
+    recalled: Vec<EntityId>,
+}
+
+impl PathDependencies {
+    /// What `assembled`'s path was read from as `reader` read it; `None` for
+    /// a turn that read no self-chat, or a craft note named by no id.
+    fn of(reader: &Reader, assembled: &Assembled<'_>) -> Option<Self> {
+        let log = assembled.self_chat?.log();
+        let notes = assembled
+            .craft
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| EntityId::from_hex(&entry.reference).ok())
+            .collect::<Option<Vec<_>>>()?;
+        let recalled = assembled
+            .board
+            .into_iter()
+            .flat_map(|(_, sections)| sections)
+            .flat_map(|section| &section.dependencies)
+            .filter_map(|locator| match locator {
+                SegmentLocator::Memory { id, .. } | SegmentLocator::Skill { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        Some(Self {
+            authors: vec![reader.actor, assembled.agent],
+            notes,
+            summaries: log.summaries.clone(),
+            recalled,
+        })
     }
-    Some(vec![reader.actor, assembled.agent])
+
+    /// The dependency set of a snapshot whose path holds `sources`, read in
+    /// `vault` now: base reality and the reader and agent, then the world
+    /// and author of each note, each summary and each turn and MESSAGE a
+    /// summary folds; the summaries, what they fold and every recalled row
+    /// as derived. Not precise when any of those does not read: an unread
+    /// world or author is never guessed. Every list sorted, once each.
+    fn read(&self, vault: &Vault, sources: Vec<EntityId>) -> SnapshotDependencies {
+        let mut set = SnapshotDependencies {
+            sources,
+            worlds: vec![base_world_id()],
+            authors: self.authors.clone(),
+            erase_subjects: Vec::new(),
+            derived: self.recalled.clone(),
+            precise: false,
+        };
+        set.precise = self.read_quoted(vault, &mut set).is_some();
+        for list in [
+            &mut set.sources,
+            &mut set.worlds,
+            &mut set.authors,
+            &mut set.derived,
+        ] {
+            list.sort_unstable();
+            list.dedup();
+        }
+        set
+    }
+
+    /// Adds to `set` the worlds and authors of the notes and summaries and
+    /// of what each summary folds, and the summaries and what they fold as
+    /// derived; `None` at the first of them that does not read.
+    fn read_quoted(&self, vault: &Vault, set: &mut SnapshotDependencies) -> Option<()> {
+        let mut folded = Vec::new();
+        for summary in &self.summaries {
+            folded.push(*summary);
+            for span in vault.summary_folded_spans(summary).ok()?? {
+                folded.push(span.turn);
+                folded.extend(span.messages);
+            }
+        }
+        for id in self.notes.iter().chain(&folded) {
+            let world = vault.record_world(id).ok()??;
+            set.worlds.push(world.unwrap_or_else(base_world_id));
+            set.authors.push(vault.record_author(id).ok()??);
+        }
+        set.derived.extend(folded);
+        Some(())
+    }
 }
 
 /// The rows the canonical path was read from: the agent, its craft notes
@@ -335,8 +420,8 @@ struct ChatAuthority {
     /// The HEAD and fold epoch the turn read its path at; `None` on the
     /// authority a commit holds, which restores nothing.
     at: Option<(Option<EntityId>, u64)>,
-    /// Who wrote the path, when known whole ([`authors`]).
-    authors: Option<Vec<EntityId>>,
+    /// What the path was read and derived from, for a self-chat.
+    path: Option<PathDependencies>,
     /// The vault's authority generation the turn was admitted at.
     revocation: Option<u64>,
 }
@@ -373,25 +458,16 @@ impl CheckpointAuthority for ChatAuthority {
     }
 
     /// The read's scope as the session is keyed by it, the authority
-    /// generation the turn was admitted at, and the path's sources with the
-    /// reply, base reality (a chat MESSAGE is no claim) and its two authors.
+    /// generation the turn was admitted at, and what the path was read and
+    /// derived from, the reply among its sources ([`PathDependencies::read`]).
     fn snapshot_scope(&self, commit: &ReplyCommit) -> Option<SnapshotScope> {
-        let authors = self.authors.clone()?;
+        let path = self.path.as_ref()?;
         let mut sources = self.sources.clone();
         sources.push(commit.message);
-        sources.sort_unstable();
-        sources.dedup();
         Some(SnapshotScope {
             read_scope: scope_digest(&self.reader, &self.read_key),
             revocation: self.revocation,
-            dependencies: SnapshotDependencies {
-                sources,
-                worlds: vec![base_world_id()],
-                authors,
-                erase_subjects: Vec::new(),
-                derived: Vec::new(),
-                precise: true,
-            },
+            dependencies: path.read(&self.reader.vault, sources),
         })
     }
 
@@ -455,7 +531,7 @@ pub(super) fn commit_on_answer(
         read_key,
         sources,
         at: None,
-        authors: segments.authors.clone(),
+        path: segments.path.clone(),
         revocation: segments.revocation,
     };
     let Answering {

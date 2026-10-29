@@ -197,19 +197,17 @@ impl Drop for Turn<'_> {
 
 /// The transform descriptor of the local model as its files on this host
 /// describe it, read only from metadata that is complete and verified by the
-/// loader's own rules ([`model_manager::verified_metadata_dir`]). `None` when
-/// it is not, or does not read: the worker checks the loaded model's once the
-/// files have been fetched and verified. `None` too for a revision that is a
-/// ref, which only the hub resolves to its commit (FIX 9489): nothing here
-/// asks the network.
+/// loader's own rules ([`model_manager::verified_metadata_dir`]), and bound to
+/// its commit as a load binds it (FIX 10755). `None` when it is not, or does
+/// not read: the worker checks the loaded model's once the files have been
+/// fetched and verified. `None` too for a revision that is a ref, which only
+/// the hub resolves to its commit (FIX 9489): nothing here asks the network.
 pub(crate) fn transform_on_disk(config: &EmbedderConfig) -> Option<String> {
-    if config.local.model_dir.is_none() && !model_manager::is_commit(&config.local.revision) {
-        return None;
-    }
-    let dir = model_manager::verified_metadata_dir(&config.local)?;
-    LocalModelSpec::read(&dir, config)
+    let resolved = model_manager::ResolvedLocalRevision::without_lookup(&config.local)?;
+    let dir = model_manager::verified_metadata_dir(resolved.config())?;
+    LocalModelSpec::read(&dir, &resolved.effective(config))
         .ok()
-        .map(|spec| spec.transform())
+        .map(|spec| resolved.bind_transform(spec.transform()))
 }
 
 /// The transform descriptor of the local model, fetching and verifying its
@@ -221,7 +219,8 @@ pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<Stri
     let models = model_manager::ModelManager::default();
     let resolved = models.resolve_local_revision(&config.local, None)?;
     let dir = models.ensure_metadata(resolved.config())?;
-    Ok(resolved.bind_transform(LocalModelSpec::read(&dir, config)?.transform()))
+    let spec = LocalModelSpec::read(&dir, &resolved.effective(config))?;
+    Ok(resolved.bind_transform(spec.transform()))
 }
 
 pub(crate) fn prepare(config: &EmbedderConfig) -> oneiron::Result<&'static str> {
@@ -297,10 +296,10 @@ impl LocalEmbedder {
         kernel: Q8Kernel,
     ) -> oneiron::Result<std::sync::Arc<Self>> {
         let run_device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
-        // One commit for every file, the cache path, the record and the
-        // transform (FIX 9489).
+        // One commit for every file, the cache path, the record, the spec
+        // read and the transform (FIX 9489, 10757).
         let dir = models.ensure_all(resolved.config())?;
-        let spec = LocalModelSpec::read(&dir, config)?;
+        let spec = LocalModelSpec::read(&dir, &resolved.effective(config))?;
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model tokenizer.json: {e}"))
         })?;

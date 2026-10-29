@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4171 declarations.
-Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1161 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 105; unread shapes: 0.
+Census: 1162 facade rows, 4180 declarations.
+Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -7468,6 +7468,81 @@ class OffRecordExecuteRequest(TypedDict):
     run_ref: str
     task: str
 OffRecordRunStatus = Literal["complete", "waiting", "yielded", "window_full"]
+class ProgramStepIdentity(TypedDict):
+    run: str
+    program_seq: int
+    invocation: int
+class ProgramPreparationNote(TypedDict):
+    code: str
+    detail: NotRequired[str | None]
+class TypeCheckFacts(TypedDict):
+    language: str
+    file: str
+    backend: str
+    pin: str
+    action_digest: NotRequired[str | None]
+    elapsed_us: NotRequired[int | None]
+    peak_memory_bytes: NotRequired[int | None]
+class DiagnosticMeasures(TypedDict):
+    count: int
+    bytes: int
+class TypeDiagnostic(TypedDict):
+    file: NotRequired[str | None]
+    line: int
+    column: int
+    category: str
+    code: int
+    message: str
+    message_bytes: int
+class DiagnosticCollectionInline(TypedDict):
+    form: Literal["inline"]
+    diagnostics: list[TypeDiagnostic]
+class DiagnosticCollectionStored(TypedDict):
+    form: Literal["stored"]
+    handle: str
+    occurrence: str
+    byte_len: int
+DiagnosticCollection = DiagnosticCollectionInline | DiagnosticCollectionStored
+class TypeDiagnosticsComplete(TypedDict):
+    state: Literal["complete"]
+    check: TypeCheckFacts
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsPending(TypedDict):
+    state: Literal["pending"]
+    check: TypeCheckFacts
+class TypeDiagnosticsFailed(TypedDict):
+    state: Literal["failed"]
+    check: TypeCheckFacts
+    failure: str
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsUnavailable(TypedDict):
+    state: Literal["unavailable"]
+    reason: str
+    detail: NotRequired[str | None]
+TypeDiagnostics = TypeDiagnosticsComplete | TypeDiagnosticsPending | TypeDiagnosticsFailed | TypeDiagnosticsUnavailable
+class ProgramStepFeedback(TypedDict):
+    step: ProgramStepIdentity
+    check_ref: str
+    preparation_note: NotRequired[ProgramPreparationNote | None]
+    type_diagnostics: TypeDiagnostics
+TypeCheckState = Literal["complete", "pending", "failed", "unavailable"]
+FeedbackWithheldReason = Literal["recipient", "placement", "producers_unknown", "conflicted_root", "release_check_failed"]
+class ProgramStepFeedbackReleaseReleased(ProgramStepFeedback):
+    release: Literal["released"]
+class ProgramStepFeedbackReleaseWithheld(TypedDict):
+    release: Literal["withheld"]
+    step: ProgramStepIdentity
+    check_ref: str
+    state: TypeCheckState
+    check: NotRequired[TypeCheckFacts | None]
+    failure: NotRequired[str | None]
+    unavailable: NotRequired[str | None]
+    measures: NotRequired[DiagnosticMeasures | None]
+    preparation_code: NotRequired[str | None]
+    reason: FeedbackWithheldReason
+ProgramStepFeedbackRelease = ProgramStepFeedbackReleaseReleased | ProgramStepFeedbackReleaseWithheld
 class OffRecordExecuted(TypedDict):
     run_ref: str
     run_id: str
@@ -7475,6 +7550,7 @@ class OffRecordExecuted(TypedDict):
     next_step_seq: NotRequired[int | None]
     steps_run: int
     bridge_calls: int
+    program_steps: NotRequired[list[ProgramStepFeedbackRelease]]
 class OffRecordRoomRequest(TypedDict):
     room: str
     session_ref: str
@@ -9387,6 +9463,20 @@ class ImagePin(TypedDict):
 class HostRuleRef(TypedDict):
     id: str
     revision: int
+RoleRank = Literal["responsible", "board", "owner"]
+AskAct = Literal["judgment", "e_signature", "payment"]
+HolderKind = Literal["person", "agent"]
+class ReceiptAnswerer(TypedDict):
+    role: RoleRank
+    project: NotRequired[str | None]
+    kind: HolderKind
+class ReceiptAsk(TypedDict):
+    seq: NotRequired[int | None]
+    role: RoleRank
+    project: NotRequired[str | None]
+    ceiling: RoleRank
+    act: AskAct
+    answered: NotRequired[ReceiptAnswerer | None]
 class DecisionReceipt(TypedDict):
     question: str
     question_version: int
@@ -9403,6 +9493,7 @@ class DecisionReceipt(TypedDict):
     think_row: NotRequired[int | None]
     person_row: NotRequired[int | None]
     rule: NotRequired[HostRuleRef | None]
+    asked: NotRequired[ReceiptAsk | None]
 HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
 class TypedDecision(TypedDict):
     answer: DecisionAnswer
@@ -10367,6 +10458,8 @@ SecretUseStatus = Literal["answered", "failed", "withheld"]
 class SecretUseRecord(TypedDict):
     handle: str
     generation: int
+    presented_custody: NotRequired[EntityId | None]
+    presented_generation: NotRequired[int | None]
     effector: str
     operation: str
     decision: str
@@ -11160,6 +11253,7 @@ class ForeignCodeRunResult(TypedDict):
     proposals: list[ForeignCodeProposal]
     isolation: ForeignCodeIsolation
     receipt_ref: str
+    program_steps: NotRequired[list[ProgramStepFeedbackRelease]]
 class CodeRunModelHealCountRequest(TypedDict):
     model_id: str
 class CodeRunModelHealCountView(TypedDict):
@@ -11167,81 +11261,7 @@ class CodeRunModelHealCountView(TypedDict):
     healed_turns: int
 class CodeRunTypeDiagnosticsRequest(TypedDict):
     check_ref: str
-class ProgramStepIdentity(TypedDict):
-    run: str
-    program_seq: int
-    invocation: int
-class ProgramPreparationNote(TypedDict):
-    code: str
-    detail: NotRequired[str | None]
-class TypeCheckFacts(TypedDict):
-    language: str
-    file: str
-    backend: str
-    pin: str
-    action_digest: NotRequired[str | None]
-    elapsed_us: NotRequired[int | None]
-    peak_memory_bytes: NotRequired[int | None]
-class DiagnosticMeasures(TypedDict):
-    count: int
-    bytes: int
-class TypeDiagnostic(TypedDict):
-    file: NotRequired[str | None]
-    line: int
-    column: int
-    category: str
-    code: int
-    message: str
-    message_bytes: int
-class DiagnosticCollectionInline(TypedDict):
-    form: Literal["inline"]
-    diagnostics: list[TypeDiagnostic]
-class DiagnosticCollectionStored(TypedDict):
-    form: Literal["stored"]
-    handle: str
-    occurrence: str
-    byte_len: int
-DiagnosticCollection = DiagnosticCollectionInline | DiagnosticCollectionStored
-class TypeDiagnosticsComplete(TypedDict):
-    state: Literal["complete"]
-    check: TypeCheckFacts
-    measures: DiagnosticMeasures
-    diagnostics: DiagnosticCollection
-class TypeDiagnosticsPending(TypedDict):
-    state: Literal["pending"]
-    check: TypeCheckFacts
-class TypeDiagnosticsFailed(TypedDict):
-    state: Literal["failed"]
-    check: TypeCheckFacts
-    failure: str
-    measures: DiagnosticMeasures
-    diagnostics: DiagnosticCollection
-class TypeDiagnosticsUnavailable(TypedDict):
-    state: Literal["unavailable"]
-    reason: str
-    detail: NotRequired[str | None]
-TypeDiagnostics = TypeDiagnosticsComplete | TypeDiagnosticsPending | TypeDiagnosticsFailed | TypeDiagnosticsUnavailable
-class ProgramStepFeedback(TypedDict):
-    step: ProgramStepIdentity
-    check_ref: str
-    preparation_note: NotRequired[ProgramPreparationNote | None]
-    type_diagnostics: TypeDiagnostics
-TypeCheckState = Literal["complete", "pending", "failed", "unavailable"]
-FeedbackWithheldReason = Literal["recipient", "placement", "producers_unknown", "conflicted_root", "release_check_failed"]
-class ProgramStepFeedbackReleaseReleased(ProgramStepFeedback):
-    release: Literal["released"]
-class ProgramStepFeedbackReleaseWithheld(TypedDict):
-    release: Literal["withheld"]
-    step: ProgramStepIdentity
-    check_ref: str
-    state: TypeCheckState
-    check: NotRequired[TypeCheckFacts | None]
-    failure: NotRequired[str | None]
-    unavailable: NotRequired[str | None]
-    measures: NotRequired[DiagnosticMeasures | None]
-    preparation_code: NotRequired[str | None]
-    reason: FeedbackWithheldReason
-ProgramStepFeedbackRelease = ProgramStepFeedbackReleaseReleased | ProgramStepFeedbackReleaseWithheld
+    session_ref: NotRequired[str | None]
 class CodeWaitTarget(TypedDict):
     run_id: EntityId
     wait_id: EntityId
@@ -11349,6 +11369,7 @@ class ResultCard(TypedDict):
     name: NotRequired[str | None]
     taint: ResultTaint
     more: list[ResultFacet]
+    shape: NotRequired[Any | None]
 class ResultReadRefusal(TypedDict):
     denied: str
     reasonCodes: list[str]
@@ -12763,6 +12784,7 @@ class WorkflowRunView(TypedDict):
     steps: list[WorkflowStepCapture]
     results: list[WorkflowStepRun]
     task_ref: NotRequired[EntityId | None]
+    release_refusal: NotRequired[str | None]
 class WorkflowPersonDispatchRequest(TypedDict):
     workflow_ref: EntityId
     intent_key: str
@@ -15549,6 +15571,14 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+ManifestKind = Literal["skill_index", "skill", "actor_claim"]
+RevisionRef = list[int]
+class ManifestEntry(TypedDict):
+    kind: ManifestKind
+    reference: str
+    version: str
+    at: int
+    revision: NotRequired[tuple[EntityId, RevisionRef] | None]
 class AsrOpenRequest(TypedDict):
     utterance_id: str
     scope: NotRequired[RecallScope]
@@ -16123,6 +16153,7 @@ class VoicePackSummary(TypedDict):
     id: str
     origin: VoiceRefOrigin
     clips: list[VoiceClipSummary]
+    crossed: list[str]
 class VoiceRenderConsentView(TypedDict):
     event_id: str
     subject: str
@@ -16435,13 +16466,10 @@ class AskRoleBoard(TypedDict):
 class AskRoleOwner(TypedDict):
     role: Literal["owner"]
 AskRole = AskRoleResponsible | AskRoleBoard | AskRoleOwner
-RoleRank = Literal["responsible", "board", "owner"]
-AskAct = Literal["judgment", "e_signature", "payment"]
 class AskTo(TypedDict):
     role: AskRole
     ceiling: RoleRank
     act: AskAct
-HolderKind = Literal["person", "agent"]
 class RoleHolder(TypedDict):
     actor: str
     kind: HolderKind
@@ -16472,6 +16500,7 @@ class DecisionAsk(TypedDict):
     role: NotRequired[ResolvedRole | None]
     answer: NotRequired[AskAnswer | None]
     withdrawn_at: NotRequired[int | None]
+    pack_state: NotRequired[Any | None]
 class DecisionAskClimbRequest(TypedDict):
     seq: int
 class ConnectorListRequest(TypedDict):
@@ -18462,7 +18491,6 @@ class OfficeBodyEdit(TypedDict):
     effects: list[str]
 class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
-    run_root_ref: NotRequired[str | None]
     proposal_ref: NotRequired[str | None]
 BodyActor = str
 class ForkStateOpen(TypedDict):
@@ -20930,14 +20958,15 @@ class WorkflowSeed(TypedDict):
     digest: str
     license: str
 class ProposeInput(TypedDict):
-    subgoal: str
+    subgoal: NotRequired[str]
     params: NotRequired[list[str]]
-    steps: list[BatchStep]
-    postcondition: list[ExpectInput]
+    steps: NotRequired[list[BatchStep]]
+    postcondition: NotRequired[list[ExpectInput]]
     args: NotRequired[dict[str, str]]
     replay_args: NotRequired[dict[str, str]]
     supersedes: NotRequired[str | None]
     seed: NotRequired[WorkflowSeed | None]
+    candidate: NotRequired[str | None]
 SlotField = Literal["text", "option"]
 class SlotCandidate(TypedDict):
     step: int
@@ -21196,6 +21225,20 @@ class DialogAnswerFailure(TypedDict):
     kind: str
     accept: bool
     error: str
+class SeedCandidate(TypedDict):
+    candidate: str
+    path: str
+    digest: str
+    license: str
+class SiteSkillMatch(TypedDict):
+    skill_id: str
+    revision: str
+    knowledge: str
+    seeds: NotRequired[list[SeedCandidate]]
+SiteSkillErrorCode = Literal["no_lease", "origin", "loader", "unresolved", "digest_mismatch", "no_loader"]
+class SiteSkillError(TypedDict):
+    code: SiteSkillErrorCode
+    detail: str
 class VerbsObservation(TypedDict):
     seq: int
     scope: str
@@ -21214,6 +21257,8 @@ class VerbsObservation(TypedDict):
     rebound: NotRequired[Rebound | None]
     fact: NotRequired[ActionFact | None]
     dialogs: NotRequired[list[DialogAnswerFailure]]
+    site_skills: NotRequired[list[SiteSkillMatch]]
+    site_skill_notes: NotRequired[list[SiteSkillError]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
 BrowserObservationPage = BrowserAnswer
@@ -21349,11 +21394,14 @@ class BatchOutput(TypedDict):
 BrowserBatchOutput = BrowserAnswer
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
+    url: NotRequired[str | None]
     subgoal: NotRequired[str | None]
     type_ref: NotRequired[str | None]
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
+    candidates: NotRequired[list[SeedCandidate]]
+    site_skill_notes: NotRequired[list[SiteSkillError]]
 BrowserLibraryFindOutput = BrowserAnswer
 class DraftInput(TypedDict):
     subgoal: str

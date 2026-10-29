@@ -31,6 +31,7 @@ mod reader_clock;
 mod reader_fold;
 mod replay;
 mod replay_capsule;
+mod replay_parts;
 mod repo_calls;
 mod result_read;
 pub(crate) mod run_verb_call;
@@ -124,8 +125,8 @@ pub(crate) use self::storage::{
     response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
-    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, ResultSpeech,
-    executor_compaction_session_id, executor_speech_message_id_in_run,
+    CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
+    SessionInstanceBind, executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
 };
 pub use self::storage::{
@@ -151,6 +152,7 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     StepKey, StoredStepFeedback, erase_spawn_targets_in_txn, erase_type_diagnostics_actor_in_txn,
+    session_type_diagnostics_row,
 };
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
@@ -160,6 +162,18 @@ pub(crate) use self::storage::{
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
+};
+// FIX 9180 (coord-b slice d): a replay row's and a step start's parts in
+// checkpoint images, as row-held responses.
+pub(crate) use self::replay_parts::{
+    ReplayPart, ReplayParts, RequestPart, recompose_replay_row, recompose_step_start,
+    recomposed_len, replay_row_parts, retire_replay_row_parts, retire_step_start_parts,
+    step_start_parts,
+};
+pub(crate) use self::storage::{
+    drop_step_start_in_rows, kept_step_start_in_txn, kept_step_starts_in_txn,
+    release_step_start_in_txn, republish_step_start_in_rows, republish_step_start_in_txn,
+    settle_start_bodies_in_rows, step_capsule_row, step_start_body_row, step_start_owners_in_txn,
 };
 // FIX 6588: a wait's replies in checkpoint images, as row-held responses.
 pub(crate) use self::storage::{

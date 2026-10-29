@@ -138,9 +138,15 @@ pub fn close_persistent_conflict(
     open: EntityId,
     resolution: Value,
     evidence_refs: Vec<EntityId>,
+    checker: Option<&crate::llm::BoundedAutoChecker>,
 ) -> Result<crate::dreamer_promotion::PromotionOutcome> {
     let close = conflict_close_candidate(vault, run, open, resolution, evidence_refs)?;
-    crate::dreamer_promotion::promote_consolidated_claims(vault, run, vec![close])
+    crate::dreamer_promotion::promote_consolidated_claims_with_checker(
+        vault,
+        run,
+        vec![close],
+        checker,
+    )
 }
 
 /// The close [`close_persistent_conflict`] promotes, for a door that writes

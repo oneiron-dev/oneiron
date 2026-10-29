@@ -125,9 +125,13 @@ impl MeshRoutes {
 }
 
 /// The node a row names, when the row is discovery's own: an own-server
-/// route a mesh catalog refresh wrote for a model that node offers.
+/// route a mesh catalog refresh wrote for a model that node offers. A row a
+/// withdrawn offer left stale routes nowhere (FIX 4546).
 fn mesh_peer(row: &ModelRegistryRow) -> Option<MachineId> {
-    if row.wire != ModelWireFormat::OwnServer || row.catalog.locality != ModelLocality::OwnServer {
+    if row.wire != ModelWireFormat::OwnServer
+        || row.catalog.locality != ModelLocality::OwnServer
+        || row.is_stale()
+    {
         return None;
     }
     let peer = row.catalog.metadata.get(MESH_PEER)?.as_str()?;

@@ -19676,7 +19676,17 @@ async fn execute_code(
             facade_door_input(&mut hooks)?,
         )
         .await;
-        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+        Ok::<_, FacadeApiError>((
+            facade_output(output.map_err(|failure| {
+                super::host_doors::source_run_refusal(
+                    server,
+                    auth,
+                    Some(listed.as_slice()),
+                    failure,
+                )
+            })?)?,
+            listed,
+        ))
     }
     .await;
     let (output, listed) = match ran {
@@ -23535,10 +23545,10 @@ async fn vault_tasks_cancel_force(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
-    facade_outside_room_turn(call, "vault.tasks.cancel_force")?;
+    facade_outside_room_turn(call, "vault.tasks.cancel.force")?;
     let value = input?;
-    oneiron::task_verb::sdk::validate_input("vault.tasks.cancel_force", &value)?;
-    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.cancel_force", value).await?;
+    oneiron::task_verb::sdk::validate_input("vault.tasks.cancel.force", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.cancel.force", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_tasks_cancel_force(
             server,
@@ -26524,6 +26534,28 @@ async fn vault_receipts_context(
         actor,
         class,
         "vault.receipts.context",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_receipts_craft_reply_manifest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.receipts.craft_reply_manifest",
         value,
         &producers,
     )?;
@@ -36689,6 +36721,7 @@ async fn self_focus_refresh(
             super::host_doors::self_focus_refresh(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36729,6 +36762,7 @@ async fn self_focus_subscribe(
             super::host_doors::self_focus_subscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36769,6 +36803,7 @@ async fn self_focus_unsubscribe(
             super::host_doors::self_focus_unsubscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -37916,7 +37951,7 @@ pub(crate) async fn call_verb(
         "vault.task_types.get" => vault_task_types_get(server, call, input).await,
         "vault.agents.spawn.get" => vault_agents_spawn_get(server, call, input).await,
         "vault.agents.spawn" => vault_agents_spawn(server, call, input).await,
-        "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
+        "vault.tasks.cancel.force" => vault_tasks_cancel_force(server, call, input).await,
         "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
         "vault.runs.pause" => vault_runs_pause(server, call, input).await,
         "vault.runs.resume" => vault_runs_resume(server, call, input).await,
@@ -38070,6 +38105,9 @@ pub(crate) async fn call_verb(
         "ai.streams.terminal" => ai_streams_terminal(server, call, input).await,
         "ai.reply" => ai_reply(server, call, input).await,
         "vault.receipts.context" => vault_receipts_context(server, call, input).await,
+        "vault.receipts.craft_reply_manifest" => {
+            vault_receipts_craft_reply_manifest(server, call, input).await
+        }
         "ai.voice.asr.open" => ai_voice_asr_open(server, call, input).await,
         "ai.voice.asr.hypothesis" => ai_voice_asr_hypothesis(server, call, input).await,
         "ai.voice.asr.finalize" => ai_voice_asr_finalize(server, call, input).await,

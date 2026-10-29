@@ -416,7 +416,7 @@ pub(super) fn card_ref(key: &([u8; 16], [u8; 1], [u8; 16])) -> String {
     )
 }
 
-pub(super) fn parse_card_ref(card: &str) -> Option<([u8; 16], [u8; 1], [u8; 16])> {
+pub(crate) fn parse_card_ref(card: &str) -> Option<([u8; 16], [u8; 1], [u8; 16])> {
     let mut parts = card.strip_prefix(CARD_REF_PREFIX)?.split(':');
     let subject = EntityId::from_hex(parts.next()?).ok()?;
     let signal = AgentHealthSignal::from_wire(parts.next()?)?;

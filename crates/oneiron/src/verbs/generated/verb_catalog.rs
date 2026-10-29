@@ -845,6 +845,7 @@ pub enum AgentVerb {
     AiStreamsTerminal,
     AiReply,
     VaultReceiptsContext,
+    VaultReceiptsCraftReplyManifest,
     AiVoiceAsrOpen,
     AiVoiceAsrHypothesis,
     AiVoiceAsrFinalize,
@@ -2031,6 +2032,7 @@ impl AgentVerb {
         Self::AiStreamsTerminal,
         Self::AiReply,
         Self::VaultReceiptsContext,
+        Self::VaultReceiptsCraftReplyManifest,
         Self::AiVoiceAsrOpen,
         Self::AiVoiceAsrHypothesis,
         Self::AiVoiceAsrFinalize,
@@ -3124,7 +3126,7 @@ impl AgentVerb {
             Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
             Self::VaultAgentsSpawn => "vault.agents.spawn",
-            Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
+            Self::VaultTasksCancelForce => "vault.tasks.cancel.force",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultRunsPause => "vault.runs.pause",
             Self::VaultRunsResume => "vault.runs.resume",
@@ -3244,6 +3246,7 @@ impl AgentVerb {
             Self::AiStreamsTerminal => "ai.streams.terminal",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
+            Self::VaultReceiptsCraftReplyManifest => "vault.receipts.craft_reply_manifest",
             Self::AiVoiceAsrOpen => "ai.voice.asr.open",
             Self::AiVoiceAsrHypothesis => "ai.voice.asr.hypothesis",
             Self::AiVoiceAsrFinalize => "ai.voice.asr.finalize",
@@ -4436,6 +4439,7 @@ impl AgentVerb {
                 | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::VaultReceiptsCraftReplyManifest
                 | Self::AiVoiceAsrOpen
                 | Self::AiVoiceAsrHypothesis
                 | Self::AiVoiceAsrFinalize
@@ -5651,6 +5655,7 @@ impl AgentVerb {
                 | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::VaultReceiptsCraftReplyManifest
                 | Self::AiVoiceAsrOpen
                 | Self::AiVoiceAsrHypothesis
                 | Self::AiVoiceAsrFinalize
@@ -6960,6 +6965,7 @@ impl AgentVerb {
                 | Self::AiStreamsTerminal
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::VaultReceiptsCraftReplyManifest
                 | Self::AiVoiceAsrOpen
                 | Self::AiVoiceAsrHypothesis
                 | Self::AiVoiceAsrFinalize
@@ -8862,6 +8868,7 @@ impl AgentVerb {
             Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::VaultReceiptsCraftReplyManifest => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
             Self::AiVoiceAsrHypothesis => &["spec"],
             Self::AiVoiceAsrFinalize => &["spec"],
@@ -10049,6 +10056,7 @@ impl AgentVerb {
             Self::AiStreamsTerminal => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::VaultReceiptsCraftReplyManifest => &["spec"],
             Self::AiVoiceAsrOpen => &["spec"],
             Self::AiVoiceAsrHypothesis => &["spec"],
             Self::AiVoiceAsrFinalize => &["spec"],
@@ -10523,7 +10531,7 @@ impl AgentVerb {
                 "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use."
             }
             Self::SelfGrantsAsk => {
-                "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."
+                "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."
             }
             Self::VaultCompanionsAccessRequestsAnswer => {
                 "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
@@ -11537,7 +11545,7 @@ impl AgentVerb {
                 "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."
             }
             Self::SelfOffRecordExecute => {
-                "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
+                "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer."
             }
             Self::VaultOffRecordRoomsStatus => {
                 "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."
@@ -12210,13 +12218,13 @@ impl AgentVerb {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
             }
             Self::ExecuteCode => {
-                "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."
+                "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal."
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
             }
             Self::VaultCodeTypeDiagnostics => {
-                "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again."
+                "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref."
             }
             Self::VaultCodeWaitsResolve => {
                 "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."
@@ -12869,6 +12877,9 @@ impl AgentVerb {
             Self::VaultReceiptsContext => {
                 "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."
             }
+            Self::VaultReceiptsCraftReplyManifest => {
+                "Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack."
+            }
             Self::AiVoiceAsrOpen => {
                 "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline."
             }
@@ -13346,7 +13357,7 @@ impl AgentVerb {
                 "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head."
             }
             Self::VaultArtifactsBodyForkOpen => {
-                "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own."
+                "Opens a fork of the live body at its head for machine work; a DOCX or XLSX fork joins the named proposal or opens its own."
             }
             Self::VaultArtifactsBodyForkEdit => {
                 "The opener's typed DOCX, XLSX or deck operations on its open fork of a live body."
@@ -13743,10 +13754,10 @@ impl AgentVerb {
                 "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."
             }
             Self::SelfBrowserOpen => {
-                "Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."
+                "Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded."
             }
             Self::SelfBrowserObserve => {
-                "Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle."
+                "Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles."
             }
             Self::SelfBrowserFind => {
                 "Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."
@@ -13779,7 +13790,7 @@ impl AgentVerb {
                 "Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt."
             }
             Self::SelfBrowserLibraryFind => {
-                "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."
+                "The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed."
             }
             Self::SelfBrowserLibraryDraft => {
                 "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."
@@ -13791,7 +13802,7 @@ impl AgentVerb {
                 "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."
             }
             Self::SelfBrowserLibraryPropose => {
-                "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."
+                "Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires."
             }
             Self::SelfBrowserLibraryRetire => {
                 "Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."

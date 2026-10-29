@@ -28,7 +28,7 @@ use crate::write_envelope::{
 
 /// The field pointer of the first typed record ref `body` names that does
 /// not resolve for `reader` in `txn`; `None` when every one does.
-pub(super) fn unresolved_claim_reference(
+pub(crate) fn unresolved_claim_reference(
     reader: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     body: &ClaimBody,

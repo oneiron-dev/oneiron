@@ -247,7 +247,7 @@
         "output": "crate::task_verb::sdk::BoardFrameReply",
         "description": "Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -272,7 +272,7 @@
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -297,7 +297,7 @@
         "output": "crate::task_verb::sdk::BoardSubscriptionReply",
         "description": "Unsubscribes the attached run's board STREAM connection from the named scopes.",
         "host_door_caller": true,
-        "host_door_session": false,
+        "host_door_session": true,
         "openapi": true
       }
     },
@@ -702,7 +702,7 @@
     },
     {
       "name": "self.grants.ask",
-      "description": "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it.",
+      "description": "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it.",
       "input": "crate::memory::GrantAskRequest",
       "output": "crate::memory::GrantAskReceipt",
       "call": "memory.grants_ask(&input)?",
@@ -6087,7 +6087,7 @@
     },
     {
       "name": "self.off_record.execute",
-      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows, spilled outputs and type feedback stay in the room until close, its feedback beside the answer.",
       "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
       "output": "crate::task_verb::sdk::OffRecordExecuted",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
@@ -9503,7 +9503,7 @@
     },
     {
       "name": "execute_code",
-      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.",
+      "description": "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
       "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
       "output": "crate::memory::foreign_code::ForeignCodeRunResult",
       "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
@@ -9535,7 +9535,7 @@
     },
     {
       "name": "vault.code.type_diagnostics",
-      "description": "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.",
+      "description": "Read one code-mode program step's type feedback by its check_ref as the owner, whole: its check as it stands and every diagnostic; a release hold gives it withheld. A session-bound run's step is read by its session_ref.",
       "input": "crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest",
       "output": "Option<crate::code_run::ProgramStepFeedbackRelease>",
       "call": "memory.code_run_type_diagnostics_as(&memory.embedded_owner(\"vault.code.type_diagnostics\")?, input)?",
@@ -11259,11 +11259,11 @@
       "openapi": true
     },
     {
-      "name": "vault.tasks.cancel_force",
+      "name": "vault.tasks.cancel.force",
       "description": "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts.",
       "input": "crate::task_verb::run_doors::CancelForceRequest",
       "output": "crate::task_verb::run_doors::CancelForceReceipt",
-      "call": "crate::task_verb::run_doors::cancel_force_as(memory.vault(), &memory.embedded_owner(\"vault.tasks.cancel_force\")?, input)?",
+      "call": "crate::task_verb::run_doors::cancel_force_as(memory.vault(), &memory.embedded_owner(\"vault.tasks.cancel.force\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -13247,6 +13247,19 @@
       "openapi": true
     },
     {
+      "name": "vault.receipts.craft_reply_manifest",
+      "description": "Read the craft manifest of one reply emit, as its actor or the live vault owner; never rebuild the pack.",
+      "input": "crate::receipt::CallReceiptRequest",
+      "output": "Option<Vec<crate::attempt_queue::ManifestEntry>>",
+      "call": "memory.craft_reply_manifest(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.voice.asr.open",
       "description": "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline.",
       "input": "crate::task_verb::sdk::AsrOpenRequest",
@@ -14191,7 +14204,7 @@
     },
     {
       "name": "self.browser.open",
-      "description": "Opens a URL in the run's browser and observes the page whole, each row with its live ref and locator, in pages read on with observe and its next cursor; a blocked, empty or interstitial page is the cue to switch_engine to chromium and retry.",
+      "description": "Opens a URL in the run's browser and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, notes why none loaded; a blocked page is the cue to switch_engine.",
       "input": "crate::task_verb::sdk::BrowserOpenInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.open(input))?)",
@@ -14201,14 +14214,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>",
-        "description": "Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "description": "Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.observe",
-      "description": "Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its run-bound handle.",
+      "description": "Observes the run's browser page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles.",
       "input": "crate::task_verb::sdk::BrowserObserveInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::BrowserAnswer::of(driver.observe_page(input)?)",
@@ -14218,7 +14231,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserObserveInput>",
-        "description": "Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle.",
+        "description": "Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14429,7 +14442,7 @@
     },
     {
       "name": "self.browser.library.find",
-      "description": "The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
+      "description": "The replay library's programs for a site, url or the open page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed.",
       "input": "crate::task_verb::sdk::BrowserLibraryFindInput",
       "output": "crate::task_verb::sdk::BrowserLibraryFindOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_find(input)?)",
@@ -14439,7 +14452,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
-        "description": "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
+        "description": "The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14497,7 +14510,7 @@
     },
     {
       "name": "self.browser.library.propose",
-      "description": "Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
+      "description": "Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the replay library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires.",
       "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",
       "output": "crate::task_verb::sdk::BrowserLibraryProposeOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_propose(input)?)",
@@ -14507,7 +14520,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
-        "description": "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
+        "description": "Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -16433,10 +16446,9 @@
     },
     {
       "name": "vault.artifacts.body.fork.open",
-      "description": "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own.",
+      "description": "Opens a fork of the live body at its head for machine work; a DOCX or XLSX fork joins the named proposal or opens its own.",
       "refs": [
         "/artifact_ref",
-        "/run_root_ref",
         "/proposal_ref"
       ],
       "input": "crate::office_body::OfficeBodyForkOpenRequest",

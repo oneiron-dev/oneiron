@@ -21,15 +21,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use oneiron::ModelLocality;
-use oneiron::llm::manifest::ModelRole;
+use oneiron::{ModelLocality, llm::manifest::ModelRole};
 use oneiron_code_check::{BackendKind, CheckMode, DEFAULT_INPUT_BYTES};
 use serde::Deserialize;
 
+mod broker;
 mod browser_planner;
 mod compaction;
 mod decision_read;
 mod decisions;
+mod drafting;
 mod dreamer_wording;
 mod levels;
 mod media;
@@ -99,7 +100,7 @@ pub(crate) struct ModelsFile {
     code_mode: CodeModeFile,
     #[serde(default)]
     recall: RecallFile,
-    broker: Option<BrokerFile>,
+    broker: Option<broker::BrokerFile>,
     decision_read: Option<decision_read::DecisionReadFile>,
     #[serde(default)]
     decisions: decisions::DecisionsFile,
@@ -113,18 +114,6 @@ pub(crate) struct ModelsFile {
     snapshots: Option<snapshots::SnapshotPolicyFile>,
     #[serde(default)]
     workers: BTreeMap<String, workers::WorkerFile>,
-}
-
-/// `[models.broker]`: where the credential broker listens and the OS user it
-/// runs as, or, with neither, how this server starts its same-user child.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BrokerFile {
-    socket: Option<PathBuf>,
-    uid: Option<u32>,
-    program: Option<PathBuf>,
-    #[serde(default)]
-    extra_roots: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -143,6 +132,7 @@ struct DreamerFile {
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
     urgent_digest_question: Option<String>,
+    drafting: Option<drafting::DraftingFile>,
     /// `[models.dreamer.wording]`: the host's wording of the engine's asks
     /// (FIX 8696); each piece unset keeps its shipped default.
     #[serde(default)]
@@ -286,10 +276,10 @@ impl Default for BrokerConfig {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DreamerSettings {
     pub enabled: bool,
-    /// A sitting with no activity for this long ends, and its turns dream.
-    pub idle_floor_secs: u64,
-    /// Hard ceiling on one session's life, independent of activity.
-    pub session_ceiling_secs: u64,
+    /// The host's idle floor, narrowing the vault's (FIX 8600); `None` keeps its row.
+    pub idle_floor_secs: Option<u64>,
+    /// The host's hard session ceiling, narrowing the vault's; `None` keeps its row.
+    pub session_ceiling_secs: Option<u64>,
     /// Budget units each wake pass may spend.
     pub pass_budget_units: u64,
     /// The instruction the Dreamer writes declared scope summaries with.
@@ -308,6 +298,7 @@ pub struct DreamerSettings {
     /// The wording of the urgent digest's harm question (OF-194). Without
     /// one, the host's shipped wording.
     pub urgent_digest_question: Option<String>,
+    pub(crate) drafting: drafting::DraftingSettings,
     /// The wording the engine's own asks go out in (FIX 8696): the shipped
     /// default for each piece the owner left unset.
     pub wording: DreamerWording,
@@ -388,7 +379,6 @@ impl Default for CodeCheckSettings {
     }
 }
 
-const DEFAULT_SESSION_CEILING_SECS: u64 = 12 * 60 * 60;
 const DEFAULT_PASS_BUDGET_UNITS: u64 = 400_000;
 const DEFAULT_TURN_BUDGET_UNITS: u64 = 64_000;
 const DEFAULT_STEP_BUDGET_UNITS: u64 = 64_000;
@@ -430,14 +420,8 @@ impl ModelsFile {
         let aliases = resolve_aliases(self.aliases, &providers, &roles)?;
         let dreamer = DreamerSettings {
             enabled: self.dreamer.enabled.unwrap_or(true),
-            idle_floor_secs: self
-                .dreamer
-                .idle_floor_secs
-                .unwrap_or(oneiron_driver::DEFAULT_SESSION_IDLE_FLOOR_SECS),
-            session_ceiling_secs: self
-                .dreamer
-                .session_ceiling_secs
-                .unwrap_or(DEFAULT_SESSION_CEILING_SECS),
+            idle_floor_secs: self.dreamer.idle_floor_secs,
+            session_ceiling_secs: self.dreamer.session_ceiling_secs,
             pass_budget_units: self
                 .dreamer
                 .pass_budget_units
@@ -470,6 +454,7 @@ impl ModelsFile {
                 .dreamer
                 .urgent_digest_question
                 .filter(|text| !text.trim().is_empty()),
+            drafting: self.dreamer.drafting.unwrap_or_default().resolve()?,
             wording: self.dreamer.wording.resolve(base)?,
             runner_seats: self.dreamer.runner_seats,
         };
@@ -478,7 +463,13 @@ impl ModelsFile {
                 .policy()
                 .map_err(|error| anyhow::anyhow!("models.dreamer.runner_seats: {error}"))?;
         }
-        if dreamer.idle_floor_secs == 0 || dreamer.session_ceiling_secs <= dreamer.idle_floor_secs {
+        let (idle, ceiling) = (dreamer.idle_floor_secs, dreamer.session_ceiling_secs);
+        if idle == Some(0)
+            || ceiling == Some(0)
+            || idle
+                .zip(ceiling)
+                .is_some_and(|(idle, ceiling)| ceiling <= idle)
+        {
             anyhow::bail!(
                 "models.dreamer: idle_floor_secs must be > 0 and session_ceiling_secs must exceed it"
             );
@@ -593,43 +584,6 @@ impl ModelsFile {
             models.decision_read = Some(file.resolve(base, &models)?);
         }
         Ok(models)
-    }
-}
-
-impl BrokerFile {
-    fn resolve(self) -> anyhow::Result<BrokerConfig> {
-        let absolute = |path: &PathBuf, field: &str| {
-            anyhow::ensure!(
-                path.is_absolute(),
-                "models.broker.{field} must be an absolute path"
-            );
-            Ok(())
-        };
-        match (self.socket, self.uid) {
-            (Some(socket), Some(uid)) => {
-                absolute(&socket, "socket")?;
-                anyhow::ensure!(
-                    self.program.is_none() && self.extra_roots.is_empty(),
-                    "models.broker.program and extra_roots are for the same-user child; a separate-user broker takes its own flags"
-                );
-                Ok(BrokerConfig::SeparateUser { socket, uid })
-            }
-            (None, None) => {
-                if let Some(program) = &self.program {
-                    absolute(program, "program")?;
-                }
-                for roots in &self.extra_roots {
-                    absolute(roots, "extra_roots")?;
-                }
-                Ok(BrokerConfig::SameUser {
-                    program: self.program,
-                    extra_roots: self.extra_roots,
-                })
-            }
-            _ => anyhow::bail!(
-                "models.broker.socket and uid name a separate-user broker together; with neither, this server starts a same-user child"
-            ),
-        }
     }
 }
 
