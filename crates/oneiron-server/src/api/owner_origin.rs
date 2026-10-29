@@ -58,7 +58,42 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/origin-mirror/strategy", post(set_origin_mirror_strategy))
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/origin-authority`'s body (FIX 11617): [`CutOriginAuthority`].
+pub(crate) fn cut_origin_authority_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CutOriginAuthority>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-authority`'s answer (FIX 11617): [`OriginAuthority`].
+pub(crate) fn origin_authority_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OriginAuthority>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror`'s body (FIX 11617): [`SetOriginMirror`].
+pub(crate) fn set_origin_mirror_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetOriginMirror>()
+}
+
+/// The OpenAPI schema of the origin-mirror answers (FIX 11617): [`OriginMirrorTarget`].
+pub(crate) fn origin_mirror_target_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OriginMirrorTarget>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror/push`'s body (FIX 11617): [`RepoQuery`].
+pub(crate) fn push_origin_mirror_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RepoQuery>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror/push`'s answer (FIX 11617): [`OriginMirrorRun`].
+pub(crate) fn origin_mirror_run_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OriginMirrorRun>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror/strategy`'s body (FIX 11617): [`SetOriginMirrorStrategy`].
+pub(crate) fn set_origin_mirror_strategy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetOriginMirrorStrategy>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RepoQuery {
     /// The repository's served name, as `/git/{repo}` names it.
@@ -95,7 +130,7 @@ async fn origin_authority(
     Ok(Json(state))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct CutOriginAuthority {
     repo: String,
@@ -168,7 +203,7 @@ async fn origin_mirror(
     Ok(Json(state))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetOriginMirror {
     repo: String,
@@ -214,7 +249,7 @@ async fn set_origin_mirror(
     Ok(Json(row))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetOriginMirrorStrategy {
     repo: String,
