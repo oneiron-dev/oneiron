@@ -435,6 +435,23 @@ impl Job {
             Some(floor) => key.with_wake_sequence_floor(floor),
             None => key,
         };
+        // So does the vault's mode-root policy, beside the plan's pins (FIX
+        // 968); one that does not read delegates no signer.
+        let key = match plan
+            .backup_mode_roots
+            .as_ref()
+            .map(|bytes| oneiron::authority::BackupModeRoots::from_bytes(&bytes.0))
+        {
+            Some(Ok(roots)) => key.trusting_mode_roots(&roots.policy, &roots.delegations),
+            Some(Err(_)) => {
+                tracing::warn!(
+                    reason = "backup_mode_roots_invalid",
+                    "the plan's backup mode roots did not read; they delegate no signer"
+                );
+                key
+            }
+            None => key,
+        };
         // The family the artifact's member held rides the key with its tag:
         // the restore passes it on only when the tag names that member (FIX
         // 6817). The pipe's live family stays here and wins.

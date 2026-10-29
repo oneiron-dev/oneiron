@@ -25,7 +25,7 @@ pub use self::facts::{
     AddedRecipient, AdmittedRestore, AnchorDisposition, CustodyAdmissionFacts, CustodyPositionFact,
     CustodyRouteFact, EscrowRole, FreshRecipient, RecipientAdmissionFacts,
     RecipientRetirementDisposition, ReleasedRecipient, RestoreAdmission, RestoreCommitFacts,
-    RestorePlan, RetiredBy, RetiredRecipient, SourceExpectation, VerifiedSource,
+    RestorePlan, RetiredBy, RetiredRecipient, SignerTrust, SourceExpectation, VerifiedSource,
 };
 use self::reason::RestoreAdmissionReason as R;
 pub(crate) use self::reason::{Rejected, because};
@@ -114,7 +114,8 @@ impl Vault {
             )
             .at(P::SourceCheck)
         })?;
-        let (file, evidence) = source::inspect(path, expected)?;
+        let (file, evidence, signer_trust) =
+            source::inspect(path, expected, key.delegated_signers())?;
         let opened = artifact::open_artifact_file(file, key).map_err(|error| {
             let reason = match error {
                 Error::Io(_) => R::StorageIo,
@@ -139,6 +140,7 @@ impl Vault {
             expected,
             checkpoint,
             source::registry(&evidence, expected)?,
+            (signer_trust, key.mode_root_policy_digest()),
         )?;
         image.drop_machine_identity();
         // The family the key carries from the artifact's member, taken

@@ -450,6 +450,18 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// engine revision it merged in, with no `Ping` field: a reader of the checks
 /// runs against an engine at or after the floor, and no reader of a check
 /// without it is kept. This version stays 3.
+///
+/// Checkpoint host-order holds and mode-root trust (FIX 6598, 6817, 968): a
+/// restore input's `host_holds` requires `origin`, `live_source` or
+/// `checkpoint_artifact` with the member's `snapshot_id`, `recipient_id`,
+/// `recipient_epoch` and `member_blake3`; the plan takes an optional
+/// `backup_mode_roots`, only on an artifact-backed wake or migrate; and a
+/// receipt's `source` carries `mode_root_policy_digest` only where a
+/// delegation from the vault's mode roots admitted the signer. They carry a
+/// build floor, at the engine revision they merged in, with no `Ping`
+/// field: a supervisor sends and reads them only with engines and vault VM
+/// images at or after it, no reader without them is kept, the restore input
+/// and receipt schemas stay 1, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

@@ -38,6 +38,7 @@ mod rebuild;
 mod response_rows;
 mod restore_class;
 mod side_pads;
+mod signer_delegation;
 mod snapshot;
 mod tiers;
 mod watermark;
@@ -53,7 +54,7 @@ pub use admission::{
     CustodyRouteFact, EscrowRole, FreshRecipient, RecipientAdmissionFacts,
     RecipientRetirementDisposition, ReleasedRecipient, RestoreAdmission, RestoreAdmissionError,
     RestoreAdmissionReason, RestoreCommitFacts, RestoreDestinationState, RestorePhase, RestorePlan,
-    RetiredBy, RetiredRecipient, SourceExpectation, VerifiedSource,
+    RetiredBy, RetiredRecipient, SignerTrust, SourceExpectation, VerifiedSource,
 };
 pub(crate) use admission::{Rejected, because};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey, CheckpointSequenceBelowFloor};

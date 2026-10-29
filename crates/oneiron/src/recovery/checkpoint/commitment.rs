@@ -279,9 +279,12 @@ pub(super) fn new_commitment(
 }
 
 /// Verifies `record` over `bytes` for `vault_id` and returns the commitment.
-/// Refused unless `trust` accepts its signer and both signatures verify.
+/// Refused unless `trust` accepts its signer, or it is one of `delegated`,
+/// the signers the vault's mode roots delegated (FIX 968, an extra route
+/// beside `trust`, never in its place), and both signatures verify.
 pub(super) fn verify(
     trust: &Trust,
+    delegated: &[CheckpointSigner],
     vault_id: &[u8; 32],
     bytes: &[u8],
     record: &[u8],
@@ -293,16 +296,17 @@ pub(super) fn verify(
     {
         return Err(codec());
     }
-    let trusted = match trust {
-        Trust::Device(keystore) => keystore
-            .get(&slot(*vault_id, commitment.signer.install))
-            .map_err(keystore_error)?
-            .map(|seed| SigningKeys::expand(commitment.signer.install, &seed).signer())
-            .transpose()?
-            .is_some_and(|signer| signer == commitment.signer),
-        Trust::Pinned(signers) => signers.contains(&commitment.signer),
-        Trust::Nobody => false,
-    };
+    let trusted = delegated.contains(&commitment.signer)
+        || match trust {
+            Trust::Device(keystore) => keystore
+                .get(&slot(*vault_id, commitment.signer.install))
+                .map_err(keystore_error)?
+                .map(|seed| SigningKeys::expand(commitment.signer.install, &seed).signer())
+                .transpose()?
+                .is_some_and(|signer| signer == commitment.signer),
+            Trust::Pinned(signers) => signers.contains(&commitment.signer),
+            Trust::Nobody => false,
+        };
     if !trusted {
         return Err(refused("the checkpoint's signer is not trusted here"));
     }
