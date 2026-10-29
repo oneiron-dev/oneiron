@@ -85,13 +85,18 @@ pub(crate) fn browser_return_body_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<ReturnRequest>()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ScreenRequest {
     run: String,
     /// The tab to show, which comes to the front; the front tab without.
     #[serde(default)]
     tab: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/screen`'s body (FIX 11613): [`ScreenRequest`].
+pub(crate) fn browser_screen_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ScreenRequest>()
 }
 
 #[derive(Deserialize)]

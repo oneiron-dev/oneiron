@@ -150,7 +150,7 @@ fn vault_label(vault_path: &Path) -> String {
 }
 
 /// One backup file.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, schemars::JsonSchema)]
 pub(crate) struct BackupRecord {
     pub(crate) file: String,
     pub(crate) path: PathBuf,
@@ -164,7 +164,7 @@ pub(crate) struct BackupRecord {
 }
 
 /// What `backup` did.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BackupOutcome {
     pub(crate) backup: BackupRecord,
     /// BLAKE3 of the checkpoint image; a rehearsal reports the same id.

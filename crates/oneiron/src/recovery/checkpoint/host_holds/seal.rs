@@ -100,7 +100,7 @@ pub enum HostHoldsSealing {
 
 /// Why a hosted vault's checkpoint carries no host-order family. Content
 /// free.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HostHoldsUnavailable {
     /// The host gave no usable recipient.

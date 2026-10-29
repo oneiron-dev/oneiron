@@ -5,6 +5,12 @@
 //! after the owner table wrote its generic operations, so the document
 //! teaches a client the fields the route takes, with no SDK row added.
 
+mod routes_backups_to_signing_keys;
+mod routes_packs;
+mod routes_pads_to_runs;
+mod routes_secret_scan_to_skills;
+mod routes_space_posting_to_worlds;
+
 use serde_json::{Value, json};
 
 use oneiron_contracts::code_run::vault_read::request_schema;
@@ -624,6 +630,11 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
         concern_prompt_inject_outcome_schema(),
         &[],
     );
+    routes_backups_to_signing_keys::merge(spec);
+    routes_packs::merge(spec);
+    routes_pads_to_runs::merge(spec);
+    routes_secret_scan_to_skills::merge(spec);
+    routes_space_posting_to_worlds::merge(spec);
 }
 
 /// Sets one operation's body and answer schemas and adds its refusals, where
@@ -636,6 +647,54 @@ fn bind(
     answer: Value,
     refusals: &[(&str, &str)],
 ) {
+    bind_operation(spec, path, method, Some(body), json_answer(answer), refusals);
+}
+
+/// [`bind`] for a route that reads no body: the operation declares none
+/// (FIX 11613).
+fn bind_answer(
+    spec: &mut Value,
+    path: &str,
+    method: &str,
+    answer: Value,
+    refusals: &[(&str, &str)],
+) {
+    bind_operation(spec, path, method, None, json_answer(answer), refusals);
+}
+
+/// [`bind`] for a route that answers the screen as a PNG image (FIX 11613).
+fn bind_image_answer(
+    spec: &mut Value,
+    path: &str,
+    method: &str,
+    body: Value,
+    refusals: &[(&str, &str)],
+) {
+    let answer = json!({
+        "description": "The screen as a PNG.",
+        "content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}
+    });
+    bind_operation(spec, path, method, Some(body), answer, refusals);
+}
+
+/// The 200 response of a route's typed JSON answer.
+fn json_answer(answer: Value) -> Value {
+    json!({
+        "description": "The route's typed answer.",
+        "content": {"application/json": {"schema": answer}}
+    })
+}
+
+/// Writes one operation's request body (or drops it when the route reads
+/// none), its 200 response and its refusals.
+fn bind_operation(
+    spec: &mut Value,
+    path: &str,
+    method: &str,
+    body: Option<Value>,
+    answer: Value,
+    refusals: &[(&str, &str)],
+) {
     let Some(operation) = spec
         .get_mut("paths")
         .and_then(|paths| paths.get_mut(path))
@@ -643,21 +702,24 @@ fn bind(
     else {
         return;
     };
-    operation["requestBody"] =
-        json!({"required": true, "content": {"application/json": {"schema": body}}});
+    match body {
+        Some(body) => {
+            operation["requestBody"] =
+                json!({"required": true, "content": {"application/json": {"schema": body}}});
+        }
+        None => {
+            if let Some(operation) = operation.as_object_mut() {
+                operation.remove("requestBody");
+            }
+        }
+    }
     let Some(responses) = operation
         .get_mut("responses")
         .and_then(Value::as_object_mut)
     else {
         return;
     };
-    responses.insert(
-        "200".to_owned(),
-        json!({
-            "description": "The route's typed answer.",
-            "content": {"application/json": {"schema": answer}}
-        }),
-    );
+    responses.insert("200".to_owned(), answer);
     for (status, description) in refusals {
         responses.insert(
             (*status).to_owned(),

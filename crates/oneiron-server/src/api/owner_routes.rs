@@ -78,7 +78,7 @@ mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 pub(super) mod model_setting_routes;
-mod owner_key_enrollment_routes;
+pub(super) mod owner_key_enrollment_routes;
 pub(super) mod owner_work_routes;
 mod pack_preview_routes;
 mod pack_routes;
@@ -1120,7 +1120,7 @@ async fn model_catalog(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetModelCatalog {
     /// `pinned-commit`, `pinned-ref` or `content-hash-frozen`.
@@ -1150,7 +1150,7 @@ async fn set_model_catalog(
 }
 
 /// What one catalog sync did, and the catalog ref after it.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, schemars::JsonSchema)]
 struct ModelCatalogSynced {
     /// `installed`, `candidate` or `blocked`.
     outcome: &'static str,
