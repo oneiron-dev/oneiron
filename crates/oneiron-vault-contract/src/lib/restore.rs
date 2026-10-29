@@ -54,7 +54,7 @@ pub use self::framing::{
     RestoreFailureReason, RestoreStatus,
 };
 pub use self::host_holds::{
-    HostHoldsBytes, HostHoldsCursor, HostHoldsSource, HostOrderHoldsExport,
+    HostHoldsBytes, HostHoldsCursor, HostHoldsOrigin, HostHoldsSource, HostOrderHoldsExport,
     HostOrderHoldsNotProven, ManagedRestoreHostHolds, RestoreHostHoldsStatus,
 };
 pub use self::plan::{

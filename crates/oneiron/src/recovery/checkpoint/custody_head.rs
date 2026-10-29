@@ -45,8 +45,8 @@ use crate::store::custody_protocol::{
 };
 use crate::store::{
     CUSTODY_HEAD_WRAP_CONTEXT, CustodyKind, CustodyRecipients, CustodyRoute, CustodySourceAt,
-    FileAnchor, FolderTarget, OutboxTarget, Publication, TargetRecipients, route_custody,
-    standing_retirements_in_txn,
+    FileAnchor, FolderTarget, OutboxTarget, Publication, TakeoverRefusal, TargetRecipients,
+    route_custody, standing_retirements_in_txn,
 };
 use crate::{EntityId, Result, Vault, VaultConfig};
 
@@ -557,7 +557,7 @@ impl Vault {
         config: VaultConfig,
         restored_at: u64,
         recovery: &CustodyRecovery<'_>,
-        finish: impl FnOnce(&Self) -> Result<()>,
+        finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         Self::restore_keeping_custody(
             path,
@@ -574,6 +574,11 @@ impl Vault {
     /// wake, a migration, an engine restore), an image whose custody is not
     /// on this host drops and names its claim-bound rows whose keys stayed
     /// behind, and completes; none refuses for it (Engine 10-20 05:2x).
+    /// `finish` gets the host-order family `key` carries from the artifact's
+    /// member where its tag names the member this image carries (FIX 6817).
+    /// A landed head's takeover fence publishes last, as an admitted
+    /// restore's does (FIX 6782): an advance that failed may have happened,
+    /// so the destination and its custody stay.
     pub(super) fn restore_keeping_custody(
         path: &Path,
         key: &CheckpointKey,
@@ -581,10 +586,11 @@ impl Vault {
         config: VaultConfig,
         (reason, restored_at): (RestoreReason, u64),
         recovery: Option<&CustodyRecovery<'_>>,
-        finish: impl FnOnce(&Self) -> Result<()>,
+        finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
         image.drop_machine_identity();
+        let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
         let anchor = recovery.and_then(|recovery| recovery.anchor());
         let source = recovery.map(CustodyRecovery::source);
         let route = route_custody(
@@ -597,12 +603,12 @@ impl Vault {
             key.custody_wrap(),
             source.as_ref(),
         )?;
-        let (custody, landing) = match route {
+        let (custody, mut landing) = match route {
             CustodyRoute::Local => (Custody::Keep, None),
             CustodyRoute::Landed(landing) => (Custody::Landed, Some(landing)),
             CustodyRoute::Absent => (Custody::NewHost, None),
         };
-        let (made, forked, mut vault, mut report) = Self::restore_image(
+        let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
             checkpoint_id,
             bodies,
@@ -614,16 +620,29 @@ impl Vault {
             &BTreeSet::new(),
             &write_budget::Unfloored,
         )?;
-        finish(&vault)?;
+        finish(&vault, artifact_holds.as_ref())?;
         if let Some(landing) = &landing {
-            landing.fence(anchor)?;
             report.custody_note = landing.note().map(str::to_owned);
             super::credential_custody::note_landed_access(
                 &mut report.credential_notes,
                 landing.owner_compartment_unopened(),
             );
         }
+        let prepared = match &landing {
+            Some(landing) => landing.prepare_takeover(&vault.store)?,
+            None => None,
+        };
+        made.preserve(true);
         forked.keep();
+        if let (Some(landing), Some(anchor), Some(prepared)) =
+            (landing.as_mut(), anchor, prepared.as_ref())
+            && let Err(refusal) = landing.publish_takeover(anchor, prepared)
+        {
+            if matches!(refusal, TakeoverRefusal::Definitive(_)) {
+                made.preserve(false);
+            }
+            return Err(refusal.into_rejected().into());
+        }
         made.keep(&mut vault);
         if let Some(landing) = landing {
             landing.keep();
