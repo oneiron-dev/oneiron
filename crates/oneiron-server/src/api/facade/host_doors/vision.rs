@@ -76,7 +76,10 @@ async fn refusal_error(refused: Response) -> MemoryError {
             MEMORY_CODE_NOT_FOUND,
             "Name a view handle the caller was served.",
         ),
-        StatusCode::PAYMENT_REQUIRED => (MEMORY_CODE_BUDGET_SPENT, "The caller's budget line is spent."),
+        StatusCode::PAYMENT_REQUIRED => (
+            MEMORY_CODE_BUDGET_SPENT,
+            "The caller's budget line is spent.",
+        ),
         StatusCode::TOO_MANY_REQUESTS if reason == "quota_spent" => (
             MEMORY_CODE_BUDGET_SPENT,
             "A usage window or prepaid credit is spent: answer the quota question in GET /v1/ai/status at POST /v1/ai/quota/{question}.",
@@ -91,10 +94,7 @@ async fn refusal_error(refused: Response) -> MemoryError {
             MEMORY_CODE_MODEL_UNAVAILABLE,
             "Retry later, or bind a [models.roles.local_vision] seat.",
         ),
-        _ => (
-            MEMORY_CODE_INTERNAL,
-            "This is an Oneiron server bug; please report it.",
-        ),
+        _ => (MEMORY_CODE_INTERNAL, "This is an Oneiron server bug; please report it."),
     };
     MemoryError::new(code, format!("{VERB}: {reason}: {words}"), &[suggestion])
 }
