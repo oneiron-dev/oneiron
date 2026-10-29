@@ -21,6 +21,8 @@
 
 pub(super) mod admit;
 pub(super) mod carrier;
+// An escaped key's span (FIX 1369).
+mod escaped_span;
 mod file_plane;
 pub(super) mod known_marks;
 mod known_note;
@@ -45,8 +47,8 @@ use super::container::{
 };
 use super::shapes::{self, Door, HANDLE_OPEN};
 use super::{
-    REASON_PRIVATE_KEY, SecretScanMode, provider_token_spans, scan_batch_ops, secret_scan_error,
-    secret_scan_mode_in_txn,
+    REASON_MNEMONIC, REASON_PRIVATE_KEY, SecretScanMode, provider_token_spans, scan_batch_ops,
+    secret_scan_error, secret_scan_mode_in_txn,
 };
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
@@ -565,7 +567,13 @@ impl Masker {
             };
             fields.mask_body(leaf)?;
             for found in fields.found {
-                spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
+                let mut hits: Vec<Range<usize>> = occurrences(leaf, &found.value).collect();
+                // A value the leaf holds escaped (a PEM block's `\n`) is
+                // placed at its escaped form (FIX 1369).
+                if hits.is_empty() {
+                    hits = escaped_span::escaped_occurrences(leaf, &found.value);
+                }
+                spans.extend(hits.into_iter().map(|span| (span, found.reason)));
             }
         }
         for (span, reason) in merged(spans) {
@@ -855,8 +863,7 @@ fn credential_member(key: &Value, member: &Value) -> bool {
 
 /// The spans of `text` the write door's text rules place, merged where they
 /// meet, in order: a private-key block, a blocklist entry, a provider key
-/// token, and an assigned value under a credential name. A recovery phrase is
-/// not placed.
+/// token, an assigned value under a credential name, and a recovery phrase.
 fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
     let spans: Vec<(Range<usize>, &'static str)> = shapes::private_key_block_spans(text)
         .into_iter()
@@ -871,6 +878,12 @@ fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
             shapes::assignment_spans(text)
                 .into_iter()
                 .map(|span| (span, REASON_SENSITIVE_ENV)),
+        )
+        // A recovery phrase takes one span per phrase (FIX 1099).
+        .chain(
+            shapes::mnemonic_spans(text)
+                .into_iter()
+                .map(|span| (span, REASON_MNEMONIC)),
         )
         .collect();
     merged(spans)

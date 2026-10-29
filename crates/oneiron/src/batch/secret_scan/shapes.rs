@@ -1,5 +1,9 @@
 //! Credential-shape detection shared by write, serve, and export.
 
+// A recovery phrase's spans (FIX 1099).
+mod mnemonic_spans;
+pub(super) use mnemonic_spans::mnemonic_spans;
+
 use std::ops::Range;
 
 use sha2::{Digest, Sha256};
