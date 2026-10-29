@@ -25,6 +25,8 @@ pub(crate) struct ActiveWakes {
     /// owed wake call names, so a reconcile tells a live call of this process
     /// from what a dead boot left (FIX 11450).
     boot: [u8; 16],
+    /// The read phases' fallback tally and deferred triggers (FIX 11568).
+    pub(crate) read_phases: crate::dreamer_wake::read_phase::ReadPhases,
 }
 
 impl Default for ActiveWakes {
@@ -34,6 +36,7 @@ impl Default for ActiveWakes {
         Self {
             wakes: Mutex::default(),
             boot,
+            read_phases: Default::default(),
         }
     }
 }

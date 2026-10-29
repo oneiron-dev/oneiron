@@ -58,11 +58,12 @@ pub use recipes::{SieveAudit, SieveAuditRecord, SieveConsumeReceipt};
 mod rules;
 #[cfg(test)]
 mod tests;
+mod texts;
+use texts::{late_ids_in_txn, new_entries_in_txn, withheld_rows_in_txn};
 mod words;
 
 use std::cell::Cell;
 use std::collections::{BTreeSet, HashMap};
-use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -70,8 +71,9 @@ use chunks::{Admission, ChunkRef};
 pub use policy::SievePolicy;
 pub use rules::RuleClass;
 
+use super::read_phase::{OnStale, ReadWrite, WakeStop};
 use crate::error::Result;
-use crate::ports::{EntityStoreRead, EntityTime, TimelineQuery};
+use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
@@ -294,9 +296,13 @@ pub struct SievePass {
 }
 
 impl Vault {
-    /// Runs one bounded sieve pass in its own transaction.
+    /// Runs one bounded sieve pass to its end, its text reads made before
+    /// its short writer opens.
     pub fn sieve_pass(&self, now: u64) -> Result<SievePass> {
-        self.with_write_txn(|txn| sieve_pass_in_txn(self, txn, now))
+        match self.sieve_pass_until(now, WakeStop::NEVER, OnStale::OneWriter, false)? {
+            ReadWrite::Written(commit) => Ok(commit.pass),
+            ReadWrite::Stopped | ReadWrite::Deferred => Ok(SievePass::default()),
+        }
     }
 
     /// The first `limit` spans of the interest queue whose source the
@@ -416,6 +422,7 @@ pub(crate) fn sieve_pass_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     now: u64,
+    texts: &texts::SieveTexts,
 ) -> Result<SievePass> {
     // A grant is judged at a persisted clock floor, as a branch's read
     // snapshot judges it.
@@ -430,6 +437,7 @@ pub(crate) fn sieve_pass_in_txn(
         epoch: retry.epoch,
         budget: Cell::new(policy.max_text_bytes_per_pass as usize),
         segmented: Cell::new(false),
+        texts,
     };
     let mut pass = SievePass::default();
     let mut left = policy.max_turns_per_pass as usize;
@@ -521,7 +529,7 @@ fn retire_spans_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId
 }
 
 /// One pass's fixed inputs, and the text it may still read.
-struct Reader {
+struct Reader<'a> {
     policy: SievePolicy,
     policy_digest: [u8; 32],
     rules: rules::Rules,
@@ -532,9 +540,11 @@ struct Reader {
     budget: Cell<usize>,
     /// Whether the pass has read a segment yet.
     segmented: Cell<bool>,
+    /// The pass's prefetched text reads.
+    texts: &'a texts::SieveTexts,
 }
 
-impl Reader {
+impl Reader<'_> {
     fn spent(&self) -> bool {
         self.budget.get() == 0
     }
@@ -597,19 +607,7 @@ impl Reader {
         left: usize,
         pass: &mut SievePass,
     ) -> Result<usize> {
-        let query = TimelineQuery {
-            start: Bound::Included(at.learned_at),
-            end: Bound::Included(at.learned_at),
-            ..Default::default()
-        };
-        let mut behind = Vec::new();
-        for entry in vault.store.port_entity_timeline(txn, query)? {
-            let entry = entry?;
-            if entry.id >= at.turn {
-                break;
-            }
-            behind.push(entry.id);
-        }
+        let behind = late_ids_in_txn(vault, txn, at)?;
         let mut read = 0;
         for id in &behind {
             if read >= left || self.spent() {
@@ -647,19 +645,8 @@ impl Reader {
         left: usize,
         pass: &mut SievePass,
     ) -> Result<usize> {
-        let query = TimelineQuery {
-            after: cursor.map(|at| EntityTime {
-                timestamp: at.learned_at,
-                id: at.turn,
-            }),
-            ..Default::default()
-        };
         let scan = self.policy.max_scan_per_pass as usize;
-        let entries = vault
-            .store
-            .port_entity_timeline(txn, query)?
-            .take(scan)
-            .collect::<Result<Vec<_>>>()?;
+        let entries = new_entries_in_txn(vault, txn, cursor, scan)?;
         let mut read = 0;
         let mut last = None;
         for entry in &entries {
@@ -717,18 +704,7 @@ impl Reader {
             after: None,
         });
         let scan = self.policy.max_scan_per_pass as usize;
-        let rows = WITHHELD
-            .iter_range(
-                &vault.store,
-                txn,
-                sweep
-                    .after
-                    .as_ref()
-                    .map_or(Bound::Unbounded, Bound::Excluded),
-                Bound::Unbounded,
-            )?
-            .take(scan)
-            .collect::<Result<Vec<_>>>()?;
+        let rows = withheld_rows_in_txn(&vault.store, txn, sweep.after, scan)?;
         let mut ended = rows.len() < scan;
         let mut read = 0;
         for (turn, epoch) in &rows {
