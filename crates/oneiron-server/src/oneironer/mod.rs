@@ -45,6 +45,7 @@ pub(crate) mod engines;
 mod local;
 mod mlx;
 pub(crate) mod release;
+pub(crate) mod wire;
 
 #[cfg(test)]
 mod tests;

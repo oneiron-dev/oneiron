@@ -18,13 +18,12 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, EncoderOutput, EncoderRegister, EncoderTurn, SpeakerRole,
-};
+use oneiron::memory::extraction::{EncoderInput, EncoderOutput};
 use serde::Deserialize;
 
 use super::super::dispatcher::{Worker, WorkerDescriptor};
 use super::super::local::{LocalTagger, WindowCounter};
+use super::super::wire::WireInput;
 use super::Engine;
 use super::rows::{Row, RowKey, sha16};
 use crate::config::OneironerConfig;
@@ -79,67 +78,6 @@ struct ParityFile {
 struct Case {
     input: WireInput,
     output: EncoderOutput,
-}
-
-/// An [`EncoderInput`] as a reference case writes it.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireInput {
-    turn: String,
-    messages: Vec<WireMessage>,
-    #[serde(default)]
-    context: Vec<WireTurn>,
-    #[serde(default)]
-    language: Option<String>,
-    #[serde(default)]
-    speaker: Option<SpeakerRole>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireMessage {
-    id: String,
-    text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WireTurn {
-    turn: String,
-    messages: Vec<WireMessage>,
-    #[serde(default)]
-    speaker: Option<SpeakerRole>,
-}
-
-fn messages(wire: Vec<WireMessage>) -> Vec<EncoderMessage> {
-    wire.into_iter()
-        .map(|message| EncoderMessage {
-            id: message.id,
-            text: message.text,
-        })
-        .collect()
-}
-
-impl From<WireInput> for EncoderInput {
-    fn from(wire: WireInput) -> Self {
-        Self {
-            turn: wire.turn,
-            messages: messages(wire.messages),
-            context: wire
-                .context
-                .into_iter()
-                .map(|turn| EncoderTurn {
-                    turn: turn.turn,
-                    messages: messages(turn.messages),
-                    speaker: turn.speaker,
-                })
-                .collect(),
-            following: Vec::new(),
-            register: EncoderRegister::Live,
-            language: wire.language,
-            speaker: wire.speaker,
-        }
-    }
 }
 
 /// The bundle's reference, read and bound to its bytes.

@@ -28,9 +28,6 @@ use clap::{Args, Subcommand, ValueEnum};
 use oneiron::llm::manifest::{
     EncoderDistillationRequest, EncoderExport, ModelManifest, ModelRole, SharedBaseFork,
 };
-use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, EncoderRegister, EncoderTurn, SpeakerRole,
-};
 use serde::Deserialize;
 
 use super::{ensure_existing_vault_for_revoke, init_tracing};
@@ -40,6 +37,7 @@ use crate::config::{
     resolve_serve_config,
 };
 use crate::oneironer::release::{self, Platforms, ReleaseSource};
+use crate::oneironer::wire::WireInput;
 
 #[derive(Subcommand)]
 pub enum OneironerCommand {
@@ -436,68 +434,7 @@ fn fetch(args: FetchArgs) -> anyhow::Result<()> {
 #[serde(deny_unknown_fields)]
 struct Case {
     id: String,
-    input: CaseInput,
-}
-
-/// An [`EncoderInput`] as contract version 2 sends it.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CaseInput {
-    turn: String,
-    messages: Vec<CaseMessage>,
-    #[serde(default)]
-    context: Vec<CaseTurn>,
-    #[serde(default)]
-    language: Option<String>,
-    #[serde(default)]
-    speaker: Option<SpeakerRole>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CaseMessage {
-    id: String,
-    text: String,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CaseTurn {
-    turn: String,
-    messages: Vec<CaseMessage>,
-    #[serde(default)]
-    speaker: Option<SpeakerRole>,
-}
-
-fn messages(wire: Vec<CaseMessage>) -> Vec<EncoderMessage> {
-    wire.into_iter()
-        .map(|message| EncoderMessage {
-            id: message.id,
-            text: message.text,
-        })
-        .collect()
-}
-
-impl From<CaseInput> for EncoderInput {
-    fn from(wire: CaseInput) -> Self {
-        Self {
-            turn: wire.turn,
-            messages: messages(wire.messages),
-            context: wire
-                .context
-                .into_iter()
-                .map(|turn| EncoderTurn {
-                    turn: turn.turn,
-                    messages: messages(turn.messages),
-                    speaker: turn.speaker,
-                })
-                .collect(),
-            following: Vec::new(),
-            register: EncoderRegister::Live,
-            language: wire.language,
-            speaker: wire.speaker,
-        }
-    }
+    input: WireInput,
 }
 
 /// Opens a stopped vault as `dreamer grant` does: the writer lease refuses a
