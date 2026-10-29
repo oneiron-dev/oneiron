@@ -136,6 +136,13 @@ pub trait AgentVerbDoor: Send + Sync {
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
 
+    /// The verified read key a host turn's hooks use, independently of the
+    /// host's System write attribution. `None` is a typed no-read answer, not
+    /// permission to reconstruct an actor or System lane (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<crate::claim::ScopedReadActorKey> {
+        None
+    }
+
     /// Whether the run's own `vault.search`, admitted with a key, keeps only
     /// surfaceable claims, as the memory surface's own BM25 channel serves
     /// them. A door that answers `false` has its search filtered by the
