@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1167 facade rows, 4179 generated types.
+// UniFFI census: 1167 facade rows, 4180 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1119.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -5364,7 +5364,7 @@ pub struct DoneMeans {
 }
 
 /// `oneiron::task_verb::ask_types::AskAuthorityScopeWire`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AskAuthorityScopeWire {
     #[serde(rename = "class")]
@@ -5377,6 +5377,12 @@ pub struct AskAuthorityScopeWire {
     pub budget: Option<u64>,
     #[serde(rename = "receipt_required")]
     pub receipt_required: bool,
+}
+impl std::fmt::Debug for AskAuthorityScopeWire {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AskAuthorityScopeWire")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::task_verb::ask_types::TaskAskGuest`.
@@ -10552,7 +10558,7 @@ pub struct CredentialCaveat {
 }
 
 /// `oneiron::verbs::credential::CredentialAttenuationRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialAttenuationRequest {
     #[serde(rename = "holder_seed")]
@@ -10566,15 +10572,27 @@ pub struct CredentialAttenuationRequest {
     )]
     pub next_binding_key: Option<Vec<u8>>,
 }
+impl std::fmt::Debug for CredentialAttenuationRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialAttenuationRequest")
+            .finish_non_exhaustive()
+    }
+}
 
 /// `oneiron::verbs::credential::CredentialAttenuated`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CredentialAttenuated {
     #[serde(rename = "token")]
     pub token: String,
     #[serde(rename = "binding_key")]
     pub binding_key: Vec<u8>,
+}
+impl std::fmt::Debug for CredentialAttenuated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CredentialAttenuated")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::memory::scoped_export::RecordPositionRequest`.
@@ -27776,12 +27794,17 @@ pub struct CourtesyDeleteAnswerRequest {
 }
 
 /// `oneiron::embed::space::Row`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EvidenceFloors {
     #[serde(rename = "floor")]
     pub floor: f64,
     #[serde(rename = "strong")]
     pub strong: f64,
+}
+impl std::fmt::Debug for EvidenceFloors {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EvidenceFloors").finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::embed::space::EmbeddingSpace`.
@@ -31172,7 +31195,7 @@ pub struct SecretManifestSource {
 }
 
 /// `oneiron::verbs::secret_custody::SecretRegisterRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretRegisterRequest {
     #[serde(rename = "name")]
@@ -31201,6 +31224,12 @@ pub struct SecretRegisterRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub recipients: Option<Vec<String>>,
+}
+impl std::fmt::Debug for SecretRegisterRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretRegisterRequest")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::verbs::secret_custody::SecretRegisteredBinding`.
@@ -31258,7 +31287,7 @@ pub struct SecretRegisterReply {
 }
 
 /// `oneiron::verbs::secret_custody::SecretRotateRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretRotateRequest {
     #[serde(rename = "name")]
@@ -31273,6 +31302,12 @@ pub struct SecretRotateRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub recipients: Option<Vec<String>>,
+}
+impl std::fmt::Debug for SecretRotateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretRotateRequest")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::verbs::secret_custody::SecretRotationReceipt`.
@@ -31295,12 +31330,11 @@ pub struct SecretRotationReceipt {
 
 /// `oneiron::verbs::secret_custody::SecretRotateReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
 pub struct SecretRotateReply {
-    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
-    pub receipt: Option<SecretRotationReceipt>,
     #[serde(rename = "custody")]
     pub custody: SecretCustodyReply,
+    #[serde(flatten)]
+    pub secret_rotation_receipt: Option<SecretRotationReceipt>,
 }
 
 /// `oneiron::verbs::secret_custody::SecretRewrapRequest`.
@@ -31321,6 +31355,19 @@ pub struct SecretRewrapRequest {
 pub struct SecretCustodyGetRequest {
     #[serde(rename = "name")]
     pub name: String,
+}
+
+/// `oneiron::verbs::secret_custody::SecretCustodyLiveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SecretCustodyLiveRequest {
+    #[serde(
+        rename = "manifest_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub manifest_text: Option<String>,
+    #[serde(flatten)]
+    pub owner_work_receipt: OwnerWorkReceipt,
 }
 
 /// `oneiron::verbs::secret_custody::SecretCustodyCandidateReply`.
@@ -31364,7 +31411,7 @@ pub struct SecretCustodyViewReply {
     #[serde(rename = "seen")]
     pub seen: String,
     #[serde(rename = "live")]
-    pub live: Vec<OwnerWorkReceipt>,
+    pub live: Vec<SecretCustodyLiveRequest>,
     #[serde(rename = "candidates")]
     pub candidates: Vec<SecretCustodyCandidateReply>,
     #[serde(rename = "delivery")]
@@ -31384,7 +31431,7 @@ pub struct SecretCustodyPermit {
 }
 
 /// `oneiron::verbs::secret_custody::SecretCustodySubmitRequest`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SecretCustodySubmitRequest {
     #[serde(rename = "change")]
@@ -31407,6 +31454,12 @@ pub struct SecretCustodySubmitRequest {
     pub manifest_ref: Option<String>,
     #[serde(rename = "input_base64")]
     pub input_base64: String,
+}
+impl std::fmt::Debug for SecretCustodySubmitRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SecretCustodySubmitRequest")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::agent_dispatch::widen_doors::WidenProposalState`.
@@ -32379,7 +32432,7 @@ pub enum RevealDecision {
 }
 
 /// `oneiron::verbs::secret::RevealWaitAnswer`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct RevealWaitAnswer {
     #[serde(rename = "decision")]
@@ -32394,6 +32447,11 @@ pub struct RevealWaitAnswer {
     pub value_base64: Option<String>,
     #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<RevealReceipt>,
+}
+impl std::fmt::Debug for RevealWaitAnswer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RevealWaitAnswer").finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::verbs::secret::RevealDescribeRequest`.
@@ -52080,13 +52138,18 @@ pub enum WireCommitOutcome {
 }
 
 /// `oneiron::booking::agent_api::TimeRangeWire`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TimeRangeWire {
     #[serde(rename = "start")]
     pub start: u64,
     #[serde(rename = "end")]
     pub end: u64,
+}
+impl std::fmt::Debug for TimeRangeWire {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TimeRangeWire").finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::booking::constraint::ConstraintWeekday`.
@@ -52118,13 +52181,19 @@ pub struct LocalMinuteWindow {
 }
 
 /// `oneiron::booking::constraint::TimeRangeWire`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConstraintTimeRangeWire {
     #[serde(rename = "start")]
     pub start: u64,
     #[serde(rename = "end")]
     pub end: u64,
+}
+impl std::fmt::Debug for ConstraintTimeRangeWire {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConstraintTimeRangeWire")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::booking::constraint::ConstraintObject`.
@@ -52541,7 +52610,7 @@ pub struct CalendarInviteSurfaceInput {
 }
 
 /// `oneiron::calendar::ingest::poll::IcsFeedPollConfig`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct IcsFeedPollConfig {
     #[serde(rename = "secret_ref")]
     pub secret_ref: String,
@@ -52551,6 +52620,11 @@ pub struct IcsFeedPollConfig {
     pub cadence_min_seconds: u32,
     #[serde(rename = "cadence_max_seconds")]
     pub cadence_max_seconds: u32,
+}
+impl std::fmt::Debug for IcsFeedPollConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IcsFeedPollConfig").finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest`.
@@ -52728,7 +52802,7 @@ pub struct ScopedReadResultCalendarPassportRevisionList {
 }
 
 /// `oneiron::calendar::connectors::seat::CalendarConnectorSeatConfig`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CalendarConnectorSeatConfig {
     #[serde(rename = "seat_ref")]
     pub seat_ref: String,
@@ -52742,6 +52816,12 @@ pub struct CalendarConnectorSeatConfig {
     pub cadence_jitter_min_seconds: u32,
     #[serde(rename = "cadence_jitter_max_seconds")]
     pub cadence_jitter_max_seconds: u32,
+}
+impl std::fmt::Debug for CalendarConnectorSeatConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CalendarConnectorSeatConfig")
+            .finish_non_exhaustive()
+    }
 }
 
 /// `oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest`.

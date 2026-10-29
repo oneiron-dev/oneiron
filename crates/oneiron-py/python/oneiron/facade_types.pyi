@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1167 facade rows, 4195 declarations.
+Census: 1167 facade rows, 4196 declarations.
 Inputs: 1102 of 1167 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1045 of 1167 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -10122,7 +10122,12 @@ class SecretRotationReceipt(TypedDict):
     rotated_at: int
     kind: str
 class SecretRotateReply(TypedDict):
-    receipt: NotRequired[SecretRotationReceipt | None]
+    receipt_id: NotRequired[str]
+    name: NotRequired[str]
+    from_generation: NotRequired[int]
+    to_generation: NotRequired[int]
+    rotated_at: NotRequired[int]
+    kind: NotRequired[str]
     custody: SecretCustodyReply
 class SecretRewrapRequest(TypedDict):
     name: str
@@ -10130,6 +10135,8 @@ class SecretRewrapRequest(TypedDict):
     recipients: list[str]
 class SecretCustodyGetRequest(TypedDict):
     name: str
+class SecretCustodyLiveRequest(OwnerWorkReceipt):
+    manifest_text: NotRequired[str | None]
 class SecretCustodyCandidateReply(TypedDict):
     machine: str
     profile: str
@@ -10147,7 +10154,7 @@ class SecretCustodyViewReply(TypedDict):
     status: NotRequired[str | None]
     generation: int
     seen: str
-    live: list[OwnerWorkReceipt]
+    live: list[SecretCustodyLiveRequest]
     candidates: list[SecretCustodyCandidateReply]
     delivery: str
 class SecretCustodyPermit(TypedDict):

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4255 declarations.
+// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4256 declarations.
 // Replies: 1093 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
@@ -2057,11 +2057,12 @@ declare namespace Sdk {
   type SecretRegisterReply = { secret_id: string; name: string; class: string; device_only: boolean; rotation_generation: number; registered_at: number; bindings: SecretRegisteredBinding[]; manifest_ref: string; declared_paths: string[]; custody: SecretCustodyReply };
   type SecretRotateRequest = { name: string; value_base64: string; holder?: string | null; recipients?: string[] };
   type SecretRotationReceipt = { receipt_id: string; name: string; from_generation: number; to_generation: number; rotated_at: number; kind: string };
-  type SecretRotateReply = { receipt?: SecretRotationReceipt | null; custody: SecretCustodyReply };
+  type SecretRotateReply = Partial<SecretRotationReceipt> & { custody: SecretCustodyReply };
   type SecretRewrapRequest = { name: string; holder?: string | null; recipients: string[] };
   type SecretCustodyGetRequest = { name: string };
+  type SecretCustodyLiveRequest = OwnerWorkReceipt & { manifest_text?: string | null };
   type SecretCustodyCandidateReply = { machine: string; profile: string; encryption_key_digest: string; suite: number; encryption_key_base64: string; this_install: boolean };
-  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: OwnerWorkReceipt[]; candidates: SecretCustodyCandidateReply[]; delivery: string };
+  type SecretCustodyViewReply = { vault_id: string; secret_id: string; name: string; known: boolean; held_here: boolean; portable: boolean; status?: string | null; generation: number; seen: string; live: SecretCustodyLiveRequest[]; candidates: SecretCustodyCandidateReply[]; delivery: string };
   type SecretCustodyPermit = { machine: string; profile: string; encryption_key_digest: string };
   type SecretCustodySubmitRequest = { change: string; secret_id: string; generation: number; seen: string; holder: string; recipients: SecretCustodyPermit[]; manifest_ref?: string | null; input_base64: string };
   type WidenProposalState = "pending" | "approved" | "declined";
