@@ -311,6 +311,15 @@ impl Vault {
         }
     }
 
+    /// Wakes the owner-question waiters once a committed write settled a
+    /// held call a code consent wait owned ([`super::settle_code_owned_call_in_txn`]):
+    /// that write runs in the wait's own writer, which does not carry the
+    /// withdrawn questions out, and every waiter rereads its own question on
+    /// a wake (FIX 2551).
+    pub(crate) fn signal_code_owned_call_asks(&self) {
+        self.signal_decision_answer(0);
+    }
+
     /// Queues the owner ask of every held call whose ask was tried and did
     /// not queue, and returns how many it queued. A call none was tried for
     /// asks when its next resume meets the hold.
