@@ -24,6 +24,7 @@ pub mod models;
 pub mod native_mail;
 pub mod oneironer;
 mod page_seal;
+mod policy;
 mod recall;
 pub mod remote_embedder;
 mod self_heal;
@@ -69,6 +70,7 @@ pub use native_mail::NativeMailConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };
+pub use policy::PolicyConfig;
 pub use recall::RecallConfig;
 pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;

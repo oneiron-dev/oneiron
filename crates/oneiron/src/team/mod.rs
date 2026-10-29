@@ -12,6 +12,7 @@
 //! before the work. Patterns are compared at equal budget, in Phase 2;
 //! nothing here adds a runtime task kind.
 
+mod choice_learning;
 mod door_reads;
 pub mod doors;
 pub mod market;
@@ -25,6 +26,7 @@ pub mod run_binding;
 mod spawn_intent;
 pub mod stack;
 
+pub(crate) use choice_learning::{ChoiceLearning, LearnedChoice};
 pub use doors::{
     BorrowedCellView, CoordinationPatternView, CriticAssociation, CriticObservation,
     FIXTURE_TREE_VERSION_MAX, LaunchedMember, LearningCellView, LearningEvidenceView,

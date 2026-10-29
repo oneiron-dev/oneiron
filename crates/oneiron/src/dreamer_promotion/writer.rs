@@ -479,7 +479,15 @@ pub(super) fn promote_one_answering(
             None => Ok(()),
         }
     };
-    let hints: Vec<&str> = prospective_queries.iter().map(String::as_str).collect();
+    // A signed (MACHINE) promotion carries no lexical query hints (FIX 11356):
+    // a hint is a stale side CLAIM, and a machine claim birth refuses every
+    // stale birth (claim/machine_birth.rs), so a hint would fail the whole
+    // candidate. The belief itself still lands.
+    let hints: Vec<&str> = if envelope.machine_signature().is_some() {
+        Vec::new()
+    } else {
+        prospective_queries.iter().map(String::as_str).collect()
+    };
     // The checker's turn, waited for here, before the batch announces its
     // write (FIX 8751, 8701): the gate inside never waits for capacity.
     let checker = checker

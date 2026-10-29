@@ -138,6 +138,9 @@ pub struct WakePassReport {
 pub enum DreamerAttemptExecution {
     Completed {
         completed_units: u64,
+        /// Terminal step identities this completion charges for the first time.
+        /// Atomic with wake-budget settlement so replay cannot double debit.
+        step_hashes: Vec<[u8; 32]>,
     },
     /// The try ends Failed with `reason`, terminal and resumed by nothing:
     /// a turn program whose attested owner is no longer the vault's live
@@ -165,6 +168,9 @@ pub enum DreamerAttemptExecution {
     Deferred {
         completed_units: u64,
         retry_at: u64,
+        /// Terminal step identities this deferral charges for the first time.
+        /// Atomic with wake-budget settlement so replay cannot double debit.
+        step_hashes: Vec<[u8; 32]>,
     },
     /// ONE-1896 rung 1, answered: the worker saw a soft request or a typed
     /// runtime warning ([`WakeAttemptContext::landing_request`]) and chose to
@@ -218,34 +224,52 @@ pub struct WakeAttemptMeter {
     /// The terminal steps the executor tallied as paid on that line, each
     /// with its units, in the order it noted them (FIX 6100).
     terminal_steps: Mutex<Vec<([u8; 32], u64)>>,
+    /// What the executor's own tally spent before an error left it, with
+    /// the terminal steps those units pay for (FIX 7432).
+    spent_before_error: Mutex<(u64, Vec<[u8; 32]>)>,
 }
 
 impl WakeAttemptMeter {
-    /// The units the registered line charged since it was registered: 0
-    /// when no line was registered, as for an attempt that never dispatched.
+    /// The units the registered line charged since it was registered, and
+    /// what the executor's tally spent before an error (FIX 7432): 0 when
+    /// neither was noted, as for an attempt that never dispatched.
     #[must_use]
     pub fn charged_units(&self) -> u64 {
+        self.line_units()
+            .saturating_add(self.lock_spent_before_error().0)
+    }
+
+    fn line_units(&self) -> u64 {
         self.line.get().map_or(0, |(line, start)| {
             line.read().used_units.saturating_sub(*start)
         })
     }
 
-    /// The noted terminal steps a settlement of `settled` units pays for:
-    /// the leading ones whose units fit in it, so no step is pinned paid
-    /// beyond what the settlement charges (FIX 6100).
-    pub(crate) fn step_receipts_within(&self, settled: u64) -> Vec<[u8; 32]> {
+    fn lock_spent_before_error(&self) -> std::sync::MutexGuard<'_, (u64, Vec<[u8; 32]>)> {
+        self.spent_before_error
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The terminal steps a settlement of [`Self::charged_units`] pays
+    /// for, each once: those the tally spent before an error, then the
+    /// leading noted line steps whose units fit in the line's charge, so no
+    /// step is pinned paid beyond what the settlement charges (FIX 6100).
+    pub(crate) fn step_receipts(&self) -> Vec<[u8; 32]> {
+        let mut paid = self.lock_spent_before_error().1.clone();
         let steps = self
             .terminal_steps
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let mut left = settled;
-        let mut paid = Vec::new();
+        let mut left = self.line_units();
         for &(hash, units) in &*steps {
             let Some(rest) = left.checked_sub(units) else {
                 break;
             };
             left = rest;
-            paid.push(hash);
+            if !paid.contains(&hash) {
+                paid.push(hash);
+            }
         }
         paid
     }
@@ -276,6 +300,23 @@ impl WakeAttemptContext<'_> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push((step_hash, units));
+        }
+    }
+
+    /// Hands the driver what the executor's own tally spent before an error
+    /// leaves the attempt (FIX 7432): `units`, and the terminal `step_hashes`
+    /// they pay for. The error itself goes on unchanged; the failure or park
+    /// that settles it charges these units and pins their receipts. With no
+    /// meter nothing is handed.
+    pub(crate) fn note_spend_before_error(&self, units: u64, step_hashes: &[[u8; 32]]) {
+        if let Some(meter) = self.spend_meter {
+            let mut spent = meter.lock_spent_before_error();
+            spent.0 = spent.0.saturating_add(units);
+            for hash in step_hashes {
+                if !spent.1.contains(hash) {
+                    spent.1.push(*hash);
+                }
+            }
         }
     }
 

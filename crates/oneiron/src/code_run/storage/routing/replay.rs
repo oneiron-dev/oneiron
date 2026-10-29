@@ -2,23 +2,24 @@
 //! transaction: the record compared against the generation its writer
 //! expects, put, its heal tally when the turn healed, and the rows that
 //! commit with it. On a stretch on record the record lands in base, so the
-//! same writer fences it against a spawn target's erase first (FIX 9180):
-//! a copy read before the erase writes back its erased form. An overlay row
-//! stays the room's own.
+//! same writer runs the full replay fence first (FIX 9180, FIX 11392): a
+//! copy read before an erase writes back its erased form, exactly as on the
+//! owned path. An overlay row stays the room's own.
 
 use std::borrow::Cow;
 
 use super::super::records::{
     MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
 };
-use super::super::spawn_erase::fence_spawn_targets_in_txn;
+use super::super::response_erase::fence_replay_in_txn;
 use super::*;
 use crate::side_table::RoutedDbs;
 
 impl SessionBinding<'_> {
     /// Compares and puts `record` along the route, with the heal tally of
     /// `healed_model` and the rows `also` writes, in one transaction; on
-    /// base the record is fenced in that writer before its put.
+    /// base the record runs the full replay fence in that writer before its
+    /// put (FIX 11392), exactly as the owned path does.
     ///
     /// # Errors
     ///
@@ -41,8 +42,7 @@ impl SessionBinding<'_> {
                             "a base route wrote outside base",
                         ));
                     };
-                    let record =
-                        fence_spawn_targets_in_txn(&vault.store, txn, Cow::Borrowed(record))?;
+                    let record = fence_replay_in_txn(vault, txn, Cow::Borrowed(record))?;
                     REPLAY_RECORDS.put(vault, txn, &record.run_id, &record)?;
                     if let Some(model) = healed_model {
                         let key = model.as_str().to_owned();

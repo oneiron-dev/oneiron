@@ -42,6 +42,7 @@ mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod backup_signer_delegation;
 mod causal_write;
 mod checkpoint;
 mod checkpoint_adopt;
@@ -138,6 +139,7 @@ mod task_actor;
 mod vault_api;
 mod weave_admin;
 mod withdrawn_grant;
+mod work_rebind;
 mod world_key_fold;
 mod world_key_support;
 mod world_privacy;
@@ -209,6 +211,10 @@ pub(crate) use admission::{AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_aut
 pub use admission::{
     AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
+};
+pub use backup_signer_delegation::{
+    BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
+    BackupSignerStatement,
 };
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
@@ -321,7 +327,7 @@ pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
 pub use slip_vault::{
     ConnectOffer, ConnectRescopeOffer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
-    HostSlipIssuer,
+    HostSlipIssuer, ScopeOpeningKey,
 };
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
@@ -336,6 +342,10 @@ pub use weave_admin::{
 pub(crate) use withdrawn_grant::{
     ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
     mark_if_withdrawn_grant_in_txn, mark_withdrawn_grant_in_txn,
+};
+pub use work_rebind::{
+    InstrumentRebind, REBIND_GRANT, REBIND_HOLDER, REBIND_ORIGIN, REBIND_STILL_STANDS,
+    REBIND_WIDENS,
 };
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
@@ -399,7 +409,8 @@ use machine_profile::{
 };
 pub(crate) use machine_write::{
     evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
-    machine_history_authority_descends, machine_history_host_context, verify_machine_claim_in_txn,
+    machine_history_authority_descends, machine_history_host_context,
+    resign_machine_claim_after_mask_in_txn, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

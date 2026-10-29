@@ -43,7 +43,8 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
                 stale_members.push(receipt_id);
                 continue;
             };
-            let scope = RoutingScopeKey::new(row.model_version, judgment.scope.clone());
+            let scope = RoutingScopeKey::new(row.model_version, judgment.scope.clone())
+                .measured_under(judgment.engine_ver.clone());
             // A judgment that holds keeps its binding and folds nothing.
             if let Some(fold) = fold_of(judgment)? {
                 apply_fold(rebuilt.entry(aggregate_key(&scope)?).or_default(), fold)?;

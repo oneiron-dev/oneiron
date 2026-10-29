@@ -80,8 +80,9 @@ impl VoiceRefusal {
     }
 
     /// The refusal as the facade answers it, its gate code leading the
-    /// message. An unknown nudge reads as not found, so a withheld one
-    /// discloses nothing.
+    /// message and typed in its `reason_codes` (FIX 7398), so no caller
+    /// parses it out of the message. An unknown nudge reads as not found, so
+    /// a withheld one discloses nothing.
     pub(super) fn error(self) -> MemoryError {
         let code = match self {
             Self::Finding => MEMORY_CODE_NOT_FOUND,
@@ -91,7 +92,9 @@ impl VoiceRefusal {
             }
         };
         let (gate, bound) = (self.gate(), self.bound());
-        MemoryError::new(code, format!("{gate}: {bound}"), &[])
+        let mut error = MemoryError::new(code, format!("{gate}: {bound}"), &[]);
+        error.reason_codes = vec![gate.to_owned()];
+        error
     }
 }
 

@@ -27,10 +27,16 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 
 mod actor_erase;
+mod fit;
 mod resolution;
+mod scope_erase;
 mod sourced;
 mod subject;
 pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
+pub use fit::{SettingCheck, global_setting_subject, record_setting_check};
+pub(crate) use fit::{owner_seed_in_txn, record_setting_check_in_txn, setting_fit_key};
+pub(crate) use resolution::{setting_value_in_scope_in_txn, setting_value_scoped_in_txn};
+pub(crate) use scope_erase::{erase_setting_scope_in_txn, project_row_keys};
 pub(crate) use sourced::setting_value_in_scope_sourced_in_txn;
 
 /// One learned knob: its key, its bounds and the value it ships with.
@@ -546,32 +552,6 @@ pub fn setting_value_scoped(
     setting_value_in_scope_in_txn(vault, &rtxn, spec, project, type_ref)
 }
 
-/// [`setting_value_scoped`] inside a transaction the caller already holds.
-pub(crate) fn setting_value_in_scope_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    project: Option<crate::entity_id::EntityId>,
-    type_ref: Option<&crate::learning::TypeRef>,
-) -> Result<f64> {
-    let scopes = read_scopes_in_txn(vault, txn, project, type_ref)?;
-    scopes_value_in_txn(&vault.store, txn, spec, &scopes, type_ref)
-}
-
-/// [`setting_value_scoped`] from the store alone, which cannot resolve a
-/// project's goal: goal rows are not read. A reader holding the vault
-/// calls [`setting_value_in_scope_in_txn`].
-pub(crate) fn setting_value_scoped_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    project: Option<crate::entity_id::EntityId>,
-    type_ref: Option<&crate::learning::TypeRef>,
-) -> Result<f64> {
-    let scopes = read_scopes(None, project, type_ref);
-    scopes_value_in_txn(store, txn, spec, &scopes, type_ref)
-}
-
 /// The goal a read under `project` serves: the goal claim the project's goal
 /// pointer names, its current intake goal (OF-542). Goal intake alone moves
 /// that pointer, so a goal row steers the project's work while its goal
@@ -621,55 +601,6 @@ fn read_scopes(
         .chain(type_ref.cloned().map(SettingScope::Type))
         .chain([SettingScope::Vault])
         .collect()
-}
-
-/// The value in force for `spec` over `scopes` ([`read_scopes`]'s order).
-fn scopes_value_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    scopes: &[SettingScope],
-    type_ref: Option<&crate::learning::TypeRef>,
-) -> Result<f64> {
-    resolution::resolve_in_txn(store, txn, spec, scopes, type_ref).map(|(value, _)| value)
-}
-
-/// The key a setting cell's fit is cached under
-/// (`learning::project::SETTING_FIT`): the knob's key alone for its vault
-/// fit; with the cell's `subject` when it is not the knob's
-/// [`global_setting_subject`]; with its task type's node when that is not the
-/// root. A type names its node only, as a type row does, so it matches at any
-/// tree version.
-pub(crate) fn setting_fit_key(
-    key: &str,
-    subject: Option<crate::entity_id::EntityId>,
-    type_node: Option<&str>,
-) -> String {
-    let mut out = key.to_owned();
-    if let Some(subject) = subject {
-        out.push_str("\0subject\0");
-        out.push_str(&subject.to_hex());
-    }
-    if let Some(node) = type_node {
-        out.push_str("\0type\0");
-        out.push_str(node);
-    }
-    out
-}
-
-/// The cached fit for one scope, once it has own runs.
-fn cached_fit(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    subject: Option<crate::entity_id::EntityId>,
-    type_node: Option<&str>,
-) -> Result<Option<f64>> {
-    Ok(crate::learning::project::SETTING_FIT
-        .get(store, txn, &setting_fit_key(spec.key, subject, type_node))?
-        .filter(|fit| fit.runs > 0.0 && fit.value.is_finite())
-        // A fit never leaves the catalog's bounds, so it never widens a floor.
-        .map(|fit| fit.value.clamp(spec.min, spec.max)))
 }
 
 /// Every owner row as stored, in key order: its scope, the row, and the
@@ -739,135 +670,4 @@ fn scoped_row_value(
         // value this reader can stand behind; the next row down is.
         .filter(|row| (spec.min..=spec.max).contains(&row.value))
         .map(|row| row.value))
-}
-
-/// The owner's seed over `spec` and its weight in runs for a cell on
-/// `subject` at `type_ref`, if one stands: the prior a `learning.setting` fit
-/// starts from. A goal or project subject's seed comes first, then a
-/// non-root type's, then the vault's; a skill subject has no seed of its
-/// own.
-pub(crate) fn owner_seed_in_txn(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    spec: &SettingSpec,
-    subject: crate::entity_id::EntityId,
-    type_ref: Option<&crate::learning::TypeRef>,
-) -> Result<Option<(f64, f64)>> {
-    let scopes = [SettingScope::Goal(subject), SettingScope::Project(subject)]
-        .into_iter()
-        .chain(
-            type_ref
-                .filter(|type_ref| !type_ref.is_root())
-                .cloned()
-                .map(SettingScope::Type),
-        )
-        .chain([SettingScope::Vault]);
-    for scope in scopes {
-        if let Some(seed) = SETTING
-            .get(
-                store,
-                txn,
-                &scoped_row_key(spec.key, SettingMode::Seed, &scope),
-            )?
-            .filter(|row| (spec.min..=spec.max).contains(&row.value))
-            .and_then(|row| row.weight_runs.map(|weight| (row.value, weight)))
-        {
-            return Ok(Some(seed));
-        }
-    }
-    Ok(None)
-}
-
-/// One check that fits a named knob: the value the check found best, on the
-/// receipt that ran it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SettingCheck {
-    /// The skill that uses the knob, or the project.
-    pub subject: crate::entity_id::EntityId,
-    /// The catalog key.
-    pub key: String,
-    /// The task type the check ran under; the vault-scope fit is the root.
-    pub type_ref: crate::learning::TypeRef,
-    pub observed: f64,
-    pub receipt: String,
-    pub at: u64,
-    /// A fitting check, an audit (with its rate) or a held-out run.
-    pub anchor: crate::learning::Anchor,
-}
-
-/// Records one fitting check into `learning.setting` and refits.
-///
-/// # Errors
-///
-/// [`Error::InvalidClaimBody`] for a key outside the catalog, an observed
-/// value outside its bounds, or an anchor that does not fit settings; the
-/// evidence door's errors.
-pub fn record_setting_check(
-    vault: &Vault,
-    check: &SettingCheck,
-    now: u64,
-) -> Result<Option<crate::learning::Estimate>> {
-    vault.with_write_txn_grouped(|wtxn| record_setting_check_in_txn(vault, wtxn, check, now))
-}
-
-/// The one subject `key`'s vault-wide fit is learned on: an id derived from
-/// the key, since a vault-wide knob has no one skill that uses it. Only a
-/// root-typed check on this subject fits the vault (OF-542); a project's or
-/// a skill's check fits that subject alone.
-///
-/// # Errors
-///
-/// The derivation's refusal of a reserved id.
-pub fn global_setting_subject(key: &str) -> Result<crate::entity_id::EntityId> {
-    crate::entity_id::EntityId::derive(
-        crate::entity_id::derived_domains::GLOBAL_SETTING_SUBJECT,
-        &[key.as_bytes()],
-    )
-}
-
-/// [`record_setting_check`] inside `wtxn`, for a writer whose own row and
-/// the check commit together: a random audit's outcome and the audit rate it
-/// fits (OF-542).
-///
-/// # Errors
-///
-/// As [`record_setting_check`].
-pub(crate) fn record_setting_check_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    check: &SettingCheck,
-    now: u64,
-) -> Result<Option<crate::learning::Estimate>> {
-    let spec = setting_spec(&check.key).ok_or(invalid("no learned setting has this key"))?;
-    if !check.observed.is_finite() || check.observed < spec.min || check.observed > spec.max {
-        return Err(invalid(
-            "a fitting check's value lies within its catalog bounds",
-        ));
-    }
-    // A vault-wide fit is learned on its knob's ASSET (FIX 8079). One not
-    // ready passes the check over, and the write that carries it goes on.
-    if check.subject == global_setting_subject(spec.key)?
-        && let Err(reason) =
-            subject::ensure_global_setting_subject_in_txn(vault, wtxn, spec.key, &check.subject)
-    {
-        tracing::warn!(
-            ?reason,
-            key = spec.key,
-            "a vault-wide setting check was not recorded: its subject is not ready"
-        );
-        return Ok(None);
-    }
-    let cell = crate::learning::LearningCell::new(
-        crate::learning::LearningPredicate::Setting,
-        check.subject,
-    )
-    .setting_key(spec.key)
-    .type_ref(check.type_ref.clone());
-    let evidence = crate::learning::LearningEvidence::anchored(
-        check.receipt.clone(),
-        check.at,
-        check.anchor,
-        crate::learning::Observation::Magnitude(check.observed),
-    );
-    crate::learning::record_evidence_in_txn(vault, wtxn, &cell, &evidence, now)
 }

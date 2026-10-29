@@ -160,6 +160,78 @@ pub fn steer_child_at_as_owner(
     )
 }
 
+/// A steer whose caller commits its own record with the signal (FIX 8533).
+/// Who may steer and which run are read as the four `steer_child*` doors
+/// read them: the owner's proof when `owner` is set, else the spawner's
+/// binding; `attempt` when set, else the TASK's live run. Then one writer
+/// runs `check`, lands the signal (a resend under the same key answers the
+/// receipt it holds) and runs `record` with that receipt, and commits them
+/// together: an error from either rolls the signal back.
+pub(crate) fn steer_linked(
+    memory: &Memory<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    input: SteerRequest,
+    attempt: Option<AttemptId>,
+    check: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+    record: impl FnOnce(&mut heed::RwTxn<'_>, &SteerReceipt) -> MemoryResult<()>,
+) -> MemoryResult<SteerReceipt> {
+    if owner.is_none() {
+        crate::memory::verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
+    }
+    let task = EntityId::from_hex(&input.task_ref)
+        .map_err(|_| MemoryError::bad_request("task_ref is not an entity id"))?;
+    let (branch, run_id) = {
+        let txn = memory
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        match owner {
+            Some(owner) => owner_admits(memory, owner, &txn)?,
+            None => spawner_admits(memory, &txn, task)?,
+        }
+        match attempt {
+            Some(attempt) => attempt_run_in(memory, &txn, task, attempt)?,
+            None => live_run_in(memory, &txn, task)?,
+        }
+    };
+    let vault = memory.vault();
+    let adapter = RunTreeAdapter::new(vault);
+    let (receipt, landed) = vault.try_with_write_txn_grouped(|txn| -> MemoryResult<_> {
+        check(txn)?;
+        let (signal, landed) = adapter.signal_in_txn(
+            txn,
+            RunSignalInput {
+                branch,
+                run_id: run_id.clone(),
+                key: input.key,
+                actor: memory.actor().to_hex(),
+                kind: RunSignalKind::Steer {
+                    instruction: input.instruction,
+                },
+            },
+        )?;
+        let receipt = SteerReceipt {
+            task_ref: input.task_ref,
+            branch: branch
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+            run_id,
+            key: signal.key,
+            state: signal.state,
+        };
+        record(txn, &receipt)?;
+        Ok((receipt, landed))
+    })?;
+    if landed {
+        vault.store.notify_attempt_observers();
+    }
+    Ok(receipt)
+}
+
 /// The spawner's admission: only the TASK's creator steers it.
 fn spawner_admits(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, task: EntityId) -> MemoryResult<()> {
     if task_create_owner_in(memory.vault(), txn, task)? != Some(memory.actor()) {

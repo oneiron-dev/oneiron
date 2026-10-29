@@ -297,7 +297,7 @@ impl<'a> HostSelfDispatcher<'a> {
                     );
                     unapplied.clone_from(&receipt.unapplied);
                     context.direct_spawn = Some(receipt);
-                    super::leader::narrow_budget(&mut context, ask.budget_cap_units.as_ref());
+                    super::leader::narrow_budget(&mut context, ask.budget_cap_units.as_ref(), None);
                     // With no planner bound, a leased agent's spawn is still
                     // placed on its need text (the rule rung reads it);
                     // dispatch keeps the stamp.
@@ -546,10 +546,10 @@ impl<'a> HostSelfDispatcher<'a> {
         let output = serde_json::to_value(ConsultLandReply::from(receipt))
             .map_err(|_| Error::InvariantViolation("consult landing answer encode"))?;
         // The answer serves the rows the landing read.
-        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
             output,
-            rows: Some(reads),
-        }))
+            Some(reads),
+        )))
     }
 
     /// Admits one `self.skills.call` as every call the run serves itself is

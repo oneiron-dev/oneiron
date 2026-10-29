@@ -19,11 +19,15 @@ use oneiron::runtime_hooks::verb::{VerbAskCredentialSource, VerbAskInstrument};
 /// the host holds never passes there: a managed vault's host acts as nobody
 /// (FIX 2222), and operator help on it goes through the owner's support
 /// grants (FIX 4408). It never names a managed vault's attested owner: a
-/// door that may take him asks [`check_request_auth`].
+/// door that may take him asks [`check_request_auth`]. On a self-hosted
+/// vault the operator's own credential (FIX 1814) passes it too, at the
+/// operator's doors (`path` under `/v1/operator/`) alone, as itself: never
+/// a caller, a person or an owner's proof.
 pub(super) fn check_api_auth(
     headers: &HeaderMap,
+    path: &str,
     server: &SyncServer,
-) -> Result<CoreAuth, ApiError> {
+) -> Result<AdminCaller, ApiError> {
     if server.managed_issuer.is_some() {
         let auth = CoreAuth::for_server(headers, server)?;
         if auth.is_host_holder() {
@@ -34,9 +38,22 @@ pub(super) fn check_api_auth(
         if !auth.is_owner_grade() {
             return Err(crate::auth::caller_slip_too_narrow("this legacy door"));
         }
-        return Ok(auth);
+        return Ok(AdminCaller::Credential(auth));
+    }
+    if let Some(operator) = crate::auth::verified_operator(headers, path, server) {
+        return Ok(AdminCaller::Operator(operator));
     }
     require_owner_auth(headers, &server.config, server.vault().as_ref())
+        .map(AdminCaller::Credential)
+}
+
+/// Who passes a host-level admin door ([`check_api_auth`]).
+pub(super) enum AdminCaller {
+    /// An owner-grade credential, as the door always took.
+    Credential(CoreAuth),
+    /// The operator's own credential on a self-hosted vault (FIX 1814): a
+    /// credential class that names no caller.
+    Operator(crate::auth::OperatorCredential),
 }
 
 /// [`check_api_auth`] for a door a managed vault's supervisor may attest the

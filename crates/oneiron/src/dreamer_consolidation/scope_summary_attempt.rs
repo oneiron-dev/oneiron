@@ -132,14 +132,17 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         // A replay after the body landed completes without a second call: the
         // landed reply is part of the scope now, so it would compose anew.
         if ctx.vault.composed_scope_summary_landed(attempt_id)? {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         // A source TURN partly away from this replica (OF-534) is owed: the
         // declaration waits, queued, for the promotion (FIX 3861).
         let (plan, evidence) = match ctx.vault.plan_scope_summary(&attempt.status.payload.input) {
             Ok(planned) => planned,
             Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0));
+                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
             }
             Err(error) => return Err(error),
         };
@@ -171,13 +174,19 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 &plan.sources,
             )
         {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let Some(first) = evidence.covers.first().copied() else {
             // A sitting that retained no text has no summary (FIX 7509): its
             // attempt completes with none, never with invented prose.
             if plan.session.is_some() {
-                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
             }
             return Err(invalid_consolidation("summary scope has no text"));
         };
@@ -221,10 +230,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             &memo,
             &params_hash,
         ) {
-            Ok(true) => return Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            Ok(true) => {
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
+            }
             Ok(false) => {}
             Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0));
+                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
             }
             Err(error) => return Err(error),
         }
@@ -349,13 +363,16 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
             // A source demoted while the model wrote waits for its promotion,
             // the paid call settled, as a moved scope composes again.
-            Err(error) if waits_on_residency(&error) => {
-                Ok(residency_deferral(ctx.now_ms, charges.units))
-            }
+            Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
+                ctx.now_ms,
+                charges.units,
+                charges.step_hashes.clone(),
+            )),
             // A refusal at the landing door (the requester's gate, a landing
             // turn gone) is this declaration's end; the paid call still settles.
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
@@ -452,6 +469,7 @@ fn compose_again(charges: &StepChargeTally, now_ms: u64) -> DreamerAttemptExecut
         retry_at: now_ms
             .div_ceil(1_000)
             .saturating_add(SCOPE_DRIFT_RETRY_SECS),
+        step_hashes: charges.step_hashes.clone(),
     }
 }
 
@@ -506,14 +524,36 @@ pub(crate) struct ScopeSummaryEvidence {
     /// What an Arc's call shows and its labels (FIX 7509 P8); `None` for
     /// every other target.
     arc: Option<arc_evidence::ArcView>,
+    /// Each row an edited predecessor's text was written from beyond these
+    /// covers and MESSAGEs, pinned as read (FIX 10092): the text goes to the
+    /// model, so they are fenced with the evidence and kept on its summary.
+    pub(crate) editor_sources: Vec<SummarySourceVersion>,
 }
 
 impl ScopeSummaryEvidence {
     pub(crate) fn fingerprint(&self) -> Result<[u8; 32]> {
-        let bytes = serde_json::to_vec(&(&self.source_versions, &self.text))
+        let bytes = serde_json::to_vec(&(&self.source_versions, &self.text, &self.editor_sources))
             .map_err(|_| invalid_consolidation("summary evidence did not hash"))?;
         Ok(*blake3::hash(&bytes).as_bytes())
     }
+}
+
+/// The version pins of `sources` as the Dreamer reads them in `txn` (FIX
+/// 10092); `None` once one of them is gone or the Dreamer does not read it.
+pub(crate) fn editor_source_pins_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sources: &[EntityId],
+) -> Result<Option<Vec<SummarySourceVersion>>> {
+    let rows = dreamer_read(vault)?.get_entities_parts_in_txn(txn, sources)?;
+    let mut pins = Vec::with_capacity(sources.len());
+    for (source, row) in sources.iter().zip(rows) {
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        pins.push(source_pin(vault, txn, *source, Some(&row))?);
+    }
+    Ok(Some(pins))
 }
 
 fn source_pin(

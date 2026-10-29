@@ -31,17 +31,22 @@ impl DreamerRunnerStore<'_> {
             return Err(invalid_dreamer_runner("dreamer budget key/body mismatch"));
         }
 
-        let settlement =
-            settle_budget_for_child(&mut budget, reservation, input.actual_units, input.now)?;
+        let settlement = super::spend::settle_budget_for_child(
+            &mut budget,
+            reservation,
+            input.actual_units,
+            input.now,
+        )?;
         put_budget_record_in_txn(self.vault, wtxn, &settlement.budget)?;
         BUDGET_RESERVATION.delete(&self.vault.store, wtxn, &reservation_key)?;
-        // A free-time item's real spend lands on its cycle's spend scope in
-        // the commit that settles this reservation, once (FIX 4453).
+        // A free-time item's real spend, what its reservation owed among
+        // it, lands on its cycle's spend scope in the commit that settles
+        // this reservation, once (FIX 4453).
         crate::dreamer_runner::charge_free_time_item_in_txn(
             self.vault,
             wtxn,
             input.child_attempt,
-            input.actual_units,
+            settlement.actual_units,
         )?;
 
         Ok(DreamerBudgetSettlementOutcome::Settled(settlement))
@@ -101,15 +106,26 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// [`Self::settle_budget_and_step_receipts_in_txn`] in its own writer:
-    /// a failed or plainly parked try settles what its run line charged and
-    /// pins the terminal steps that charge paid for (FIX 6100).
+    /// a failed or plainly parked try settles what it charged and pins the
+    /// terminal steps that charge paid for (FIX 6100). A step already pinned
+    /// keeps its receipt and is not pinned twice, so the charge itself is
+    /// never refused for it (FIX 8728).
     pub(crate) fn settle_budget_with_step_receipts(
         &self,
         input: SettleDreamerBudget,
         step_hashes: &[[u8; 32]],
     ) -> Result<DreamerBudgetSettlementOutcome> {
         self.vault.with_write_txn_grouped(|wtxn| {
-            self.settle_budget_and_step_receipts_in_txn(wtxn, input, step_hashes)
+            let child = input.child_attempt;
+            let mut unpinned = Vec::with_capacity(step_hashes.len());
+            for hash in step_hashes {
+                if !unpinned.contains(hash)
+                    && !BUDGET_STEP_CHARGE.contains(&self.vault.store, &*wtxn, &(child, *hash))?
+                {
+                    unpinned.push(*hash);
+                }
+            }
+            self.settle_budget_and_step_receipts_in_txn(wtxn, input, &unpinned)
         })
     }
 

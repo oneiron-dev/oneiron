@@ -210,7 +210,7 @@ impl Memory<'_> {
             WitnessDoor::Guest,
             before_txn,
             prepare,
-            effect,
+            |txn, _| effect(txn),
         )
     }
 

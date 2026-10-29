@@ -155,6 +155,7 @@ pub(super) async fn registered_actor(
         room_turn,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 

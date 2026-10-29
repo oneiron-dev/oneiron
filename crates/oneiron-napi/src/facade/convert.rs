@@ -16,7 +16,7 @@ use super::dtos::{
     NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence,
     NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
     NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiTurnProgramWakeOutcome,
-    NapiWitnessReceipt, NapiWitnessTurn,
+    NapiWitnessAssertions, NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -129,7 +129,11 @@ pub(super) fn witness_turn_to_engine(turn: &NapiWitnessTurn) -> BoundaryResult<W
         thread_audience,
         messages,
         occurred_at: ts_to_engine(turn.occurred_at, "occurred_at")?,
-        assertions: Default::default(),
+        assertions: turn
+            .assertions
+            .as_ref()
+            .map(NapiWitnessAssertions::to_engine)
+            .unwrap_or_default(),
     })
 }
 

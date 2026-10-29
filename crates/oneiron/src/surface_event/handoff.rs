@@ -613,7 +613,7 @@ fn held_event_matches(held: &SurfaceEvent, offered: &SurfaceEvent) -> Result<boo
 /// The read must share the admission transaction: a read-transaction lookup
 /// followed by a separate write would let a concurrent submitter slip a second
 /// row in between.
-fn attempts_for_run_in_write_txn(
+pub(super) fn attempts_for_run_in_write_txn(
     vault: &Vault,
     queue: &AttemptQueue<'_>,
     wtxn: &heed::RwTxn<'_>,
@@ -638,7 +638,7 @@ fn attempts_for_run_in_write_txn(
 /// Multiple rows may share a run id when providers reuse a correlation id
 /// across receiving identities. Only the exact tuple is a replay. A row of
 /// another kind under the same public correlation id remains a typed collision.
-fn matching_surface_event_attempt(
+pub(super) fn matching_surface_event_attempt(
     records: Vec<AttemptRecord>,
     correlation_id: &str,
     dedupe_key: &str,

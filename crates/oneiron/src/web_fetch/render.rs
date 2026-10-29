@@ -14,13 +14,12 @@ use std::num::NonZeroUsize;
 
 use dom_smoothie::{Config, Readability, TextMode};
 use reqwest::Url;
-use serde::de::{self, SeqAccess, Visitor};
+use serde::de::{SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{
-    FIRECRAWL_UNREPORTED_STATUS, FirecrawlRenderer, MAX_DISCOVERED_LINKS_PER_PAGE,
-    MAX_RAW_LINKS_PER_PAGE, MAX_REPORTED_CHARSET_LABEL_CHARS, REDACTED_USERINFO, RenderedPage,
-    RendererError, RendererResult, WebFetchError, WebFetchResult,
+    FIRECRAWL_UNREPORTED_STATUS, FirecrawlRenderer, MAX_REPORTED_CHARSET_LABEL_CHARS,
+    REDACTED_USERINFO, RenderedPage, RendererError, RendererResult, WebFetchError, WebFetchResult,
 };
 
 /// The single normalization step: drop the fragment and keep whatever the URL
@@ -34,26 +33,18 @@ pub(super) fn normalize_url(url: &Url) -> Url {
 }
 
 /// Normalizes, filters to HTTP(S), sorts bytewise, and deduplicates one raw
-/// link list under both work ceilings.
+/// link list.
 ///
-/// Raw entries are counted before parsing or joining, so duplicates and invalid
-/// spellings cannot buy unbounded CPU work. Distinct normalized entries are
-/// checked before insertion, so the set itself never grows past its ceiling.
-/// Either overflow is a typed rung failure; no shortened link list is admitted.
-pub(super) fn normalize_link_list<I, S>(links: I, base: &Url) -> RendererResult<Vec<String>>
+/// Entries that do not join, or that are not credential-free absolute HTTP(S)
+/// once normalized, are skipped. No count refuses a page: the response body
+/// byte ceiling already bounds how many links one page can carry.
+pub(super) fn normalize_link_list<I, S>(links: I, base: &Url) -> Vec<String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    let mut raw_count = 0_usize;
     let mut normalized = BTreeSet::new();
     for raw in links {
-        raw_count = raw_count.saturating_add(1);
-        if raw_count > MAX_RAW_LINKS_PER_PAGE {
-            return Err(RendererError::invalid_response(format!(
-                "web fetch page exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
-            )));
-        }
         let Ok(joined) = base.join(raw.as_ref().trim()) else {
             continue;
         };
@@ -61,18 +52,9 @@ where
         if !is_web_url(&candidate) {
             continue;
         }
-        let identity = candidate.to_string();
-        if normalized.contains(&identity) {
-            continue;
-        }
-        if normalized.len() == MAX_DISCOVERED_LINKS_PER_PAGE {
-            return Err(RendererError::invalid_response(format!(
-                "web fetch page exceeded the {MAX_DISCOVERED_LINKS_PER_PAGE} discovered-link ceiling"
-            )));
-        }
-        normalized.insert(identity);
+        normalized.insert(candidate.to_string());
     }
-    Ok(normalized.into_iter().collect())
+    normalized.into_iter().collect()
 }
 
 /// Absolute HTTP(S), a non-empty host, and no embedded credentials: the only
@@ -459,10 +441,7 @@ fn resolve_canonical_url(final_url: &Url, candidate: Option<&str>) -> String {
 /// Collects `a[href]` targets from the document *before* `parse()` mutates it.
 /// Relative hrefs resolve against the document `<base href>` when one is
 /// present and otherwise against the response-final URL.
-fn collect_document_links(
-    readability: &Readability,
-    final_url: &Url,
-) -> RendererResult<Vec<String>> {
+fn collect_document_links(readability: &Readability, final_url: &Url) -> Vec<String> {
     let base = readability
         .doc
         .select("base[href]")
@@ -472,18 +451,10 @@ fn collect_document_links(
         .and_then(|href| final_url.join(href.trim()).ok())
         .unwrap_or_else(|| final_url.clone());
 
-    // Collect only under the raw-entry ceiling. The DOM is already present, but
-    // an anchor-dense document must not create an unbounded second vector before
-    // normalization gets its turn.
     let anchors = readability.doc.select("a[href]");
     let mut hrefs = Vec::new();
     for node in anchors.nodes() {
         if let Some(href) = node.attr("href") {
-            if hrefs.len() == MAX_RAW_LINKS_PER_PAGE {
-                return Err(RendererError::invalid_response(format!(
-                    "web fetch page exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
-                )));
-            }
             hrefs.push(href.to_string());
         }
     }
@@ -505,7 +476,7 @@ pub(super) fn extract_readable_page(html: &str, final_url: &Url) -> RendererResu
             RendererError::extraction(format!("readability construction failed: {error}"))
         })?;
 
-    let discovered_links = collect_document_links(&readability, &normalized_final)?;
+    let discovered_links = collect_document_links(&readability, &normalized_final);
 
     let article = readability.parse().map_err(|error| {
         RendererError::extraction(format!("readability extraction failed: {error}"))
@@ -545,62 +516,41 @@ pub(super) struct FirecrawlScrapeEnvelope {
 struct FirecrawlScrapeData {
     #[serde(default)]
     markdown: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_bounded_links")]
+    #[serde(default, deserialize_with = "deserialize_links")]
     links: Vec<String>,
     #[serde(default)]
     metadata: Option<FirecrawlScrapeMetadata>,
 }
 
-/// Decodes Firecrawl's link array without first expanding the whole peer-chosen
-/// sequence into a `Vec<String>`. The visitor stops at the first entry beyond
-/// the raw ceiling, so even an array of tiny duplicates has bounded allocation
-/// and bounded decode work.
-fn deserialize_bounded_links<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+/// Decodes Firecrawl's link array. Every link string the (byte-capped)
+/// response carries is kept; the response body byte ceiling already bounds
+/// how many can arrive.
+fn deserialize_links<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    struct BoundedLinksVisitor;
+    struct LinksVisitor;
 
-    impl<'de> Visitor<'de> for BoundedLinksVisitor {
+    impl<'de> Visitor<'de> for LinksVisitor {
         type Value = Vec<String>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(
-                formatter,
-                "at most {MAX_RAW_LINKS_PER_PAGE} Firecrawl link strings"
-            )
+            formatter.write_str("a sequence of Firecrawl link strings")
         }
 
         fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
         where
             A: SeqAccess<'de>,
         {
-            if sequence
-                .size_hint()
-                .is_some_and(|length| length > MAX_RAW_LINKS_PER_PAGE)
-            {
-                return Err(de::Error::custom(format!(
-                    "firecrawl links exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
-                )));
-            }
-            let capacity = sequence
-                .size_hint()
-                .unwrap_or_default()
-                .min(MAX_RAW_LINKS_PER_PAGE);
-            let mut links = Vec::with_capacity(capacity);
+            let mut links = Vec::new();
             while let Some(link) = sequence.next_element::<String>()? {
-                if links.len() == MAX_RAW_LINKS_PER_PAGE {
-                    return Err(de::Error::custom(format!(
-                        "firecrawl links exceeded the {MAX_RAW_LINKS_PER_PAGE} raw-link ceiling"
-                    )));
-                }
                 links.push(link);
             }
             Ok(links)
         }
     }
 
-    deserializer.deserialize_seq(BoundedLinksVisitor)
+    deserializer.deserialize_seq(LinksVisitor)
 }
 
 /// The pinned self-hosted scrape metadata.
@@ -677,7 +627,7 @@ impl FirecrawlRenderer {
         // callers inspecting one page, but the crawl door below rejects this
         // unwitnessed result before any link reaches its frontier.
         let link_base = final_url.as_ref().unwrap_or(&canonical_url);
-        let discovered_links = normalize_link_list(&data.links, link_base)?;
+        let discovered_links = normalize_link_list(&data.links, link_base);
         Ok(RenderedPage {
             markdown,
             title: metadata.title.unwrap_or_default().trim().to_string(),

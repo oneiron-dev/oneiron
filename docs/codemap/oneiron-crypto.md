@@ -15,8 +15,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fuzz/fuzz_targets/record_parse.rs` | src | s | — | — | — |
 | `src/backup/checkpoint_fact.rs` | src | s | 2 struct · 5 fn · 5 const | CheckpointFact, SignedCheckpointFact | A sealed backup's checkpoint fact (FIX 7326): its engine vault id, the full BLAKE3 of its canonical image… |
 | `src/backup/commitment.rs` | src | s | 3 struct · 4 fn · 7 const | CheckpointSigner, Commitment, CustodyRef | The clear commitment every sealed artifact carries, its digest, and the check of its dual Ed25519 +… |
+| `src/backup/host_holds.rs` | src | m | 2 struct · 9 fn · 7 const | HostHoldsBinding, SealedHostHolds | A checkpoint's host-private member (FIX 6598): a hosted vault's host-order legal-hold family, carried in its… |
 | `src/backup/inspect.rs` | src | m | 2 struct · 6 fn · 6 const | BackupEvidence, BackupTailEvidence | Evidence of one sealed artifact, read in one pass with no key: its clear prelude, key header and signed… |
-| `src/backup/mod.rs` | src | s | 5 re-export | — | The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact… |
+| `src/backup/mod.rs` | src | s | 6 re-export | — | The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact… |
 | `src/backup/prelude.rs` | src | s | 2 struct · 1 enum · 7 fn · 7 const · 2 crate-vis | ArtifactPrelude, BackupHead, RegistryMatch | The fixed prelude every sealed artifact starts with, and the registry binding a version 2 prelude carries… |
 | `src/backup/wire.rs` | src | s | 3 struct · 2 enum · 8 fn · 2 const | ArtifactKind, KeyHeader, KeyHeaderWrap, VaultKeyWrapInfo, VaultKeyWrapKind | The artifact kinds and the key header's wire form (moved from the engine's `recovery::checkpoint::artifact`… |
 | `src/codec.rs` | src | s | 13 crate-vis | — | Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings… |

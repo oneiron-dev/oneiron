@@ -47,7 +47,7 @@ use super::step_charge::StepChargeTally;
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::ScopedRead;
-use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims};
+use crate::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims_with_checker};
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause};
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
@@ -183,6 +183,7 @@ impl ConsolidationExecutor<'_> {
                 crate::note::review_note_tombstones(ctx.vault)?;
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
         }
@@ -397,7 +398,12 @@ impl ConsolidationExecutor<'_> {
             // A refusal is the gate's answer about one belief (a persona
             // belief, say, needs turns from two sessions), never a reason
             // to read the NOTE again.
-            let outcome = promote_consolidated_claims(ctx.vault, run, candidates)?;
+            let outcome = promote_consolidated_claims_with_checker(
+                ctx.vault,
+                run,
+                candidates,
+                self.decisions.checker.as_ref(),
+            )?;
             for (claim, reason) in &outcome.rejected {
                 tracing::info!(
                     target: "oneiron::dreamer",

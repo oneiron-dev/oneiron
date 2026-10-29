@@ -120,6 +120,7 @@ impl fmt::Debug for ServeConfig {
             .field("failure_signals", &self.failure_signals)
             .field("self_heal", &self.self_heal)
             .field("recall", &self.recall)
+            .field("policy", &self.policy)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
             .field("limits", &self.limits)
