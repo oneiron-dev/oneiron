@@ -2,7 +2,7 @@
 use super::*;
 
 impl DreamerRunnerStore<'_> {
-    pub(in crate::dreamer_runner) fn settle_budget_in_txn(
+    pub(crate) fn settle_budget_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         input: SettleDreamerBudget,
@@ -39,6 +39,13 @@ impl DreamerRunnerStore<'_> {
         )?;
         put_budget_record_in_txn(self.vault, wtxn, &settlement.budget)?;
         BUDGET_RESERVATION.delete(&self.vault.store, wtxn, &reservation_key)?;
+        // The charge and the owed rows commit together: a crash before this
+        // leaves the spend to the wake-start reconcile (FIX 11450).
+        crate::dreamer_wake::owed::delete_attempt_owed_calls_in_txn(
+            self.vault,
+            wtxn,
+            input.child_attempt,
+        )?;
         // A free-time item's real spend, what its reservation owed among
         // it, lands on its cycle's spend scope in the commit that settles
         // this reservation, once (FIX 4453).
@@ -67,6 +74,18 @@ impl DreamerRunnerStore<'_> {
                 "invalid checkpoint step charge receipt",
             )),
         }
+    }
+
+    /// Whether this exact terminal step already reads charged, in the
+    /// caller's snapshot: the crash-owed reconcile charges no step twice
+    /// (FIX 11450).
+    pub(crate) fn step_charge_marked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt_id: AttemptId,
+        step_hash: &[u8; 32],
+    ) -> Result<bool> {
+        Ok(BUDGET_STEP_CHARGE.contains(&self.vault.store, txn, &(attempt_id, *step_hash))?)
     }
 
     /// Retire paid-step receipts, and the listing its extraction pinned,

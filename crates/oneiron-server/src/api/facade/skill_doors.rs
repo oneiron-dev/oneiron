@@ -354,6 +354,12 @@ impl SkillRefiner for HostSkillRefiner<'_> {
                 })
             })
             .collect();
+        let said_rows: Vec<oneiron::EntityId> = brief.said.iter().map(|said| said.source).collect();
+        let neighbor_rows: Vec<oneiron::EntityId> = brief
+            .neighbors
+            .iter()
+            .map(|neighbor| neighbor.entity)
+            .collect();
         // FIX 8989: every selected utterance and neighbour is read. A
         // selection that fits the seat's window, or one whose window is
         // unknown, goes in one request, as it always has; a longer one goes
@@ -362,12 +368,17 @@ impl SkillRefiner for HostSkillRefiner<'_> {
         let window = refine_window(self.server.vault(), seat)
             .filter(|window| !fits(*window, prompt, &data.to_string()));
         let refined = match window {
-            None => self.ask(seat, prompt, &data)?.1,
+            None => {
+                self.ask(seat, prompt, &data, Some(self.read_rows.borrow().to_vec()))?
+                    .1
+            }
             Some(window) => {
                 let selection = Selection {
                     said: &said,
+                    said_rows: &said_rows,
                     hint: brief.hint.as_deref(),
                     neighbors: &neighbors,
+                    neighbor_rows: &neighbor_rows,
                 };
                 self.ask_in_pages(seat, prompt, window, &selection)?
             }
@@ -395,11 +406,15 @@ impl SkillRefiner for HostSkillRefiner<'_> {
 }
 
 /// A selection's refiner input, each utterance and neighbour as its request
-/// carries it.
+/// carries it, with the vault row each was read from beside it (FIX 11397):
+/// a page's call rows are sliced with the same bounds as its JSON, so no id
+/// is ever parsed back out of it.
 struct Selection<'a> {
     said: &'a [serde_json::Value],
+    said_rows: &'a [oneiron::EntityId],
     hint: Option<&'a str>,
     neighbors: &'a [serde_json::Value],
+    neighbor_rows: &'a [oneiron::EntityId],
 }
 
 /// What a paged selection's request says of its part, beside its page.
@@ -450,7 +465,14 @@ impl HostSkillRefiner<'_> {
                 &draft,
                 last,
             );
-            let (answer, refined) = self.ask(seat, prompt, &data)?;
+            // Each page's call carries the rows its prompt was read from (FIX
+            // 11397): this page's and every earlier page's, since the draft it
+            // carries is text written from them. Attribution only.
+            let rows = oneiron::skill_optimize::union_source_rows([
+                Some(&selection.said_rows[..said_end]),
+                Some(&selection.neighbor_rows[..neighbors_end]),
+            ]);
+            let (answer, refined) = self.ask(seat, prompt, &data, rows)?;
             if last {
                 return Ok(refined);
             }
@@ -461,13 +483,16 @@ impl HostSkillRefiner<'_> {
 
     /// One refiner request over `data` on the caller's admitted inference
     /// ladder: its answer as JSON, and as the typed result it must parse
-    /// to. The caller is checked again after the remote call, before the
-    /// engine lands the candidate or a next page is asked.
+    /// to. `rows` are the vault rows the prompt was read from (FIX 11397);
+    /// the call carries them as attribution only. The caller is checked
+    /// again after the remote call, before the engine lands the candidate or
+    /// a next page is asked.
     fn ask(
         &self,
         seat: &Seat,
         prompt: &str,
         data: &serde_json::Value,
+        rows: Option<Vec<oneiron::EntityId>>,
     ) -> oneiron::Result<(serde_json::Value, RefinedSkillWire)> {
         let purpose = oneiron::skill_convert::skill_convert_call_purpose();
         let mut request = LlmRequest {
@@ -499,6 +524,7 @@ impl HostSkillRefiner<'_> {
             crate::api::llm::admit(self.server, self.auth, &mut request).map_err(|response| {
                 refine_failed(&format!("inference refused ({})", response.status()))
             })?;
+        let run = run.sourced(rows);
         let response = self
             .handle
             .block_on(ladder.generate(&run, request, None))

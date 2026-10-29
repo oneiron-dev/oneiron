@@ -120,7 +120,7 @@ impl DreamerRunnerStore<'_> {
     }
 
     /// The counter row owed spend lands on.
-    fn owing_budget_in_txn(
+    pub(crate) fn owing_budget_in_txn(
         &self,
         wtxn: &heed::RwTxn<'_>,
         budget_id: &str,
@@ -138,7 +138,7 @@ impl DreamerRunnerStore<'_> {
 
     /// `units` owed by `child_attempt`, on its reservation when one is held,
     /// else charged to `budget` at once; `budget` is written either way.
-    fn owe_usage_in_txn(
+    pub(crate) fn owe_usage_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         budget: &mut DreamerBudgetRecord,
