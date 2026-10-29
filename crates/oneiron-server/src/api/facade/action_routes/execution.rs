@@ -105,9 +105,10 @@ where
 
 /// [`run_bound`], and beside its dispatch what its verb-table row's reply
 /// stated of its call receipt (FIX 2887): recorded, no-record or
-/// unrecorded, on the row's success and its refusal alike. Unrecorded when
-/// no row ran through the door's route: a typed action, a run row, a
-/// refusal before the row, or a row the credential's own facade call ran.
+/// unrecorded, on the row's success and its refusal alike. A row the
+/// credential's own facade call ran states the receipt its door recorded
+/// (FIX 10635). Unrecorded when no row ran: a typed action, a run row, or a
+/// refusal before the row.
 pub(super) async fn run_bound_stamped<F>(
     server: &Arc<SyncServer>,
     headers: HeaderMap,
@@ -137,7 +138,6 @@ where
     let door = Arc::new(FacadeRowDoor::new(
         server, headers, extensions, key, credential,
     ));
-    let verb_door: Arc<dyn AgentVerbDoor> = Arc::clone(&door) as Arc<dyn AgentVerbDoor>;
     let bound = Unbound {
         actor,
         class,
@@ -145,7 +145,7 @@ where
         surface,
         live_run,
     };
-    let ran = run_with_door(server, verb_door, bound, run).await;
+    let ran = run_with_door(server, Arc::clone(&door), bound, run).await;
     (ran, door.stamp())
 }
 
@@ -160,7 +160,7 @@ struct Unbound {
 
 async fn run_with_door<F>(
     server: &Arc<SyncServer>,
-    door: Arc<dyn AgentVerbDoor>,
+    door: Arc<FacadeRowDoor>,
     bound: Unbound,
     run: F,
 ) -> Result<ActionDispatch, FacadeApiError>
@@ -194,6 +194,11 @@ where
         ),
         None => None,
     };
+    // FIX 10938: each verb row's own receipt names this hold too.
+    if let Some(held) = &held {
+        door.held_outer(held.proof().call_attempt_witness());
+    }
+    let door: Arc<dyn AgentVerbDoor> = door;
     let host = Arc::clone(server);
     let vault = Arc::clone(&server.vault);
     off_the_hook_pool(move || {
