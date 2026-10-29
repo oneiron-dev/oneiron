@@ -25,6 +25,8 @@ use super::{DeleteEntityOutcome, PendingConfirmedErase};
 use crate::side_table::HexId;
 
 impl Vault {
+    /// Deletes the headerless residue of `id` under `reason`: its tombstone publishes, its
+    /// residue purges, and a hard purge writes its receipt.
     pub(super) fn delete_entity_without_header(
         &self,
         id: &EntityId,
@@ -68,15 +70,21 @@ impl Vault {
                 .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
         });
         // FIX 5736: a purge names the turn-program rows it removes whole
-        // because they do not decode.
+        // because they do not decode. FIX 5775: the count rides the returned
+        // outcome too, so a delete with no gate decision carries it.
+        let turn_program_details = if reason.active_store_hard_purge_v1() {
+            crate::dreamer_runner::turn_program_erase_details(self, id)?
+        } else {
+            Vec::new()
+        };
         if reason.active_store_hard_purge_v1()
             && let Some(decision) = gate_decision.as_mut()
         {
-            let details = crate::dreamer_runner::turn_program_erase_details(self, id)?;
             decision
                 .system_notices
                 .extend(crate::store::GateSystemNoticeRecord::receipt_details(
-                    "deletion", details,
+                    "deletion",
+                    turn_program_details.clone(),
                 ));
         }
         let window_label = window_label_from_timestamp(requested_at);
@@ -206,7 +214,12 @@ impl Vault {
                 false,
             )?;
             wtxn.commit()?;
-            return Ok(DeleteEntityOutcome::missing());
+            return Ok(DeleteEntityOutcome {
+                existed: false,
+                receipt_id: None,
+                sweep_key: None,
+                turn_program_details: turn_program_details.clone(),
+            });
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
         // Only an erase destroys a world's keys, and its pad tombstones
@@ -265,6 +278,7 @@ impl Vault {
                 existed,
                 receipt_id: None,
                 sweep_key: None,
+                turn_program_details: turn_program_details.clone(),
             });
         }
 
@@ -301,6 +315,7 @@ impl Vault {
             existed,
             receipt_id: Some(receipt_id),
             sweep_key: Some(sweep_key),
+            turn_program_details,
         })
     }
 }

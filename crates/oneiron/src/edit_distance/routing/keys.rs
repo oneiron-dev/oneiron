@@ -11,9 +11,10 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 // Tables
 // ---------------------------------------------------------------------------
 
-/// Per-scope aggregates, keyed by task class then model version — task class
-/// FIRST, because the peer distribution behind every relative score is
-/// exactly one task-class-prefixed scan.
+/// Per-scope aggregates, keyed by task class, then measurement version, then
+/// model version — task class and measurement version FIRST, because the peer
+/// distribution behind every relative score is exactly one prefixed scan, and
+/// peers measured under another engine version are not peers (FIX 7822).
 pub(super) const AGGREGATE: SideTable<AggregateKey, StoredAggregate, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_AGGREGATE);
 
@@ -31,12 +32,14 @@ pub(super) const RUNG: SideTable<String, StoredRung, Raw> =
 pub(super) const SERVING_MODEL: SideTable<(), ServingModelVersion, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_ROUTING_SERVING_MODEL);
 
-/// `edit_distance/routing_aggregate/v1` row key: task class, then `0x00`, then
-/// model version. Not a [`FixedSideKey`](crate::side_table::FixedSideKey) tuple: neither half has a
+/// `edit_distance/routing_aggregate/v1` row key: task class, `0x00`,
+/// measurement version, `0x00`, model version. Not a
+/// [`FixedSideKey`](crate::side_table::FixedSideKey) tuple: no part has a
 /// fixed width.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct AggregateKey {
     pub(super) task_class: String,
+    pub(super) measurement_version: String,
     pub(super) model_version: String,
 }
 
@@ -44,14 +47,18 @@ impl SideKey for AggregateKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.task_class.as_bytes());
         out.push(KEY_SEPARATOR);
+        out.extend_from_slice(self.measurement_version.as_bytes());
+        out.push(KEY_SEPARATOR);
         out.extend_from_slice(self.model_version.as_bytes());
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.iter().position(|&byte| byte == KEY_SEPARATOR)?;
+        let mut parts = bytes.splitn(3, |&byte| byte == KEY_SEPARATOR);
+        let mut part = || String::from_utf8(parts.next()?.to_vec()).ok();
         Some(Self {
-            task_class: String::from_utf8(bytes[..split].to_vec()).ok()?,
-            model_version: String::from_utf8(bytes[split + 1..].to_vec()).ok()?,
+            task_class: part()?,
+            measurement_version: part()?,
+            model_version: part()?,
         })
     }
 }
@@ -204,21 +211,30 @@ impl RawValue for ServingModelVersion {
 row_codec!(StoredRung, RUNG_ROW_LABEL);
 
 /// The bytes after [`AGGREGATE`]'s prefix that scope every model version under
-/// one task class — the peer-distribution scan's `key_prefix`.
-pub(super) fn task_class_prefix(task_class: &str) -> Result<Vec<u8>> {
+/// one task class and one measurement version — the peer-distribution scan's
+/// `key_prefix`.
+pub(super) fn peer_prefix(task_class: &str, measurement_version: &str) -> Result<Vec<u8>> {
     let mut prefix = normalized_task_class(task_class)?.as_bytes().to_vec();
+    prefix.push(KEY_SEPARATOR);
+    prefix.extend_from_slice(usable_key_part(measurement_version)?.as_bytes());
     prefix.push(KEY_SEPARATOR);
     Ok(prefix)
 }
 
 pub(super) fn aggregate_key(scope: &RoutingScopeKey) -> Result<AggregateKey> {
-    if scope.model_version.is_empty() || scope.model_version.as_bytes().contains(&KEY_SEPARATOR) {
-        return Err(invalid("a routing model version must be a usable key"));
-    }
     Ok(AggregateKey {
         task_class: normalized_task_class(&scope.task_class)?.to_owned(),
-        model_version: scope.model_version.clone(),
+        measurement_version: usable_key_part(&scope.measurement_version)?.to_owned(),
+        model_version: usable_key_part(&scope.model_version)?.to_owned(),
     })
+}
+
+/// A version as one part of an aggregate key: non-empty and separator-free.
+fn usable_key_part(version: &str) -> Result<&str> {
+    if version.is_empty() || version.as_bytes().contains(&KEY_SEPARATOR) {
+        return Err(invalid("a routing version must be a usable key"));
+    }
+    Ok(version)
 }
 
 /// The trimmed task class, or the reason it is not one — ED-03's scope rule,

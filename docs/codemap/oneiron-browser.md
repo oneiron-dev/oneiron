@@ -52,7 +52,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine.rs` | src | s | 1 enum · 3 fn | BrowserEngine | The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt… |
 | `src/fact.rs` | src | s | 3 struct · 2 enum | ActionFact, ActionTarget, DialogAnswerFailure, NoEffectReason, ViewportPoint | What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page… |
 | `src/field.rs` | src | m | 8 struct · 4 enum · 1 trait · 2 fn · 1 const · 4 crate-vis | FieldSpec, FieldTextReason, FieldWrite, FieldWriteError, FieldWriter, FieldWritten, NoWriter, TextCheck +5 | A Fill step's text (CUA E6, DESIGN-2 §4 "Field text = A"): what one field takes, resolved in code before any… |
-| `src/lib.rs` | src | m | 1 enum · 1 fn · 1 const · 1 mod · 26 re-export | BrowserError | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
+| `src/lib.rs` | src | m | 1 enum · 1 fn · 1 const · 1 mod · 27 re-export | BrowserError | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
 | `src/library.rs` | src | m | 6 struct · 2 enum · 1 trait · 4 fn · 6 re-export · 12 crate-vis | LibraryRunInput, LibraryRunOutput, ProposeInput, ProposeOutput, SecretArg, WorkflowCheck, WorkflowLibrary, WorkflowProgram +1 | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
 | `src/library/admission.rs` | src | s | 3 struct · 4 enum · 1 fn | AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal, WorkflowSeed | What an admission checks past the two pages, and what the library keeps of it (CUA E1): the held-out values… |
 | `src/library/cards.rs` | src | s | 8 struct | LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, RetiredCard | The library's cards (OF-598): a program as a planner reads it, and the inputs and answers of `find`… |
@@ -64,6 +64,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp.rs` | src | s | 5 crate-vis | — | MCP over a guest's stdio, as `cua-driver mcp` serves it: JSON-RPC 2.0, one message per line, on one reader… |
 | `src/observation.rs` | src | s | 5 struct · 1 fn · 3 crate-vis | HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound | The observation contract both drivers answer (AB-001, AB-002) |
 | `src/outline.rs` | src | m | 13 crate-vis | — | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
+| `src/press_answer.rs` | src | s | 1 struct · 1 enum | PressAnswer, PressOutcome | What a press a browser act waited on came to (FIX 10423), as the answer a code run's parked call resumes… |
 | `src/programs.rs` | src | m | 14 struct · 5 enum · 1 trait · 3 fn · 9 const | BatchInput, BatchOutput, BatchStep, BrowserPersonInput, BrowserTab, DecideStep, DesktopWindow, HandoverInput +12 | — |
 | `src/progress.rs` | src | s | 1 fn · 1 const · 6 crate-vis | — | A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]… |
 | `src/receipt_evidence.rs` | src | s | 1 enum · 1 trait | ReceiptEvidence, ReceiptEvidenceSink | An effect receipt's screenshot kept past its session (FIX 2150) |
@@ -73,11 +74,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/row.rs` | src | s | 2 struct · 2 enum | Row, RowFieldGap, RowGapField, RowGapReason | A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX… |
 | `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 13 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
 | `src/secret_fields.rs` | src | m | 1 struct · 2 enum · 11 crate-vis | RowSecret, SecretKind, SecretNote | One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card… |
-| `src/session.rs` | src | m | 2 struct · 4 re-export · 6 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
+| `src/session.rs` | src | m | 2 struct · 5 re-export · 6 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
 | `src/session/demonstration.rs` | src | m | 2 fn · 11 crate-vis | — | `demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs… |
 | `src/session/draft.rs` | src | s | 4 crate-vis | — | `library.draft` on a browser session (CUA E7): the session's own history (`trail`) as draft steps, its open… |
 | `src/session/fresh.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | FreshGuest | The fresh guest a proposal's replay runs on (CUA E1): admission's second check runs on a browser of its own… |
 | `src/session/guest.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | BrowserGuestStarter, StartedGuest | A session's engine guest (FIX 6680, BROWSER-SPLIT PR3): the browser guest, its lease and manifest, and the… |
+| `src/session/held.rs` | src | s | 1 struct · 1 enum · 6 fn · 2 crate-vis | HeldPress, PressNeed | The act a press held, kept for the host to bind (FIX 10423), and the one press an owner's answer arms for it |
 | `src/session/lifecycle.rs` | src | m | 23 fn · 9 crate-vis | — | — |
 | `src/session/press.rs` | src | s | 1 trait · 3 fn · 6 crate-vis | PressGrants | The press each effect class's sends run under (FIX 4613, 4615, 8009) |
 | `src/session/request.rs` | src | s | 2 fn · 2 crate-vis | — | The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination… |

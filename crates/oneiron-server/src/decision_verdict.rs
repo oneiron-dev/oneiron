@@ -54,6 +54,8 @@ use serde_json::Value;
 use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
 
+pub(crate) mod hook;
+
 /// The state field, and the question's name, for a call's image.
 const IMAGE: &str = "image";
 
@@ -327,11 +329,7 @@ fn answer_verdict(
                 ],
             )
         })?;
-    let views = if request.evidence.is_empty() {
-        Vec::new()
-    } else {
-        reader.hydrate(&request.evidence)?.value
-    };
+    let views = hook::evidence_views(reader, &request.evidence)?;
     let mut evidence = views
         .iter()
         .map(|view| EntityId::from_hex(&view.id_hex))

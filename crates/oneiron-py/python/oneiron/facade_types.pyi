@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1162 facade rows, 4199 declarations.
-Inputs: 1097 of 1162 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1040 of 1162 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1163 facade rows, 4206 declarations.
+Inputs: 1098 of 1163 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1041 of 1163 fully typed, 122 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -1603,6 +1603,7 @@ TaskAssignee = Literal["dreamer"] | TaskAssigneeAgentDef | TaskAssigneePeer | Ta
 class TaskAskGuest(TypedDict):
     companion_ref: EntityId
     disclosure_grant_ref: str
+    holder_key: NotRequired[str | None]
 class TaskAskTargetAuthority(TypedDict):
     authority: AskAuthorityScope
 class TaskAskTargetResponder(TypedDict):
@@ -2247,6 +2248,8 @@ class LocalRunnerBudgetCounter(TypedDict):
     remaining_units: int
     reserved_units: int
     spent_units: int
+    overdraft_units: int
+    owed_calls: int
     updated_at: int
 class LocalRunnerBudgetView(TypedDict):
     budget_id: str
@@ -2258,6 +2261,7 @@ class RunnerBudgetReservationsRequest(TypedDict):
 class RunnerBudgetReservation(TypedDict):
     job_ref: str
     reserved_units: int
+    owed_units: int
     created_at: int
     updated_at: int
 class RunnerBudgetReservationsView(TypedDict):
@@ -6928,7 +6932,7 @@ class OfferConnect(TypedDict):
 class FederationPactScope(TypedDict):
     lo_to_hi: FederationDirectionScope
     hi_to_lo: FederationDirectionScope
-Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str, "key": str})
 class AcceptConnect(TypedDict):
     offer: Offer
     grant: str
@@ -6953,7 +6957,7 @@ class RescopeConnect(TypedDict):
     epoch: int
     outbound: FederationDirectionScope
     inbound: FederationDirectionScope
-RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str, "key": str})
 class AcceptRescopeConnect(TypedDict):
     offer: RescopeOffer
 class ConnectRescoped(TypedDict):
@@ -7170,7 +7174,7 @@ class GuestRevokeResponse(TypedDict):
     courtesy_skipped: NotRequired[str | None]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
-    holder_key: str
+    holder_key: NotRequired[str | None]
     expires_at: int
     comm: NotRequired[CommReach | None]
 class GuestSlipMinted(TypedDict):
@@ -10198,6 +10202,14 @@ class LearningChoiceValuePattern(TypedDict):
 class LearningChoiceValueBudget(TypedDict):
     budget: int
 LearningChoiceValue = LearningChoiceValueModel | LearningChoiceValueWidth | LearningChoiceValuePattern | LearningChoiceValueBudget
+class LearnedChoiceValueView(TypedDict):
+    choice: LearningChoiceValue
+    runs: float
+    share: float
+class LearnedChoiceView(TypedDict):
+    values: list[LearnedChoiceValueView]
+    own_runs: float
+    origin: PriorOrigin
 class LearningSettingRowView(TypedDict):
     key: str
     mode: LearningSettingMode
@@ -10211,6 +10223,7 @@ class LearningSettingRowView(TypedDict):
     by: str
     at: int
     why: str
+    learned: NotRequired[LearnedChoiceView | None]
 class LearningSettingsView(TypedDict):
     catalog: list[LearningSettingSpecView]
     rows: list[LearningSettingRowView]
@@ -11400,6 +11413,7 @@ class CodeWaitResolveRequest(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
 CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
+CodeWaitBrowserAction = TypedDict("CodeWaitBrowserAction", {"act": str, "class": str, "role": str, "name": str, "locator": str, "page": NotRequired[str | None], "press": str})
 class CodeWaitAnswerView(TypedDict):
     answer: CodeWaitChoice
     word_ref: EntityId
@@ -11429,6 +11443,7 @@ class CodeWaitReceiptView(TypedDict):
     verb: str
     connector: str
     tool: str
+    browser: NotRequired[CodeWaitBrowserAction | None]
     hold_reasons: list[str]
     ask_ref: NotRequired[EntityId | None]
     allowed_answers: list[CodeWaitChoice]
@@ -14928,6 +14943,15 @@ class TurnActionReceipt(TypedDict):
     turn_id: str
     message_id: str
     attempt_id: str
+class TurnActionRebindRequest(TypedDict):
+    attempt_id: str
+class TurnActionRebindReceipt(TypedDict):
+    action: TurnAction
+    turn_id: str
+    attempt_id: str
+    predecessor_slip: str
+    successor_slip: str
+    owner_work: bool
 class MessageReactionExternal(TypedDict):
     connector: str
     id: str
@@ -15284,7 +15308,7 @@ class ProposalDeltaSettleRequest(TypedDict):
     actor: EntityId
     skill: NotRequired[EntityId | None]
     attempt_receipt: NotRequired[str | None]
-    source_turn_ref: NotRequired[EntityId | None]
+    artifact_ref: NotRequired[EntityId | None]
     scope: str
     cause: NotRequired[ProposalAmendmentCause | None]
     followed_skill: NotRequired[bool | None]
@@ -15313,13 +15337,14 @@ class AmendmentJudgmentView(TypedDict):
     scope: str
     evidence_receipts: list[str]
     d_norm: float
+    engine_ver: str
     at: int
 class ProposalDeltaSettlement(TypedDict):
     receipt_id: str
-    artifact_ref: EntityId
+    artifact_ref: NotRequired[EntityId | None]
     proposed_text: str
     final_text: str
-    delta: AmendmentDeltaView
+    delta: NotRequired[AmendmentDeltaView | None]
     hunks: list[SettledHunkView]
     judgment: NotRequired[AmendmentJudgmentView | None]
     edit_cost_claims: list[EntityId]
@@ -15331,14 +15356,14 @@ class ProposalDeltaReadRequest(TypedDict):
 class ProposalOpSpanView(TypedDict):
     actor: NotRequired[EntityId | None]
     trust: str
-    before_text: str
-    after_text: str
+    before_text: NotRequired[str | None]
+    after_text: NotRequired[str | None]
     lamport: int
     timestamp: int
 class ProposalArtifactView(TypedDict):
     artifact_ref: EntityId
-    proposed_text: str
-    final_text: str
+    proposed_text: NotRequired[str | None]
+    final_text: NotRequired[str | None]
     source_turn_ref: NotRequired[EntityId | None]
     spans: list[ProposalOpSpanView]
 class AmendmentEvidenceView(TypedDict):
@@ -21181,8 +21206,7 @@ class SessionManifest(TypedDict):
     generation: str
     fence_proof: NotRequired[SessionFenceProof | None]
     fence_unproven: NotRequired[bool]
-BrowserAnswerItem = dict[str, Any]
-BrowserAnswer = BrowserAnswerItem
+PressOutcome = Literal["delivered", "refused", "delivery_unknown"]
 class RowSplice(TypedDict):
     start: int
     delete_count: int
@@ -21377,6 +21401,14 @@ class VerbsObservation(TypedDict):
     site_skill_notes: NotRequired[list[SiteSkillError]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
+class PressAnswer(TypedDict):
+    wait: str
+    outcome: PressOutcome
+    reasons: NotRequired[list[str]]
+    step: NotRequired[ObservationPage | None]
+    receipt: NotRequired[EffectReceipt | None]
+BrowserAnswerItem = dict[str, Any]
+BrowserAnswer = BrowserAnswerItem
 BrowserObservationPage = BrowserAnswer
 class ObservationBase(TypedDict):
     scope: str

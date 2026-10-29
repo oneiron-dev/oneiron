@@ -578,6 +578,12 @@ fn step(value: &Value) -> Result<MemberStep> {
                 generation: small(generation)?,
             })
         }
+        [kind, object, generation] if kind.as_str() == Some("pdf_strings") => {
+            Ok(MemberStep::PdfStrings {
+                object: small(object)?,
+                generation: small(generation)?,
+            })
+        }
         _ => Err(corrupt()),
     }
 }

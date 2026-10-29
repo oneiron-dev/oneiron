@@ -12648,6 +12648,19 @@
       "section": false
     },
     {
+      "name": "vault.conversations.turn.rebind",
+      "description": "Rebinds the caller's queued turn action whose credential no longer stands to the live credential this request was admitted on; the action keeps its scope.",
+      "input": "crate::conversation::TurnActionRebindRequest",
+      "output": "crate::conversation::TurnActionRebindReceipt",
+      "call": "memory.conversations_turn_rebind(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.messages.react",
       "description": "Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress.",
       "input": "crate::reaction::MessageReactionRequest",
@@ -13012,7 +13025,7 @@
     },
     {
       "name": "vault.skills.attribution.settle",
-      "description": "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.",
+      "description": "The owner settles one amended proposal: the original artifact's recorded window, or an imported edit's two endpoints, measure the delta; hunks are judged and each share routes to its consumer.",
       "input": "ProposalDeltaSettleRequest",
       "output": "crate::task_verb::sdk::ProposalDeltaSettlement",
       "call": "crate::task_verb::sdk::skill_attribution_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.settle\")?, &input)?",

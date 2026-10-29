@@ -163,10 +163,13 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let (proposals, chunks) = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some(completed_units) =
+            if let Some((completed_units, step_hashes)) =
                 landed_units_in_txn(ctx.vault, &txn, attempt.status.attempt.id)?
             {
-                return Ok(DreamerAttemptExecution::Completed { completed_units });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units,
+                    step_hashes,
+                });
             }
             // A listed child's retry chunks fan in beside it (FIX 7495).
             let chunks = retry_chunks_in_txn(ctx.vault, &txn, &attempt.status, &input.children);
@@ -175,6 +178,7 @@ impl ConsolidationExecutor<'_> {
                 return Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at: (ctx.now_ms / 1_000).saturating_add(input.retry_secs),
+                    step_hashes: Vec::new(),
                 });
             };
             (proposals, chunks)
@@ -453,6 +457,7 @@ impl ConsolidationExecutor<'_> {
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             // A proposal that moved before the merge commits again on resume;
             // a gate only an owner act opens keeps the private park.

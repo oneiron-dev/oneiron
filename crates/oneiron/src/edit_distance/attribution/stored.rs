@@ -131,6 +131,8 @@ pub(super) struct StoredJudgment {
     pub(super) scope: String,
     pub(super) evidence_receipts: Vec<String>,
     pub(super) d_norm: f32,
+    /// The measurement engine version `d_norm` was measured under (FIX 7822).
+    pub(super) engine_ver: String,
     pub(super) at: u64,
     /// The sequence of the skill edit proposal this judgment's `discovery` share minted, kept so
     /// a re-judgment re-mints under the same sequence or withdraws it.

@@ -13,6 +13,8 @@ pub(super) const KEY_RECEIPTS: &str = "receipts";
 const KEY_SESSION: &str = "session";
 const KEY_TURNS: &str = "turns";
 pub(super) const KEY_AT: &str = "at";
+/// The measurement engine version an amendment row's Δs were measured under.
+pub(crate) const KEY_ENGINE_VER: &str = "engine_ver";
 const LANE_TASK: &str = "task";
 const LANE_CHAT: &str = "chat";
 const LANE_AMENDMENT: &str = "amendment";
@@ -40,7 +42,11 @@ pub(super) enum ActorClaimLane {
     /// amendment row cites the receipt ED-01 measured a Δ against, and
     /// grounding one against the other's index would answer "no such receipt"
     /// for a citation that is plainly readable.
-    Amendment { receipts: Vec<String> },
+    Amendment {
+        receipts: Vec<String>,
+        /// The one measurement version every cited Δ was measured under.
+        engine_ver: String,
+    },
 }
 /// The trace a row rests on, plus when it was observed.
 ///
@@ -66,13 +72,16 @@ impl ActorClaimEvidence {
     }
 
     /// AMENDMENT-lane evidence: the receipts whose Δs the judgment rested on
-    /// (ED-03, ARCH-0056 §5).
-    pub fn amendment(receipts: Vec<String>, at: u64) -> Result<Self> {
+    /// (ED-03, ARCH-0056 §5), and the measurement version they share.
+    pub fn amendment(receipts: Vec<String>, engine_ver: String, at: u64) -> Result<Self> {
         if receipts.is_empty() {
             return Err(invalid("an amendment-lane actor row must cite a receipt"));
         }
         Ok(Self {
-            lane: ActorClaimLane::Amendment { receipts },
+            lane: ActorClaimLane::Amendment {
+                receipts,
+                engine_ver,
+            },
             at,
         })
     }
@@ -130,11 +139,18 @@ impl ActorClaimEvidence {
                     Value::Array(receipts.iter().map(|r| Value::from(r.as_str())).collect()),
                 ));
             }
-            ActorClaimLane::Amendment { receipts } => {
+            ActorClaimLane::Amendment {
+                receipts,
+                engine_ver,
+            } => {
                 entries.push((Value::from(KEY_LANE), Value::from(LANE_AMENDMENT)));
                 entries.push((
                     Value::from(KEY_RECEIPTS),
                     Value::Array(receipts.iter().map(|r| Value::from(r.as_str())).collect()),
+                ));
+                entries.push((
+                    Value::from(KEY_ENGINE_VER),
+                    Value::from(engine_ver.as_str()),
                 ));
             }
             ActorClaimLane::Chat { session, turns } => {
