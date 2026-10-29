@@ -66,9 +66,10 @@ pub use step::{
 };
 pub(crate) use step::{
     StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim, forget_step_memo,
-    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
-    signal_step_wait_in_txn, verified_step_consolidation_eligible_in_txn,
-    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
+    forget_step_memo_in_txn, index_dreamer_step_claim_for_put, open_step_wait_in_txn,
+    register_detached_step_in_txn, signal_step_wait_in_txn,
+    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
+    wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
