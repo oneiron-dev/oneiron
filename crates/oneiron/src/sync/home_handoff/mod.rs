@@ -20,7 +20,9 @@
 //! actor's content apart ([`Partitioned`]). The actor content is sealed under
 //! an erasable key per actor and export ([`actor_content`]), not under the
 //! target's machine key, so an erase of the actor makes the retained and
-//! staged copies unreadable while the facts stay as history.
+//! staged copies unreadable while the facts stay as history. The keys travel
+//! to the target in a live key session, and every holder's copy is retired
+//! after an erase ([`key_transit`]).
 //!
 //! The election records its move request and L07-A's six tables register
 //! ([`home_tables`]). C2a's delivery ([`delivery`]) carries the handoff: the
@@ -43,6 +45,7 @@ mod arrival;
 mod delivery;
 mod drain;
 mod envelope;
+mod key_transit;
 mod lineage;
 mod registry;
 mod restore;
@@ -66,6 +69,10 @@ pub(crate) use delivery::{
 pub(crate) use drain::free_time_arming;
 pub(crate) use envelope::{
     HomeAck, SealedHandoff, VerifiedHandoff, VerifiedHomeAck, open_handoff, verify_ack,
+};
+pub(crate) use key_transit::{
+    KeySessionOffer, OwedRetirement, SentKey, note_retired, open_key_session, owed_retirements,
+    receive_keys, retire_held, retired_here, transit_keys,
 };
 pub(crate) use registry::{
     froze_home_state_in_txn, home_tables, pending_move_in_txn, takes_home_write_in_txn,
