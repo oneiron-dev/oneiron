@@ -19,6 +19,13 @@ pub(crate) const SOLO_FIELD: &str = "oneiron_solo";
 
 /// The most error text a 400 refusal keeps, in bytes.
 const MAX_REFUSAL_MESSAGE_BYTES: usize = 2048;
+/// The catalog row metadata key that names how its provider continues a
+/// trailing assistant message (FIX 3187).
+const PREFILL_WIRE_KEY: &str = "prefill_wire";
+/// [`PREFILL_WIRE_KEY`]'s value for a provider that continues a trailing
+/// assistant message only when it carries `"prefix": true` (DeepSeek,
+/// Mistral).
+const PREFILL_WIRE_PREFIX: &str = "prefix";
 
 pub fn build_openai_chat_request(
     config: &OpenAiCompatConfig,
@@ -106,16 +113,29 @@ pub fn build_openai_chat_request(
     // Only the selected offer's own declaration sends assistant reasoning
     // apart; no param, provider option or model name turns it on.
     let reasoning_history = catalog.supports(&LlmCapability::ReasoningContentHistory);
-    body.insert(
-        "messages".to_owned(),
-        JsonValue::Array(
-            request
-                .messages
-                .iter()
-                .map(|message| openai_message(message, reasoning_history))
-                .collect::<Vec<_>>(),
-        ),
-    );
+    let mut messages = request
+        .messages
+        .iter()
+        .map(|message| openai_message(message, reasoning_history))
+        .collect::<Vec<_>>();
+    // A trailing assistant message is the prefill the reply continues. A
+    // row whose provider continues it only on the flag says so in its
+    // metadata, and only a row with the prefill capability sends it.
+    if request
+        .messages
+        .last()
+        .is_some_and(|message| message.role == LlmMessageRole::Assistant)
+        && catalog.supports(&LlmCapability::AssistantPrefill)
+        && catalog
+            .metadata
+            .get(PREFILL_WIRE_KEY)
+            .and_then(JsonValue::as_str)
+            == Some(PREFILL_WIRE_PREFIX)
+        && let Some(JsonValue::Object(last)) = messages.last_mut()
+    {
+        last.insert("prefix".to_owned(), JsonValue::Bool(true));
+    }
+    body.insert("messages".to_owned(), JsonValue::Array(messages));
     body.insert("stream".to_owned(), JsonValue::Bool(stream));
     if stream {
         body.insert("stream_options".into(), json!({"include_usage":true}));
