@@ -192,51 +192,40 @@ pub(in crate::runtime_hooks::verb) fn open(
         hidden.to_hex(),
         binding_id.to_hex()
     );
-    let save = |ask: EntityId| -> bool {
-        keep.save_ask(
-            vault,
-            key,
-            call.invocation.0,
-            SessionVerbAsk {
-                verb: call.verb.clone(),
-                actor: call.actor,
-                class: call.class,
-                args: args.clone(),
-                position,
-                binding: binding_id,
-                hook: format!("{}/{}", binding.pack, binding.hook),
-                author: binding.author_id(),
-                author_class: binding.author_class(),
-                ask,
-                used: false,
-                route: route.clone(),
-            },
-        )
-    };
-    let opened = author_memory(vault, binding.author_id(), binding.author_class(), turn)
-        .tasks_ask_with_txn_effect(&spec, |txn, ask| {
-            write(txn).map_err(MemoryError::from)?;
-            if save(ask) {
-                Ok(())
-            } else {
-                Err(MemoryError::from(ended(key)))
-            }
-        });
-    let receipt = match opened {
-        Ok(receipt) => receipt,
+    let parts = match author_memory(vault, binding.author_id(), binding.author_class(), turn)
+        .session_ask_parts(&spec)
+    {
+        Ok(parts) => parts,
         Err(error) => return Ok(Err(format!("{}: {}", error.code, error.message))),
     };
-    let group = receipt.handle.group_ref;
-    if receipt.idempotent_replay {
-        // The ask stood from an earlier try in this process whose pause was
-        // not kept here. An unused pause of it under the key stands.
-        vault.with_write_txn_grouped(|txn| write(txn))?;
-        let kept = keep
-            .ask(key, call.invocation.0)
-            .is_some_and(|row| row.ask == group && !row.used);
-        if !kept && !save(group) {
-            return Ok(Err(ended(key).to_string()));
-        }
+    let group = parts.group_ref;
+    let paused = SessionVerbAsk {
+        verb: call.verb.clone(),
+        actor: call.actor,
+        class: call.class,
+        args: args.clone(),
+        position,
+        binding: binding_id,
+        hook: format!("{}/{}", binding.pack, binding.hook),
+        author: binding.author_id(),
+        author_class: binding.author_class(),
+        ask: group,
+        used: false,
+        route: route.clone(),
+    };
+    let Some((_receipt, idempotent, pause_existed)) = keep.open_ask(
+        vault,
+        key,
+        parts,
+        paused,
+        call.invocation.0,
+        vault.store.clock.now_recorded_at(),
+    ) else {
+        return Ok(Err(ended(key).to_string()));
+    };
+    if let Err(error) = vault.with_write_txn_grouped(write) {
+        keep.discard_ask(key, group, call.invocation.0, idempotent, pause_existed);
+        return Err(error);
     }
     Ok(Ok(group))
 }

@@ -113,7 +113,14 @@ pub fn read_blocked_receipt(vault: &Vault, id: &EntityId) -> Result<Option<Block
     {
         return Ok(None);
     }
-    let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+    decode_blocked_receipt(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
+}
+
+/// The receipt a canonical witnessed MESSAGE body carries, decoded from
+/// already-admitted bytes (FIX 10812): the body's witness, its companion
+/// author and receipt type, its prefix and its content checks. Ordinary
+/// speech and malformed bodies are not blocked reports.
+pub(crate) fn decode_blocked_receipt(body: &[u8]) -> Result<Option<BlockedReceipt>> {
     if crate::gate::validate_canonical_witness_message_body(body).is_err() {
         return Ok(None);
     }

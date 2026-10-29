@@ -169,6 +169,12 @@ impl StoredAggregate {
 pub(super) struct StoredExecutor {
     pub(super) v: u8,
     pub(super) executor: String,
+    /// The anchored task outcome this receipt's fold counted, so the
+    /// settle-time refold adjusts the head's counts instead of recounting
+    /// (FIX 11618). Absent on a row written before refolds, and on a fold
+    /// that counted none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) outcome: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

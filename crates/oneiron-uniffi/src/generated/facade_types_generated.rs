@@ -6020,6 +6020,16 @@ pub struct PinnedRef {
     pub digest: String,
 }
 
+/// `oneiron_browser::library::live_run::SecretArg`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(deny_unknown_fields)]
+pub enum SecretArg {
+    #[serde(rename = "handle")]
+    Handle(String),
+    #[serde(rename = "text")]
+    Text(String),
+}
+
 /// `oneiron::task_verb::brief::WorkflowBinding`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -6028,6 +6038,12 @@ pub struct WorkflowBinding {
     pub handle: String,
     #[serde(rename = "args", default, skip_serializing_if = "Option::is_none")]
     pub args: Option<std::collections::HashMap<String, String>>,
+    #[serde(
+        rename = "secret_args",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_args: Option<std::collections::HashMap<String, SecretArg>>,
 }
 
 /// `oneiron::task_verb::brief::BriefContext`.
@@ -17349,6 +17365,11 @@ pub enum HookReplayOutcome {
         from_memo: bool,
         #[serde(rename = "reads_live")]
         reads_live: bool,
+    },
+    #[serde(rename = "withheld")]
+    Withheld {
+        #[serde(rename = "reason")]
+        reason: String,
     },
     #[serde(rename = "missing_history")]
     MissingHistory {
@@ -32328,6 +32349,12 @@ pub struct PackAttributionFields {
     pub type_ref: CellTypeRef,
     #[serde(rename = "executor")]
     pub executor: String,
+    #[serde(
+        rename = "agent_definition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_definition: Option<String>,
     #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
     pub judge: Option<String>,
     #[serde(rename = "pattern")]
@@ -35154,6 +35181,12 @@ pub struct HookGoldenDiff {
     pub cases: u64,
     #[serde(rename = "changed")]
     pub changed: Vec<String>,
+    #[serde(rename = "execution_failed")]
+    pub execution_failed: Vec<String>,
+    #[serde(rename = "withheld")]
+    pub withheld: Vec<String>,
+    #[serde(rename = "missing_history")]
+    pub missing_history: Vec<String>,
 }
 
 /// `oneiron::runtime_hooks::regen::HookRegenFailurePhase`.
@@ -66831,16 +66864,6 @@ pub struct WorkflowSeed {
     pub digest: String,
     #[serde(rename = "license")]
     pub license: String,
-}
-
-/// `oneiron_browser::library::live_run::SecretArg`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(deny_unknown_fields)]
-pub enum SecretArg {
-    #[serde(rename = "handle")]
-    Handle(String),
-    #[serde(rename = "text")]
-    Text(String),
 }
 
 /// `oneiron_browser::switch::SnapshotBounds`.

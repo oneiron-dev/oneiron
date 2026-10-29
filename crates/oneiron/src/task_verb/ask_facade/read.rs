@@ -13,6 +13,13 @@ impl Memory<'_> {
             return self.task_work_memory().tasks_ask_status(handle);
         }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
+        if let Some(status) = self.vault().verb_hook_state.session.status_ask(
+            self.vault(),
+            handle.group_ref,
+            self.actor(),
+        ) {
+            return status;
+        }
         let txn = self
             .vault()
             .store

@@ -117,8 +117,9 @@ pub(super) fn unresolved_append_reference_in_txn(
 }
 
 /// [`unresolved_append_reference_in_txn`] over `refs`, then over the TURN
-/// holding a quoted MESSAGE: the MESSAGE is read first, so an unreadable one
-/// says nothing of its TURN.
+/// holding a quoted MESSAGE, and the TURN holding a MESSAGE replied to
+/// (FIX 11086): the MESSAGE is read first, so an unreadable one says
+/// nothing of its TURN.
 pub(crate) fn require_append_references_in_txn(
     vault: &Vault,
     lane: &ScopedRead<'_>,
@@ -133,6 +134,17 @@ pub(crate) fn require_append_references_in_txn(
         let turn = super::quote::owning_turn_in(&vault.store, txn, &quote.message)?;
         if let Some(pointer) =
             unresolved_append_reference_in_txn(lane, txn, &[("/quote/turn".to_owned(), turn)])?
+        {
+            return Err(AppendFailure::Unresolved(pointer));
+        }
+    }
+    if let Some(reply_to) = input.reply_to
+        && vault.get_entity_type_in_txn(txn, &reply_to)?
+            == Some(crate::registry::ENTITY_TYPE_MESSAGE)
+    {
+        let turn = super::quote::owning_turn_in(&vault.store, txn, &reply_to)?;
+        if let Some(pointer) =
+            unresolved_append_reference_in_txn(lane, txn, &[("/reply_to/turn".to_owned(), turn)])?
         {
             return Err(AppendFailure::Unresolved(pointer));
         }
