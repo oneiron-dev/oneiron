@@ -36,9 +36,10 @@ use futures_util::{Sink, Stream};
 use oneiron::llm::media::{AiOperation, MediaBackend, MediaFuture, MediaRequest, MediaResponse};
 use oneiron::llm::run_admission::OfferBinding;
 use oneiron::voice_cascade::media::{LeasedAsrStream, MediaVoiceRoute, VoiceStreamDoor};
-use oneiron::voice_cascade::soniox::{SonioxAsrClient, SonioxTransport, SonioxUpdate};
+use oneiron::voice_cascade::soniox::{SonioxAsrClient, SonioxUpdate};
+use oneiron::voice_cascade::spilled_audio::{AudioSpool, SpilledAudio};
 use oneiron::voice_cascade::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
-use oneiron::{BudgetLease, FatalLlmError};
+use oneiron::{BudgetLease, FatalLlmError, Vault};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -51,6 +52,7 @@ use super::cooldown::OfferCooldowns;
 use super::offer::media_offer;
 use crate::config::models::{LiveAsrOptions, ModelsConfig, ProviderConfig};
 
+mod queues;
 // A live hearing's rate and quota limits, waited out (FIX 9515).
 mod quota;
 // The providers' one limit vocabulary, as every offer rest reads it.
@@ -192,149 +194,12 @@ pub(super) fn live_backend(provider: &ProviderConfig) -> anyhow::Result<Arc<dyn 
     Ok(Arc::new(LiveOnly))
 }
 
-/// The Soniox client's transport: frames queue here, in order, and the
-/// live hearing sends them as the socket takes them. A slow socket is waited
-/// on, never refused (Rule 5).
-#[derive(Default)]
-struct Outbox {
-    frames: VecDeque<Message>,
-}
-
-impl Outbox {
-    fn push(&mut self, frame: Message) -> oneiron::Result<()> {
-        self.frames.push_back(frame);
-        Ok(())
-    }
-
-    fn pop(&mut self) -> Option<Message> {
-        self.frames.pop_front()
-    }
-}
-
-impl SonioxTransport for Outbox {
-    fn submit_audio(&mut self, bytes: &[u8]) -> oneiron::Result<()> {
-        self.push(Message::binary(bytes.to_vec()))
-    }
-
-    fn submit_finalize(&mut self) -> oneiron::Result<()> {
-        self.push(Message::text(FINALIZE))
-    }
-
-    fn submit_end(&mut self) -> oneiron::Result<()> {
-        self.push(Message::binary(Vec::new()))
-    }
-}
-
-/// What a segment sent that Soniox has not made final yet, in order: its
-/// audio, and each cut whose `<fin>` has not come. A dropped socket's next
-/// segment hears it again.
-struct Journal {
-    /// Each item sent, at the byte of the segment's audio it follows.
-    sent: VecDeque<(u64, Held)>,
-    /// Audio bytes the segment has sent.
-    end: u64,
-    /// Bytes per sample frame (every channel), and per second.
-    frame_bytes: u64,
-    per_second: u64,
-}
-
-impl Journal {
-    fn new(sample_rate: u32, channels: u16) -> Self {
-        let frame_bytes = u64::from(channels.max(1)) * 2;
-        Self {
-            sent: VecDeque::new(),
-            end: 0,
-            frame_bytes,
-            per_second: u64::from(sample_rate) * frame_bytes,
-        }
-    }
-
-    /// A frame the socket took. Its audio stays until Soniox makes it final,
-    /// however long that takes: none is dropped by size (Rule 5).
-    fn record(&mut self, frame: &Message) {
-        match frame {
-            Message::Binary(pcm) if !pcm.is_empty() => {
-                self.sent.push_back((self.end, Held::Audio(pcm.to_vec())));
-                self.end = self.end.saturating_add(pcm.len() as u64);
-            }
-            Message::Text(text) if text.as_str() == FINALIZE => {
-                self.sent.push_back((self.end, Held::Cut));
-            }
-            // Its config, a keepalive, its end.
-            _ => {}
-        }
-    }
-
-    /// What one frame said: each `<fin>` answers the oldest cut, and the
-    /// audio Soniox made final (its `final_audio_proc_ms`, or the end of the
-    /// last final word) leaves.
-    fn heard(&mut self, frame: &serde_json::Value, updates: &[SonioxUpdate]) {
-        for _ in updates
-            .iter()
-            .filter(|update| matches!(update, SonioxUpdate::Finalized))
-        {
-            if let Some(at) = self
-                .sent
-                .iter()
-                .position(|(_, held)| matches!(held, Held::Cut))
-            {
-                self.sent.remove(at);
-            }
-        }
-        let words = updates
-            .iter()
-            .filter_map(|update| match update {
-                SonioxUpdate::Asr(event) => Some(event.tokens.iter()),
-                SonioxUpdate::Finalized => None,
-            })
-            .flatten()
-            .filter(|token| token.is_final)
-            .filter_map(|token| token.end_ms);
-        let processed = frame
-            .get("final_audio_proc_ms")
-            .and_then(serde_json::Value::as_f64);
-        let Some(ms) = words.chain(processed).reduce(f64::max) else {
-            return;
-        };
-        if !ms.is_finite() || ms <= 0.0 {
-            return;
-        }
-        let byte = (ms / 1_000.0 * self.per_second as f64) as u64;
-        self.confirm(byte / self.frame_bytes * self.frame_bytes);
-    }
-
-    /// Drops the audio before byte `upto`; cuts stay until their `<fin>`.
-    fn confirm(&mut self, upto: u64) {
-        self.sent.retain_mut(|(at, held)| {
-            let Held::Audio(pcm) = held else {
-                return true;
-            };
-            let end = at.saturating_add(pcm.len() as u64);
-            if end <= upto {
-                return false;
-            }
-            if *at < upto {
-                let made_final =
-                    usize::try_from(upto - *at).map_or(pcm.len(), |n| n.min(pcm.len()));
-                pcm.drain(..made_final);
-                *at = upto;
-            }
-            true
-        });
-    }
-
-    /// What the next segment hears again, in order.
-    fn replay(self) -> VecDeque<Held> {
-        self.sent.into_iter().map(|(_, held)| held).collect()
-    }
-}
-
 /// One socket and the lease its audio is metered on.
 struct Segment {
-    stream: LeasedAsrStream<SonioxAsrClient<Outbox>>,
+    stream: LeasedAsrStream<SonioxAsrClient<queues::Outbox>>,
     socket: Socket,
     /// What it sent that Soniox has not made final.
-    journal: Journal,
+    journal: queues::Journal,
     /// Its end is queued: it is read on until `finished`.
     ending: bool,
 }
@@ -348,9 +213,11 @@ impl Segment {
         route: MediaVoiceRoute,
         sample_rate: u32,
         channels: u16,
+        spool: Arc<AudioSpool>,
+        vault: Arc<Vault>,
     ) -> oneiron::Result<Self> {
-        let mut outbox = Outbox::default();
-        outbox.push(Message::text(rung.config(sample_rate, channels)))?;
+        let mut outbox = queues::Outbox::new(Arc::clone(&spool), Arc::clone(&vault));
+        outbox.push_text(rung.config(sample_rate, channels))?;
         let stream = LeasedAsrStream::open(
             &*door,
             &route,
@@ -375,7 +242,7 @@ impl Segment {
         Ok(Self {
             stream,
             socket,
-            journal: Journal::new(sample_rate, channels),
+            journal: queues::Journal::new(sample_rate, channels, spool, vault),
             ending: false,
         })
     }
@@ -397,7 +264,27 @@ impl Segment {
             let Some(frame) = self.stream.inner_mut().transport_mut().pop() else {
                 break;
             };
-            self.journal.record(&frame);
+            // A spilled frame is read back only now, for the socket; one
+            // that cannot be read waits for the next segment unsent.
+            let frame = match frame {
+                queues::OutFrame::Audio(audio) => match audio.bytes() {
+                    Ok(pcm) => {
+                        self.journal.record_audio(&pcm);
+                        Message::binary(pcm)
+                    }
+                    Err(error) => {
+                        self.stream
+                            .inner_mut()
+                            .transport_mut()
+                            .push_front(queues::OutFrame::Audio(audio));
+                        return Err(error);
+                    }
+                },
+                queues::OutFrame::Text(text) => {
+                    self.journal.record_text(&text);
+                    Message::text(text)
+                }
+            };
             Pin::new(&mut self.socket)
                 .start_send(frame)
                 .map_err(|error| socket_error(&error))?;
@@ -430,7 +317,7 @@ impl Segment {
                 self.stream
                     .inner_mut()
                     .transport_mut()
-                    .push(Message::text(r#"{"type":"keepalive"}"#))?;
+                    .push_text(r#"{"type":"keepalive"}"#.to_owned())?;
                 quiet
                     .as_mut()
                     .reset(tokio::time::Instant::now() + KEEPALIVE_AFTER);
@@ -489,12 +376,6 @@ fn socket_error(error: &tokio_tungstenite::tungstenite::Error) -> oneiron::Error
     invalid(&format!("socket: {error}"))
 }
 
-/// What waits for the next segment, in the order the owner said it.
-enum Held {
-    Audio(Vec<u8>),
-    Cut,
-}
-
 /// One call's live hearing: a segment after another on the route's rung,
 /// each on a lease of its own. It is polled beside the call's connection
 /// ([`Self::next`]), never detached and never under the session lock, and
@@ -508,7 +389,13 @@ pub(crate) struct SonioxLive {
     channels: u16,
     segment: Option<Segment>,
     opening: Option<Opening>,
-    held: VecDeque<Held>,
+    held: VecDeque<queues::Held>,
+    /// Where audio that outgrows each queue's bound spills (FIX 3728),
+    /// and the vault its floor is asked against.
+    spool: Arc<AudioSpool>,
+    vault: Arc<Vault>,
+    /// Held audio bytes still in memory, against the spool's bound.
+    held_inline: u64,
     /// Final words a rolled-over segment heard for the utterance still open.
     carried: Vec<AsrToken>,
     /// The owner's audio ended: no segment opens after this one.
@@ -536,6 +423,7 @@ impl ModelRuntime {
     pub(crate) fn open_voice_asr(
         &self,
         door: Arc<dyn VoiceStreamDoor>,
+        vault: Arc<Vault>,
         route: &MediaVoiceRoute,
         sample_rate: u32,
         channels: u16,
@@ -544,6 +432,12 @@ impl ModelRuntime {
             return Ok(None);
         };
         route.stream_request(sample_rate, channels)?;
+        // A body directory that would not open never refuses the hearing:
+        // its audio is held in memory, as it always was (FIX 3728).
+        let spool = Arc::new(AudioSpool::new(&vault).unwrap_or_else(|error| {
+            tracing::warn!(%error, "live hearing audio held in memory; its spill directory did not open");
+            AudioSpool::unspilled(&vault)
+        }));
         let mut live = SonioxLive {
             rung,
             door,
@@ -553,6 +447,9 @@ impl ModelRuntime {
             segment: None,
             opening: None,
             held: VecDeque::new(),
+            spool,
+            vault,
+            held_inline: 0,
             carried: Vec::new(),
             ending: false,
             closed: false,
@@ -575,6 +472,8 @@ impl SonioxLive {
             self.route.clone(),
             self.sample_rate,
             self.channels,
+            Arc::clone(&self.spool),
+            Arc::clone(&self.vault),
         ))
     }
 
@@ -604,8 +503,12 @@ impl SonioxLive {
             segment.stream.inner_mut().end()?;
             segment.ending = true;
         }
-        // Held however long the next segment takes to open (Rule 5).
-        self.held.push_back(Held::Audio(pcm.to_vec()));
+        // Held however long the next segment takes to open (Rule 5);
+        // past the inline bound it waits spilled (FIX 3728).
+        let spill = self.held_inline.saturating_add(pcm.len() as u64) > self.spool.inline_limit();
+        let audio = self.spool.take(&self.vault, pcm.to_vec(), spill);
+        self.held_inline = self.held_inline.saturating_add(audio.inline_bytes());
+        self.held.push_back(queues::Held::Audio(audio));
         Ok(())
     }
 
@@ -619,7 +522,7 @@ impl SonioxLive {
         match self.live_segment() {
             Some(segment) => segment.stream.inner_mut().finalize(),
             None => {
-                self.held.push_back(Held::Cut);
+                self.held.push_back(queues::Held::Cut);
                 Ok(())
             }
         }
@@ -633,6 +536,7 @@ impl SonioxLive {
         }
         self.ending = true;
         self.held.clear();
+        self.held_inline = 0;
         // A segment still opening is dropped, and its lease cancelled.
         self.opening = None;
         match &mut self.segment {
@@ -742,16 +646,28 @@ impl SonioxLive {
         let (words, _) = client.dropped();
         while let Some(frame) = client.transport_mut().pop() {
             match frame {
-                Message::Binary(pcm) if !pcm.is_empty() => {
-                    unsent.push_back(Held::Audio(pcm.to_vec()))
+                queues::OutFrame::Audio(audio) if !audio.is_empty() => {
+                    unsent.push_back(queues::Held::Audio(audio))
                 }
-                Message::Text(text) if text.as_str() == FINALIZE => unsent.push_back(Held::Cut),
+                queues::OutFrame::Text(text) if text == FINALIZE => {
+                    unsent.push_back(queues::Held::Cut)
+                }
                 // Its config, a keepalive, its end.
                 _ => {}
             }
         }
         unsent.append(&mut self.held);
         self.held = unsent;
+        // What moved kept the form it was taken in; the count is the
+        // merged whole's (FIX 3728).
+        self.held_inline = self
+            .held
+            .iter()
+            .map(|held| match held {
+                queues::Held::Audio(audio) => audio.inline_bytes(),
+                queues::Held::Cut => 0,
+            })
+            .fold(0u64, |total, bytes| total.saturating_add(bytes));
         self.carried.extend(words);
         Ok(if self.carried.is_empty() {
             Vec::new()
@@ -772,13 +688,14 @@ impl SonioxLive {
         let segment = self.segment.as_mut().ok_or_else(|| invalid("no segment"))?;
         let mut took_audio = false;
         while let Some(held) = self.held.pop_front() {
-            let mut pcm = match held {
-                Held::Audio(pcm) => pcm,
-                Held::Cut => {
+            let mut audio = match held {
+                queues::Held::Audio(audio) => audio,
+                queues::Held::Cut => {
                     segment.stream.inner_mut().finalize()?;
                     continue;
                 }
             };
+            self.held_inline = self.held_inline.saturating_sub(audio.inline_bytes());
             // Whole sample frames within the lease, one millisecond short
             // for its rounding up, as `accept_audio` leaves.
             let fits = segment
@@ -789,16 +706,48 @@ impl SonioxLive {
                 / 1_000;
             let fits = usize::try_from(fits / frame_bytes * frame_bytes).unwrap_or(usize::MAX);
             // A fresh lease that takes no audio at all refuses it as before.
-            if pcm.len() <= fits || (fits == 0 && !took_audio) {
-                segment.stream.accept_audio(&pcm)?;
+            // Audio that cannot be read, or that the segment will not take,
+            // waits where it was: its bytes return to `held` ahead of the
+            // rest, as a frame `Segment::send` cannot read does.
+            if audio.len() <= fits as u64 || (fits == 0 && !took_audio) {
+                let pcm = match audio.bytes() {
+                    Ok(pcm) => pcm,
+                    Err(error) => {
+                        self.held_inline = self.held_inline.saturating_add(audio.inline_bytes());
+                        self.held.push_front(queues::Held::Audio(audio));
+                        return Err(error);
+                    }
+                };
+                if let Err(error) = segment.stream.accept_audio(&pcm) {
+                    self.held_inline = self.held_inline.saturating_add(audio.inline_bytes());
+                    self.held.push_front(queues::Held::Audio(audio));
+                    return Err(error);
+                }
                 took_audio = true;
                 continue;
             }
-            let rest = pcm.split_off(fits);
-            if !pcm.is_empty() {
-                segment.stream.accept_audio(&pcm)?;
+            let front = match audio.split_front(fits as u64) {
+                Ok(front) => front,
+                Err(error) => {
+                    self.held_inline = self.held_inline.saturating_add(audio.inline_bytes());
+                    self.held.push_front(queues::Held::Audio(audio));
+                    return Err(error);
+                }
+            };
+            if !front.is_empty() {
+                if let Err(error) = segment.stream.accept_audio(&front) {
+                    // The front never reached the segment, and the remainder
+                    // never left: both wait, in order, ahead of the rest.
+                    self.held_inline = self.held_inline.saturating_add(audio.inline_bytes());
+                    self.held.push_front(queues::Held::Audio(audio));
+                    let front = SpilledAudio::inline(front);
+                    self.held_inline = self.held_inline.saturating_add(front.inline_bytes());
+                    self.held.push_front(queues::Held::Audio(front));
+                    return Err(error);
+                }
             }
-            self.held.push_front(Held::Audio(rest));
+            self.held_inline = self.held_inline.saturating_add(audio.inline_bytes());
+            self.held.push_front(queues::Held::Audio(audio));
             segment.stream.inner_mut().end()?;
             segment.ending = true;
             break;

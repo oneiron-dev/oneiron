@@ -53,7 +53,7 @@ impl Memory<'_> {
     /// The census of `input` for the group `group_ref`: its recipients and
     /// class, its effective spec, its rules, and one validated member TASK
     /// per recipient. It writes nothing but the route vetoes it reads.
-    pub(super) fn ask_census_in(
+    pub(in super::super) fn ask_census_in(
         &self,
         txn: &heed::RoTxn<'_>,
         input: &TaskAskSpec,
