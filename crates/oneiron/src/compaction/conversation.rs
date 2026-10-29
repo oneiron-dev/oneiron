@@ -99,7 +99,7 @@ pub enum ConversationCompactionUnavailable {
 impl ConversationCompactionUnavailable {
     /// The stable name a log line carries.
     #[must_use]
-    pub const fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::Off(why) => why.as_str(),
             Self::Writer(why) => why.as_str(),
@@ -153,15 +153,15 @@ pub struct ConversationFlight<'a> {
 /// # Errors
 ///
 /// Why no flight runs; the driver is let go with the error.
-pub fn seal_conversation_flight(
-    vault: &Vault,
-    driver: &mut CompactionDriver,
+pub fn seal_conversation_flight<'a>(
+    vault: &'a Vault,
+    driver: &'a mut CompactionDriver,
     policy: CompactionGatePolicy,
     byline: WriteActor,
     captured: Option<Result<LiveCompactionFork, SelfCompactionUnavailable>>,
-    log: &ChatLog,
+    log: &'a ChatLog,
     job: EntityId,
-) -> Result<ConversationFlight<'_>, ConversationCompactionUnavailable> {
+) -> Result<ConversationFlight<'a>, ConversationCompactionUnavailable> {
     use ConversationCompactionUnavailable as Why;
     match driver.observe_from_context_build(vault, log.uncompacted_tokens) {
         Ok(CompactionDirective::Begin { .. }) => {}
@@ -311,7 +311,7 @@ impl ConversationFlight<'_> {
     /// Runs the flight's passes on its frozen fork, files every paid try,
     /// and lands an accepted summary with its receipt and its check.
     #[must_use]
-    pub fn fly(mut self, vault: &Vault) -> ConversationFlightOutcome {
+    pub fn fly(self, vault: &Vault) -> ConversationFlightOutcome {
         let backend = std::sync::Arc::clone(self.driver.backend());
         let (pass, mut execution) = run_pass(backend.as_ref(), &self.request, &self.policy);
         if let Some(execution) = execution.as_mut() {
