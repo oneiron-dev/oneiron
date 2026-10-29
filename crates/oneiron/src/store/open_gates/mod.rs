@@ -3,6 +3,10 @@
 //! ABI/schema gates, HNSW config and embedding-model gates, and open-time
 //! migrations. The exact gate order is documented on [`crate::store`].
 
+mod create_commit;
+mod create_dbs;
+mod create_env;
+mod create_preflight;
 mod custody_pad_rows;
 mod embedding_transform_gates;
 mod hnsw_model_gates;
