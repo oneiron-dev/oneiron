@@ -51,7 +51,7 @@ pub(crate) async fn with_calling_line<F: std::future::Future>(
 }
 
 /// The line the calling code-mode run spends on, when its dispatch bound one.
-fn calling_line() -> Option<RunAdmission> {
+pub(crate) fn calling_line() -> Option<RunAdmission> {
     CALLING_LINE.try_with(Clone::clone).ok()
 }
 
