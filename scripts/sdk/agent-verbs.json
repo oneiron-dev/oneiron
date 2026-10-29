@@ -8384,6 +8384,19 @@
       "section": false
     },
     {
+      "name": "vault.lenses.export_pack",
+      "description": "Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt.",
+      "input": "crate::lens::LensPackExportRequest",
+      "output": "crate::lens::LensPackExport",
+      "call": "memory.lenses_export_pack(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.lenses.select",
       "description": "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card.",
       "input": "crate::lens::LensSelectRequest",

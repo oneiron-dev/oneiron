@@ -549,6 +549,7 @@ pub enum AgentVerb {
     VaultLensesActivate,
     VaultLensesDeactivate,
     VaultLensesList,
+    VaultLensesExportPack,
     VaultLensesSelect,
     VaultLensesResolve,
     VaultLensesResultSetAction,
@@ -1740,6 +1741,7 @@ impl AgentVerb {
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
+        Self::VaultLensesExportPack,
         Self::VaultLensesSelect,
         Self::VaultLensesResolve,
         Self::VaultLensesResultSetAction,
@@ -2948,6 +2950,7 @@ impl AgentVerb {
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesExportPack => "vault.lenses.export_pack",
             Self::VaultLensesSelect => "vault.lenses.select",
             Self::VaultLensesResolve => "vault.lenses.resolve",
             Self::VaultLensesResultSetAction => "vault.lenses.result_set.action",
@@ -4155,6 +4158,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesExportPack
                 | Self::VaultLensesSelect
                 | Self::VaultLensesResolve
                 | Self::VaultLensesResultSetAction
@@ -5375,6 +5379,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesExportPack
                 | Self::VaultLensesSelect
                 | Self::VaultLensesResolve
                 | Self::VaultLensesResultSetAction
@@ -6720,6 +6725,7 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesExportPack
                 | Self::VaultLensesSelect
                 | Self::VaultLensesResolve
                 | Self::VaultLensesResultSetAction
@@ -8597,6 +8603,7 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesExportPack => &["spec"],
             Self::VaultLensesSelect => &["spec"],
             Self::VaultLensesResolve => &["spec"],
             Self::VaultLensesResultSetAction => &["spec"],
@@ -9789,6 +9796,7 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesExportPack => &["spec"],
             Self::VaultLensesSelect => &["spec"],
             Self::VaultLensesResolve => &["spec"],
             Self::VaultLensesResultSetAction => &["spec"],
@@ -12043,6 +12051,9 @@ impl AgentVerb {
             }
             Self::VaultLensesList => {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
+            }
+            Self::VaultLensesExportPack => {
+                "Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."
             }
             Self::VaultLensesSelect => {
                 "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."

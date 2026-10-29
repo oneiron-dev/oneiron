@@ -579,6 +579,7 @@ vaultLensesPropose(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
+vaultLensesExportPack(input: unknown): unknown
 vaultLensesSelect(input: unknown): unknown
 vaultLensesResolve(input: unknown): unknown
 vaultLensesResultSetAction(input: unknown): unknown

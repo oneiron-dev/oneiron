@@ -17419,6 +17419,28 @@ async fn vault_lenses_list(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_lenses_export_pack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.lenses.export_pack",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_lenses_select(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37802,6 +37824,7 @@ pub(crate) async fn call_verb(
         "vault.lenses.activate" => vault_lenses_activate(server, call, input).await,
         "vault.lenses.deactivate" => vault_lenses_deactivate(server, call, input).await,
         "vault.lenses.list" => vault_lenses_list(server, call, input).await,
+        "vault.lenses.export_pack" => vault_lenses_export_pack(server, call, input).await,
         "vault.lenses.select" => vault_lenses_select(server, call, input).await,
         "vault.lenses.resolve" => vault_lenses_resolve(server, call, input).await,
         "vault.lenses.result_set.action" => {

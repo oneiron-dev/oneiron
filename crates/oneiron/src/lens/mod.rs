@@ -16,7 +16,8 @@
 //! - `proposal`, `activation` — pack lens proposals and the owner's slot
 //!   selection (`vault.lenses.*`); `actor_erase` — an erased actor out of
 //!   both; `regen` — enacting a regeneration outcome through those doors;
-//!   `sdk` — the default vault projection verb.
+//!   `pack_export` — a lens as a portable pack file (FIX 1192); `sdk` — the
+//!   default vault projection verb.
 //! - `record_ref` — OF-063 typed record refs and their scoped resolution.
 
 mod activation;
@@ -47,6 +48,10 @@ mod generated_ui;
 mod mediation;
 mod mount;
 pub use mount::LensMount;
+mod pack_export;
+pub use pack_export::{
+    LENS_PACK_SCHEMA, LensPackExport, LensPackExportReceipt, LensPackExportRequest, LensPackFile,
+};
 mod proposal;
 mod regen;
 pub use activation::{

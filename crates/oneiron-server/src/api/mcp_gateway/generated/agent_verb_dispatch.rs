@@ -683,6 +683,7 @@ fn mcp_agent_verb_input(
         "vault.lenses.activate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.deactivate" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.lenses.export_pack" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.select" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.lenses.result_set.action" => a.spec.clone().ok_or_else(invalid),
@@ -3106,6 +3107,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.lenses.export_pack" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.lenses.select" => {
@@ -13256,6 +13260,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::lens::LensListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_lenses_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.lenses.export_pack" => {
+            let input: oneiron::lens::LensPackExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_lenses_export_pack(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

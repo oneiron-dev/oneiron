@@ -2726,6 +2726,11 @@ export_facade! {
     let output = client.vault_lenses_list(&input)?;
     crate::codec::lift_record("vault.lenses.list", &output)
 };
+"vault.lenses.export_pack" => fn vault_lenses_export_pack(&self, input: LensPackExportRequest) -> LensPackExport = |client| {
+    let input: oneiron::lens::LensPackExportRequest = crate::codec::lower_record("vault.lenses.export_pack", input)?;
+    let output = client.vault_lenses_export_pack(&input)?;
+    crate::codec::lift_record("vault.lenses.export_pack", &output)
+};
 "vault.lenses.select" => fn vault_lenses_select(&self, input: LensSelectRequest) -> LensSelection = |client| {
     let input: oneiron::lens::LensSelectRequest = crate::codec::lower_record("vault.lenses.select", input)?;
     let output = client.vault_lenses_select(&input)?;

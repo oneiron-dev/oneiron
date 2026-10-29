@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1217 code-mode rows (1177 host rows, 40 run rows), 4256 declarations.
-// Replies: 1090 fully typed, 126 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1218 code-mode rows (1178 host rows, 40 run rows), 4259 declarations.
+// Replies: 1091 fully typed, 126 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: none.
 declare namespace Sdk {
@@ -2106,6 +2106,11 @@ declare namespace Sdk {
   type LensProposalState = "proposed" | "active";
   type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null };
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
+  type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
+  type TravelChoice = { born_with?: BornWithField[] };
+  type LensPackExportRequest = { lens_ref: string; travel?: TravelChoice | null };
+  type LensPackExportReceipt = { lens_ref: string; prompt_ref: string; skill_id: string; content_hash: string; travelled: BornWithField[] };
+  type LensPackExport = { pack_json: string; receipt: LensPackExportReceipt };
   type LensSelectionRange = { start: number; end: number; version?: number[] | null };
   type LensSelectRequest = { cardId: string; atomId: string; handle: string; span?: LensSelectionRange | null };
   type LensReadReach = "claim_set" | "entity_set" | "timeline" | "query_result";
@@ -2155,8 +2160,6 @@ declare namespace Sdk {
   type SecretGrantRenewRequest = { grant: string; ttl_secs?: number | null };
   type SecretGrantTeardownRequest = { grant: string };
   type SecretGrantUseRequest = { grant: string; operation: string; arguments?: unknown };
-  type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
-  type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
   type ShareCreated = { share_id: string; recipient: string; brief_ref: string; created_at: number; expires_at?: number | null; travel: TravelChoice };
   type ShareRevokeRequest = { share_ref: string };
@@ -6074,6 +6077,8 @@ declare const vault: Sdk.VaultHost & {
     deactivate(input: Sdk.LensDeactivateRequest): Promise<Sdk.LensActivationReceipt | StoredResult>;
     /** Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server. */
     default(input: Sdk.LensDefaultRequest): Promise<Sdk.ScopedReadResult<Sdk.LensFrameCard> | StoredResult>;
+    /** Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt. */
+    export_pack(input: Sdk.LensPackExportRequest): Promise<Sdk.LensPackExport | StoredResult>;
     /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */

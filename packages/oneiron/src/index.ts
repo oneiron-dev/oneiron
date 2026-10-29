@@ -1859,6 +1859,8 @@ export class Oneiron {
       deactivate: (input: Facade.LensDeactivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesDeactivate(input) as Facade.LensActivationReceipt),
       /** One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees. */
       list: (input: Facade.LensListRequest): Facade.LensListPage => this.#call(() => this.#client.vaultLensesList(input) as Facade.LensListPage),
+      /** Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt. */
+      export_pack: (input: Facade.LensPackExportRequest): Facade.LensPackExport => this.#call(() => this.#client.vaultLensesExportPack(input) as Facade.LensPackExport),
       /** Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card. */
       select: (input: Facade.LensSelectRequest): Facade.LensSelection => this.#call(() => this.#client.vaultLensesSelect(input) as Facade.LensSelection),
       /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */

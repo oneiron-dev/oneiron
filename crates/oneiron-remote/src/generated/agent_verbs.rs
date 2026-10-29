@@ -1706,6 +1706,9 @@ impl OneironClient {
                 "vault.lenses.list" => {
                     remote_agent_verb_output::<oneiron::lens::LensListPage>(client, verb, &input)
                 }
+                "vault.lenses.export_pack" => {
+                    remote_agent_verb_output::<oneiron::lens::LensPackExport>(client, verb, &input)
+                }
                 "vault.lenses.select" => {
                     remote_agent_verb_output::<oneiron::lens::LensSelection>(client, verb, &input)
                 }
@@ -10337,6 +10340,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.lenses.list", value)
+    }
+    pub fn vault_lenses_export_pack(
+        &self,
+        input: &oneiron::lens::LensPackExportRequest,
+    ) -> Result<oneiron::lens::LensPackExport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.lenses.export_pack", value)
     }
     pub fn vault_lenses_select(
         &self,
