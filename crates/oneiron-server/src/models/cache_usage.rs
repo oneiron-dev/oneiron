@@ -107,19 +107,27 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&Answe
     }
 }
 
-/// The llama.cpp worker that answered with `identity`: its build verified
-/// only by the manifest `answering`'s alias resolved to.
+/// The llama.cpp worker that answered with `identity`: verified artifacts
+/// only by the manifest `answering`'s alias resolved to; a runtime digest
+/// with no manifest is the reported version the fingerprint names.
 fn llama_worker(
     identity: CacheIdentity,
     answering: Option<&AnsweringIdentity>,
 ) -> WorkerDescriptor {
+    let verified = answering.is_some_and(|answering| {
+        answering.build_evidence() == WorkerBuildEvidence::VerifiedArtifacts
+    });
+    let build_evidence = if verified {
+        WorkerBuildEvidence::VerifiedArtifacts
+    } else if identity.runtime.is_some() {
+        WorkerBuildEvidence::ReportedVersion
+    } else {
+        WorkerBuildEvidence::Unknown
+    };
     WorkerDescriptor {
         kind: WorkerKind::LlamaCpp,
         identity,
-        build_evidence: answering.map_or(
-            WorkerBuildEvidence::Unknown,
-            AnsweringIdentity::build_evidence,
-        ),
+        build_evidence,
     }
 }
 
