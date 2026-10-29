@@ -106,8 +106,13 @@ impl Recall<'_> {
     }
 
     fn call(&self) -> anyhow::Result<Value> {
-        let mut bridge =
-            Bridge::start(self.oneiron, self.url, self.auth, self.deadline, Stdio::null())?;
+        let mut bridge = Bridge::start(
+            self.oneiron,
+            self.url,
+            self.auth,
+            self.deadline,
+            Stdio::null(),
+        )?;
         let result = self.exchange(&mut bridge);
         bridge.close();
         result

@@ -56,7 +56,6 @@ pub use pack_export::{
 mod proposal;
 mod regen;
 mod scope;
-pub use scope::LensScope;
 pub use activation::{
     LensActivateRequest, LensDeactivateRequest, activate_lens_embedded, deactivate_lens_embedded,
 };
@@ -68,6 +67,7 @@ pub use regen::{
     LensRegenDecision, LensRegenEnactment, enact_lens_regeneration_embedded,
     regenerate_and_enact_lens_embedded,
 };
+pub use scope::LensScope;
 mod sdk;
 pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource, WeaveLensRequest};
 mod record_ref;

@@ -216,8 +216,7 @@ pub(in crate::commands::owner) fn restore_fresh(
                     oneiron_keystore::default_platform_keystore(&[config.vault_path.as_path()])?
                 }
             };
-            let secret =
-                existing_machine_secret(keystore.as_ref(), vault_id, *machine.as_bytes())?;
+            let secret = existing_machine_secret(keystore.as_ref(), vault_id, *machine.as_bytes())?;
             if secret.is_none() {
                 pad_machine_note = Some(format!(
                     "this install holds no key of machine {id}: it opened nothing"
@@ -246,19 +245,19 @@ pub(in crate::commands::owner) fn restore_fresh(
     let mut added = None;
     let (vault, mut restored) =
         backup::restore_fresh(backup, path, target, &key, &custody, |vault| {
-        installed = config.keystore.install_on(vault, path);
-        unlock.unlock_live(vault)?;
-        // A device unlock of a plain vault wraps the key to this install on
-        // its own; a sealed vault's key is already held from its page seal.
-        let sealed = vault.vault_pages_sealed();
-        if installed && (sealed || !matches!(unlock, HostUnlock::Device)) {
-            vault.add_vault_key_device()?;
-        }
-        if let Some(wrap) = wrap {
-            added = Some(wrap.add(vault)?);
-        }
-        vault.check_page_custody()
-    })?;
+            installed = config.keystore.install_on(vault, path);
+            unlock.unlock_live(vault)?;
+            // A device unlock of a plain vault wraps the key to this install on
+            // its own; a sealed vault's key is already held from its page seal.
+            let sealed = vault.vault_pages_sealed();
+            if installed && (sealed || !matches!(unlock, HostUnlock::Device)) {
+                vault.add_vault_key_device()?;
+            }
+            if let Some(wrap) = wrap {
+                added = Some(wrap.add(vault)?);
+            }
+            vault.check_page_custody()
+        })?;
     if let Some(note) = pad_machine_note {
         restored.pad_notes.push(note);
     }
