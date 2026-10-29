@@ -2412,6 +2412,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/attempt_queue/engine/enqueue_claim/claim_scan.rs",
+     "purpose": "The read-only half of the generic claim scan (FIX 11664): what a claim would lease, repair and hold, read…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/attempt_queue/engine/enqueue_record.rs",
      "purpose": "The one storage write every enqueue door ends in: a fresh row, its readiness, run and dedupe entries, in the…",
      "surface": {
@@ -59125,7 +59135,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3,
       "re-export": 1,
       "struct": 1
@@ -59253,7 +59263,7 @@
      "path": "src/scope_summary/derivation.rs",
      "purpose": "Scope-summary derivation envelopes and change-driven re-derivation",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1,
       "struct": 5
      }
@@ -59712,7 +59722,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 2,
       "re-export": 2,
@@ -74481,7 +74491,8 @@
      "path": "src/vault/transactions/write_door.rs",
      "purpose": "The vault's classed write door: one logical write in the single writer's group commit, and the work its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -81386,7 +81397,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 59,
+     "files": 60,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82872,7 +82883,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5537,
+   "source_files": 5538,
    "test_files": 902
   },
   "oneiron-android": {
