@@ -145,6 +145,7 @@ impl Vault {
         if summary.settled {
             self.close_mirror_plan_in_txn(&mut txn, plan, summary.landed, false)?;
             txn.commit()?;
+            self.release_mirror_plan_pins(scope.wire, scope.handle, plan);
         }
         Ok(summary)
     }

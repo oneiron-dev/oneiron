@@ -25,7 +25,8 @@
 //! egress (`mirror_plan`, `mirror_review`), sends it in claimed, leased
 //! batches (`mirror_plan_dispatch`) and reconciles before any resend
 //! (`mirror_plan_reconcile`), in the LIVE store `ORIGIN_MIRROR_WORK`
-//! (`mirror_plan_store`).
+//! (`mirror_plan_store`); an open plan keeps what it sends pinned
+//! (`mirror_plan_pins`).
 
 mod approval;
 mod authority;
@@ -34,6 +35,7 @@ mod inputs;
 mod lifecycle;
 mod mirror_plan;
 mod mirror_plan_dispatch;
+mod mirror_plan_pins;
 mod mirror_plan_reconcile;
 mod mirror_plan_remote;
 mod mirror_plan_run;

@@ -220,7 +220,8 @@ impl Vault {
     }
 
     /// The census's sweep of this plane's pins in one repository: an exact
-    /// request's pin whose row is gone or settled. The caller holds the
+    /// request's pin whose row is gone or settled, and an automatic plan's
+    /// pin whose plan is not open (`mirror_plan_pins`). The caller holds the
     /// repository's coordinator. A sweep that fails only warns: a pin left
     /// behind keeps an object, never loses one.
     pub(crate) fn sweep_orphan_publish_pins(
@@ -232,6 +233,9 @@ impl Vault {
     ) {
         if let Err(error) = self.sweep_orphan_publish_request_pins(git, repo_id, repo, learned_at) {
             tracing::warn!(kind = ?error.kind(), "orphaned publish request pins were not swept");
+        }
+        if let Err(error) = self.sweep_settled_mirror_plan_pins(git, repo_id, repo, learned_at) {
+            tracing::warn!(kind = ?error.kind(), "settled mirror plan pins were not swept");
         }
     }
 
