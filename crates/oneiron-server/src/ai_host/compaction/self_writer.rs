@@ -30,7 +30,7 @@ use oneiron::code_run::{
 use oneiron::compaction::{
     CompactionBackend, CompactionCall, CompactionCheck, CompactionExecution, CompactionHomeRef,
     CompactionProduct, CompactionRefusal, CompactionRequest, CompactionTierClass,
-    SelfCompactionUnavailable, compaction_usage_projection,
+    SelfCompactionUnavailable, compaction_home_worn_rows, compaction_usage_projection,
 };
 use oneiron::llm::{
     ContentPart, ModelId, ModelLocality, SelfCompactionDefault, SelfCompactionSource,
@@ -274,21 +274,26 @@ impl SelfCompactionBackend {
             return Err(SelfCompactionUnavailable::ModelNotServed.refusal());
         };
         let admit = Admit::Exact { model, locality };
-        self.route.serve(request, retry, &admit, |call, room| {
-            let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
-            let home = frozen.home.render(compaction_home_budget(
-                room.context,
-                room.input,
-                room.output,
-                frame,
-            ));
-            if let Some(system) = call.messages.first_mut() {
-                system.content.push(ContentPart::Text {
-                    text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
-                });
-            }
-            Ok(home.refs)
-        })
+        let sources = request
+            .window_read_from_sources
+            .then_some(request.sources.clone());
+        self.route
+            .serve(request, retry, sources, &admit, |call, room| {
+                let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
+                let home = frozen.home.render(compaction_home_budget(
+                    room.context,
+                    room.input,
+                    room.output,
+                    frame,
+                ));
+                if let Some(system) = call.messages.first_mut() {
+                    system.content.push(ContentPart::Text {
+                        text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
+                    });
+                }
+                let home_rows = compaction_home_worn_rows(&home.refs).collect();
+                Ok((home.refs, Some(home_rows)))
+            })
     }
 
     /// One call of the frozen flight, and the source it ran on (FIX 6029).

@@ -226,7 +226,7 @@ pub fn seal_conversation_flight<'a>(
         driver.abandon();
         return Err(Why::Pending(stop.clone()));
     }
-    let Ok(request) = driver.seal_request(
+    let Ok(mut request) = driver.seal_request(
         vault,
         &window.session,
         window.messages,
@@ -238,6 +238,9 @@ pub fn seal_conversation_flight<'a>(
         driver.abandon();
         return Err(Why::WindowNotSealed);
     };
+    // This window was cut from the retained ledger's witnessed turn and
+    // message spans, not from caller-asserted or outcome-scanned ids.
+    request.window_read_from_sources = true;
     let evidence = ConversationEvidence {
         session: window.session,
         conversation: log.conversation,
