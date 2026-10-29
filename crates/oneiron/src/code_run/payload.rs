@@ -2,6 +2,7 @@
 //! Entry: `self_call_request_value`.
 //! The request child owns request encoding; `code_run::types` owns call and outcome types.
 
+mod observations;
 mod request;
 mod session_hooks;
 
@@ -28,6 +29,7 @@ use super::types::{
 use super::{SelfLeaderCall, SummarizeEffort, coordination_codec};
 use crate::error::GateError;
 
+pub(crate) use self::observations::agent_verb_observations_of;
 pub(super) use self::request::self_call_request_value;
 
 fn context_spec_json(spec: &ContextSpec) -> Result<String> {
@@ -95,6 +97,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
                     Value::Array(rows.iter().copied().map(entity_id_value).collect()),
                 ));
             }
+            observations::keep_observations(&mut entries, &answer.observations)?;
             request_map(entries)
         }
         SelfDispatchOutcome::Failed(result) => request_map(vec![
@@ -296,6 +299,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
                 .ok()
                 .map(|rows| decode_array(rows, entity_value))
                 .transpose()?,
+            observations: observations::decode_observations(entries)?,
         })),
         "failed" => Ok(SelfDispatchOutcome::Failed(SelfFailedResult {
             effect: self_effect_from_str(str_value(map_get(entries, "effect")?)?)?,

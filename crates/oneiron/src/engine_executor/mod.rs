@@ -7,6 +7,7 @@
 //! host dispatcher that records the typed bridge call in the durable replay log.
 
 mod attempt_cancels;
+mod board_frames;
 mod cancel;
 mod capture;
 pub mod checkpoint_read;

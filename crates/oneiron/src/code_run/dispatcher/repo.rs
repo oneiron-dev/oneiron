@@ -308,10 +308,7 @@ fn answered<T: serde::Serialize>(
     rows.dedup();
     let output = serde_json::to_value(&output)
         .map_err(|_| Error::InvariantViolation("run repo answer encode"))?;
-    Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
-        output,
-        rows: Some(rows),
-    }))
+    Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(output, Some(rows))))
 }
 
 /// A typed repo refusal is a denial; any other door error a failure the
