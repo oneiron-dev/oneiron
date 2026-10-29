@@ -58,6 +58,8 @@ use crate::connector_admission_host::{self as host, QualificationKit, ToolClass}
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+pub(crate) mod schema;
+
 /// A generic MCP catalog's entry-wide class: scoped-MCP tool calls,
 /// unbudgeted for sends (ARCH-0054).
 const CATALOG_CALL_CLASS: ConnectorCallClass = ConnectorCallClass::ScopedMcp;
@@ -77,7 +79,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/connectors/proxy/revoke-write", post(revoke_proxy_write))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RegisterRequest {
     /// The catalog name, as `[connectors.<name>]` installs it.
@@ -99,7 +101,7 @@ struct SetupQuery {
     connector: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AcceptRequest {
     pub(crate) connector: String,
@@ -118,14 +120,14 @@ pub(crate) struct AcceptRequest {
     pub(crate) all_manual: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct QualifyRequest {
     pub(crate) connector: String,
     pub(crate) kit: QualificationKit,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RefreshRequest {
     connector: String,
@@ -135,14 +137,14 @@ struct RefreshRequest {
     tools: BTreeMap<String, ToolClass>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EnabledRequest {
     connector: String,
     enabled: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Refreshed {
     connector: String,
     /// The connector's tools or revision changed, and the key is Pending.
@@ -157,7 +159,7 @@ struct Refreshed {
     dropped: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Registered {
     connector: String,
     endpoint: String,

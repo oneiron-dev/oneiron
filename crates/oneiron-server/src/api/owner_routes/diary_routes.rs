@@ -82,13 +82,24 @@ pub(crate) fn diary_grant_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<DiaryReadGranted>()
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReadDiary {
     /// Whose diary, as 32 hex.
     agent: String,
     /// The reason the read states; the agent sees it.
     reason: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/read`'s body (FIX 11611): [`ReadDiary`].
+pub(crate) fn read_diary_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReadDiary>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/read`'s answer (FIX 11611):
+/// [`DiaryReadOutcome`].
+pub(crate) fn diary_read_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DiaryReadOutcome>()
 }
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {

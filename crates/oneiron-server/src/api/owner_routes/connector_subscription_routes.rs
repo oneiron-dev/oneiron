@@ -34,7 +34,7 @@ struct ListQuery {
     agent: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SubscribeRequest {
     /// The agent that answers, as 32 hex.
@@ -81,6 +81,18 @@ pub(crate) fn revoke_subscription_body_schema() -> serde_json::Value {
 /// 11103): [`Revoked`].
 pub(crate) fn subscription_revoked_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<Revoked>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions`'s body (FIX 11611):
+/// [`SubscribeRequest`].
+pub(crate) fn subscribe_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SubscribeRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/subscriptions`'s answer (FIX 11611):
+/// [`ChannelMessageSubscription`].
+pub(crate) fn channel_subscription_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ChannelMessageSubscription>()
 }
 
 fn invalid(error: oneiron::Error) -> OwnerError {

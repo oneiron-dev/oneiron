@@ -71,12 +71,24 @@ struct Refused {
     refused: Vec<MediaRefused>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ClearRefused {
     space: String,
     /// The refused document, as 32 hex.
     id: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/embedding-spaces/refused/clear`'s body (FIX 11611):
+/// [`ClearRefused`].
+pub(crate) fn clear_refused_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ClearRefused>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/embedding-spaces/refused/clear`'s answer
+/// (FIX 11611): [`EmbeddingSpacesView`].
+pub(crate) fn embedding_spaces_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<EmbeddingSpacesView>()
 }
 
 fn invalid(error: impl std::fmt::Display) -> OwnerError {
