@@ -194,7 +194,9 @@ mod held {
 
         /// Takes `value` into custody: its handle, or why there is none. A
         /// value of the same kind the session took before answers the
-        /// handle it took then.
+        /// handle it took then. A card number is filed by its digits, without
+        /// single spaces or dashes (FIX 10333), so one printed either way
+        /// takes one handle.
         pub(crate) fn acquire(
             &self,
             kind: SecretKind,
@@ -204,7 +206,12 @@ mod held {
             let (custody, print) = {
                 let mut held = self.held();
                 let key = *held.key.get_or_insert_with(memo_key);
-                let print = *blake3::keyed_hash(&key, value.as_bytes()).as_bytes();
+                let print = if kind == SecretKind::Card {
+                    let collapsed: String = value.chars().filter(char::is_ascii_digit).collect();
+                    *blake3::keyed_hash(&key, collapsed.as_bytes()).as_bytes()
+                } else {
+                    *blake3::keyed_hash(&key, value.as_bytes()).as_bytes()
+                };
                 if let Some(handle) = held.taken.get(&(kind, print)) {
                     return Ok(handle.clone());
                 }
@@ -241,8 +248,10 @@ mod held {
         /// again (FIX 8337, FIX 8338, FIX 8340), each with what shows in its
         /// place: the run-scoped matcher. Each whole token of `text` is
         /// hashed with the session's own key and looked up among the hashes
-        /// the session already keeps of what it took; no value is kept for
-        /// it, and nothing this run's reads did not take is matched.
+        /// the session already keeps of what it took; a card number printed
+        /// with single spaces or dashes is collapsed to its digits first and
+        /// matched among cards only (FIX 10333). No value is kept for it,
+        /// and nothing this run's reads did not take is matched.
         pub(crate) fn known_in(&self, text: &str) -> Vec<(String, String)> {
             let held = self.held();
             let Some(key) = held.key.filter(|_| !held.taken.is_empty()) else {
@@ -257,6 +266,14 @@ mod held {
                 if let Some((kind, handle)) = named {
                     let shown = secret_display_policy(kind, token, Some(handle.as_str()));
                     found.push((token.to_owned(), shown));
+                }
+            }
+            for (original, collapsed) in card_spans(text) {
+                let print = *blake3::keyed_hash(&key, collapsed.as_bytes()).as_bytes();
+                if let Some(handle) = held.taken.get(&(SecretKind::Card, print)) {
+                    let shown =
+                        secret_display_policy(SecretKind::Card, original, Some(handle.as_str()));
+                    found.push((original.to_owned(), shown));
                 }
             }
             found
@@ -329,5 +346,74 @@ mod held {
             }
         }
         tokens
+    }
+
+    /// The card numbers `text` prints with single spaces or dashes, as each
+    /// stands and collapsed to its digits (FIX 10333): each run of digit
+    /// groups joined by single separators, each once. Only runs with a
+    /// separator print here; whole tokens stay with [`tokens`].
+    fn card_spans(text: &str) -> Vec<(&str, String)> {
+        let bytes = text.as_bytes();
+        let mut spans = Vec::new();
+        let mut seen = HashSet::new();
+        let mut i = 0;
+        while i < bytes.len() {
+            if !bytes[i].is_ascii_digit() {
+                i += 1;
+                continue;
+            }
+            let mut groups = Vec::new();
+            let mut k = i;
+            loop {
+                let start = k;
+                while k < bytes.len() && bytes[k].is_ascii_digit() {
+                    k += 1;
+                }
+                groups.push((start, k));
+                if k + 1 < bytes.len()
+                    && (bytes[k] == b' ' || bytes[k] == b'-')
+                    && bytes[k + 1].is_ascii_digit()
+                {
+                    k += 1;
+                    continue;
+                }
+                break;
+            }
+            let end = groups.last().map_or(i, |(_, end)| *end);
+            if groups.len() >= 2 {
+                let before = text[..i].chars().next_back();
+                let after = text[end..].chars().next();
+                let edge = |side: Option<char>| side.is_none_or(|c| !c.is_alphanumeric());
+                let before_ok = edge(before);
+                let after_ok = edge(after);
+                for a in 0..groups.len() {
+                    let mut digits = 0;
+                    for b in a..groups.len() {
+                        digits += groups[b].1 - groups[b].0;
+                        if b > a {
+                            if (12..=19).contains(&digits) {
+                                let ok_before = a > 0 || before_ok;
+                                let ok_after = b + 1 < groups.len() || after_ok;
+                                if ok_before && ok_after {
+                                    let original = &text[groups[a].0..groups[b].1];
+                                    if seen.insert(original) {
+                                        let mut collapsed = String::with_capacity(digits);
+                                        for group in &groups[a..=b] {
+                                            collapsed.push_str(&text[group.0..group.1]);
+                                        }
+                                        spans.push((original, collapsed));
+                                    }
+                                }
+                            }
+                            if digits > 19 {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            i = end.max(i + 1);
+        }
+        spans
     }
 }
