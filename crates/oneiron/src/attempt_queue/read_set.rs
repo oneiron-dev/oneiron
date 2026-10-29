@@ -49,7 +49,7 @@ impl ReadSetProducer {
 
     /// A Dreamer consolidation branch's extraction: each slice's TURNs,
     /// conversations, projected MESSAGEs and the listed rows its page
-    /// shows (FIX 7019).
+    /// shows, and every row its branch pinned (FIX 7019).
     pub const DREAMER_EXTRACTION: Self = Self("dreamer.extraction");
 
     /// The Coach's eval-authoring pass: the inventory it read and the
