@@ -1,9 +1,11 @@
 //! Qualification is a vault door: callers cannot submit a self-graded report.
 use crate::Vault;
 use crate::connector_key::qualification::{
-    ConnectorQualificationReceipt, GroundingOracle, QualificationConnector, QualificationFailure,
-    QualificationPlan, QualificationReport, qualify_connector_with_schemas,
+    ConnectorQualificationReceipt, GroundingOracle, OWNER_ATTESTED_QUALIFICATION_SUITE,
+    QualificationConnector, QualificationFailure, QualificationPlan, QualificationReport,
+    qualify_connector_with_schemas,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -268,6 +270,83 @@ impl Vault {
         wtxn.commit().map_err(Error::from)?;
         self.measure_connector_key_shape(&active);
         Ok((active, report))
+    }
+
+    /// CONNECTOR-QUALIFY = A (owner ruling 2026-10-30 05:52 JST): the owner
+    /// attests a pending catalog connector the probe suite cannot grade, in
+    /// place of [`Self::qualify_connector_key`]. The probes stay the default;
+    /// only his authenticated act activates a key this way, and its receipt
+    /// names that basis ([`OWNER_ATTESTED_QUALIFICATION_SUITE`]). Every other
+    /// guard stands: his current stamp on the bound slate, its per-tool
+    /// settings, a pack's qualification basis, and the call-time screens.
+    pub fn attest_connector_key(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_revision: &str,
+        at: u64,
+    ) -> Result<ConnectorKeyRecord> {
+        let mut wtxn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(self, &wtxn)?;
+        crate::memory::verify_deletion_authority_in_txn(
+            self,
+            &wtxn,
+            actor,
+            crate::edge::EdgeActorClass::Human,
+        )
+        .map_err(|_| invalid_body("connector attestation needs the owner"))?;
+        let record =
+            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
+        if record.status != ConnectorKeyStatus::Pending
+            || record.catalog.is_none()
+            || record.protocol_revision.as_deref() != Some(expected_revision)
+        {
+            return Err(invalid_body("connector not pending at this revision"));
+        }
+        let slate_id = record
+            .slate_ref
+            .ok_or_else(|| invalid_body("connector slate required"))?;
+        let slate = read_connector_slate_in_txn(self, &wtxn, slate_id)?
+            .ok_or_else(|| invalid_body("connector slate missing"))?;
+        require_pack_qualification(self, &wtxn, &record, &slate, expected_revision)?;
+        if slate.owner_actor().is_none() || slate.revision() == 0 || !slate.stamp_holds() {
+            return Err(invalid_body("connector slate not stamped for attestation"));
+        }
+        let mut digest = blake3::Hasher::new();
+        digest.update(OWNER_ATTESTED_QUALIFICATION_SUITE.as_bytes());
+        digest.update(owner.decision_id().to_hex().as_bytes());
+        digest.update(&slate.manifest_hash());
+        digest.update(&slate.grant_hash());
+        let active = ConnectorKeyRecord {
+            catalog: slate_catalog(record.catalog.clone(), &slate),
+            qualification_receipt: Some(ConnectorQualificationReceipt::owner_attested(
+                digest.finalize().to_hex().to_string(),
+                expected_revision.to_owned(),
+                slate.manifest_hash(),
+                at,
+            )?),
+            status: ConnectorKeyStatus::Active,
+            status_changed_at: Some(at),
+            slate_revision: Some(slate.revision()),
+            consent_required: false,
+            ..record
+        };
+        active.validate()?;
+        rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &active)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
+        append_connector_key_op_record(
+            &self.store,
+            &mut wtxn,
+            id,
+            "gate.connector_key.owner_attest",
+            &active,
+            policy.read_frontier_hash()?,
+            at,
+        )?;
+        self.sync_derived_keys_in_txn(&mut wtxn, &active, at)?;
+        wtxn.commit()?;
+        self.measure_connector_key_shape(&active);
+        Ok(active)
     }
 
     /// The owner restamped an admitted catalog connector's slate: new

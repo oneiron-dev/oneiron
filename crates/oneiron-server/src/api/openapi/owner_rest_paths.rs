@@ -33,9 +33,9 @@ use crate::api::owner_routes::conflict_routes::{
     settlement_reverted_schema,
 };
 use crate::api::owner_routes::connector_admission_routes::schema::{
-    accept_request_body_schema, admitted_slate_schema, connector_key_schema,
-    enabled_request_body_schema, qualify_request_body_schema, refresh_request_body_schema,
-    refreshed_schema, register_request_body_schema, registered_schema,
+    accept_request_body_schema, admitted_slate_schema, attest_request_body_schema,
+    connector_key_schema, enabled_request_body_schema, qualify_request_body_schema,
+    refresh_request_body_schema, refreshed_schema, register_request_body_schema, registered_schema,
 };
 use crate::api::owner_routes::connector_consent_routes::{
     consent_request_body_schema, consented_schema,
@@ -376,6 +376,14 @@ pub(super) fn merge_owner_rest_shapes(spec: &mut Value) {
     );
     bind(
         spec,
+        "/v1/owner/connectors/attest",
+        "post",
+        attest_request_body_schema(),
+        connector_key_schema(),
+        &[],
+    );
+    bind(
+        spec,
         "/v1/owner/connectors/refresh",
         "post",
         refresh_request_body_schema(),
@@ -647,7 +655,14 @@ fn bind(
     answer: Value,
     refusals: &[(&str, &str)],
 ) {
-    bind_operation(spec, path, method, Some(body), json_answer(answer), refusals);
+    bind_operation(
+        spec,
+        path,
+        method,
+        Some(body),
+        json_answer(answer),
+        refusals,
+    );
 }
 
 /// [`bind`] for a route that reads no body: the operation declares none

@@ -85,6 +85,28 @@ impl ConnectorManifestQualifier for ProbeManifestQualifier<'_> {
     }
 }
 
+/// CONNECTOR-QUALIFY = A (owner ruling 2026-10-30 05:52 JST): the owner's
+/// attestation in place of the probe suite, for a connector the suite cannot
+/// grade (one that returns no `oneiron/probe` evidence). Only an
+/// authenticated owner act constructs it; its report hash names that act and
+/// the exact manifest, so it never reads as a suite run.
+pub struct OwnerAttestedManifestQualifier<'a> {
+    pub owner: &'a AuthenticatedOwner,
+}
+
+impl ConnectorManifestQualifier for OwnerAttestedManifestQualifier<'_> {
+    fn qualify(&self, manifest: &ResolvedConnectorManifest, revision: &str) -> Result<String> {
+        validate_protocol_revision(revision)?;
+        manifest.validate_snapshot()?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"connector-manifest-owner-attestation-v1");
+        hasher.update(&manifest.hash()?);
+        hasher.update(revision.as_bytes());
+        hasher.update(self.owner.decision_id().to_hex().as_bytes());
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+}
+
 fn probe_failure() -> Error {
     invalid_body("connector qualification probes failed")
 }
