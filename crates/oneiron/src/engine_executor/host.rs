@@ -25,8 +25,8 @@ use super::types::{
     StoreReceiptInput,
 };
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunCallableRows, CodeRunDeterminism, CodeRunRawOutput,
-    CodeRunReplayRecord, CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
+    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
+    CodeRunResultBinding, DelegatedSource, ExecutorCallSite, ExecutorStorage, GatedActorWrite,
     ReaderFindingRef, ReaderJobKind, ReaderJobState, ResultFacet, ResultRead, ResultReply, RunCall,
     SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfEffect, SelfFailedResult,
     SelfReaderReportCall, SelfReaderSpawnCall, SelfSkillCall, SelfSkillCallResult,
@@ -109,12 +109,11 @@ pub(super) struct RecordingJsHost<'a, 's> {
     callable_depth: u32,
     /// The host projection already ran this outer call's verb hooks.
     admitted_skill_seq: Option<u64>,
-    /// Each stored skill the run's callable calls read and loaded, and the
+    /// Each stored skill this host's callable calls read and loaded, and the
     /// rows of every result a read took from another run (`None` once one
     /// kept no set): what a callable's answer stands on, counted in
-    /// [`Self::result_rows`]. Seeded from the run's record, which keeps them
-    /// for its later steps and its readers (FIX 5763).
-    pub(super) callable_rows: CodeRunCallableRows,
+    /// [`Self::result_rows`].
+    pub(super) callable_rows: (Vec<EntityId>, Option<Vec<EntityId>>),
     /// A turn program's pinned entry only (DOOR-141 PR3b): the calls an
     /// earlier entry settled, answered in their place instead of issued.
     pub(super) injection: Option<ProgramInjection>,
@@ -180,7 +179,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             skill_executor: None,
             callable_depth: 0,
             admitted_skill_seq: None,
-            callable_rows: CodeRunCallableRows::default(),
+            callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
             callable_checks: CallableChecks::default(),
         }
@@ -247,7 +246,6 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
-        self.callable_rows = record.callable_rows.clone();
         self.storage = Some(storage);
         Ok(self)
     }

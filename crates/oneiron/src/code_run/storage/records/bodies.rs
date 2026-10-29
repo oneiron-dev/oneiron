@@ -317,7 +317,7 @@ impl Vault {
         }
         let served_rows = REPLAY_RECORDS
             .get(room, wtxn, &attachment.source.run_id)?
-            .and_then(|record| record.result_rows());
+            .and_then(|record| record.agent_verb_rows());
         let mut held = owned_body(message, &output, &stored)?;
         held.result = Some(crate::provenance::body::RetainedResultProvenance {
             run_id: attachment.source.run_id,

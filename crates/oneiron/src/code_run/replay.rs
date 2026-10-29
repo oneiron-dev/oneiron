@@ -688,9 +688,6 @@ pub struct CodeRunReplayRecord {
     /// The credential attached to this live agent run (OF-181), as its host
     /// stored it: association metadata, never the lease proof.
     pub live_run: Option<super::live_run::CodeRunLiveRunBinding>,
-    /// The rows the run's callable calls stood on (FIX 5763), which
-    /// [`Self::result_rows`] adds to its verb answers' rows.
-    pub callable_rows: super::callable_rows::CodeRunCallableRows,
 }
 
 /// One name a program bound to a result of its run (`r7`, or a name it gave
@@ -768,7 +765,6 @@ impl CodeRunReplayRecord {
             abi_layout_checks: code_run_replay_abi_layout_checks(),
             bindings: Vec::new(),
             live_run: None,
-            callable_rows: super::callable_rows::CodeRunCallableRows::default(),
         }
     }
 

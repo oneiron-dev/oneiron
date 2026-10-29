@@ -111,7 +111,7 @@ pub fn read_fold_history(
             folds.push(description);
         }
     }
-    let mut sources = record.result_rows().ok_or_else(|| {
+    let mut sources = record.agent_verb_rows().ok_or_else(|| {
         Error::InvalidConfig("run history contains an answer with unlisted sources".into())
     })?;
     sources.extend(
@@ -210,7 +210,7 @@ pub fn read_fold_description(
         .max();
     let mut ledger = storage.code_run_folds(run)?;
     let number = crate::compaction::parse_fold_handle(&input.fold)?;
-    let mut sources = record.result_rows().ok_or_else(|| {
+    let mut sources = record.agent_verb_rows().ok_or_else(|| {
         Error::InvalidConfig("run history contains an answer with unlisted sources".into())
     })?;
     if let Some(fold) = ledger.fold(number) {

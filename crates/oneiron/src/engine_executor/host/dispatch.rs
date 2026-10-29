@@ -193,7 +193,7 @@ impl RecordingJsHost<'_, '_> {
             &mut loaded,
             memory,
         );
-        self.callable_rows.skills.extend(loaded);
+        self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
         // The callable's type feedback stays beside the run, however the
         // call ended (FIX 10389).
