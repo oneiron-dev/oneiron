@@ -9473,7 +9473,7 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
-class EvidenceFloors(TypedDict):
+class VectorEvidenceFloors(TypedDict):
     floor: float
     strong: float
 class EmbeddingSpace(TypedDict):
@@ -9481,7 +9481,7 @@ class EmbeddingSpace(TypedDict):
     dimensions: int
     accepts: list[InputKind]
     query_towers: list[InputKind]
-    evidence: NotRequired[EvidenceFloors | None]
+    evidence: NotRequired[VectorEvidenceFloors | None]
 class SpaceRefDeclared(TypedDict):
     declared: str
 SpaceRef = Literal["text_index"] | SpaceRefDeclared

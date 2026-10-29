@@ -3750,10 +3750,10 @@ export type CourtesyDeleteChoice = { choice: CooperativeDeletionDispositionKind;
 export type CourtesyDeleteIncoming = { request: string; pact: string; pact_status?: string | null; requester: string; worlds: CourtesyDeleteAskedWorld[]; epoch_cutoff: number; candidates: string[]; requested: string; received: string; answer?: CourtesyDeleteChoice | null; reply_status?: string | null; holds: CourtesyDeleteHold[] }
 /** `oneiron::verbs::courtesy_delete::CourtesyDeleteAnswerRequest` */
 export type CourtesyDeleteAnswerRequest = { pact: string; request: string; choice: CooperativeDeletionDispositionKind; reason_code?: string | null; review_at?: number | null; delete?: string[]; hold?: string[]; reply_to?: string | null }
-/** `oneiron::embed::space::Row` */
-export type EvidenceFloors = { floor: number; strong: number }
+/** `oneiron::config::VectorEvidenceFloors` */
+export type VectorEvidenceFloors = { floor: number; strong: number }
 /** `oneiron::embed::space::EmbeddingSpace` */
-export type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: EvidenceFloors | null }
+export type EmbeddingSpace = { id: string; dimensions: number; accepts: InputKind[]; query_towers: InputKind[]; evidence?: VectorEvidenceFloors | null }
 /** `oneiron::embed::space_move::SpaceRef` */
 export type SpaceRef = "text_index" | { declared: string }
 /** `oneiron::embed::space_move::SpaceMoveState` */

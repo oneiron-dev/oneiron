@@ -203,6 +203,20 @@ fn encode_recall(pack: &MemoryPack) -> PyResult<String> {
 #[pyclass]
 struct NativeClient {
     inner: oneiron_remote::OneironClient,
+    /// What keeps this handle's engine serving while the handle lives: the
+    /// in-process engine a local attach came from (FIX 4895), handed on to
+    /// every handle rebound from it; `None` on every other handle.
+    keep: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl NativeClient {
+    /// A handle rebound from this one, keeping what this one keeps.
+    fn rebound(&self, inner: oneiron_remote::OneironClient) -> Self {
+        Self {
+            inner,
+            keep: self.keep.clone(),
+        }
+    }
 }
 
 #[pymethods]
@@ -227,7 +241,7 @@ impl NativeClient {
         let inner = py
             .detach(|| oneiron_remote::OneironClient::open(path.as_deref(), &options))
             .map_err(raise)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// `open`, then this install's own machine profile from the vault's host
@@ -244,7 +258,7 @@ impl NativeClient {
     ) -> PyResult<Self> {
         let device_class = host_device_class(device_class.as_deref())?;
         let inner = host_root::open(py, path, host_root_secret, dimensions, device_class)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// What `open_with_host_root` did with its root, as JSON; `None` on
@@ -261,7 +275,7 @@ impl NativeClient {
         let inner = py
             .detach(|| oneiron_remote::OneironClient::connect(&url, &key))
             .map_err(raise)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// Redeems a pairing link once; returns the `{url, credential, pin, comm}`
@@ -280,7 +294,7 @@ impl NativeClient {
         let inner = py
             .detach(|| self.inner.as_actor(&actor_key))
             .map_err(raise)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
@@ -288,7 +302,7 @@ impl NativeClient {
         let inner = py
             .detach(|| self.inner.in_room_turn(&room_ref))
             .map_err(raise)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// Returns a NEW handle whose every verb runs inside the off-record
@@ -298,7 +312,7 @@ impl NativeClient {
         let inner = py
             .detach(|| self.inner.in_off_record_session(&session_ref))
             .map_err(raise)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// The lasting call receipt the last verb's reply stated, as
@@ -10687,5 +10701,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     // The engine-backed served client, only in an `engine` build (OF-237).
     #[cfg(feature = "engine")]
     module.add_class::<embedded_engine::NativeEngine>()?;
+    #[cfg(feature = "engine")]
+    module.add_class::<embedded_engine::NativeEngineConnection>()?;
     Ok(())
 }
