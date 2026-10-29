@@ -6,7 +6,8 @@
 //! once frozen. An actor's erase scrubs the owner a push-now plan names and
 //! keeps the rest of the record; a plan row that does not decode is dropped
 //! there with its pages and batches instead, never an abort of the erase or
-//! restore.
+//! restore. A head row that does not decode is rebuilt from the plan rows
+//! that do, with no plan open.
 
 use super::mirror_plan_types::{
     MirrorBatchProgress, MirrorPushPlan, MirrorSettledPlan, MirrorWorkHead, MirrorWorkRow,
@@ -15,6 +16,7 @@ use super::types::OriginPublishReviewPage;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::origin::mirror_auto::OriginMirrorHoldCause;
 use crate::side_table::{self, Named, SideTable};
 
 /// Settled plans each mirror keeps, with their reviews, beside its open one;
@@ -25,6 +27,9 @@ pub(crate) const ORIGIN_MIRROR_WORK_KEPT_PLANS: usize = 16;
 /// The WARN code of a plan row an actor scrub dropped because it does not
 /// decode.
 const ORIGIN_MIRROR_WORK_UNDECODABLE_DROPPED: &str = "origin_mirror_work_undecodable_dropped";
+
+/// The WARN code of a mirror's work head rebuilt because it did not decode.
+const ORIGIN_MIRROR_WORK_HEAD_REBUILT: &str = "origin_mirror_work_head_rebuilt";
 
 /// Repo id, then the repo id again with `head`, or a plan id with nothing
 /// (the plan), `p` + u64be (a review page) or `b` + u32be (a batch).
@@ -211,6 +216,56 @@ impl Vault {
             WORK.delete_from(&self.store, txn, &plan_prefix(plan.repo_id, dropped))?;
         }
         self.put_mirror_work_head_in_txn(txn, plan.repo_id, &head)
+    }
+
+    /// Rebuilds a mirror's work head that does not decode (FIX 7217), under
+    /// a WARN naming only its key and the error's kind. No plan is open
+    /// after it, so the mirror plans afresh; every plan whose row decodes is
+    /// kept, oldest first, past [`ORIGIN_MIRROR_WORK_KEPT_PLANS`] the oldest
+    /// dropped rows and all, and a plan row that does not decode goes with
+    /// its pages and batches. A head that decodes again is left as it is.
+    pub(super) fn rebuild_mirror_work_head(&self, repo_id: EntityId, error: &Error) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        let undecodable_head = self
+            .mirror_work_head_in_txn(&txn, repo_id)
+            .is_err_and(|current| {
+                OriginMirrorHoldCause::of(&current) == OriginMirrorHoldCause::Decode
+            });
+        if !undecodable_head {
+            return Ok(());
+        }
+        let (mut kept, mut undecodable) = (Vec::new(), Vec::new());
+        for row in WORK.iter_raw_from(&self.store, &txn, repo_id.as_bytes())? {
+            let (key, bytes) = row?;
+            if key.len() != PLAN_KEY_BYTES {
+                continue;
+            }
+            match WORK.decode_value(&bytes) {
+                Ok(MirrorWorkRow::Plan(plan)) => kept.push(plan.plan_id),
+                Ok(_) => {}
+                Err(_) => undecodable.push(key),
+            }
+        }
+        for key in undecodable {
+            WORK.delete_from(&self.store, &mut txn, &key)?;
+        }
+        while kept.len() > ORIGIN_MIRROR_WORK_KEPT_PLANS {
+            let dropped = kept.remove(0);
+            WORK.delete_from(&self.store, &mut txn, &plan_prefix(repo_id, dropped))?;
+        }
+        let head = MirrorWorkHead {
+            kept,
+            ..MirrorWorkHead::default()
+        };
+        self.put_mirror_work_head_in_txn(&mut txn, repo_id, &head)?;
+        txn.commit()?;
+        tracing::warn!(
+            code = ORIGIN_MIRROR_WORK_HEAD_REBUILT,
+            repo_id = %repo_id.to_hex(),
+            kind = ?error.kind(),
+            "an automatic mirror's work head that does not decode was rebuilt with no plan open"
+        );
+        Ok(())
     }
 
     /// Drops an open plan whose row does not decode, with its pages and

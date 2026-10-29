@@ -57,19 +57,34 @@ impl Vault {
     ) -> Result<Option<MirrorPlanSummary>> {
         let (plan_id, plan) = {
             let txn = self.store.env.read_txn()?;
-            let head = self.mirror_work_head_in_txn(&txn, scope.repo_id)?;
+            // A head that does not decode is rebuilt with no plan open, so
+            // the mirror plans afresh; it holds this run, once.
+            let head = match self.mirror_work_head_in_txn(&txn, scope.repo_id) {
+                Ok(head) => head,
+                Err(error)
+                    if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode =>
+                {
+                    drop(txn);
+                    self.rebuild_mirror_work_head(scope.repo_id, &error)?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
             let Some(plan_id) = head.open else {
                 return Ok(None);
             };
-            (
-                plan_id,
-                self.mirror_plan_in_txn(&txn, scope.repo_id, plan_id),
-            )
+            let plan = self
+                .mirror_plan_in_txn(&txn, scope.repo_id, plan_id)
+                .and_then(|plan| match plan {
+                    Some(plan) => self.mirror_batches_in_txn(&txn, &plan).map(|_| Some(plan)),
+                    None => Ok(None),
+                });
+            (plan_id, plan)
         };
-        // A plan an actor scrub dropped, or whose row does not decode, can
-        // never send: it is forgotten and the mirror plans afresh. One that
-        // does not decode holds this run, once (`review_unavailable`, cause
-        // decode).
+        // A plan an actor scrub dropped, or whose plan or batch row does not
+        // decode, can never send: it is forgotten and the mirror plans
+        // afresh. One that does not decode holds this run, once
+        // (`review_unavailable`, cause decode).
         let plan = match plan {
             Ok(Some(plan)) => plan,
             Ok(None) => {
@@ -137,8 +152,9 @@ impl Vault {
 
 impl Vault {
     /// Closes an open plan that can never send: its row is gone (an actor
-    /// scrub dropped it) or does not decode, and is dropped here with its
-    /// pages and batches under a key-only WARN. The mirror plans again.
+    /// scrub dropped it), or it or one of its batch rows does not decode,
+    /// and is dropped here with its pages and batches under a key-only
+    /// WARN. The mirror plans again.
     pub(super) fn forget_open_mirror_plan(
         &self,
         repo_id: EntityId,
@@ -150,7 +166,15 @@ impl Vault {
             return Ok(());
         }
         match self.mirror_plan_in_txn(&txn, repo_id, plan_id) {
-            Ok(Some(_)) => return Ok(()),
+            Ok(Some(plan)) => match self.mirror_batches_in_txn(&txn, &plan) {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode =>
+                {
+                    self.drop_undecodable_mirror_plan_in_txn(&mut txn, repo_id, plan_id, &error)?;
+                }
+                Err(error) => return Err(error),
+            },
             Ok(None) => {}
             Err(error) if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode => {
                 self.drop_undecodable_mirror_plan_in_txn(&mut txn, repo_id, plan_id, &error)?;
@@ -210,10 +234,17 @@ impl Vault {
         Ok(())
     }
 
-    /// Whether a mirror has an open plan to settle.
+    /// Whether a mirror has an open plan to settle. A head that does not
+    /// decode counts as one: the run that reads it rebuilds it.
     pub(crate) fn origin_mirror_work_open(&self, repo_id: EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        Ok(self.mirror_work_head_in_txn(&txn, repo_id)?.open.is_some())
+        match self.mirror_work_head_in_txn(&txn, repo_id) {
+            Ok(head) => Ok(head.open.is_some()),
+            Err(error) if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode => {
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
