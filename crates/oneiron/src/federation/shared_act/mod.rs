@@ -12,6 +12,7 @@ mod execute;
 mod membership;
 mod removal;
 mod removal_archive;
+mod removal_import;
 
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,

@@ -17,7 +17,10 @@
 //!   replaces its live twin, never the other way, and two live actors
 //!   conflict (FIX 4247).
 //! - A pin larger than a part rides as linked parts (`carrier_parts`), its
-//!   key holding their manifest, so no quote is too long to travel.
+//!   key holding their manifest, so no quote is too long to travel. The
+//!   parts hold the pin naming no one and the manifest names its actor, so
+//!   no part names anyone and a scrub rewrites the actor of a pin whose
+//!   parts have not all landed (FIX 4789).
 //! - Admission refuses every insert into the map that is not a whole pin or
 //!   a pin's manifest filed under its own key, or a part filed under its
 //!   digest, in the latest state, at a snapshot's root and in every retained
@@ -40,6 +43,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 use loro::event::MapDelta;
 use loro::{CommitOptions, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
+use serde::{Deserialize, Serialize};
 
 use super::bridge::BRIDGE_ORIGIN;
 use super::carrier_parts::{
@@ -49,7 +53,7 @@ use super::carrier_parts::{
 use super::loro_support::{map_contains_binary, map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
-use crate::entity_doc::{CitationPin, PinMerge};
+use crate::entity_doc::{CitationPin, DocActor, PinMerge};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 
@@ -77,7 +81,17 @@ fn decode_pin(bytes: &[u8]) -> Result<(CitationPin, EntityId, EntityId)> {
 /// its parts.
 enum Carried {
     Whole(CitationPin, EntityId, EntityId),
-    Parted(Parts),
+    Parted(PartedPin),
+}
+
+/// The manifest of a pin larger than a part (FIX 4789): the parts of the
+/// pin naming no one, and the actor it names, so no part names anyone and
+/// the actor is rewritten here alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PartedPin {
+    parts: Parts,
+    actor: DocActor,
 }
 
 /// Decodes the value under a pin key, in its one spelling.
@@ -87,14 +101,13 @@ fn decode_carried(bytes: &[u8]) -> Result<Carried> {
     {
         return Ok(Carried::Whole(pin, message, citation));
     }
-    let parts: Parts = rmp_serde::from_slice(bytes).map_err(|_| refused("not a pin"))?;
-    if rmp_serde::to_vec_named(&parts).ok().as_deref() != Some(bytes)
-        || !parts.well_formed()
-        || usize::try_from(parts.len).is_ok_and(|len| len <= PART_BYTES)
+    let parted: PartedPin = rmp_serde::from_slice(bytes).map_err(|_| refused("not a pin"))?;
+    if rmp_serde::to_vec_named(&parted).ok().as_deref() != Some(bytes)
+        || !parted.parts.well_formed()
     {
         return Err(refused("not a pin's parts"));
     }
-    Ok(Carried::Parted(parts))
+    Ok(Carried::Parted(parted))
 }
 
 /// The key `pin`, of `message` cited by `citation`, rides under: the two
@@ -133,11 +146,20 @@ fn key_ids(map_key: &str) -> Option<(EntityId, EntityId)> {
 fn carried_pin(map: &LoroMap, map_key: &str, bytes: &[u8]) -> Result<Option<CitationPin>> {
     let (pin, message, citation) = match decode_carried(bytes)? {
         Carried::Whole(pin, message, citation) => (pin, message, citation),
-        Carried::Parted(parts) => {
-            let Some(whole) = join_parts(map, &parts) else {
+        Carried::Parted(parted) => {
+            let Some(whole) = join_parts(map, &parted.parts) else {
                 return Ok(None);
             };
-            decode_pin(&whole)?
+            let (mut pin, message, citation) = decode_pin(&whole)?;
+            if pin.actor != DocActor::Erased {
+                return Err(refused("a part names an actor"));
+            }
+            pin.actor = parted.actor;
+            // A pin that fits in a part rides whole: one spelling per pin.
+            if !rmp_serde::to_vec_named(&pin).is_ok_and(|bytes| bytes.len() > PART_BYTES) {
+                return Err(refused("not a pin's parts"));
+            }
+            (pin, message, citation)
         }
     };
     if carrier_key(message, citation, &pin)? != map_key {
@@ -249,7 +271,7 @@ pub(crate) fn mirror_document_pins(
                 replaced = true;
             }
         }
-        write_carrier(doc, &map, &key, &bytes)?;
+        write_carrier(doc, &map, &key, pin)?;
         wrote = true;
     }
     if replaced {
@@ -311,35 +333,47 @@ fn replaces(map: &LoroMap, map_key: &str, held: &[u8], pin: &CitationPin) -> boo
         .is_some_and(|twin| twin.erased_wins(pin).is_some_and(|stands| *stands != twin))
 }
 
-/// Writes `bytes`, a pin, under `map_key`, in parts when it is larger than
-/// one; the pin and each part commit on their own. Returns the parts it
-/// lists.
+/// Writes `pin` under `map_key`, in parts when it is larger than one: the
+/// parts of the pin naming no one, under a manifest that names its actor
+/// (FIX 4789), so a pin and its erased twin share their parts. The pin and
+/// each part commit on their own. Returns the parts it lists.
 fn write_carrier(
     doc: &LoroDoc,
     map: &LoroMap,
     map_key: &str,
-    bytes: &[u8],
+    pin: &CitationPin,
 ) -> Result<BTreeSet<String>> {
+    let encode = |pin: &CitationPin| {
+        rmp_serde::to_vec_named(pin).map_err(|_| refused("does not encode"))
+    };
     let commit = || doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
+    let bytes = encode(pin)?;
     if bytes.len() <= PART_BYTES {
-        map_insert_bytes(map, map_key, bytes)?;
+        map_insert_bytes(map, map_key, &bytes)?;
         commit();
         return Ok(BTreeSet::new());
     }
-    let (parts, pieces) = split_parts(bytes)?;
-    let manifest = rmp_serde::to_vec_named(&parts).map_err(|_| refused("does not encode"))?;
-    map_insert_bytes(map, map_key, &manifest)?;
+    let no_one = encode(&pin.actor_erased())?;
+    let (parts, pieces) = split_parts(&no_one)?;
+    let listed = parts.keys().collect();
+    write_manifest(map, map_key, PartedPin { parts, actor: pin.actor })?;
     commit();
     write_parts(map, &pieces, commit)?;
-    Ok(parts.keys().collect())
+    Ok(listed)
+}
+
+/// Writes a parted pin's manifest under `map_key`.
+fn write_manifest(map: &LoroMap, map_key: &str, parted: PartedPin) -> Result<()> {
+    let manifest = rmp_serde::to_vec_named(&parted).map_err(|_| refused("does not encode"))?;
+    map_insert_bytes(map, map_key, &manifest)
 }
 
 /// Every part a pin key in `map` lists.
 fn listed_parts(map: &LoroMap) -> BTreeSet<String> {
     let mut listed = BTreeSet::new();
     for (_, bytes) in pin_rows(map, |_, _| true) {
-        if let Ok(Carried::Parted(parts)) = decode_carried(&bytes) {
-            listed.extend(parts.keys());
+        if let Ok(Carried::Parted(parted)) = decode_carried(&bytes) {
+            listed.extend(parted.parts.keys());
         }
     }
     listed
@@ -380,8 +414,8 @@ pub(crate) fn materialize_document_pins_from_delta(
     let rows = pin_rows(&map, |map_key, bytes| {
         updated.contains(map_key)
             || (part_landed
-                && matches!(decode_carried(bytes), Ok(Carried::Parted(parts))
-                    if parts.keys().any(|part| updated.contains(&part))))
+                && matches!(decode_carried(bytes), Ok(Carried::Parted(parted))
+                    if parted.parts.keys().any(|part| updated.contains(&part))))
     });
     merge_pins(vault, &map, window_key, rows);
     Some(Vec::new())
@@ -471,37 +505,56 @@ pub(crate) fn scrub_document_pins(
     let mut carried = Vec::new();
     for (map_key, bytes) in pin_rows(&map, |_, _| true) {
         if let Some((message, citation)) = key_ids(&map_key) {
-            let parts = match decode_carried(&bytes) {
-                Ok(Carried::Parted(parts)) => parts.keys().collect(),
-                _ => Vec::new(),
+            let parted = match decode_carried(&bytes) {
+                Ok(Carried::Parted(parted)) => Some(parted),
+                _ => None,
             };
             let pin = carried_pin(&map, &map_key, &bytes).ok().flatten();
-            carried.push((map_key, message, citation, parts, pin));
+            carried.push((map_key, message, citation, parted, pin));
         }
     }
     let entities = doc.get_map("entities");
     let mut gone = Vec::new();
     let mut erased = Vec::new();
+    let mut renamed = Vec::new();
     let mut referenced = BTreeSet::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for (map_key, message, citation, parts, pin) in carried {
+        for (map_key, message, citation, parted, pin) in carried {
             if !map_contains_binary(&entities, &message.to_hex())
                 || crate::ports::removed_in_txn(&vault.store, &rtxn, &message)?
                 || crate::ports::removed_in_txn(&vault.store, &rtxn, &citation)?
             {
                 gone.push(map_key);
-            } else if let Some(pin) = pin
-                && let Some(twin) = erased_twin(vault, &rtxn, &message, &citation, &pin)?
+                continue;
+            }
+            if let Some(pin) = &pin
+                && let Some(twin) = erased_twin(vault, &rtxn, &message, &citation, pin)?
             {
                 erased.push((map_key, twin));
-            } else {
-                referenced.extend(parts);
+                continue;
+            }
+            let Some(parted) = parted else {
+                continue;
+            };
+            referenced.extend(parted.parts.keys());
+            // Its parts have not all landed, and they name no one: the
+            // manifest alone names the actor (FIX 4789).
+            if pin.is_none()
+                && unjoined_actor_erased(vault, &rtxn, (&message, &citation), &map_key, &parted)?
+            {
+                renamed.push((
+                    map_key,
+                    PartedPin {
+                        actor: DocActor::Erased,
+                        ..parted
+                    },
+                ));
             }
         }
     }
     let mut stale = unreferenced_parts(&map, &referenced);
-    if gone.is_empty() && erased.is_empty() && stale.is_empty() {
+    if gone.is_empty() && erased.is_empty() && renamed.is_empty() && stale.is_empty() {
         return Ok(false);
     }
     if let Some(key) = history_free {
@@ -509,9 +562,11 @@ pub(crate) fn scrub_document_pins(
     }
     // The erased twin rides under the live one's key.
     for (map_key, twin) in &erased {
-        let bytes = rmp_serde::to_vec_named(twin).map_err(|_| refused("does not encode"))?;
-        let listed = write_carrier(doc, &map, map_key, &bytes)?;
+        let listed = write_carrier(doc, &map, map_key, twin)?;
         stale.retain(|part| !listed.contains(part));
+    }
+    for (map_key, parted) in renamed {
+        write_manifest(&map, &map_key, parted)?;
     }
     for map_key in gone.iter().chain(&stale) {
         map_delete(&map, map_key)?;
@@ -538,6 +593,29 @@ fn erased_twin(
         None => &here,
     };
     Ok((stands != carried).then(|| stands.clone()))
+}
+
+/// Whether the parted pin under `map_key`, of `message` cited by `citation`,
+/// whose parts have not all landed, names an actor this vault erased, or
+/// rides live where this vault holds its erased twin (FIX 4789). Only the
+/// manifest is read: it names the actor.
+fn unjoined_actor_erased(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    (message, citation): (&EntityId, &EntityId),
+    map_key: &str,
+    parted: &PartedPin,
+) -> Result<bool> {
+    if parted.actor == DocActor::Erased {
+        return Ok(false);
+    }
+    if parted.actor.erased_here(vault, txn)? == DocActor::Erased {
+        return Ok(true);
+    }
+    let Some(held) = vault.message_quote_pin_in_txn(txn, message, citation)? else {
+        return Ok(false);
+    };
+    Ok(held.actor == DocActor::Erased && carrier_key(*message, *citation, &held)? == map_key)
 }
 
 /// The pin rows among `rows` a canonical snapshot keeps as the window holds
@@ -574,8 +652,8 @@ pub(crate) fn canonical_pin_rows(
         {
             continue;
         }
-        if let Ok(Carried::Parted(parts)) = decode_carried(row) {
-            referenced.extend(parts.keys());
+        if let Ok(Carried::Parted(parted)) = decode_carried(row) {
+            referenced.extend(parted.parts.keys());
         }
         kept.insert(key.clone());
     }
