@@ -13,7 +13,9 @@ use crate::runtime_hooks::body::{
 use crate::runtime_hooks::grant::HookGrant;
 use crate::runtime_hooks::lineage::HookCheckReason;
 use crate::runtime_hooks::outcome::{HookOutcome, kind_token};
-use crate::runtime_hooks::store::{self, HookReadPin, HookRunRecord, HookRunState, HookVerdictPin};
+use crate::runtime_hooks::store::{
+    self, HookReadPin, HookRunDerivation, HookRunRecord, HookRunState, HookVerdictPin,
+};
 use crate::skill_hub::pack_catalog::{HookPhase, HookRenderClass, PackHookBinding};
 use crate::{EntityId, Result};
 
@@ -236,8 +238,19 @@ pub(super) fn record(
     verdict: &Verdict,
     duration_ms: u64,
     now: u64,
-) -> HookRunRecord {
-    HookRunRecord {
+    runtime_identity: Option<String>,
+) -> Result<HookRunRecord> {
+    let derivation = HookRunDerivation::new(
+        run.binding_id,
+        run.binding,
+        run.grant,
+        run.entry,
+        &reads,
+        &verdicts.pins,
+        runtime_identity,
+    )?;
+    let mut memo = HookRunRecord {
+        derivation,
         binding: run.binding_id,
         code: run.binding.code,
         body_hash: run.binding.body_hash.clone(),
@@ -261,7 +274,9 @@ pub(super) fn record(
         budget_overrun: verdict.budget_overrun,
         now,
         committed_at: 0,
-    }
+    };
+    store::finalize_derivation(&mut memo)?;
+    Ok(memo)
 }
 
 /// The run's Hook receipt: the hook, its CODE id and body hash, the duration,
