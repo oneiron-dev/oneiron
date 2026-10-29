@@ -485,6 +485,13 @@ impl<'a> HostSelfDispatcher<'a> {
             at: call.at,
         };
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        // FIX 10697: a consult whose ConsultAssignee fact has not landed
+        // parks its executor until it does.
+        match memory.consult_assignee_park(task) {
+            Ok(Some(wait)) => return Ok(SelfDispatchOutcome::DurableWait(wait)),
+            Ok(None) => {}
+            Err(error) => return Ok(failed(SelfEffect::TasksRefuse, error)),
+        }
         Ok(match memory.land_task_refusal(task, &input) {
             Ok(receipt) => SelfDispatchOutcome::TaskRefusal(SelfTaskRefusalResult {
                 task_ref: receipt.task_ref,
@@ -546,6 +553,11 @@ impl<'a> HostSelfDispatcher<'a> {
         // A lease lost while the refs were read lands nothing.
         self.task_host_binding()?.ok_or_else(invalid)?;
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        match memory.consult_assignee_park(task) {
+            Ok(Some(wait)) => return Ok(SelfDispatchOutcome::DurableWait(wait)),
+            Ok(None) => {}
+            Err(error) => return Ok(failed(SelfEffect::ConsultResult, error)),
+        }
         let receipt = match memory.land_consult_result(task, &input) {
             Ok(receipt) => receipt,
             Err(error) => return Ok(failed(SelfEffect::ConsultResult, error)),
