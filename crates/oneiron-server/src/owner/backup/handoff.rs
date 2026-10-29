@@ -29,7 +29,7 @@ use oneiron_vault_contract::backup_handoff::{
     read_private_file,
 };
 
-use super::BackupRecord;
+use super::{BackupPlan, BackupRecord};
 
 /// The typed check the backups a pin holds raise past their rows.
 pub(crate) const BACKUP_HANDOFF_BACKLOG_CHECK_KIND: &str = "backup_handoff_backlog";
@@ -185,4 +185,92 @@ pub(super) fn check_backlog(
         "backups wait for the node's stage ack past their row and are all kept; is everything \
          okay?"
     );
+}
+
+/// The backups among `records` a managed handoff pin keeps pending for a
+/// stage ack (FIX 6335): retention's excess past `keep`, oldest first, whose
+/// ack does not name the file held here. A label with no handoff directory
+/// keeps none by pin. The pin still keeps every one, and the backlog check
+/// still raises past its rows.
+pub(super) fn handoff_pending(plan: &BackupPlan, records: &[BackupRecord]) -> Vec<BackupRecord> {
+    let Some(handoff) = pinned(&plan.dir, &plan.label) else {
+        return Vec::new();
+    };
+    let excess = records.len().saturating_sub(plan.keep.max(1));
+    let excess: Vec<BackupRecord> = records.iter().take(excess).cloned().collect();
+    let (_, pending) = released(&handoff, &plan.label, excess);
+    pending
+}
+
+/// Removes every stage ack in `plan`'s handoff directory whose artifact is
+/// gone (FIX 7607): nothing is at its path anymore. Pinned acks whose
+/// artifact exists stay, as does anything unreadable as an ack,
+/// which pins nothing. Called from the prune; a sweep that fails is logged and
+/// fails nothing else, and the next prune sweeps again.
+pub(super) fn sweep_orphan_stage_acks(plan: &BackupPlan) {
+    if let Err(error) = sweep_orphans(plan) {
+        tracing::warn!(
+            reason = "backup_stage_ack_sweep_failed",
+            error = %format!("{error:#}"),
+            "stage acks whose backup is gone were not swept; the next prune sweeps again"
+        );
+    }
+}
+
+fn sweep_orphans(plan: &BackupPlan) -> anyhow::Result<()> {
+    let Some(handoff) = pinned(&plan.dir, &plan.label) else {
+        return Ok(());
+    };
+    let entries = match std::fs::read_dir(&handoff) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut swept = false;
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with("stage-ack-") {
+            continue;
+        }
+        // Only a readable ack names an artifact; anything else stays.
+        let Ok(PrivateFile::Bytes(bytes)) = read_private_file(&entry.path()) else {
+            continue;
+        };
+        let Some(ack) = BackupStageAck::parse(&bytes) else {
+            continue;
+        };
+        if ack_orphaned(&plan.dir, &ack.file) {
+            remove_ack(&handoff, &name);
+            swept = true;
+        }
+    }
+    if swept {
+        super::sync_dir(&handoff)?;
+    }
+    Ok(())
+}
+
+/// Whether the artifact `file` is gone from `dir`: nothing is at its path
+/// anymore. An artifact still there keeps its ack, listed or not.
+fn ack_orphaned(dir: &Path, file: &str) -> bool {
+    matches!(
+        std::fs::symlink_metadata(dir.join(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
+/// Removes the stage ack `name` in `handoff` once its artifact is gone, in the
+/// checkpoint fact sweep's remove-and-ignore-NotFound style (FIX 7359): one
+/// that is not there is gone already; one that will not go is logged and stays.
+fn remove_ack(handoff: &Path, name: &str) {
+    match std::fs::remove_file(handoff.join(name)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => tracing::warn!(
+            reason = "backup_stage_ack_stuck",
+            error = %error,
+            "a stage ack whose backup is gone did not go"
+        ),
+    }
 }
