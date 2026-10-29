@@ -1,7 +1,11 @@
 //! `self.grants.ask` (FIX 1379): an access request addressed to the person
-//! asked, for the requested resource's read and nothing wider.
+//! asked, for the requested resource's read and nothing wider; and
+//! `self.grants.asked` (FIX 11147): the one asked lists what it is asked.
 
-use super::{GrantAskReceipt, GrantAskRequest, GrantAskScope, hex_ref, unix_ms};
+use super::{
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, GrantAskedPage, GrantAskedRequest,
+    GrantAskedRow, hex_opt, hex_ref, unix_ms,
+};
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
 use crate::federation::Scope;
 use crate::memory::{Memory, MemoryResult};
@@ -11,6 +15,10 @@ use crate::memory::{Memory, MemoryResult};
 fn requested_authority_scope() -> Scope {
     crate::federation::scope_codec::read_preset()
 }
+
+/// `self.grants.asked`'s page size when the caller names none, and its most.
+const GRANTS_ASKED_PAGE_DEFAULT: u32 = 50;
+const GRANTS_ASKED_PAGE_MAX: u32 = 100;
 
 impl Memory<'_> {
     /// `self.grants.ask`: asks a person or an agent for access, on behalf of
@@ -60,6 +68,43 @@ impl Memory<'_> {
             request: request.to_hex(),
             asked: asked.handle.clone(),
             status: "pending".to_owned(),
+        })
+    }
+
+    /// `self.grants.asked` (FIX 11147): one page of the pending access
+    /// requests that ask this surface's actor, the person or agent the caller
+    /// is bound to, so the one asked learns of each without the asker handing
+    /// over its id. It answers nothing and reads nothing a request guards;
+    /// `self.grants.answer` answers one.
+    pub fn grants_asked(&self, input: &GrantAskedRequest) -> MemoryResult<GrantAskedPage> {
+        super::super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
+        let after = hex_opt("after", input.after.as_deref())?;
+        let limit = input
+            .limit
+            .unwrap_or(GRANTS_ASKED_PAGE_DEFAULT)
+            .clamp(1, GRANTS_ASKED_PAGE_MAX);
+        let (requests, next) = self.vault.pending_access_requests_addressed_page(
+            self.actor,
+            after.as_ref(),
+            limit as usize,
+        )?;
+        let requests = requests
+            .into_iter()
+            .filter_map(|request| {
+                let scope = crate::verbs::grant_requested_scope(&request.grant.scope)?;
+                Some(GrantAskedRow {
+                    request: request.id.to_hex(),
+                    asker: request.grant.principal_ref.to_hex(),
+                    capability: request.grant.capability.as_str().to_owned(),
+                    scope,
+                    created_at: request.grant.created_at,
+                    expires_at: request.grant.expires_at,
+                })
+            })
+            .collect();
+        Ok(GrantAskedPage {
+            requests,
+            next_after: next.map(|id| id.to_hex()),
         })
     }
 }
