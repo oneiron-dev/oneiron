@@ -297,7 +297,8 @@ impl Vault {
                 ShapeItemState::Pending
                 | ShapeItemState::Proposed
                 | ShapeItemState::Filed { .. }
-                | ShapeItemState::FileRefused { .. } => {}
+                | ShapeItemState::FileRefused { .. }
+                | ShapeItemState::Held { .. } => {}
             }
         }
         if journal.done {

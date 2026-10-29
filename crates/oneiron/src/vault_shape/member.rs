@@ -4,10 +4,12 @@
 //! preset's default when they name none. Picking a preset is picking a
 //! seed; it stays editable afterwards. Membership lands through the
 //! membership doors the vault already has.
+use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeSeed, invalid};
-use crate::EntityId;
+use crate::authority::HostSlipIssuer;
 use crate::error::Result;
 use crate::federation::{FederationGrantRole, SharedVaultPreset};
+use crate::{EntityId, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -150,5 +152,43 @@ impl ShapeSeed {
         let seed = Self { rows };
         seed.validate()?;
         Ok(seed)
+    }
+}
+
+/// Whether `item` lowers or removes a member: the change that ends the
+/// member's capability slips (FIX 2574).
+pub(super) fn lowers_member(item: &ShapePlanItem) -> bool {
+    match (item.change, &item.before, &item.after) {
+        (ShapeChange::Retire, Some(ShapeRow::Member { .. }), _) => true,
+        (
+            ShapeChange::Update,
+            Some(ShapeRow::Member { role: was, .. }),
+            Some(ShapeRow::Member { role: now, .. }),
+        ) => now.reach() < was.reach(),
+        _ => false,
+    }
+}
+
+impl Vault {
+    /// The issuer that ends the slips of a member the shape lowers or
+    /// removes when the host passed none (FIX 2574): this install's own host
+    /// issuer for the vault, as `vault.members.*` revokes with one. Only
+    /// while it is the live host on the vault's roster, so revoking with it
+    /// refuses no membership change the door would have landed. None when
+    /// the host passed one, or this install holds no live one.
+    pub(super) fn shape_slip_issuer(
+        &self,
+        slips: Option<&HostSlipIssuer>,
+    ) -> Option<HostSlipIssuer> {
+        if slips.is_some() {
+            return None;
+        }
+        let issuer = self.load_host_slip_issuer().ok()?;
+        let txn = self.store.env.read_txn().ok()?;
+        let view = self.authority_view_readonly_in_txn(&txn).ok()?;
+        (view.vault_id.is_some()
+            && !view.vault_root_is_conflicted()
+            && crate::authority::roster_has_live_owner(&view.roster, &issuer.public_key()))
+        .then_some(issuer)
     }
 }
