@@ -178,6 +178,7 @@ impl Vault {
                 .into_iter()
                 .find(|(id, _)| *id == binding)
                 .ok_or(Error::EntityNotFound)?;
+            let previous = row.clone();
             row.enabled = enabled;
             let envelope = owner_envelope(owner, owner_id, &row.pack, &row.source)?;
             let at = crate::unix_seconds_now();
@@ -189,7 +190,15 @@ impl Vault {
                     TimeRange { start: at, end: at },
                     at,
                 )
-                .apply(txn)
+                .apply(txn)?;
+            crate::runtime_hooks::sync_binding_cursor_in_txn(
+                self,
+                txn,
+                binding,
+                Some(&previous),
+                &row,
+            )?;
+            Ok(())
         })?;
         self.verb_hook_bindings_changed();
         Ok(())

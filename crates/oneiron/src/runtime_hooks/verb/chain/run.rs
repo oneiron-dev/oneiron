@@ -8,7 +8,9 @@ use serde_json::Value;
 
 use crate::runtime_hooks::outcome::HookOutcome;
 use crate::runtime_hooks::runner::{Verdict, bounded, judge};
-use crate::runtime_hooks::store::{HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey};
+use crate::runtime_hooks::store::{
+    HookDependency, HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey,
+};
 use crate::runtime_hooks::{
     HookBodyUsage, HookBudgetOverrun, HookPreparation, HookRunContext, apply, grant, read,
 };
@@ -54,6 +56,25 @@ pub(super) struct RunRecord<'c> {
     pub(super) reads: Vec<HookReadPin>,
     /// The outcome the body returned, before the engine's own checks.
     pub(super) outcome_json: Option<String>,
+}
+
+impl RunRecord<'_> {
+    /// Every source row the saved input and callback reads depend on.
+    pub(super) fn hook_dependencies(&self) -> Vec<HookDependency> {
+        self.dependencies
+            .iter()
+            .chain(
+                self.reads
+                    .iter()
+                    .flat_map(|pin| pin.rows.iter().map(|row| &row.id)),
+            )
+            .map(|id| HookDependency {
+                id: *id,
+                revision: None,
+                body_hash: None,
+            })
+            .collect()
+    }
 }
 
 impl<'c> Chain<'c> {
@@ -173,6 +194,7 @@ impl<'c> Chain<'c> {
                     _ => None,
                 };
                 let intent = HookIntent {
+                    dependencies: run.hook_dependencies(),
                     binding: id,
                     author: binding.author_id(),
                     outcome_json: verdict.outcome_json.clone().unwrap_or_default(),

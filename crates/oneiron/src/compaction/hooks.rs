@@ -8,7 +8,7 @@
 use serde_json::{Value, json};
 
 use super::{CompactionWindowMessage, SwapPlan};
-use crate::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre};
+use crate::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
 use crate::skill_hub::pack_catalog::HookActorClass;
 use crate::{EntityId, Vault};
 
@@ -16,9 +16,20 @@ use crate::{EntityId, Vault};
 pub const HOST_COMPACT: &str = "host.compact";
 
 /// A pass past its pre chain, as its post chain picks it up once the
-/// keyframe lands. Empty when no hook is live for the pass.
+/// keyframe lands, or the typed Pending its blocking hook saved (FIX 10085).
 #[derive(Debug, Default)]
-pub struct CompactHooks(Option<VerbHookPre>);
+pub struct CompactHooks {
+    pre: Option<VerbHookPre>,
+    pending: Option<VerbHookStop>,
+}
+
+impl CompactHooks {
+    /// The saved ask/Pending stop, never an ordinary unavailable pass.
+    #[must_use]
+    pub const fn pending(&self) -> Option<&VerbHookStop> {
+        self.pending.as_ref()
+    }
+}
 
 /// The invocation of one pass of a host-numbered log: the same across a
 /// retry of the pass at the same watermark.
@@ -62,6 +73,7 @@ impl Vault {
             class: HookActorClass::System,
             scope: None,
             board_epoch: None,
+            turn: None,
             domain: VerbDomain::Write,
             // A host's own call reads as its actor.
             reader: None,
@@ -73,18 +85,27 @@ impl Vault {
                 if let Ok(added) = added_pins(&args, &pre.args, &contains, fits) {
                     keep.extend(added);
                 }
-                CompactHooks(Some(pre))
+                CompactHooks {
+                    pre: Some(pre),
+                    pending: None,
+                }
             }
             Ok(Err(stop)) => {
+                if matches!(&stop, VerbHookStop::Pending { .. }) {
+                    return CompactHooks {
+                        pre: None,
+                        pending: Some(stop),
+                    };
+                }
                 tracing::warn!(%stop, "host.compact pre-hooks stopped; the pass keeps its own pins");
-                CompactHooks(None)
+                CompactHooks::default()
             }
             Err(error) => {
                 tracing::warn!(
                     ?error,
                     "host.compact pre-hooks failed; the pass keeps its own pins"
                 );
-                CompactHooks(None)
+                CompactHooks::default()
             }
         }
     }
@@ -93,7 +114,7 @@ impl Vault {
     /// keyframe over turns `first..=last`. The keyframe stands whatever a
     /// post-hook says.
     pub fn post_compact_hooks(&self, hooks: CompactHooks, plan: &SwapPlan, first: u64, last: u64) {
-        let Some(pre) = hooks.0 else {
+        let Some(pre) = hooks.pre else {
             return;
         };
         let result = json!({
