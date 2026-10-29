@@ -3303,6 +3303,9 @@ class Oneiron:
         def list(self, spec):
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
+        def export_pack(self, spec):
+            """Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_export_pack(json.dumps(spec))))
         def select(self, spec):
             """Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."""
             return json.loads(_translate(lambda: self._client.vault_lenses_select(json.dumps(spec))))

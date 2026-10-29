@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1166 facade rows, 4180 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1118.
+// UniFFI census: 1167 facade rows, 4183 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1119.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), ManifestEntry.revision (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -31952,6 +31952,61 @@ pub struct LensListPage {
     pub next_after: Option<String>,
 }
 
+/// `oneiron_authority::share_travel::BornWithField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BornWithField {
+    #[serde(rename = "prompt")]
+    Prompt,
+    #[serde(rename = "why")]
+    Why,
+    #[serde(rename = "keep")]
+    Keep,
+    #[serde(rename = "intent_prompt")]
+    IntentPrompt,
+}
+
+/// `oneiron_authority::share_travel::TravelChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TravelChoice {
+    #[serde(rename = "born_with", default, skip_serializing_if = "Option::is_none")]
+    pub born_with: Option<Vec<BornWithField>>,
+}
+
+/// `oneiron::lens::pack_export::LensPackExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensPackExportRequest {
+    #[serde(rename = "lens_ref")]
+    pub lens_ref: String,
+    #[serde(rename = "travel", default, skip_serializing_if = "Option::is_none")]
+    pub travel: Option<TravelChoice>,
+}
+
+/// `oneiron::lens::pack_export::LensPackExportReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LensPackExportReceipt {
+    #[serde(rename = "lens_ref")]
+    pub lens_ref: String,
+    #[serde(rename = "prompt_ref")]
+    pub prompt_ref: String,
+    #[serde(rename = "skill_id")]
+    pub skill_id: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "travelled")]
+    pub travelled: Vec<BornWithField>,
+}
+
+/// `oneiron::lens::pack_export::LensPackExport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LensPackExport {
+    #[serde(rename = "pack_json")]
+    pub pack_json: String,
+    #[serde(rename = "receipt")]
+    pub receipt: LensPackExportReceipt,
+}
+
 /// `oneiron::lens::selection::LensSelectionRange`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -32756,27 +32811,6 @@ pub struct LiveRunRequestSecretGrantUseRequest {
     pub live_run: String,
     #[serde(rename = "spec")]
     pub spec: SecretGrantUseRequest,
-}
-
-/// `oneiron_authority::share_travel::BornWithField`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum BornWithField {
-    #[serde(rename = "prompt")]
-    Prompt,
-    #[serde(rename = "why")]
-    Why,
-    #[serde(rename = "keep")]
-    Keep,
-    #[serde(rename = "intent_prompt")]
-    IntentPrompt,
-}
-
-/// `oneiron_authority::share_travel::TravelChoice`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TravelChoice {
-    #[serde(rename = "born_with", default, skip_serializing_if = "Option::is_none")]
-    pub born_with: Option<Vec<BornWithField>>,
 }
 
 /// `oneiron::verbs::share::ShareCreateRequest`.

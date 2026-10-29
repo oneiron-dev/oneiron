@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1166 facade rows, 4196 declarations.
-Inputs: 1099 of 1166 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1166 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1167 facade rows, 4199 declarations.
+Inputs: 1100 of 1167 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1043 of 1167 fully typed, 124 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
@@ -10344,6 +10344,21 @@ class LensListRow(TypedDict):
 class LensListPage(TypedDict):
     rows: list[LensListRow]
     next_after: NotRequired[str | None]
+BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
+class TravelChoice(TypedDict):
+    born_with: NotRequired[list[BornWithField]]
+class LensPackExportRequest(TypedDict):
+    lens_ref: str
+    travel: NotRequired[TravelChoice | None]
+class LensPackExportReceipt(TypedDict):
+    lens_ref: str
+    prompt_ref: str
+    skill_id: str
+    content_hash: str
+    travelled: list[BornWithField]
+class LensPackExport(TypedDict):
+    pack_json: str
+    receipt: LensPackExportReceipt
 class LensSelectionRange(TypedDict):
     start: int
     end: int
@@ -10546,9 +10561,6 @@ class SecretGrantUseRequest(TypedDict):
     grant: str
     operation: str
     arguments: NotRequired[Any]
-BornWithField = Literal["prompt", "why", "keep", "intent_prompt"]
-class TravelChoice(TypedDict):
-    born_with: NotRequired[list[BornWithField]]
 class ShareCreateRequest(TypedDict):
     share_id: NotRequired[str | None]
     recipient: str

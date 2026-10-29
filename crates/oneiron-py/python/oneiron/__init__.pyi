@@ -2171,6 +2171,8 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
         def list(self, spec: Facade.LensListRequest) -> Facade.LensListPage:
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
+        def export_pack(self, spec: Facade.LensPackExportRequest) -> Facade.LensPackExport:
+            """Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."""
         def select(self, spec: Facade.LensSelectRequest) -> Facade.LensSelection:
             """Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."""
         def resolve(self, spec: Facade.LensSelectionResolveRequest) -> Facade.LensSelectionResolved:

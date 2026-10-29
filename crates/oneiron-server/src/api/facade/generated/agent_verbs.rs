@@ -613,6 +613,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.lenses.activate", post(facade_route))
         .route("/vault.lenses.deactivate", post(facade_route))
         .route("/vault.lenses.list", post(facade_route))
+        .route("/vault.lenses.export_pack", post(facade_route))
         .route("/vault.lenses.select", post(facade_route))
         .route("/vault.lenses.resolve", post(facade_route))
         .route("/vault.lenses.result_set.action", post(facade_route))

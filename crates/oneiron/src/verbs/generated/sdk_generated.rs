@@ -2937,6 +2937,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::LensListRequest>(),
             ),
             (
+                "vault.lenses.export_pack",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensPackExportRequest>(),
+            ),
+            (
                 "vault.lenses.select",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensSelectRequest>(),
             ),
@@ -7100,6 +7104,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.seal.complete",
     "vault.claims.review",
     "vault.claims.settle",
+    "vault.lenses.export_pack",
     "vault.lenses.select",
     "vault.lenses.resolve",
     "vault.lenses.result_set.action",
@@ -8683,6 +8688,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "vault.lenses.export_pack" => {
+            crate::code_run::vault_read::request_schema::<crate::lens::LensPackExport>()
         }
         "vault.lenses.select" => {
             crate::code_run::vault_read::request_schema::<crate::lens::LensSelection>()
@@ -13812,6 +13820,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.lenses.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.export_pack" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19981,6 +19996,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.lenses.list" => {
             let _input: crate::lens::LensListRequest = decode(value.clone())?;
         }
+        "vault.lenses.export_pack" => {
+            let _input: crate::lens::LensPackExportRequest = decode(value.clone())?;
+        }
         "vault.lenses.select" => {
             let _input: crate::lens::LensSelectRequest = decode(value.clone())?;
         }
@@ -23376,6 +23394,7 @@ pub fn invoke(
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
+        "vault.lenses.export_pack" => encode(vault_lenses_export_pack(memory, decode(value)?)?),
         "vault.lenses.select" => encode(vault_lenses_select(memory, decode(value)?)?),
         "vault.lenses.resolve" => encode(vault_lenses_resolve(memory, decode(value)?)?),
         "vault.lenses.result_set.action" => {
@@ -29344,6 +29363,12 @@ pub fn vault_lenses_list(
     input: crate::lens::LensListRequest,
 ) -> MemoryResult<crate::lens::LensListPage> {
     memory.lenses_list(input)
+}
+pub fn vault_lenses_export_pack(
+    memory: &Memory<'_>,
+    input: crate::lens::LensPackExportRequest,
+) -> MemoryResult<crate::lens::LensPackExport> {
+    memory.lenses_export_pack(&input)
 }
 pub fn vault_lenses_select(
     memory: &Memory<'_>,
