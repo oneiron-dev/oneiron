@@ -6012,6 +6012,7 @@ impl AgentVerb {
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSettingChangesList
+                | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
                 | Self::VaultSkillsBootstrap
                 | Self::VaultSkillsRestoredefaults

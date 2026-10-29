@@ -3259,6 +3259,12 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "page": {
+        "rows": "groups",
+        "cursor": "next",
+        "resume": "spec",
+        "within": "after"
+      },
       "section": false,
       "openapi": true
     },
