@@ -44,7 +44,7 @@ type NoClosure = fn(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>;
 
 /// An ask's census, read in one snapshot: its recipients, its effective
 /// spec and one validated member TASK per recipient.
-struct AskCensus {
+pub(super) struct AskCensus {
     holders: Vec<EntityId>,
     context_class: Option<TaskAskClass>,
     governed_task: Option<EntityId>,
