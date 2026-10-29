@@ -13,9 +13,10 @@
 //! A home out of reach, refusing or moved stays pending by name, and the next
 //! pass retries. A home already holding a newer head of this machine's own
 //! log (a newer pass committed it) is nothing to ship and nothing pending:
-//! that pass acks it (FIX 6394). A home this machine left stays a member,
-//! pending, never removed. With nothing in custody, or every residence
-//! member current, it dials nothing.
+//! that pass acks it (FIX 6394). The owner drains a residence member this
+//! machine left through `drain_custody_residence_member_as`, which the home
+//! answers with its sweep ack; until then it stays a pending member. With
+//! nothing in custody, or every residence member current, it dials nothing.
 
 use std::sync::Arc;
 
@@ -26,10 +27,11 @@ use serde_json::{Value, json};
 use super::{ResidenceRpc, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::PeerMachine;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::store::custody_protocol::{
-    AckPosition, AckRecord, CustodyBatch, EvidenceKind, PendingCode, TargetKind, TargetPending,
-    TargetSpec,
+    AckPosition, AckRecord, CustodyBatch, DrainAck, EvidenceKind, PendingCode, TargetId,
+    TargetKind, TargetPending, TargetSpec,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::SEALED_BUNDLE_PUT_PART_MAX;
@@ -71,6 +73,11 @@ struct StagedReply {
 #[derive(Deserialize)]
 struct CommitReply {
     ack: AckRecord,
+}
+
+#[derive(Deserialize)]
+struct DrainReply {
+    ack: DrainAck,
 }
 
 fn storage(error: crate::Error) -> TransportError {
@@ -210,6 +217,56 @@ pub(crate) async fn relay_custody(
         None => Ok(()),
         Some(detail) => note(vault, spec, pending(PendingCode::Failed, &detail)).await,
     }
+}
+
+/// Drains residence member `target`, approved by `owner` (FIX 5843): begun,
+/// the home empties the lineage's heads on the proven socket and answers
+/// its sweep ack, committed here. The set's new revision. Any error leaves
+/// the member fenced for a retry, which begins the same drain again.
+pub async fn drain_custody_residence_member_as(
+    vault: &Arc<Vault>,
+    config: &SyncClientConfig,
+    owner: &AuthenticatedOwner,
+    target: &TargetId,
+) -> Result<u64, TransportError> {
+    let begun = Arc::clone(vault);
+    let begin_owner = owner.clone();
+    let begin_target = target.clone();
+    let ticket = blocking(move || begun.begin_custody_member_drain_as(&begin_owner, &begin_target))
+        .await?;
+    let budgets = residence_budgets(vault)?;
+    let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
+        return Err(TransportError::Storage("home node offline".into()));
+    };
+    let PeerMachine::Proven { machine: home, .. } = rpc.home else {
+        return Err(refused());
+    };
+    let params = json!({
+        "targetId": ticket.target_id.as_str(),
+        "setRevision": ticket.set_revision,
+        "position": AckPosition::of(&ticket.position),
+        "operationId": crate::entity_id::bytes_to_hex_lower(&ticket.operation_id),
+        "token": base64::engine::general_purpose::STANDARD.encode(ticket.token.expose()),
+    });
+    let ack = match rpc.call("residence.custody.drain", params).await? {
+        Ok(reply) => serde_json::from_value::<DrainReply>(reply)
+            .map_err(|_| refused())?
+            .ack,
+        Err(_) => return Err(refused()),
+    };
+    let residence = TargetSpec::residence(home);
+    if ack.target_id != ticket.target_id.as_str()
+        || ack.target_id != residence.id().as_str()
+        || ack.set_revision != ticket.set_revision
+        || ack.position != AckPosition::of(&ticket.position)
+        || ack.operation_id != crate::entity_id::bytes_to_hex_lower(&ticket.operation_id)
+        || ack.evidence.kind != EvidenceKind::ResidenceSweep
+    {
+        return Err(refused());
+    }
+    let committed = Arc::clone(vault);
+    let commit_owner = owner.clone();
+    blocking(move || committed.commit_custody_member_drain_as(&commit_owner, &ack)).await
 }
 
 /// What the home holds of `lineage`; `None` when it refused the read.

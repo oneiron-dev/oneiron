@@ -162,6 +162,21 @@ impl Vault {
         Ok(owed)
     }
 
+    /// Drops every ledger row of the archive the export row `export_key`
+    /// names (`person:receipt`), in the caller's writer: each holder's
+    /// delivery of it goes with its archive.
+    pub(crate) fn drop_removal_deliveries_for_export_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        export_key: &str,
+    ) -> Result<()> {
+        let prefix = format!("{export_key}:");
+        for (key, _) in REMOVAL_DELIVERY.scan_from(&self.store, &*txn, prefix.as_bytes())? {
+            REMOVAL_DELIVERY.delete(&self.store, &mut *txn, &key)?;
+        }
+        Ok(())
+    }
+
     /// The current delivery version of the archive the ledger row `key`
     /// names, `None` when it is gone or past its term at `now`, or the key
     /// names none.

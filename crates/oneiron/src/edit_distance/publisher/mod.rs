@@ -82,8 +82,10 @@ pub use self::interview::{
 #[cfg(feature = "sync")]
 pub use self::interview::{open_generated_interview, open_interview, settle_interview_digest};
 pub use self::signature::{CONTENT_HASH_LEN, IssueSignature, tally_judged_outcomes};
-pub(crate) use self::signature_store::emit_issue_signature_in_txn;
 pub use self::signature_store::{emit_issue_signature, issue_signature};
+pub(crate) use self::signature_store::{
+    emit_issue_signature_in_txn, emit_issue_signature_local_in_txn,
+};
 pub(crate) use self::transport::record_signature_hold_in_txn;
 pub use self::transport::{
     PUBLISHER_CHANNEL_CLASS, SendOutcome, SignatureSendState, send_signatures_if_enabled,
