@@ -329,7 +329,7 @@ impl Memory<'_> {
             if lands_nothing {
                 unproven.take();
             }
-            let landed = match &sink {
+            let mut landed = match &sink {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(
                         &plan,
@@ -437,14 +437,22 @@ impl Memory<'_> {
             // its actor armed a wake, recorded in this commit so a crash after
             // it cannot lose one. An import is a source's words and a host
             // door's turn the engine's own: neither wakes a program. The
-            // record never fails the turn; one it cannot write is logged.
+            // record never fails the turn; one it cannot write is logged, and
+            // the turn's receipt says what the wake came to (FIX 9970).
             if matches!(&sink, WitnessSink::Base(_))
                 && plan.imported.is_none()
                 && !door.is_host()
                 && (matches!(admission.turn, AdmittedTurn::Mint { .. })
                     || admission.has_new_messages())
             {
-                self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
+                let outcome = self.record_turn_program_wakes_in_txn(
+                    wtxn,
+                    plan.conversation_id,
+                    plan.turn_id,
+                );
+                if let Landed::Base(receipt) = &mut landed {
+                    receipt.wake_outcome = Some(outcome);
+                }
             }
             if let Some(project) = leader_project {
                 let message_ids = plan.message_ids();

@@ -333,7 +333,10 @@ pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
-pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub use witness::{
+    TurnProgramWakeOutcome, UnpersistedWakeReason, WitnessAssertions, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
+};
 pub(crate) use witness::{
     erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
 };

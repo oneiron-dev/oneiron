@@ -12,6 +12,7 @@
 use crate::dreamer_runner::{
     ArmTurnProgram, LandedTurnRef, TurnProgramAuthority, TurnProgramRegistration,
 };
+use super::wake_outcome::{TurnProgramWakeOutcome, UnpersistedWakeReason};
 use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 
@@ -100,29 +101,30 @@ impl Memory<'_> {
     }
 
     /// Records, in the landing turn's own writer, the wake `turn` owes each
-    /// program its actor armed (DOOR-141). It never fails the turn: a wake it
+    /// program its actor armed (DOOR-141), and answers what it came to for
+    /// the turn's receipt (FIX 9970). It never fails the turn: a wake it
     /// cannot record (no authority to seal, a read or write that fails) is
-    /// logged and rolled back alone, and the turn commits as it would have.
+    /// logged, rolled back alone and answered as unpersisted, and the turn
+    /// commits as it would have.
     pub(super) fn record_turn_program_wakes_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         conversation: EntityId,
         turn: EntityId,
-    ) {
+    ) -> TurnProgramWakeOutcome {
         match crate::dreamer_runner::turn_programs_armed_in_txn(self.vault, &*wtxn, self.actor) {
             Ok(true) => {}
-            Ok(false) => return,
-            Err(error) => {
-                skipped(&error, turn);
-                return;
-            }
+            Ok(false) => return TurnProgramWakeOutcome::NotArmed,
+            Err(error) => return skipped(&error, turn),
         }
         let Some(authority) = self.turn_program_authority() else {
             tracing::warn!(
                 turn = %turn.to_hex(),
                 "a turn whose caller seals no authority wakes no armed program; the turn commits"
             );
-            return;
+            return TurnProgramWakeOutcome::Unpersisted {
+                reason: UnpersistedWakeReason::NoAuthority,
+            };
         };
         let landed = LandedTurnRef {
             turn,
@@ -131,10 +133,7 @@ impl Memory<'_> {
         };
         let mut savepoint = match self.vault.store.env.nested_write_txn(wtxn) {
             Ok(savepoint) => savepoint,
-            Err(error) => {
-                skipped(&crate::Error::from(error), turn);
-                return;
-            }
+            Err(error) => return skipped(&crate::Error::from(error), turn),
         };
         match crate::dreamer_runner::record_turn_program_wakes_in_txn(
             self.vault,
@@ -142,22 +141,27 @@ impl Memory<'_> {
             &authority,
             &landed,
         ) {
-            Ok(_) => {
-                if let Err(error) = savepoint.commit() {
-                    skipped(&crate::Error::from(error), turn);
-                }
-            }
+            Ok(recorded) => match savepoint.commit() {
+                Ok(()) => TurnProgramWakeOutcome::Evaluated {
+                    newly_recorded: u32::try_from(recorded).unwrap_or(u32::MAX),
+                },
+                Err(error) => skipped(&crate::Error::from(error), turn),
+            },
             Err(error) => skipped(&error, turn),
         }
     }
 }
 
-/// Logs one program wake the turn could not record; the turn goes on.
-fn skipped(error: &crate::Error, turn: EntityId) {
+/// Logs one program wake the turn could not record in storage, and answers
+/// it for the turn's receipt; the turn goes on.
+fn skipped(error: &crate::Error, turn: EntityId) -> TurnProgramWakeOutcome {
     tracing::warn!(
         kind = ?error.kind(),
         %error,
         turn = %turn.to_hex(),
         "turn program wake not recorded; the turn commits"
     );
+    TurnProgramWakeOutcome::Unpersisted {
+        reason: UnpersistedWakeReason::StorageFailure,
+    }
 }
