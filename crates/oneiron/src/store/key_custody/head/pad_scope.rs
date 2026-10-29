@@ -5,7 +5,7 @@
 //!
 //! Two forms share one codec. A head's world compartment, once
 //! [`WORLD_PAD_COMPARTMENTS`] is on, sits among the head's others under the
-//! control compartment's digests. A capsule ([`SealedWorldPads`]) stands
+//! control compartment's root. A capsule ([`SealedWorldPads`]) stands
 //! alone: what a machine's pad hydration carries to another of the owner's
 //! machines, bound to its custody position, its world, the exact set of pads
 //! it holds and the set of recipients it is wrapped to. Its BLAKE3 is what
@@ -420,7 +420,7 @@ pub(crate) fn seal_world_pad_compartment(
     let key_id = capsule_key_id(position, &world, &keys, &ids);
     let body = BodyWire {
         control: None,
-        digests: Vec::new(),
+        root: None,
         live: live
             .iter()
             .map(|(full, secret)| EntryWire {
@@ -443,7 +443,6 @@ pub(crate) fn seal_world_pad_compartment(
         // A world's pad capsule carries no erase evidence (FIX 10584 item
         // 3): that rides the head's host-readable compartments.
         evidence: Vec::new(),
-        carried_digests: Vec::new(),
     };
     let mut key = Zeroizing::new([0u8; 32]);
     crate::world_keys::os_fill(&mut key[..])?;
@@ -527,11 +526,10 @@ pub(crate) fn open_world_pad_compartment(
     )?;
     let mut body: BodyWire = rmp_serde::from_slice(&plain).map_err(|_| pads_corrupt())?;
     if body.control.is_some()
-        || !body.digests.is_empty()
+        || body.root.is_some()
         || !body.recipients.is_empty()
         || !body.history.is_empty()
         || !body.evidence.is_empty()
-        || !body.carried_digests.is_empty()
     {
         return Err(pads_corrupt());
     }
