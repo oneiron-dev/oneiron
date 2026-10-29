@@ -140,7 +140,12 @@ pub fn receipt_attribution_trace_sourced(
         .and_then(|attempt| EntityId::from_bytes(*attempt.as_bytes()).ok())
         .map(|run| vec![run]);
     let skills = trace.skills.iter().map(|skill| skill.skill).collect();
-    let rows = union_source_rows([receipt.pack_source_rows(), run, Some(skills)]);
+    let rows = union_source_rows([
+        receipt.pack_source_rows(),
+        run,
+        Some(skills),
+        Some(vec![trace.actor]),
+    ]);
     Ok(Some((trace, rows)))
 }
 
