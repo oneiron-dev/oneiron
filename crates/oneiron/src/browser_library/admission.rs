@@ -99,6 +99,16 @@ impl ProgramAdmissionJob {
     }
 }
 
+/// The source actor a [`PROGRAM_ADMISSION_KIND`] payload was captured
+/// under (FIX 10718): its scope's actor, when the payload decodes. The
+/// erase pass reads it to scrub an erased actor's payloads; a payload
+/// that does not decode names no actor.
+pub(crate) fn admission_payload_actor(payload: &[u8]) -> Option<EntityId> {
+    serde_json::from_slice::<ProgramAdmissionJob>(payload)
+        .map(|job| job.scope.actor)
+        .ok()
+}
+
 /// The job a filing in an admission run files for (CUA E8b): the filing's
 /// own write keeps the program it filed against the job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
