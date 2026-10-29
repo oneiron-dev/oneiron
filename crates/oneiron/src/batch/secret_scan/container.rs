@@ -1,6 +1,7 @@
 //! Containers the secret mask reads into (OF-067 C, owner ruling G04 binary
 //! = C2): a ZIP archive (Office, OpenDocument and the other ZIP-family
-//! files), a gzip file and a PDF's streams and text strings. The write door
+//! files), a gzip file, a tar archive, an xz file (FIX 2471) and a PDF's
+//! streams and text strings. The write door
 //! reads each member as it reads a body, and a member's keys are placed at
 //! their spans in the decoded member. A reader the owner has not granted gets
 //! a copy rebuilt around the overwritten keys, each key in a text member
@@ -25,14 +26,17 @@
 //!
 //! A container is known by its leading bytes, never by its name, and text
 //! with a container's leading bytes is one only when it parses as one (FIX
-//! 2474). A tar, 7z, RAR or xz file is read as plain bytes, and so is a
-//! container that starts past a file's first byte.
+//! 2474). A 7z or RAR file is read as plain bytes (FIX 2471); a ZIP that
+//! starts past a file's first byte opens through the zip crate's own offset
+//! handling.
 
 mod archive;
 mod gzip;
 mod pdf;
 mod projection_edit;
 mod retained_iterative;
+mod tar;
+mod xz;
 
 pub(crate) use self::projection_edit::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff,
@@ -63,6 +67,9 @@ const REASON_ARCHIVE_CYCLE: &str = "gate.secret_scan.archive_cycle";
 enum Kind {
     Zip,
     Gzip,
+    // FIX 2471: a tar archive and an xz file.
+    Tar,
+    Xz,
     Pdf,
 }
 
@@ -74,6 +81,14 @@ fn kind(bytes: &[u8]) -> Option<Kind> {
         Some(Kind::Gzip)
     } else if bytes.starts_with(b"%PDF-") && bytes.get(5).is_some_and(u8::is_ascii_digit) {
         Some(Kind::Pdf)
+    } else if bytes.len() >= 512
+        && bytes.get(257..).is_some_and(|magic| magic.starts_with(b"ustar"))
+    {
+        // FIX 2471: a ustar header.
+        Some(Kind::Tar)
+    } else if bytes.starts_with(&[0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]) {
+        // FIX 2471: an xz stream.
+        Some(Kind::Xz)
     } else {
         None
     }
@@ -81,28 +96,38 @@ fn kind(bytes: &[u8]) -> Option<Kind> {
 
 /// The container the walk reads `bytes` as (FIX 2474): the head's, save
 /// that UTF-8 text is a container only when its frame parses (a ZIP's end
-/// record and central directory, a PDF's header, cross-reference and
-/// trailer). A credential line or a string that only starts like one reads
-/// as text. Binary bytes keep the head's: a malformed container stays
-/// sealed. A gzip file's second byte is no UTF-8.
+/// record and central directory, a tar's first header checksum, a PDF's
+/// header, cross-reference and trailer). A credential line or a string that
+/// only starts like one reads as text. Binary bytes keep the head's: a
+/// malformed container stays sealed. A gzip file's second byte is no UTF-8.
 fn classify(bytes: &[u8]) -> Option<Kind> {
-    let kind = kind(bytes)?;
+    let Some(head) = kind(bytes) else {
+        // FIX 2471: a ZIP that starts past byte 0 opens through the zip
+        // crate's own offset handling; binary bytes only.
+        if std::str::from_utf8(bytes).is_err() && archive::opens(bytes) {
+            return Some(Kind::Zip);
+        }
+        return None;
+    };
     if std::str::from_utf8(bytes).is_err() {
-        return Some(kind);
+        return Some(head);
     }
-    let parses = match kind {
+    let parses = match head {
         Kind::Zip => archive::opens(bytes),
         Kind::Gzip => true,
+        Kind::Tar => tar::opens(bytes),
+        Kind::Xz => true,
         Kind::Pdf => pdf::opens(bytes),
     };
-    parses.then_some(kind)
+    parses.then_some(head)
 }
 
 /// Whether `bytes` lead as a container: the head pre-filter a reader that
 /// holds only a body's first bytes takes. The walk reads `bytes` as the
 /// classification above does.
 pub(crate) fn is_container(bytes: &[u8]) -> bool {
-    kind(bytes).is_some()
+    // FIX 2471: a prefixed ZIP opens through the zip crate's own offset handling.
+    kind(bytes).is_some() || (std::str::from_utf8(bytes).is_err() && archive::opens(bytes))
 }
 
 /// Whether `bytes` is a container the walk cannot read whole: encrypted,
@@ -119,10 +144,14 @@ pub(crate) fn is_sealed(bytes: &[u8]) -> bool {
 }
 
 /// Whether a key's span is placed in `bytes` as they are: plain bytes, and a
-/// PDF, whose own bytes hold its uncompressed objects. A ZIP or gzip file is
-/// rebuilt from its members, so a key in one is placed in the member.
+/// PDF, whose own bytes hold its uncompressed objects. A ZIP, gzip, tar or
+/// xz file is rebuilt from its members, so a key in one is placed in the
+/// member (FIX 2471).
 pub(super) fn holds_spans(bytes: &[u8]) -> bool {
-    !matches!(classify(bytes), Some(Kind::Zip | Kind::Gzip))
+    !matches!(
+        classify(bytes),
+        Some(Kind::Zip | Kind::Gzip | Kind::Tar | Kind::Xz)
+    )
 }
 
 /// Whether bytes no reader shows are handed to a scan's walk as a member
@@ -135,14 +164,21 @@ fn hidden_member(bytes: &[u8]) -> bool {
 
 /// Whether a key at `path` in the member `bytes` stands as its handle text
 /// in a masked copy (FIX 7944): the UTF-8 text of a ZIP entry, a gzip
-/// payload or a PDF object's strings, each encoded again around its new
-/// length. The stored bytes' own spans, a binary member's, a PDF stream's
-/// (an object stream names its objects by offset) and a PDF's own bytes
-/// (its cross-reference does) keep the filler's width.
+/// payload, a tar entry, an xz payload (FIX 2471) or a PDF object's
+/// strings, each encoded again around its new length. The stored bytes' own
+/// spans, a binary member's, a PDF stream's (an object stream names its
+/// objects by offset) and a PDF's own bytes (its cross-reference does) keep
+/// the filler's width.
 fn writes_handles(path: &[MemberStep], bytes: &[u8]) -> bool {
     matches!(
         path.last(),
-        Some(MemberStep::Zip { .. } | MemberStep::Gzip | MemberStep::PdfStrings { .. })
+        Some(
+            MemberStep::Zip { .. }
+                | MemberStep::Gzip
+                | MemberStep::Tar { .. }
+                | MemberStep::Xz
+                | MemberStep::PdfStrings { .. }
+        )
     ) && std::str::from_utf8(bytes).is_ok()
         && classify(bytes).is_none()
 }

@@ -81,6 +81,10 @@ pub(crate) enum MemberStep {
     Zip { entry: u32 },
     /// A gzip file's payload: every member it chains, read as one.
     Gzip,
+    /// A tar entry, by its place in archive order (FIX 2471).
+    Tar { entry: u32 },
+    /// An xz file's decompressed payload (FIX 2471).
+    Xz,
     /// A PDF stream, by its object's id.
     PdfStream { object: u32, generation: u16 },
     /// A PDF object's text strings, each decoded, in the object's order

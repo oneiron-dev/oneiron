@@ -108,6 +108,11 @@ futures-util = { version = "0.3", optional = true }
 zstd = "0.13"
 # The whole-vault archive (OF-222) is one ZIP of JSONL records, files and a manifest.
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+# FIX 2471: the secret scan opens tar and xz containers. Both are pure Rust
+# (tar MIT OR Apache-2.0, lzma-rust2 Apache-2.0); the Engine approved the two
+# lines on 10-29 for L14's manifest seam.
+tar = { version = "=0.4.46", default-features = false }
+lzma-rust2 = { version = "=0.16.2", default-features = false, features = ["std", "xz", "encoder"] }
 tracing = { version = "0.1" }
 # FIX 8276: code-mode TypeScript is stripped by Oxc in process before QuickJS
 # runs it (code_sandbox/source.rs); plain JavaScript is never reprinted.

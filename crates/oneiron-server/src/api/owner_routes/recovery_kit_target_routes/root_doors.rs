@@ -29,7 +29,7 @@ use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EntityId;
-use oneiron::authority::{EditOrigin, RecoveryRootId};
+use oneiron::authority::RecoveryRootId;
 use oneiron::recovery::{KitIssue, PassphraseCost, PieceHome};
 use oneiron::world_keys::{KitConfirmation, RootWorkDone};
 use serde::Deserialize;
@@ -153,7 +153,6 @@ async fn anchor(
         let seed = Kit::parse(body.pieces, body.passphrase)?.seed(vault)?;
         let anchored = vault.anchor_machine(
             &owner,
-            EditOrigin::ThisMachine,
             &seed,
             &request,
             code,
@@ -187,7 +186,6 @@ async fn restore(
         let pieces = kit.pieces();
         let restored = vault.restore_world_kit(
             &owner,
-            EditOrigin::ThisMachine,
             &pieces,
             kit.passphrase.as_ref(),
             confirm,
@@ -259,7 +257,6 @@ async fn confirm(
         let pieces = kit.pieces();
         let confirmed = vault.confirm_world_kit(
             &owner,
-            EditOrigin::ThisMachine,
             &pieces,
             kit.passphrase.as_ref(),
             &carry,

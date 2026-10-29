@@ -41,7 +41,7 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::authority::{EditOrigin, RecoveryRootId, RootChange};
+use oneiron::authority::{RecoveryRootId, RootChange};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -356,7 +356,7 @@ async fn pin(
         let root = RecoveryRootId(parse_revision("root", &body.root)?);
         let report = server
             .vault()
-            .pin_owner_root(&owner, EditOrigin::ThisMachine, root)?;
+            .pin_owner_root(&owner, root)?;
         Ok(RepinView::from(&report))
     })
     .await?;

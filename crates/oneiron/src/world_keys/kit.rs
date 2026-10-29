@@ -36,7 +36,7 @@ use super::{
     RecoveryRootId, RecoveryRootSeed, RootRestore, VaultKeyStatus, VaultKeyWrapInfo,
     WorldPadAvailability, WorldRecoveryState, refused,
 };
-use crate::authority::{AuthorityEntryHash, EditOrigin};
+use crate::authority::AuthorityEntryHash;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::recovery::{
@@ -397,7 +397,6 @@ impl Vault {
     pub fn confirm_world_kit(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
         pieces: &[&KitPiece],
         passphrase: Option<&KitPassphrase>,
         carry: &BTreeSet<EntityId>,
@@ -408,7 +407,7 @@ impl Vault {
         // after it commits (OF-570).
         let transition = self.begin_wrap_transition()?;
         let (activated, (replaced, escrow)) =
-            self.activate_owner_root_with(owner, origin, prepared, carry, |txn| {
+            self.activate_owner_root_with(owner, prepared, carry, |txn| {
                 self.confirm_kit_rows_in_txn(txn, &transition, &row)
             })?;
         transition.finish()?;
@@ -485,7 +484,6 @@ impl Vault {
     pub fn restore_world_kit(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
         pieces: &[&KitPiece],
         passphrase: Option<&KitPassphrase>,
         confirm: Option<KitConfirmation>,
@@ -496,7 +494,7 @@ impl Vault {
             root,
             reissue_advised,
         } = self.kit_seed(pieces, passphrase)?;
-        let keys = self.restore_world_keys(owner, origin, &seed, confirm)?;
+        let keys = self.restore_world_keys(owner, &seed, confirm)?;
         Ok(WorldKitRestore {
             kit,
             root: root.id,

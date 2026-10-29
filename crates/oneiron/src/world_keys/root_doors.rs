@@ -25,7 +25,7 @@ use super::{
     SeedOrigin, WorldKey, WorldKeyId, refused,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, EditOrigin, FoldedMachine,
+    AuthorityEntryHash, AuthorityFold, FoldedMachine,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineEnrolmentRequest,
     OwnerRootRecord, PinnedRoot, RequestCode, anchor_mark_stands, invalid_authority,
     owner_root_records_in_txn, read_pin_row_in_txn, write_awaited_root_in_txn,
@@ -349,11 +349,10 @@ impl Vault {
     pub fn activate_owner_root(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
-        self.activate_owner_root_with(owner, origin, prepared, carry, |_| Ok(()))
+        self.activate_owner_root_with(owner, prepared, carry, |_| Ok(()))
             .map(|(activated, ())| activated)
     }
 
@@ -363,7 +362,6 @@ impl Vault {
     pub(crate) fn activate_owner_root_with<T>(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
@@ -455,7 +453,6 @@ impl Vault {
     pub fn anchor_machine(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         seed: &RecoveryRootSeed,
         request: &MachineEnrolmentRequest,
         code: Option<RequestCode>,
@@ -623,14 +620,13 @@ impl Vault {
     /// anchors this install's own request under it unless this machine is
     /// already mine there with its own keys; pins it; and opens each key
     /// wrapped to it whose world is live here. Every root-wrapped key lands in
-    /// exactly one list. `_origin` does not narrow it: the owner's say-so counts
-    /// from any surface the owner is authenticated on (owner, 10-19), so a
-    /// peer's request restores as this machine's does. The revalidated owner
-    /// proof and the kit's seed gate are what stand.
+    /// exactly one list. The caller's origin does not narrow it: the owner's
+    /// say-so counts from any surface the owner is authenticated on (owner,
+    /// 10-19), so a peer's request restores as this machine's does. The
+    /// revalidated owner proof and the kit's seed gate are what stand.
     pub fn restore_world_keys(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         seed: &RecoveryRootSeed,
         confirm: Option<KitConfirmation>,
     ) -> Result<RootRestore> {
@@ -725,7 +721,6 @@ impl Vault {
     pub fn pin_owner_root(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         root: RecoveryRootId,
     ) -> Result<RepinReport> {
         let stored = self.precheck_root_door(owner, |txn, fold| {
