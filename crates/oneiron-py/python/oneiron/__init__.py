@@ -897,6 +897,9 @@ class Oneiron:
         def revert_run(self, spec):
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
             return json.loads(_translate(lambda: self._client.vault_revert_run(json.dumps(spec))))
+        @property
+        def custody(self) -> "Oneiron._VaultCustodyVerbs":
+            return Oneiron._VaultCustodyVerbs(self._client)
     class _VaultCommitmentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -978,6 +981,9 @@ class Oneiron:
         @property
         def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs":
             return Oneiron._VaultCoachTrainingOffersPilotsVerbs(self._client)
+        def sources(self, spec):
+            """Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_sources(json.dumps(spec))))
     class _VaultCoachTrainingOffersCandidatesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5508,6 +5514,33 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
+    class _VaultCustodyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def members(self) -> "Oneiron._VaultCustodyMembersVerbs":
+            return Oneiron._VaultCustodyMembersVerbs(self._client)
+    class _VaultCustodyMembersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def drain(self) -> "Oneiron._VaultCustodyMembersDrainVerbs":
+            return Oneiron._VaultCustodyMembersDrainVerbs(self._client)
+        def reenrol(self, spec):
+            """The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_reenrol(json.dumps(spec))))
+    class _VaultCustodyMembersDrainVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def begin(self, spec):
+            """The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_drain_begin(json.dumps(spec))))
+        def commit(self, spec):
+            """The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_drain_commit(json.dumps(spec))))
+        def folder(self, spec):
+            """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_drain_folder(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1196 facade rows, 4329 declarations.
-Inputs: 1124 of 1196 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1035 of 1196 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1201 facade rows, 4343 declarations.
+Inputs: 1129 of 1201 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1201 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 120; unread shapes: 0.
 """
 
@@ -1995,9 +1995,15 @@ class PinnedRef(TypedDict):
     target: EntityId
     frontier: NotRequired[list[int] | None]
     digest: str
+class SecretArgHandle(TypedDict):
+    handle: str
+class SecretArgText(TypedDict):
+    text: str
+SecretArg = SecretArgHandle | SecretArgText
 class WorkflowBinding(TypedDict):
     handle: str
     args: NotRequired[dict[str, str]]
+    secret_args: NotRequired[dict[str, SecretArg]]
 class BriefContext(TypedDict):
     pack: NotRequired[PinnedPack | None]
     read_first: NotRequired[list[PinnedRef]]
@@ -8759,6 +8765,20 @@ class OfferPilotComplete(TypedDict):
     measurement: OfferPilotMeasurement
 class OfferPilotRef(TypedDict):
     pilot: EntityId
+class ReservoirSourcesRequest(TypedDict):
+    task_classes: NotRequired[list[str] | None]
+    since: NotRequired[int | None]
+    consented_sources: NotRequired[list[EntityId]]
+ReservoirSourcePeople = Literal["others", "unknown"]
+class ReservoirSourceRow(TypedDict):
+    source: EntityId
+    people: ReservoirSourcePeople
+    pairs: int
+    consented: bool
+class ReservoirSourcePreview(TypedDict):
+    carried: int
+    excluded: dict[str, int]
+    sources: list[ReservoirSourceRow]
 class ResearchBindWire(TypedDict):
     root: EntityId
     config: CampaignConfig
@@ -21500,6 +21520,45 @@ class IdentityPairProposals(TypedDict):
     b: EntityId
     proposals: list[EntityId]
     distinct_claims: list[EntityId]
+class CustodyMemberRef(TypedDict):
+    target_id: str
+class AckPosition(TypedDict):
+    vault: str
+    namespace: str
+    epoch: int
+    seq: int
+    tip: str
+class CustodyDrainTicketView(TypedDict):
+    target_id: str
+    set_revision: int
+    position: AckPosition
+    operation_id: str
+    token: str
+ProtocolEvidenceKind = Literal["filesystem_sweep", "residence_sweep", "ssh_version_sweep", "object_version_sweep", "no_head_in_scope", "unversioned_object_sweep"]
+class DeletionEvidence(TypedDict):
+    kind: ProtocolEvidenceKind
+    superseded_removed: int
+    remaining_heads: int
+    inventory_digest: str
+class DrainAck(TypedDict):
+    version: int
+    target_id: str
+    set_revision: int
+    position: AckPosition
+    operation_id: str
+    evidence: DeletionEvidence
+    placement: str
+    origin: str
+    mac: str
+class CustodyDrainCommitRequest(TypedDict):
+    ack: DrainAck
+class CustodySetRevision(TypedDict):
+    revision: int
+TargetScope = Literal["head_and_log", "log_only"]
+class CustodyMemberReenrolRequest(TypedDict):
+    target_id: NotRequired[str | None]
+    folder: NotRequired[str | None]
+    scope: NotRequired[TargetScope | None]
 ConnectorAnswerAction = Literal["accept", "decline", "cancel"]
 class ConnectorQuestionAnswer(TypedDict):
     key: str
@@ -21678,11 +21737,6 @@ class WorkflowSeed(TypedDict):
     path: str
     digest: str
     license: str
-class SecretArgHandle(TypedDict):
-    handle: str
-class SecretArgText(TypedDict):
-    text: str
-SecretArg = SecretArgHandle | SecretArgText
 class SnapshotBounds(TypedDict):
     read_chars: NotRequired[int | None]
     snapshot_origins: NotRequired[int | None]

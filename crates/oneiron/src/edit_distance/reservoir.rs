@@ -127,6 +127,9 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 mod eligibility;
 pub use eligibility::CorpusUse;
+pub use eligibility::{
+    ReservoirSourcePeople, ReservoirSourcePreview, ReservoirSourceRow, reservoir_source_preview,
+};
 
 // ---------------------------------------------------------------------------
 // Keyspace + pinned strings

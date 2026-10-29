@@ -9911,7 +9911,7 @@
      "purpose": "The replay library's store (OF-598; EIRI-ARCH-0002 \"The replay library\"): solved browser runs, filed per…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 5,
       "fn": 6,
       "re-export": 5,
@@ -10015,7 +10015,7 @@
      "path": "src/browser_library/records.rs",
      "purpose": "The browser library's records (moved out of `browser_library` whole): its programs' and retires' rows…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -17324,7 +17324,7 @@
      "purpose": "Proxy receipts use the existing owner-local gate ledger",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
@@ -71774,7 +71774,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 14,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -86863,7 +86863,7 @@
      "purpose": "`demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs…",
      "surface": {
       "crate-vis": 11,
-      "fn": 2
+      "fn": 3
      }
     },
     {

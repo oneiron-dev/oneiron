@@ -2226,6 +2226,11 @@ export_facade! {
     let output = client.vault_coach_training_offers_pilots_get(&input)?;
     crate::codec::lift_record("vault.coach.training_offers.pilots.get", &output)
 };
+"vault.coach.training_offers.sources" => fn vault_coach_training_offers_sources(&self, input: ReservoirSourcesRequest) -> ReservoirSourcePreview = |client| {
+    let input: oneiron::task_verb::sdk::ReservoirSourcesRequest = crate::codec::lower_record("vault.coach.training_offers.sources", input)?;
+    let output = client.vault_coach_training_offers_sources(&input)?;
+    crate::codec::lift_record("vault.coach.training_offers.sources", &output)
+};
 "vault.research.bind" => fn vault_research_bind(&self, input: ResearchBindWire) -> ResearchBinding = |client| {
     let input: oneiron::task_verb::sdk::ResearchBindWire = crate::codec::lower_record("vault.research.bind", input)?;
     let output = client.vault_research_bind(&input)?;
@@ -5790,6 +5795,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::IdentityPairRequest = crate::codec::lower_record("vault.identity.proposals.for_pair", input)?;
     let output = client.vault_identity_proposals_for_pair(&input)?;
     crate::codec::lift_record("vault.identity.proposals.for_pair", &output)
+};
+"vault.custody.members.drain.begin" => fn vault_custody_members_drain_begin(&self, input: CustodyMemberRef) -> CustodyDrainTicketView = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberRef = crate::codec::lower_record("vault.custody.members.drain.begin", input)?;
+    let output = client.vault_custody_members_drain_begin(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.begin", &output)
+};
+"vault.custody.members.drain.commit" => fn vault_custody_members_drain_commit(&self, input: CustodyDrainCommitRequest) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyDrainCommitRequest = crate::codec::lower_record("vault.custody.members.drain.commit", input)?;
+    let output = client.vault_custody_members_drain_commit(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.commit", &output)
+};
+"vault.custody.members.drain.folder" => fn vault_custody_members_drain_folder(&self, input: CustodyMemberRef) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberRef = crate::codec::lower_record("vault.custody.members.drain.folder", input)?;
+    let output = client.vault_custody_members_drain_folder(&input)?;
+    crate::codec::lift_record("vault.custody.members.drain.folder", &output)
+};
+"vault.custody.members.reenrol" => fn vault_custody_members_reenrol(&self, input: CustodyMemberReenrolRequest) -> CustodySetRevision = |client| {
+    let input: oneiron::task_verb::sdk::CustodyMemberReenrolRequest = crate::codec::lower_record("vault.custody.members.reenrol", input)?;
+    let output = client.vault_custody_members_reenrol(&input)?;
+    crate::codec::lift_record("vault.custody.members.reenrol", &output)
 };
 "connector.answer" => fn connector_answer(&self, input: ConnectorAnswerRequest) -> ConnectorCallReply = |client| {
     let input: oneiron::task_verb::sdk::ConnectorAnswerRequest = crate::codec::lower_record("connector.answer", input)?;
