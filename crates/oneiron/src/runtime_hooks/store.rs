@@ -17,7 +17,7 @@ use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
 use super::grant::HookGrant;
 use super::lineage::LineageLink;
 use super::source::{
-    ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
+    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
 };
 
 pub(crate) use erase::scrub_hook_source_in_txn;
@@ -186,9 +186,7 @@ pub(crate) fn sync_binding_cursor_in_txn(
             if prior.is_some_and(|row| row.paused) {
                 continue;
             }
-            let row = prior
-                .unwrap_or_else(|| CursorRow::new(None, at))
-                .paused(at);
+            let row = prior.unwrap_or_else(|| CursorRow::new(None, at)).paused(at);
             CURSORS.put(&vault.store, txn, &key, &row)?;
         }
         return Ok(());
@@ -205,13 +203,7 @@ pub(crate) fn sync_binding_cursor_in_txn(
     }
     for source in FactSource::ALL {
         let start = source::enable_start_in_txn(vault, txn, &binding, source)?;
-        put_cursor_in_txn(
-            vault,
-            txn,
-            binding,
-            source,
-            &CursorRow::new(start, at),
-        )?;
+        put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(start, at))?;
     }
     Ok(())
 }
@@ -314,7 +306,7 @@ pub(super) struct HookRunDerivation {
 }
 
 impl HookRunDerivation {
-    fn new(
+    pub(in crate::runtime_hooks) fn new(
         vault: &Vault,
         binding_id: EntityId,
         binding: &PackHookBinding,

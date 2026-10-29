@@ -651,13 +651,7 @@ impl Vault {
             batch.apply(txn)?;
         }
         for (id, previous, row) in transitions {
-            crate::runtime_hooks::sync_binding_cursor_in_txn(
-                self,
-                txn,
-                id,
-                Some(&previous),
-                &row,
-            )?;
+            crate::runtime_hooks::sync_binding_cursor_in_txn(self, txn, id, Some(&previous), &row)?;
         }
         Ok(())
     }
@@ -770,7 +764,7 @@ impl Vault {
             if row.pack == pack && row.enabled && !bound.contains(&id) {
                 let previous = row.clone();
                 row.enabled = false;
-                transitions.push((id, previous, row.clone()));
+                transitions.push((id, Some(previous), row.clone()));
                 batch =
                     batch.claim_candidate(&id, binding_candidate(&row)?, &envelope, occurred, at);
             }
