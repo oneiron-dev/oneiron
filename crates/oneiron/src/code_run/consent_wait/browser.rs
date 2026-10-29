@@ -34,8 +34,9 @@ use crate::memory::{Memory, MemoryResult};
 use crate::task_verb::sdk::AgentVerb;
 
 use super::binding::{
-    CodeConsentDraft, code_consent_binds, mint_code_consent_wait_in_txn,
-    read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
+    CodeConsentDraft, code_consent_binds, code_consent_wait_rows_in_txn,
+    mint_code_consent_wait_in_txn, read_code_consent_wait_in_txn,
+    record_code_consent_admission_in_txn,
 };
 use super::settle::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, offered_choices, original_authority_holds_in_txn,
@@ -196,6 +197,38 @@ impl Vault {
                 row.settlement.is_none() && row.binding.pending.browser_action().is_some()
             }),
         )
+    }
+
+    /// The waits that bind a held browser act whose approving answer, given
+    /// at or before `answered_by_ms`, never admitted it (FIX 11498):
+    /// approved, unsettled and unadmitted. A held browser act has no
+    /// connector row, so the connector settler never visits it; a host's
+    /// settler pass drives each one through its answered pass instead, which
+    /// runs it once. An admitted wait is left out: its answer's own drive may
+    /// still be running the act, and the pass would settle it as of unknown
+    /// delivery under that drive.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn approved_browser_code_consent_waits(
+        &self,
+        answered_by_ms: u64,
+    ) -> Result<Vec<EntityId>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(code_consent_wait_rows_in_txn(self, &txn)?
+            .into_iter()
+            .filter(|row| {
+                row.approved_unsettled()
+                    && row.admission.is_none()
+                    && row
+                        .answer
+                        .as_ref()
+                        .is_some_and(|answer| answer.answered_at_ms <= answered_by_ms)
+                    && row.binding.pending.browser_action().is_some()
+            })
+            .map(|row| row.binding.wait_id)
+            .collect())
     }
 
     /// Admits wait `wait_id`'s held browser act for its host's answered
