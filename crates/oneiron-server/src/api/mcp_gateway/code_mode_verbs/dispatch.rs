@@ -91,7 +91,9 @@ impl McpCodeModeVerbs {
                 .map(|read| read.actor_key().clone())
                 .map_err(|error| AgentVerbRefusal {
                     code: match error.code() {
-                        crate::error::ErrorCode::Forbidden => "forbidden",
+                        crate::error::ErrorCode::Forbidden
+                        | crate::error::ErrorCode::HostActionRequiresSupportGrant
+                        | crate::error::ErrorCode::OwnerBindingRequired => "forbidden",
                         _ => "engine_error",
                     }
                     .to_owned(),
