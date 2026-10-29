@@ -43947,6 +43947,7 @@
       "DreamerWakeCallStateView",
       "DreamerWakeCallView",
       "DreamerWakeCheckpointView",
+      "DreamerWakeClaimAuthoringFallbackView",
       "DreamerWakeEndView",
       "DreamerWakeGenerationView",
       "DreamerWakeHeaderView",
@@ -43959,7 +43960,7 @@
      "path": "src/memory/dreamer_wake_read.rs",
      "purpose": "`vault.consolidation.wake.status` (DOOR-144 B): the typed wake read beside `vault.consolidation.status`",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "fn": 1,
       "struct": 11
      }
@@ -75144,12 +75145,14 @@
       "SkillOptimizeProposalRequest",
       "SkillOptimizeProposeRequest",
       "SkillOptimizeTradeoffAskView",
-      "SkillOptimizeTradeoffPickRequest"
+      "SkillOptimizeTradeoffPickRequest",
+      "TradeoffCapacityAdvisory"
      ],
      "path": "src/verbs/goal_optimize.rs",
      "purpose": "Full witnessed goal intake and explicit optimizer proposal/admission doors",
      "surface": {
-      "fn": 14,
+      "enum": 1,
+      "fn": 15,
       "struct": 15
      }
     },
@@ -94234,7 +94237,7 @@
      "path": "src/facade/client.rs",
      "purpose": "Remote-backed NativeClient SDK seam with its stamped-turn input",
      "surface": {
-      "fn": 12,
+      "fn": 13,
       "struct": 4
      }
     },
@@ -100211,7 +100214,7 @@
      "path": "src/api/facade/export_transfer.rs",
      "purpose": "Whole-vault exports kept on the server for their caller to read (FIX 3676)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -114283,6 +114286,7 @@
       "EntityRefReceipt",
       "EntityView",
       "EntityViews",
+      "ExportReceipt",
       "FacadeReceipt",
       "ForgetSelector",
       "HabitCheckinInput",
@@ -114335,7 +114339,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 13,
-      "struct": 54
+      "struct": 55
      }
     },
     {
@@ -115657,6 +115661,7 @@
       "DreamerWakeCallStateView",
       "DreamerWakeCallView",
       "DreamerWakeCheckpointView",
+      "DreamerWakeClaimAuthoringFallbackView",
       "DreamerWakeEndView",
       "DreamerWakeGenerationView",
       "DreamerWakeHeaderView",
@@ -118368,6 +118373,7 @@
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
+      "TradeoffCapacityAdvisory",
       "TradeoffChoice",
       "TradeoffRole",
       "TradeoffRule",
@@ -118640,7 +118646,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1043,
+      "enum": 1045,
       "struct": 3211
      }
     },
@@ -118667,7 +118673,7 @@
      "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 11,
       "re-export": 7,
       "struct": 1
      }
